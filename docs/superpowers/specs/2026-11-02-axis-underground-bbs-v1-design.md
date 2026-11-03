@@ -123,8 +123,13 @@ Source layout: `src/bbs/` (BBS core) and `src/door/` (door runtime). The door ru
 | 10 | Shareware and Free Trials | general shareware, demos and trials |
 | 11 | Abandonware | old software whose makers no longer sell or support it |
 | 12 | BBS Doors | door game distribution archives (for example the unmodified lord407.zip) |
+| 13 | CAD/CAM Software | CAD and CAM programs of any license the sysop can post |
+| 14 | Post Processors | machine post processors for CAM programs |
+| 15 | BBS Software | BBS packages, utilities, mailers, tossers |
+| 16 | Music: Rev J Money | Rev J Money's own music |
+| 17 | Music: Other | other music the sysop has the right to share (the sysop can split this into more areas) |
 
-Abandonware is still copyrighted in most cases; the area exists, but AXIS ships no files in it and the sysop decides what to post. Areas 3, 4, 5, 9 and 10 hold only files whose licenses allow redistribution.
+Abandonware is still copyrighted in most cases; the area exists, but AXIS ships no files in it and the sysop decides what to post. Areas 3, 4, 5, 9 and 10 hold only files whose licenses allow redistribution. Areas 13 to 17 were added by Rev on 2026-11-03.
 
 ### 5.8 Door runtime
 The core of v1. Components:
