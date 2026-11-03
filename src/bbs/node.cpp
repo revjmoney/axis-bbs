@@ -3,6 +3,7 @@
 #include "bbs/node.h"
 
 #include "bbs/login_art.h"
+#include "bbs/password.h"
 #include "bbs/theme.h"
 
 #include <cctype>
@@ -84,6 +85,43 @@ std::string uptime(uint32_t sec) {
 Node::Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg, FileLibrary* files)
     : node_(nodeNumber), info_(std::move(info)), cfg_(std::move(cfg)), files_(files) {}
 
+void Node::setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow) {
+    users_ = users;
+    saveUsers_ = std::move(save);
+    rng_ = rng;
+    unixNow_ = std::move(unixNow);
+}
+
+void Node::loggedIn() {
+    state_ = State::Menu;
+    out_ += "\r\n\r\n   ";
+    out_ += theme::TEXT;
+    out_ += "Welcome back, ";
+    out_ += theme::WHITE + handle_ + theme::TEXT + (sysop_ ? ". " + std::string(theme::ORANGE) + "Sysop access." : ".");
+    showMenu();
+}
+
+void Node::showPending() {
+    User* u = users_ ? users_->byId(userId_) : nullptr;
+    out_ += theme::CLS;
+    out_ += "\r\n   ";
+    out_ += theme::DGREY;
+    out_ += "[";
+    out_ += theme::fade("ACCOUNT STATUS:") + " " + theme::ORANGE + "PENDING VERIFICATION" + theme::DGREY + "]\r\n\r\n";
+    out_ += theme::window("PENDING", {{"handle", handle_},
+                                      {"status", "waiting for the sysop"},
+                                      {"answers", u ? std::to_string(u->answers.size()) + " questions answered" : ""},
+                                      {"next", "call back later: the sysop reads every one"}});
+    out_ += "\r\n   " + std::string(theme::TEXT) +
+            "Until you're validated you can't reach the files or the doors.\r\n   Lamers, narcs and leeches need not wait.\r\n";
+    pendingMenu();
+}
+
+void Node::pendingMenu() {
+    out_ += "\r\n   " + theme::key("S", "tatus   ") + theme::key("C", "redits   ") + theme::key("G", "oodbye");
+    out_ += "\r\n   " + theme::fade("Command") + theme::ORANGE + ": " + theme::WHITE;
+}
+
 void Node::begin(uint32_t nowMs) {
     lastInput_ = nowMs;
     out_ += welcome(node_, info_(), cfg_);
@@ -93,6 +131,8 @@ void Node::begin(uint32_t nowMs) {
 void Node::prompt() {
     if (state_ == State::Login) {
         out_ += "   " + theme::fade("Handle") + theme::ORANGE + ": " + theme::WHITE;
+    } else if (state_ == State::Password) {
+        out_ += "\r\n   " + theme::fade("Password") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Menu) {
         out_ += "\r\n   " + theme::fade("Command") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Doors) {
@@ -163,12 +203,39 @@ void Node::key(char c) {
                 return;
             }
             handle_ = h;
-            state_ = State::Menu;
-            out_ += "\r\n\r\n";
-            out_ += DIM;
-            out_ += "   Welcome, ";
-            out_ += HI + handle_ + DIM + ".";
-            showMenu();
+            if (!users_) {  // no accounts: in by handle
+                state_ = State::Menu;
+                out_ += "\r\n\r\n";
+                out_ += DIM;
+                out_ += "   Welcome, ";
+                out_ += HI + handle_ + DIM + ".";
+                showMenu();
+                return;
+            }
+            auto same = [](const std::string& a, const std::string& b) {
+                if (a.size() != b.size()) return false;
+                for (size_t i = 0; i < a.size(); i++)
+                    if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
+                return true;
+            };
+            wantSysop_ = !cfg_.sysopHash.empty() && same(h, cfg_.sysopHandle);
+            User* u = wantSysop_ ? nullptr : users_->find(h);
+            if (wantSysop_ || u) {
+                if (u) {
+                    userId_ = u->id;
+                    handle_ = u->handle;
+                } else {
+                    handle_ = cfg_.sysopHandle;
+                }
+                tries_ = 0;
+                state_ = State::Password;
+                prompt();
+                return;
+            }
+            state_ = State::ApplyAsk;
+            out_ += "\r\n\r\n   " + std::string(theme::TEXT) + "Nobody here goes by " + theme::WHITE + handle_ + theme::TEXT + ".";
+            out_ += "\r\n   " + theme::fade("Apply for an account") + " " + theme::key("Y", "/") + theme::key("N", "") + theme::ORANGE +
+                    ": " + theme::WHITE;
         } else if (c == '\b' || c == 0x7f) {
             if (!line_.empty()) {
                 line_.pop_back();
@@ -177,6 +244,121 @@ void Node::key(char c) {
         } else if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && line_.size() < kMaxHandle) {
             line_ += c;
             out_ += c;
+        }
+        return;
+    }
+    if (state_ == State::Password) {
+        if (c == '\r') {
+            std::string pw = line_;
+            line_.clear();
+            User* u = users_ ? users_->byId(userId_) : nullptr;
+            bool  ok = wantSysop_ ? checkPassword(cfg_.sysopSalt, cfg_.sysopHash, pw) : (u && checkPassword(u->salt, u->hash, pw));
+            if (!ok) {
+                if (++tries_ >= 3) {
+                    out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + "Three strikes." + theme::TEXT + " Call back when you remember it.\r\n";
+                    state_ = State::Done;
+                    return;
+                }
+                out_ += "\r\n   " + std::string(theme::ORANGE) + "Wrong password.";
+                prompt();
+                return;
+            }
+            if (wantSysop_) {
+                sysop_ = true;
+                loggedIn();
+                return;
+            }
+            u->calls++;
+            if (unixNow_) u->lastCall = unixNow_();
+            if (saveUsers_) saveUsers_();
+            if (u->status == User::Status::Denied) {
+                out_ += "\r\n\r\n   " + std::string(theme::TEXT) + "Your application was " + theme::ORANGE + "denied" + theme::TEXT +
+                        ". This board isn't for you.\r\n";
+                state_ = State::Done;
+            } else if (u->status == User::Status::Pending) {
+                state_ = State::Pending;
+                showPending();
+            } else {
+                loggedIn();
+            }
+        } else if (c == '\b' || c == 0x7f) {
+            if (!line_.empty()) {
+                line_.pop_back();
+                out_ += "\b \b";
+            }
+        } else if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && line_.size() < 40) {
+            line_ += c;
+            out_ += '*';
+        }
+        return;
+    }
+    if (state_ == State::ApplyAsk) {
+        char k = (char)(c | 0x20);
+        if (k == 'y') {
+            out_ += "yes";
+            state_ = State::Applying;
+            app_.reset(new NewUserApp(handle_, out_, cfg_, rng_));
+            app_->begin();
+        } else if (k == 'n') {
+            out_ += "no\r\n";
+            state_ = State::Login;
+            prompt();
+        }
+        return;
+    }
+    if (state_ == State::Applying) {
+        auto r = app_->key(c);
+        if (r == NewUserApp::Outcome::Running) return;
+        if (r == NewUserApp::Outcome::Submitted) {
+            User u = app_->user();
+            if (unixNow_) u.created = u.lastCall = unixNow_();
+            u.calls = 1;
+            if (users_->find(u.handle)) {  // someone took the handle while they typed
+                out_ += "\r\n   " + std::string(theme::ORANGE) + "That handle was just taken. Call back with another.\r\n";
+                state_ = State::Done;
+                app_.reset();
+                return;
+            }
+            userId_ = users_->add(u).id;
+            if (saveUsers_) saveUsers_();
+            app_.reset();
+            if (u.status == User::Status::Validated) {  // a machine owner or RotatoCAM Pro user: straight in
+                out_ += theme::CLS;
+                out_ += "\r\n   ";
+                out_ += theme::DGREY;
+                out_ += "[";
+                out_ += theme::fade("ACCOUNT STATUS:") + " " + theme::ORANGE + "ACCESS GRANTED" + theme::DGREY + "]\r\n\r\n";
+                out_ += theme::window("WELCOME TO THE UNDERGROUND",
+                                      {{"handle", handle_}, {"access", "validated"}, {"why", "you make chips fly"}});
+                loggedIn();
+                return;
+            }
+            state_ = State::Pending;
+            showPending();
+        } else {
+            app_.reset();
+            state_ = State::Login;
+            out_ += "\r\n";
+            prompt();
+        }
+        return;
+    }
+    if (state_ == State::Pending) {
+        switch (c | 0x20) {
+            case 's':
+                showPending();
+                break;
+            case 'c':
+                out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + kAxisSoftware + theme::TEXT + " by " + theme::WHITE + "Rev. J. Money" +
+                        theme::TEXT + "   rotatocam.com   jmscnc.com\r\n";
+                pendingMenu();
+                break;
+            case 'g':
+                out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + "Later. The sysop will get to you." + theme::RESET + "\r\n";
+                state_ = State::Done;
+                break;
+            default:
+                break;
         }
         return;
     }
@@ -274,7 +456,7 @@ void Node::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string&
     state_ = State::Files;
 }
 
-void Node::poll(uint32_t nowMs) {
+void Node::poll(uint32_t nowMs) {  // the idle timer covers the application and the pending screen too
     if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";
         out_ += AMBER;

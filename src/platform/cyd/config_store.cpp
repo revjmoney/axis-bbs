@@ -30,3 +30,24 @@ bool configSave(const axis::bbs::BbsConfig& c) {
 }
 
 bool configErase() { return LittleFS.remove(kPath); }
+
+std::string flashRead(const char* path) {
+    File f = LittleFS.open(path, "r");
+    if (!f) return "";
+    std::string s;
+    s.resize(f.size());
+    size_t n = f.read((uint8_t*)&s[0], s.size());
+    s.resize(n);
+    f.close();
+    return s;
+}
+
+bool flashWrite(const char* path, const std::string& text) {
+    File f = LittleFS.open("/save.tmp", "w");
+    if (!f) return false;
+    bool ok = f.write((const uint8_t*)text.data(), text.size()) == text.size();
+    f.close();
+    if (!ok) return false;
+    LittleFS.remove(path);
+    return LittleFS.rename("/save.tmp", path);
+}

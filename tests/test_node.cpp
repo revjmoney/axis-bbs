@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include <regex>
+
 #include "doctest.h"
 #include "bbs/login_art.h"
 #include "bbs/node.h"
 
 using axis::bbs::Node;
 using axis::bbs::SysInfo;
+
+static std::string plain(const std::string& s) { return std::regex_replace(s, std::regex("\x1b\\[[0-9;]*m"), ""); }
 
 static SysInfo info() {
     SysInfo s;
@@ -26,7 +30,7 @@ static void type(Node& n, const std::string& s, uint32_t now = 1000) {
 TEST_CASE("node greets with the AXIS welcome and asks for a handle") {
     Node n(1, info);
     n.begin(0);
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     CHECK(out.find("Axis Micro BBS Firmware") != std::string::npos);
     CHECK(out.find("Handle:") != std::string::npos);
     CHECK(n.state() == Node::State::Login);
@@ -35,13 +39,13 @@ TEST_CASE("node greets with the AXIS welcome and asks for a handle") {
 TEST_CASE("node echoes the handle, supports backspace, then shows the menu") {
     Node n(1, info);
     n.begin(0);
-    n.takeOutput();
+    plain(n.takeOutput());
     type(n, "Rew");
-    CHECK(n.takeOutput() == "Rew");
+    CHECK(plain(n.takeOutput()) == "Rew");
     type(n, "\b");
-    CHECK(n.takeOutput() == "\b \b");
+    CHECK(plain(n.takeOutput()) == "\b \b");
     type(n, "v\r");
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     CHECK(n.handle() == "Rev");
     CHECK(n.state() == Node::State::Menu);
     CHECK(out.find("Rev") != std::string::npos);
@@ -52,10 +56,10 @@ TEST_CASE("node echoes the handle, supports backspace, then shows the menu") {
 TEST_CASE("node asks again for an empty handle") {
     Node n(1, info);
     n.begin(0);
-    n.takeOutput();
+    plain(n.takeOutput());
     type(n, "   \r");
     CHECK(n.state() == Node::State::Login);
-    CHECK(n.takeOutput().find("Handle:") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find("Handle:") != std::string::npos);
 }
 
 TEST_CASE("node caps the handle length at 30 characters") {
@@ -69,14 +73,14 @@ static Node loggedIn() {
     Node n(1, info);
     n.begin(0);
     type(n, "Rev\r");
-    n.takeOutput();
+    plain(n.takeOutput());
     return n;
 }
 
 TEST_CASE("credits name Rev J Money, rotatocam.com and jmscnc.com") {
     Node n = loggedIn();
     type(n, "c");
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     CHECK(out.find("Rev. J. Money") != std::string::npos);
     CHECK(out.find("rotatocam.com") != std::string::npos);
     CHECK(out.find("jmscnc.com") != std::string::npos);
@@ -87,7 +91,7 @@ TEST_CASE("credits name Rev J Money, rotatocam.com and jmscnc.com") {
 TEST_CASE("info shows the node's address and uptime") {
     Node n = loggedIn();
     type(n, "I");
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     CHECK(out.find("192.168.1.77") != std::string::npos);
     CHECK(out.find("axis.local") != std::string::npos);
     CHECK(out.find("1h 2m") != std::string::npos);
@@ -98,7 +102,7 @@ TEST_CASE("goodbye logs off and asks to hang up") {
     Node n = loggedIn();
     CHECK_FALSE(n.wantsHangup());
     type(n, "g");
-    CHECK(n.takeOutput().find("Goodbye") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find("Goodbye") != std::string::npos);
     CHECK(n.wantsHangup());
     CHECK(n.state() == Node::State::Done);
 }
@@ -109,13 +113,13 @@ TEST_CASE("idle callers are logged off after 5 minutes") {
     CHECK_FALSE(n.wantsHangup());
     n.poll(1000 + 300001);
     CHECK(n.wantsHangup());
-    CHECK(n.takeOutput().find("idle") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find("idle") != std::string::npos);
 }
 
 TEST_CASE("unknown menu keys redraw the menu prompt") {
     Node n = loggedIn();
     type(n, "z");
-    CHECK(n.takeOutput().find("Command") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find("Command") != std::string::npos);
 }
 
 TEST_CASE("busy screen tells the caller the node is busy") {
@@ -126,13 +130,13 @@ TEST_CASE("menu shows Doors") {
     Node n(1, info);
     n.begin(0);
     type(n, "Rev\r");
-    CHECK(n.takeOutput().find("[D]") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find("[D]") != std::string::npos);
 }
 
 TEST_CASE("D lists the configured doors") {
     Node n = loggedIn();
     type(n, "d");
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     CHECK(out.find("Legend of the Red Dragon") != std::string::npos);
     CHECK(out.find("[1]") != std::string::npos);
     CHECK(n.state() == Node::State::Doors);
@@ -156,19 +160,19 @@ TEST_CASE("a key that is not a door goes back to the menu") {
 TEST_CASE("after the door the caller is back at the menu") {
     Node n = loggedIn();
     type(n, "d1");
-    n.takeOutput();
+    plain(n.takeOutput());
     n.resumeAfterDoor(Node::DoorEnd::Normal, 50000);
     CHECK(n.state() == Node::State::Menu);
     CHECK(n.doorRequested().empty());
-    CHECK(n.takeOutput().find("Command:") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find("Command:") != std::string::npos);
 }
 
 TEST_CASE("door out of memory returns the caller to the menu") {
     Node n = loggedIn();
     type(n, "d1");
-    n.takeOutput();
+    plain(n.takeOutput());
     n.resumeAfterDoor(Node::DoorEnd::OutOfMemory, 50000);
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     CHECK(out.find("out of memory") != std::string::npos);
     CHECK(n.state() == Node::State::Menu);
 }
@@ -198,8 +202,8 @@ TEST_CASE("login screen shows the drippy logo and the board's details") {
     cfg.location = "The Workshop";
     Node n(1, fullInfo, cfg);
     n.begin(0);
-    std::string out = n.takeOutput();
-    CHECK(out.find(kLoginArt) != std::string::npos);  // the drippy logo from art/login.ans
+    std::string raw = n.takeOutput(), out = plain(raw);
+    CHECK(raw.find(kLoginArt) != std::string::npos);  // the drippy logo from art/login.ans, as is
     CHECK(out.find("The Workshop") != std::string::npos);
     CHECK(out.find("axis.local") != std::string::npos);
     CHECK(out.find("ESP32 CYD") != std::string::npos);
@@ -210,7 +214,7 @@ TEST_CASE("login screen shows the drippy logo and the board's details") {
 TEST_CASE("login screen lists the active nodes") {
     Node n(1, fullInfo);
     n.begin(0);
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     CHECK(out.find("1 of 1") != std::string::npos);
     CHECK(out.find("you") != std::string::npos);
 }
@@ -218,7 +222,7 @@ TEST_CASE("login screen lists the active nodes") {
 TEST_CASE("login screen credits jmscnc.com and rotatocam.com") {
     Node n(1, fullInfo);
     n.begin(0);
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     CHECK(out.find("jmscnc.com") != std::string::npos);
     CHECK(out.find("rotatocam.com") != std::string::npos);
 }
@@ -226,7 +230,7 @@ TEST_CASE("login screen credits jmscnc.com and rotatocam.com") {
 TEST_CASE("login screen fits a 25 line terminal") {
     Node n(1, fullInfo);
     n.begin(0);
-    std::string out = n.takeOutput();
+    std::string out = plain(n.takeOutput());
     size_t lines = 0;
     for (size_t i = out.find("\x1b[2J"); i < out.size(); i++) lines += out[i] == '\n';
     CHECK(lines <= 24);

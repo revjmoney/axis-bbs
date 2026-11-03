@@ -19,6 +19,7 @@
 #include "bbs/eventlog.h"
 #include "bbs/sysop_menu.h"
 #include "bbs/transferjob.h"
+#include "bbs/users.h"
 #include "door/session.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
@@ -49,6 +50,8 @@ static std::unique_ptr<WifiStream>              line;  // the caller, when one i
 static axis::bbs::SysopMenu                     sysop;   // the touchscreen sysop menu (a tap on the WFC)
 static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
 static SdFileLibrary                            sdFiles;  // the file areas on the SD card, for callers
+static axis::bbs::UserStore                     users;    // callers' accounts, internal flash /users.dat
+static size_t                                   pendingSeen = 0;
 // the door the caller is in, if any (the screen copy is freed meanwhile)
 static std::unique_ptr<axis::PosixHostFs>       doorFs;
 static std::unique_ptr<FlashImageSource>        doorImage;
@@ -105,6 +108,18 @@ static void logEvent(const String& what) {
     if (now > 1700000000) strftime(stamp, sizeof stamp, "%H:%M", localtime(&now));
     events.add(std::string(stamp) + " " + what.c_str());
     Serial.printf("axis: %s\n", what.c_str());
+}
+
+static void saveUsers() {
+    if (!flashWrite("/users.dat", users.format())) logEvent("users: SAVE FAILED");
+    if (users.pending() > pendingSeen) logEvent("new user application waiting: tap USERS");
+    pendingSeen = users.pending();
+    screenDirty = true;
+}
+
+static uint32_t unixNow() {
+    time_t t = time(nullptr);
+    return t > 1700000000 ? (uint32_t)t : 0;
 }
 
 // File areas: one folder each under /files on the SD card (none without a card).
@@ -178,7 +193,12 @@ static void drawWfc() {
     if (node) panel.text(0, 2, "\xb5 CALLER ONLINE \xc6", 0x0F);
     else panel.text(0, 2, "\xb5 WAITING FOR CALLER \xc6", 0x0F);
     panel.text(0, 30, "\xb5 node 1 \xc6", 0x08);
-    panel.text(last, 23, "\xb5 tap: sysop \xc6", 0x08);
+    if (users.pending()) {  // applications waiting for the sysop
+        snprintf(b, sizeof b, "\xb5 %u NEW USER%s \xc6", (unsigned)users.pending(), users.pending() == 1 ? "" : "S");
+        panel.text(last, 39 - (int)strlen(b), b, 0x06);
+    } else {
+        panel.text(last, 23, "\xb5 tap: sysop \xc6", 0x08);
+    }
     auto line = [&](int r, const char* label, const String& value) {
         panel.text(r, 2, label, K);
         panel.text(r, 9, value.substring(0, 29).c_str(), V);
@@ -212,6 +232,7 @@ static void drawSysop() {
     d.cfg = cfg;
     d.info = sysInfo();
     d.log = events;
+    d.users = users;
     if (sysop.screen() == axis::bbs::SysopMenu::Screen::Files) d.areaFiles = areaFileCounts();
     static BigText t;
     t.clear(0x07);
@@ -370,6 +391,7 @@ static void answer(WiFiClient incoming) {
     if (cfg.setupDone && mode == Mode::Normal) {
         callsToday++;
         node.reset(new axis::bbs::Node(kNodeNumber, sysInfo, cfg, &sdFiles));
+        node->setAccounts(&users, saveUsers, hwRandom, unixNow);
         node->begin(millis());
         sendApp(node->takeOutput());
     } else {
@@ -556,6 +578,14 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
         logEvent("sysop: restart");
         delay(200);
         ESP.restart();
+    } else if (a == A::ValidateUser || a == A::DenyUser) {
+        axis::bbs::User* u = users.byId(sysop.selectedUser());
+        if (!u) return;
+        bool ok = a == A::ValidateUser;
+        u->status = ok ? axis::bbs::User::Status::Validated : axis::bbs::User::Status::Denied;
+        if (ok && u->security < 20) u->security = 20;
+        logEvent(String("sysop: ") + (ok ? "validated " : "denied ") + u->handle.c_str());
+        saveUsers();
     } else if (a == A::RerunSetup) {  // nothing changes until the wizard saves
         logEvent("sysop: setup again");
         newSetupPin();
@@ -667,6 +697,8 @@ void setup() {
     storageInit();
     if (!configMount()) Serial.println("axis: internal flash filesystem failed to mount");
     cfg = configLoad();
+    users.parse(flashRead("/users.dat"));
+    pendingSeen = users.pending();
     makeAreaFolders();
     if (!cfg.setupDone) {
         mode = Mode::SetupChoice;

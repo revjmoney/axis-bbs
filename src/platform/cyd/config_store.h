@@ -8,3 +8,6 @@ bool                  configMount();  // mounts LittleFS, formatting a blank par
 axis::bbs::BbsConfig  configLoad();   // defaults when there is no file yet
 bool                  configSave(const axis::bbs::BbsConfig& c);
 bool                  configErase();  // back to first-boot setup
+// any small text file in internal flash (the user base: /users.dat), saved the same safe way
+std::string           flashRead(const char* path);
+bool                  flashWrite(const char* path, const std::string& text);

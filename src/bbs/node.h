@@ -13,6 +13,8 @@
 #include "bbs/config.h"
 #include "bbs/filebrowser.h"
 #include "bbs/filelib.h"
+#include "bbs/newuser.h"
+#include "bbs/users.h"
 #include "bbs/version.h"
 
 namespace axis::bbs {
@@ -28,12 +30,15 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Login, Menu, Doors, InDoor, Files, Transfer, Done };
+    enum class State { Login, Password, ApplyAsk, Applying, Pending, Menu, Doors, InDoor, Files, Transfer, Done };
     enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError };
     static constexpr size_t   kMaxHandle = 30;
 
     // files: the file areas' store (nullptr: the Files menu says the areas are offline)
     Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {}, FileLibrary* files = nullptr);
+    // accounts: without them anyone is let in by handle (the first builds, tests)
+    void setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow);
+    bool isSysop() const { return sysop_; }
     void        begin(uint32_t nowMs);
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);
@@ -53,6 +58,9 @@ private:
     void key(char c);
     void showMenu();
     void showDoors();
+    void loggedIn();
+    void showPending();
+    void pendingMenu();
     void prompt();
     int                       node_;
     std::function<SysInfo()>  info_;
@@ -61,6 +69,13 @@ private:
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
     size_t                    door_ = 0;
+    UserStore*                users_ = nullptr;
+    std::function<void()>     saveUsers_;
+    uint32_t (*rng_)() = nullptr;
+    std::function<uint32_t()> unixNow_;
+    int                       userId_ = 0, tries_ = 0;
+    bool                      sysop_ = false, wantSysop_ = false;
+    std::unique_ptr<NewUserApp> app_;
     FileLibrary*              files_;
     std::unique_ptr<FileBrowser> browser_;
 };

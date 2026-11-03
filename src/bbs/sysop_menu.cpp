@@ -51,7 +51,14 @@ std::vector<SysopMenu::Button> SysopMenu::buttons() const {
             break;
         default:
             b.push_back({"BACK", 8, 204, 90, 30});
-            if (screen_ == Screen::Files || screen_ == Screen::Logs) b.push_back({"MORE", 222, 204, 90, 30});
+            if (screen_ == Screen::UserDetail) {
+                b.back().w = 70;
+                b.push_back({"VALIDATE", 84, 204, 86, 30});
+                b.push_back({"DENY", 176, 204, 60, 30, true});
+                b.push_back({"MORE", 242, 204, 70, 30});
+                break;
+            }
+            if (screen_ == Screen::Files || screen_ == Screen::Logs || screen_ == Screen::Users) b.push_back({"MORE", 222, 204, 90, 30});
             if (screen_ == Screen::Setup) b.push_back({"RUN SETUP", 192, 204, 120, 30, true});
             if (screen_ == Screen::System) {
                 b.push_back({"FORMAT SD", 106, 204, 100, 30, true});
@@ -75,7 +82,9 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
                 if (b.label == kSections[i]) go(kSectionScreens[i]);
             return Action::None;
         }
-        if (b.label == "BACK") go(Screen::Main);
+        if (b.label == "BACK") go(screen_ == Screen::UserDetail ? Screen::Users : Screen::Main);
+        else if (b.label == "VALIDATE") return Action::ValidateUser;
+        else if (b.label == "DENY") return Action::DenyUser;
         else if (b.label == "MORE") page_++;
         else if (b.label == "FORMAT SD") go(Screen::ConfirmFormat);
         else if (b.label == "CANCEL") go(Screen::System);
@@ -86,6 +95,13 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
         else if (b.label == "RUN SETUP") return Action::RerunSetup;
         return Action::None;
     }
+    if (screen_ == Screen::Users && x >= 8 && x < 312 && y >= 32 && y < 32 + kLinesPerPage * 16) {  // a caller's row
+        size_t row = (size_t)((y - 32) / 16);
+        if (row < listed_.size()) {
+            user_ = listed_[row];
+            go(Screen::UserDetail);
+        }
+    }
     return Action::None;
 }
 
@@ -94,6 +110,7 @@ std::string SysopMenu::title() const {
         case Screen::Main: return "SYSOP MENU";
         case Screen::Setup: return "BBS SETUP";
         case Screen::Users: return "USERS";
+        case Screen::UserDetail: return "CALLER";
         case Screen::Files: return "FILE AREAS";
         case Screen::Messages: return "MESSAGES";
         case Screen::Logs: return "LOGS";
@@ -122,14 +139,48 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
             all.push_back(row("doors", std::to_string(c.doors.size()) + (c.doors.empty() ? "" : " (" + c.doors[0].name + ")")));
             all.push_back("RUN SETUP redoes it (over telnet/here)");
             break;
-        case Screen::Users:
-            all.push_back(row("sysop", c.sysopHandle + (c.sysopHash.empty() ? "" : ", password set")));
-            all.push_back("");
-            all.push_back("Caller accounts, security levels and");
-            all.push_back("the user editor arrive with the BBS");
-            all.push_back("core (accounts). Callers sign in by");
-            all.push_back("handle for now.");
+        case Screen::Users: {
+            std::vector<const User*> order;  // pending first, then the rest; tap a row to open it
+            for (auto& u : d.users.all())
+                if (u.status == User::Status::Pending) order.push_back(&u);
+            for (auto& u : d.users.all())
+                if (u.status != User::Status::Pending) order.push_back(&u);
+            int pages = ((int)order.size() + kLinesPerPage - 1) / kLinesPerPage;
+            int p = pages ? page_ % pages : 0;
+            listed_.clear();
+            if (order.empty()) all.push_back("No callers have applied yet.");
+            for (size_t i = (size_t)p * kLinesPerPage; i < order.size() && i < (size_t)(p + 1) * kLinesPerPage; i++) {
+                std::string h = order[i]->handle.substr(0, 26);
+                all.push_back(h + std::string(28 - h.size(), ' ') + statusName(order[i]->status));
+                listed_.push_back(order[i]->id);
+            }
+            return all;  // already one page
+        }
+        case Screen::UserDetail: {
+            const User* u = nullptr;
+            for (auto& x : d.users.all())
+                if (x.id == user_) u = &x;
+            if (!u) {
+                all.push_back("That caller is gone.");
+                break;
+            }
+            all.push_back(row("handle", u->handle));
+            all.push_back(row("status", statusName(u->status)));
+            all.push_back(row("from", u->location));
+            all.push_back(row("name", u->realName));
+            all.push_back(row("email", u->email));
+            all.push_back(row("calls", std::to_string(u->calls)));
+            for (auto& a : u->answers) {
+                std::string q = a.first.substr(0, kLineChars - 2) + "?";
+                all.push_back(q);
+                std::string v = "  " + a.second;
+                while (!v.empty()) {
+                    all.push_back(v.substr(0, kLineChars));
+                    v = v.size() > (size_t)kLineChars ? "  " + v.substr(kLineChars) : "";
+                }
+            }
             break;
+        }
         case Screen::Files:
             for (size_t i = 0; i < c.areas.size(); i++) {
                 int         n = i < d.areaFiles.size() ? d.areaFiles[i] : -1;

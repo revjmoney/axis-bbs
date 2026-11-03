@@ -80,7 +80,7 @@ TEST_CASE("menu shows Files") {
     Node        n(1, info, twoAreas(), &lib);
     n.begin(0);
     type(n, "Rev\r");
-    CHECK(n.takeOutput().find("[F]") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find("[F]") != std::string::npos);
 }
 
 TEST_CASE("F lists the file areas with their file counts") {

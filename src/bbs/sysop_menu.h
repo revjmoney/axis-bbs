@@ -10,6 +10,7 @@
 #include "bbs/config.h"
 #include "bbs/eventlog.h"
 #include "bbs/node.h"
+#include "bbs/users.h"
 
 namespace axis::bbs {
 
@@ -18,12 +19,13 @@ struct SysopData {  // what the screens show, gathered by the firmware when draw
     SysInfo          info;
     EventLog         log;
     std::vector<int> areaFiles;  // files in each of cfg.areas (-1 = no storage for files)
+    UserStore        users;
 };
 
 class SysopMenu {
 public:
-    enum class Screen { Main, Setup, Users, Files, Messages, Logs, System, ConfirmFormat };
-    enum class Action { None, Close, FormatSd, Restart, RerunSetup };
+    enum class Screen { Main, Setup, Users, UserDetail, Files, Messages, Logs, System, ConfirmFormat };
+    enum class Action { None, Close, FormatSd, Restart, RerunSetup, ValidateUser, DenyUser };
     struct Button {
         std::string label;
         int         x, y, w, h;
@@ -38,12 +40,15 @@ public:
     Action              tap(int x, int y);
     std::string         title() const;
     std::vector<std::string> lines(const SysopData& d) const;  // at most kLinesPerPage
+    int selectedUser() const { return user_; }  // for ValidateUser / DenyUser
 
 private:
     void   go(Screen s);
     bool   open_ = false;
     Screen screen_ = Screen::Main;
     int    page_ = 0;
+    int    user_ = 0;
+    mutable std::vector<int> listed_;  // user ids on the Users page as last drawn, for row taps
 };
 
 }  // namespace axis::bbs

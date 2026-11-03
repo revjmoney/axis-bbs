@@ -138,3 +138,60 @@ TEST_CASE("logs screen shows the newest events") {
     REQUIRE(!lines.empty());
     CHECK(lines.back().find("opened LORD") != std::string::npos);
 }
+
+namespace {
+SysopData withUsers() {
+    SysopData d = data();
+    User      a, b;
+    a.handle = "Validated Guy";
+    a.status = User::Status::Validated;
+    b.handle = "Waiting Kid";
+    b.location = "Conway, SC";
+    b.answers = {{"Do you own a CNC machine", "no"}, {"Why should we let you in", "I want to learn"}};
+    d.users.add(a);
+    d.users.add(b);
+    return d;
+}
+}  // namespace
+
+TEST_CASE("users screen lists pending callers first") {
+    SysopMenu m;
+    m.open();
+    tapButton(m, "USERS");
+    auto lines = m.lines(withUsers());
+    REQUIRE(lines.size() >= 2);
+    CHECK(lines[0].find("Waiting Kid") != std::string::npos);
+    CHECK(lines[0].find("pending") != std::string::npos);
+}
+
+TEST_CASE("tapping a caller shows their application and validate returns their id") {
+    SysopMenu m;
+    SysopData d = withUsers();
+    m.open();
+    tapButton(m, "USERS");
+    m.lines(d);                  // the screen is drawn before it is tapped
+    m.tap(100, 32 + 8);          // the first row
+    CHECK(m.screen() == SysopMenu::Screen::UserDetail);
+    std::string all;
+    for (auto& l : m.lines(d)) all += l + "\n";
+    CHECK(all.find("Conway, SC") != std::string::npos);
+    CHECK(all.find("I want to learn") != std::string::npos);
+    SysopMenu::Action a = SysopMenu::Action::None;
+    tapButton(m, "VALIDATE", &a);
+    CHECK(a == SysopMenu::Action::ValidateUser);
+    CHECK(m.selectedUser() == 2);
+}
+
+TEST_CASE("deny also returns the caller's id") {
+    SysopMenu m;
+    SysopData d = withUsers();
+    m.open();
+    tapButton(m, "USERS");
+    m.lines(d);
+    m.tap(100, 32 + 8);
+    m.lines(d);
+    SysopMenu::Action a = SysopMenu::Action::None;
+    tapButton(m, "DENY", &a);
+    CHECK(a == SysopMenu::Action::DenyUser);
+    CHECK(m.selectedUser() == 2);
+}
