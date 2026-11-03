@@ -5,7 +5,8 @@
 A small ANSI/CP437 terminal (80x25) runs inside this script, so every screenshot shows the
 screen exactly as a real terminal would after that step.
 
-usage: python bbs_shots.py HOST OUTDIR            (default script: login, info, credits, goodbye)
+usage: python bbs_shots.py HOST OUTDIR [SCRIPT.py] [--no-busy]
+       SCRIPT.py defines SCRIPT = [(name, keys bytes), ...]; default: login, info, credits, goodbye
 """
 import os
 import re
@@ -133,10 +134,15 @@ SCRIPT = [('01-welcome', b''), ('02-logged-in', b'Rev\r\n'), ('03-info', b'i'), 
 
 def main():
     host, out = sys.argv[1], sys.argv[2]
+    script = SCRIPT
+    if len(sys.argv) > 3 and sys.argv[3].endswith('.py'):
+        ns = {}
+        exec(open(sys.argv[3]).read(), ns)
+        script = ns['SCRIPT']
     os.makedirs(out, exist_ok=True)
     term = Term()
     s = socket.create_connection((host, 23), 5)
-    for name, keys in SCRIPT:
+    for name, keys in script:
         if keys:
             s.sendall(keys)
         term.feed(strip_telnet(read(s, 1.5)).decode('cp437'))
@@ -144,6 +150,8 @@ def main():
         term.png(path, f'AXIS UNDERGROUND CNC  telnet {host}  step: {name}')
         print(path)
     s.close()
+    if '--no-busy' in sys.argv:
+        return
     time.sleep(0.5)
     first = socket.create_connection((host, 23), 5)  # holds the node
     read(first, 1.0)

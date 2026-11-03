@@ -9,7 +9,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Standalone BBS firmware for the CYD (ESP32-2432S028R) | planned | No demos or built-in games; the only games are installed DOS doors |
 | Works with no SD card (minimal board) | planned | Everything in internal flash (LittleFS), LORD included; SD only adds space; file areas off without SD |
 | Preliminary BBS firmware | working | Boots, joins the saved WiFi, listens on port 23 as `axis.local`, welcome + handle + menu (Info, Credits, Goodbye), busy screen for a second caller, 5 min idle logoff, sysop waiting-for-caller screen; tested with a live call 2026-11-02 |
-| First-boot setup | planned | WiFi on the touchscreen, then the board asks with a tap: finish on the screen or over telnet (setup PIN); asks sysop account, names, location, address, port, timezone, FTN address, new-user defaults |
+| First-boot setup | working (telnet path) | Tap screen + PIN + wizard over telnet tested live 2026-11-02; on-screen wizard and touch WiFi picker still to come | WiFi on the touchscreen, then the board asks with a tap: finish on the screen or over telnet (setup PIN); asks sysop account, names, location, address, port, timezone, FTN address, new-user defaults |
 | One telnet node per board | in progress | Port 23, LAN only in v1; a second caller gets a "node busy" screen |
 | Multi-board cluster | planned | Boards on the LAN join as node 2, 3, 4...; one BBS with shared data |
 | One caller address | planned | Callers dial `axis.local`; the main answers with a free board's IP so each caller connects directly (no relay), so a failing board never drops other boards' callers |
@@ -25,7 +25,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | FidoNet packets | planned | Type-2+ PKT import/export via inbound/outbound folders; BinkP mailer in v2 |
 | File areas | planned | FILES.BBS-style lists, ZMODEM download; uploads in v1.1 |
 | Sysop console | planned | CYD screen: waiting-for-caller and live caller mirror (off during doors); telnet sysop screens |
-| SD card tools | planned | Sysop screen: card info and Format SD card (FAT32, optional full erase), with password + typed confirmation |
+| SD card tools | in progress | FAT32 format works (bench command `@SDFORMAT FORMAT`, card re-check `@SDCHECK`); sysop menu entry comes with the sysop menu | Sysop screen: card info and Format SD card (FAT32, optional full erase), with password + typed confirmation |
 | Storage check at boot | working | SD card if it answers, else internal flash; shown in Info and on the sysop screen |
 | Nightly maintenance | planned | 4:00 AM: door maintenance, toss/scan, purge, log rotation |
 | AXIS ANSI screens | planned | Original art by Claude from TheDraw fonts + CNC motifs; Rev edits later |
@@ -59,3 +59,4 @@ Living record of every feature and setting, updated as the project goes. Status:
 - **2026-11-02:** Callers: one address (`axis.local`), never dropped by another board failing; the main answers the name with a free board's IP (direct connections, relay only as a race fallback).
 - **2026-11-02:** License: GPL-3.0-or-later plus a GPLv3 7(b) attribution term (keep the copyright notices and the Rev. J. Money / rotatocam.com / jmscnc.com credit in the README and on the credits screen).
 - **2026-11-02:** First firmware: boots, joins the saved WiFi, answers telnet calls on `axis.local:23` with a placeholder welcome, handle prompt and Info / Credits / Goodbye menu. Telnet filter and session logic have PC tests (17 passing). Flashed to the newer CYD (MAC 8c:94:df:4f:1c:4c, COM18): 911 KB of 1.5 MB flash, 230 KB RAM free while serving.
+- **2026-11-02:** First-boot setup over telnet working (choice screen, setup PIN, wizard, settings saved to internal flash `/axis.ini`, BBS name and idle time used by the node). CYD screen screenshots via `@SHOT` + `tools/screenshots/cyd_shot.py`. SD format tool wiped Rev's 15 GB card to fresh FAT32. Third SD card works; first two were dead.

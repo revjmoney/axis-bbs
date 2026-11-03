@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "bbs/node.h"
 
+#include <cctype>
 #include <cstdio>
 
 namespace axis::bbs {
@@ -17,12 +18,14 @@ const char* const AMBER = "\x1b[0;33m";
 const char* const RED = "\x1b[1;31m";
 
 // Placeholder title until the real AXIS ANSI screens are drawn (roadmap stage 9).
-std::string welcome(int node, const SysInfo& s) {
+std::string welcome(int node, const SysInfo& s, const std::string& bbsName) {
     std::string w = CLS;
     w += AMBER;
     w += " \xb0\xb1\xb2\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xb2\xb1\xb0\r\n";
     w += RED;
-    w += "         AXIS UNDERGROUND CNC\r\n";
+    std::string title = bbsName;
+    for (char& ch : title) ch = (char)std::toupper((unsigned char)ch);
+    w += "         " + title + "\r\n";
     w += AMBER;
     w += " \xb0\xb1\xb2\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xb2\xb1\xb0\r\n";
     w += DIM;
@@ -44,11 +47,12 @@ std::string uptime(uint32_t sec) {
 }
 }  // namespace
 
-Node::Node(int nodeNumber, std::function<SysInfo()> info) : node_(nodeNumber), info_(std::move(info)) {}
+Node::Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg)
+    : node_(nodeNumber), info_(std::move(info)), cfg_(std::move(cfg)) {}
 
 void Node::begin(uint32_t nowMs) {
     lastInput_ = nowMs;
-    out_ += welcome(node_, info_());
+    out_ += welcome(node_, info_(), cfg_.bbsName);
     prompt();
 }
 
@@ -156,7 +160,7 @@ void Node::key(char c) {
 }
 
 void Node::poll(uint32_t nowMs) {
-    if (state_ != State::Done && nowMs - lastInput_ > kIdleMs) {
+    if (state_ != State::Done && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";
         out_ += AMBER;
         out_ += "Logged off: idle too long.";

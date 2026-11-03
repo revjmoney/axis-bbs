@@ -7,3 +7,5 @@
 void        storageInit();       // probes the SD card once at boot
 bool        storageHasSd();
 const char* storageSummary();    // e.g. "SD card 7580 MB (SDHC)" or "internal flash (no SD card)"
+// Sysop tool: erase the card by writing a fresh FAT32 filesystem. Destroys everything on it.
+bool        storageFormatSd(String& result);

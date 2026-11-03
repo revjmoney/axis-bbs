@@ -1,0 +1,129 @@
+********************************************************************************
+Obsolete PIO Core v6.1.19 is used (previous was 6.2.0)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+Processing cyd (platform: espressif32@6.9.0; board: esp32dev; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32dev.html
+PLATFORM: Espressif 32 (6.9.0) > Espressif ESP32 Dev Module
+HARDWARE: ESP32 240MHz, 320KB RAM, 4MB Flash
+DEBUG: Current (cmsis-dap) External (cmsis-dap, esp-bridge, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b 
+ - tool-esptoolpy @ 1.40501.0 (4.5.1) 
+ - tool-mkfatfs @ 2.0.1 
+ - tool-mklittlefs @ 1.203.210628 (2.3) 
+ - tool-mkspiffs @ 2.230.0 (2.30) 
+ - toolchain-xtensa-esp32 @ 8.4.0+2021r2-patch5
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 35 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- LovyanGFX @ 1.2.36
+|-- sha256-bconte @ 1.0.0
+|-- ESPmDNS @ 2.0.0
+|-- SD @ 2.0.0
+|-- WiFi @ 2.0.0
+|-- LittleFS @ 2.0.0
+|-- SPI @ 2.0.0
+|-- Preferences @ 2.0.0
+Building in release mode
+Compiling .pio\build\cyd\src\main.cpp.o
+Linking .pio\build\cyd\firmware.elf
+Retrieving maximum program size .pio\build\cyd\firmware.elf
+Checking size .pio\build\cyd\firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [==        ]  15.6% (used 51268 bytes from 327680 bytes)
+Flash: [=======   ]  67.0% (used 1053073 bytes from 1572864 bytes)
+Building .pio\build\cyd\firmware.bin
+esptool.py v4.5.1
+Creating esp32 image...
+Merged 27 ELF sections
+Successfully created esp32 image.
+Configuring upload protocol...
+AVAILABLE: cmsis-dap, esp-bridge, esp-prog, espota, esptool, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa
+CURRENT: upload_protocol = esptool
+Looking for upload port...
+Using manually specified: COM18
+Uploading .pio\build\cyd\firmware.bin
+esptool.py v4.5.1
+Serial port COM18
+Connecting......
+Chip is ESP32-D0WD-V3 (revision v3.1)
+Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Coding Scheme None
+Crystal is 40MHz
+MAC: 8c:94:df:4f:1c:4c
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to 921600
+Changed.
+Configuring flash size...
+Flash will be erased from 0x00001000 to 0x00005fff...
+Flash will be erased from 0x00008000 to 0x00008fff...
+Flash will be erased from 0x0000e000 to 0x0000ffff...
+Flash will be erased from 0x00010000 to 0x00112fff...
+Compressed 18992 bytes to 13104...
+Writing at 0x00001000... (100 %)
+Wrote 18992 bytes (13104 compressed) at 0x00001000 in 0.3 seconds (effective 469.8 kbit/s)...
+Hash of data verified.
+Compressed 3072 bytes to 132...
+Writing at 0x00008000... (100 %)
+Wrote 3072 bytes (132 compressed) at 0x00008000 in 0.0 seconds (effective 847.4 kbit/s)...
+Hash of data verified.
+Compressed 8192 bytes to 49...
+Writing at 0x0000e000... (100 %)
+Wrote 8192 bytes (49 compressed) at 0x0000e000 in 0.1 seconds (effective 1024.4 kbit/s)...
+Hash of data verified.
+Compressed 1059648 bytes to 675890...
+Writing at 0x00010000... (2 %)
+Writing at 0x00019c71... (4 %)
+Writing at 0x000254e3... (7 %)
+Writing at 0x00031680... (9 %)
+Writing at 0x0004099b... (11 %)
+Writing at 0x000465a7... (14 %)
+Writing at 0x0004c245... (16 %)
+Writing at 0x0005220e... (19 %)
+Writing at 0x00058155... (21 %)
+Writing at 0x0005d707... (23 %)
+Writing at 0x00063217... (26 %)
+Writing at 0x000689ee... (28 %)
+Writing at 0x0006e1d8... (30 %)
+Writing at 0x00073c9b... (33 %)
+Writing at 0x000791c8... (35 %)
+Writing at 0x0007e3d3... (38 %)
+Writing at 0x0008394b... (40 %)
+Writing at 0x00088c0e... (42 %)
+Writing at 0x0008df9c... (45 %)
+Writing at 0x000931e1... (47 %)
+Writing at 0x00098322... (50 %)
+Writing at 0x0009d8e9... (52 %)
+Writing at 0x000a28a6... (54 %)
+Writing at 0x000a7b95... (57 %)
+Writing at 0x000ad724... (59 %)
+Writing at 0x000b2fcc... (61 %)
+Writing at 0x000b83eb... (64 %)
+Writing at 0x000bd711... (66 %)
+Writing at 0x000c2bc7... (69 %)
+Writing at 0x000c8341... (71 %)
+Writing at 0x000cd9f2... (73 %)
+Writing at 0x000d31e9... (76 %)
+Writing at 0x000d913e... (78 %)
+Writing at 0x000deab7... (80 %)
+Writing at 0x000e7259... (83 %)
+Writing at 0x000ee347... (85 %)
+Writing at 0x000f6216... (88 %)
+Writing at 0x000fb2f1... (90 %)
+Writing at 0x00100d32... (92 %)
+Writing at 0x0010667e... (95 %)
+Writing at 0x0010b778... (97 %)
+Writing at 0x001112bc... (100 %)
+Wrote 1059648 bytes (675890 compressed) at 0x00010000 in 11.9 seconds (effective 712.1 kbit/s)...
+Hash of data verified.
+
+Leaving...
+Hard resetting via RTS pin...
+========================= [SUCCESS] Took 55.78 seconds =========================

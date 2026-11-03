@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// AXIS UNDERGROUND CNC firmware entry: board, WiFi, the telnet listener and the sysop's
-// waiting-for-caller screen. One node per board for now; callers beyond that hear "busy".
+// AXIS UNDERGROUND CNC firmware entry: board, storage, settings, WiFi, the telnet listener
+// and the sysop screen. On first boot it runs setup (tap: on this screen or over telnet).
+// One node per board for now; callers beyond that hear "busy".
 #include <Arduino.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
@@ -9,22 +10,37 @@
 
 #include <memory>
 
+#include "bbs/config.h"
 #include "bbs/node.h"
+#include "bbs/setup_gate.h"
+#include "bbs/setup_wizard.h"
 #include "net/telnet.h"
 #include "platform/cyd/board.h"
+#include "platform/cyd/config_store.h"
+#include "platform/cyd/screen.h"
 #include "platform/cyd/storage.h"
+#include <SD.h>
 #include "platform/cyd/wifi.h"
 
-static constexpr int      kNodeNumber = 1;
-static constexpr uint16_t kTelnetPort = 23;
+static constexpr int kNodeNumber = 1;
 
-static WiFiServer server(kTelnetPort);
-static WiFiClient caller;
+enum class Mode { Normal, SetupChoice, SetupTelnet, SetupTouch };
+
+static axis::bbs::BbsConfig cfg;
+static Mode                 mode = Mode::Normal;
+static String               setupPin;
+static WiFiServer           server;
+static WiFiClient           caller;
 static std::unique_ptr<axis::net::TelnetFilter> telnet;
 static std::unique_ptr<axis::bbs::Node>         node;
+static std::unique_ptr<axis::bbs::SetupGate>    gate;
+static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
 static uint32_t callStartMs = 0, callsToday = 0;
 static String   lastCaller = "none yet";
 static bool     screenDirty = true;
+static int      tapX = -1, tapY = -1;  // a tap from the @TAP serial command
+
+static uint32_t hwRandom() { return esp_random(); }
 
 static String timeText() {
     time_t now = time(nullptr);
@@ -34,10 +50,12 @@ static String timeText() {
     return b;
 }
 
+static String dialName() { return String(cfg.boardName.c_str()) + ".local"; }
+
 static axis::bbs::SysInfo sysInfo() {
     axis::bbs::SysInfo s;
     s.ip = WiFi.localIP().toString().c_str();
-    s.host = "axis.local";
+    s.host = dialName().c_str();
     s.wifi = wifiSsid();
     s.rssi = WiFi.RSSI();
     s.uptimeSec = millis() / 1000;
@@ -47,126 +65,312 @@ static axis::bbs::SysInfo sysInfo() {
     return s;
 }
 
-// Sysop screen (placeholder look until the AXIS screens are drawn).
+// ------------------------------------------------------------------ screens (placeholder look)
+static void title(const char* sub) {
+    scr.fillScreen(TFT_BLACK);
+    scr.setTextDatum(textdatum_t::top_left);
+    scr.setTextColor(TFT_RED, TFT_BLACK);
+    scr.setTextSize(2);
+    String t = cfg.bbsName.c_str();
+    t.toUpperCase();
+    scr.drawString(t.c_str(), 8, 8);
+    scr.setTextSize(1);
+    scr.setTextColor(TFT_ORANGE, TFT_BLACK);
+    scr.drawString(sub, 8, 30);
+}
+
+static void bigButton(int y, const char* label, uint16_t color) {
+    scr.fillRoundRect(16, y, 288, 52, 8, color);
+    scr.setTextColor(TFT_WHITE, color);
+    scr.setTextSize(2);
+    scr.setTextDatum(textdatum_t::middle_center);
+    scr.drawString(label, 160, y + 26);
+    scr.setTextDatum(textdatum_t::top_left);
+    scr.setTextSize(1);
+}
+
 static void drawScreen() {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextDatum(textdatum_t::top_left);
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.drawString("AXIS UNDERGROUND", 8, 8);
-    tft.drawString("CNC", 8, 28);
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
-    tft.drawString("telnet BBS  -  node 1", 8, 52);
-    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.drawString(("ip     " + WiFi.localIP().toString() + ":" + String(kTelnetPort)).c_str(), 8, 76);
-    tft.drawString("name   axis.local", 8, 90);
-    tft.drawString(("wifi   " + String(wifiSsid())).c_str(), 8, 104);
-    tft.drawString((String("store  ") + (storageHasSd() ? "SD card" : "internal flash")).c_str(), 8, 132);
-    tft.drawString(("calls  " + String(callsToday) + "    last: " + lastCaller).c_str(), 8, 118);
-    tft.setTextSize(2);
-    if (node) {
-        tft.setTextColor(TFT_GREEN, TFT_BLACK);
-        tft.drawString("CALLER ONLINE", 8, 150);
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.drawString(node->handle().empty() ? "(logging in)" : node->handle().c_str(), 8, 174);
+    if (mode == Mode::SetupChoice) {
+        title("first-boot setup");
+        scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        scr.drawString(("WiFi: " + String(wifiSsid()) + "   " + WiFi.localIP().toString()).c_str(), 8, 50);
+        scr.drawString("How do you want to set up your BBS?", 8, 70);
+        bigButton(92, "ON THIS SCREEN", 0x2945);
+        bigButton(156, "OVER TELNET", 0x0210);
+        scr.setTextColor(TFT_DARKGREY, TFT_BLACK);
+        scr.drawString("tap a button", 8, 222);
+    } else if (mode == Mode::SetupTelnet) {
+        title("first-boot setup");
+        scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        scr.drawString("From a computer on this network:", 8, 56);
+        scr.setTextSize(2);
+        scr.setTextColor(TFT_CYAN, TFT_BLACK);
+        scr.drawString(("telnet " + dialName()).c_str(), 8, 76);
+        scr.setTextSize(1);
+        scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        scr.drawString(("or telnet " + WiFi.localIP().toString() + " " + String(cfg.telnetPort)).c_str(), 8, 100);
+        scr.drawString("Setup PIN:", 8, 128);
+        scr.setTextSize(4);
+        scr.setTextColor(TFT_YELLOW, TFT_BLACK);
+        scr.drawString(setupPin.c_str(), 8, 144);
+        scr.setTextSize(1);
+        scr.setTextColor(wizard ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+        scr.drawString(wizard ? "setup in progress over telnet..."
+                              : gate ? "caller connected, waiting for the PIN" : "waiting for the sysop to call",
+                       8, 200);
+    } else if (mode == Mode::SetupTouch) {
+        title("first-boot setup");
+        scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        scr.drawString("On-screen setup is coming in the next build.", 8, 70);
+        bigButton(156, "BACK", 0x2945);
     } else {
-        tft.setTextColor(TFT_CYAN, TFT_BLACK);
-        tft.drawString("WAITING FOR CALLER", 8, 150);
+        title("telnet BBS  -  node 1");
+        scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        scr.drawString(("ip     " + WiFi.localIP().toString() + ":" + String(cfg.telnetPort)).c_str(), 8, 52);
+        scr.drawString(("name   " + dialName()).c_str(), 8, 66);
+        scr.drawString(("wifi   " + String(wifiSsid())).c_str(), 8, 80);
+        scr.drawString((String("store  ") + (storageHasSd() ? "SD card" : "internal flash")).c_str(), 8, 94);
+        scr.drawString(("calls  " + String(callsToday) + "    last: " + lastCaller).c_str(), 8, 108);
+        scr.drawString(("sysop  " + String(cfg.sysopHandle.c_str())).c_str(), 8, 122);
+        scr.setTextSize(2);
+        if (node) {
+            scr.setTextColor(TFT_GREEN, TFT_BLACK);
+            scr.drawString("CALLER ONLINE", 8, 150);
+            scr.setTextColor(TFT_WHITE, TFT_BLACK);
+            scr.drawString(node->handle().empty() ? "(logging in)" : node->handle().c_str(), 8, 174);
+        } else {
+            scr.setTextColor(TFT_CYAN, TFT_BLACK);
+            scr.drawString("WAITING FOR CALLER", 8, 150);
+        }
+        scr.setTextSize(1);
     }
+    screenPush();
     screenDirty = false;
 }
 
+// ------------------------------------------------------------------ network
+static void applyNetwork() {
+    setenv("TZ", axis::bbs::tzRule(cfg.timezone), 1);
+    tzset();
+    MDNS.end();
+    if (MDNS.begin(cfg.boardName.c_str())) MDNS.addService("telnet", "tcp", cfg.telnetPort);
+    server.end();
+    server.begin(cfg.telnetPort);
+    server.setNoDelay(true);
+    Serial.printf("axis: listening on %s:%d, heap %u\n", dialName().c_str(), cfg.telnetPort, ESP.getFreeHeap());
+}
+
+static void sendRaw(const std::string& s) {
+    if (!s.empty() && caller.connected()) caller.write((const uint8_t*)s.data(), s.size());
+}
 static void sendApp(const std::string& s) {
-    if (s.empty() || !caller.connected()) return;
-    std::string w = telnet->toNet((const uint8_t*)s.data(), s.size());
-    caller.write((const uint8_t*)w.data(), w.size());
+    if (!s.empty() && telnet) sendRaw(telnet->toNet((const uint8_t*)s.data(), s.size()));
 }
 
 static void hangUp() {
+    caller.flush();
+    delay(100);
     caller.stop();
-    Serial.printf("axis: logoff %s after %lus\n", node ? node->handle().c_str() : "",
-                  (unsigned long)((millis() - callStartMs) / 1000));
+    Serial.printf("axis: hang up after %lus\n", (unsigned long)((millis() - callStartMs) / 1000));
     if (node && !node->handle().empty()) lastCaller = node->handle().c_str();
     node.reset();
+    gate.reset();
+    wizard.reset();
     telnet.reset();
     screenDirty = true;
 }
 
+static void answer(WiFiClient incoming) {
+    if (telnet) {  // one node per board for now
+        std::string busy = axis::bbs::busyScreen();
+        incoming.write((const uint8_t*)busy.data(), busy.size());
+        incoming.stop();
+        Serial.println("axis: busy, turned a caller away");
+        return;
+    }
+    caller = incoming;
+    caller.setNoDelay(true);
+    telnet.reset(new axis::net::TelnetFilter());
+    callStartMs = millis();
+    Serial.printf("axis: call from %s\n", caller.remoteIP().toString().c_str());
+    sendRaw(telnet->initialNegotiation());
+    if (cfg.setupDone) {
+        callsToday++;
+        node.reset(new axis::bbs::Node(kNodeNumber, sysInfo, cfg));
+        node->begin(millis());
+        sendApp(node->takeOutput());
+    } else {
+        gate.reset(new axis::bbs::SetupGate(setupPin.c_str()));
+        gate->begin();
+        sendApp(gate->takeOutput());
+    }
+    screenDirty = true;
+}
+
+// keystrokes from the caller, already through the telnet filter
+static void callerInput(const std::string& app) {
+    const uint8_t* p = (const uint8_t*)app.data();
+    if (node) {
+        std::string before = node->handle();
+        node->input(p, app.size(), millis());
+        if (node->handle() != before) screenDirty = true;
+        return;
+    }
+    if (wizard) {
+        wizard->input(p, app.size());
+        sendApp(wizard->takeOutput());
+        if (wizard->finished()) {
+            cfg = wizard->result();
+            bool ok = configSave(cfg);
+            Serial.printf("axis: setup %s over telnet\n", ok ? "saved" : "SAVE FAILED");
+            char b[220];
+            snprintf(b, sizeof b,
+                     "\r\n   \x1b[1;32mSettings saved.\x1b[0;37m Your BBS is open: call %s port %d.\r\n"
+                     "   Log in as %s for the sysop menu (coming soon).\x1b[0m\r\n",
+                     dialName().c_str(), cfg.telnetPort, cfg.sysopHandle.c_str());
+            sendApp(b);
+            hangUp();
+            mode = Mode::Normal;
+            applyNetwork();
+        } else if (wizard->cancelled()) {
+            sendApp("\r\n   Nothing was saved. Call again to start over.\x1b[0m\r\n");
+            hangUp();
+        }
+        return;
+    }
+    if (gate) {
+        gate->input(p, app.size());
+        sendApp(gate->takeOutput());
+        if (gate->passed()) {
+            mode = Mode::SetupTelnet;  // the right PIN means the sysop chose telnet
+            gate.reset();
+            wizard.reset(new axis::bbs::SetupWizard(cfg, hwRandom));
+            wizard->begin();
+            sendApp(wizard->takeOutput());
+            screenDirty = true;
+        } else if (gate->rejected()) {
+            hangUp();
+        }
+    }
+}
+
+// ------------------------------------------------------------------ taps and serial commands
+static void handleTap(int x, int y) {
+    bool top = y >= 92 && y < 144, bottom = y >= 156 && y < 208;
+    if (x < 16 || x >= 304) return;
+    if (mode == Mode::SetupChoice) {
+        if (top) mode = Mode::SetupTouch;
+        else if (bottom) mode = Mode::SetupTelnet;
+        screenDirty = true;
+    } else if (mode == Mode::SetupTouch && bottom) {
+        mode = Mode::SetupChoice;
+        screenDirty = true;
+    }
+}
+
+static void handleSerial() {
+    static String line;
+    while (Serial.available()) {
+        char c = Serial.read();
+        if (c != '\n' && c != '\r') {
+            if (line.length() < 80) line += c;
+            continue;
+        }
+        if (line.startsWith("@TAP ")) {
+            int sp = line.indexOf(' ', 5);
+            tapX = line.substring(5, sp).toInt();
+            tapY = line.substring(sp + 1).toInt();
+        } else if (line == "@SHOT") {
+            screenShot();
+        } else if (line == "@SDCHECK") {  // look for the card again (cards swapped while running)
+            SD.end();
+            storageInit();
+            screenDirty = true;
+        } else if (line == "@SDFORMAT FORMAT") {  // bench trigger for the sysop SD tool
+            if (telnet) {
+                Serial.println("axis: sd format refused, a caller is online");
+            } else {
+                String result;
+                bool   ok = storageFormatSd(result);
+                Serial.printf("axis: sd format %s: %s\n", ok ? "ok" : "FAILED", result.c_str());
+                screenDirty = true;
+            }
+        } else if (line == "@RESETSETUP") {
+            configErase();
+            Serial.println("axis: settings erased, restarting into setup");
+            delay(100);
+            ESP.restart();
+        }
+        line = "";
+    }
+}
+
+// ------------------------------------------------------------------ main
 void setup() {
     Serial.begin(115200);
     delay(200);
     const char* panel = boardInit(1, 40000000);
+    if (!screenInit()) Serial.println("axis: no memory for the screen copy");
     Serial.printf("\naxis: AXIS UNDERGROUND CNC booting, panel %s, heap %u\n", panel, ESP.getFreeHeap());
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
-    tft.drawString("AXIS UNDERGROUND CNC: checking storage...", 8, 110);
+    title("starting...");
+    screenPush();
     storageInit();
-    tft.drawString("AXIS UNDERGROUND CNC: joining WiFi...   ", 8, 110);
+    if (!configMount()) Serial.println("axis: internal flash filesystem failed to mount");
+    cfg = configLoad();
+    if (!cfg.setupDone) {
+        mode = Mode::SetupChoice;
+        char b[8];
+        snprintf(b, sizeof b, "%06lu", (unsigned long)(esp_random() % 1000000));
+        setupPin = b;
+    }
+    Serial.printf("axis: settings %s\n", cfg.setupDone ? "loaded" : "not set up yet, first-boot setup");
     if (!wifiJoinSaved()) {
         Serial.println("axis: no saved WiFi network in range");
-        tft.fillScreen(TFT_BLACK);
-        tft.setTextColor(TFT_RED, TFT_BLACK);
-        tft.drawString("No saved WiFi network in range.", 8, 110);
-        return;  // loop() keeps the screen; WiFi setup comes with the sysop console
+        title("no WiFi");
+        scr.setTextColor(TFT_RED, TFT_BLACK);
+        scr.drawString("No saved WiFi network in range.", 8, 110);
+        screenPush();
+        return;  // the touch WiFi picker comes with the next build
     }
-    Serial.printf("axis: wifi %s ip %s time %s\n", wifiSsid(), WiFi.localIP().toString().c_str(),
-                  timeText().c_str());
-    if (MDNS.begin("axis")) MDNS.addService("telnet", "tcp", kTelnetPort);
-    server.begin();
-    server.setNoDelay(true);
-    Serial.printf("axis: listening on port %u, heap %u\n", kTelnetPort, ESP.getFreeHeap());
+    Serial.printf("axis: wifi %s ip %s\n", wifiSsid(), WiFi.localIP().toString().c_str());
+    applyNetwork();
+    Serial.printf("axis: time %s\n", timeText().c_str());
     drawScreen();
 }
 
 void loop() {
+    handleSerial();
+    int         tx, ty;
+    static bool wasDown = false;
+    bool        down = boardTouch(tx, ty);
+    if (down && !wasDown) handleTap(tx, ty);
+    wasDown = down;
+    if (tapX >= 0) {
+        handleTap(tapX, tapY);
+        tapX = tapY = -1;
+    }
     if (WiFi.status() != WL_CONNECTED) {
-        delay(50);
+        if (screenDirty) drawScreen();
+        delay(20);
         return;
     }
-    if (server.hasClient()) {
-        WiFiClient incoming = server.available();
-        if (node) {  // one node per board for now
-            std::string busy = axis::bbs::busyScreen();
-            incoming.write((const uint8_t*)busy.data(), busy.size());
-            incoming.stop();
-            Serial.println("axis: busy, turned a caller away");
-        } else {
-            caller = incoming;
-            caller.setNoDelay(true);
-            telnet.reset(new axis::net::TelnetFilter());
-            node.reset(new axis::bbs::Node(kNodeNumber, sysInfo));
-            callStartMs = millis();
-            callsToday++;
-            Serial.printf("axis: call from %s\n", caller.remoteIP().toString().c_str());
-            std::string hello = telnet->initialNegotiation();
-            caller.write((const uint8_t*)hello.data(), hello.size());
-            node->begin(millis());
-            sendApp(node->takeOutput());
-            screenDirty = true;
-        }
-    }
-    if (node) {
+    if (server.hasClient()) answer(server.available());
+    if (telnet) {
         uint8_t buf[128];
-        while (caller.connected() && caller.available()) {
+        while (telnet && caller.connected() && caller.available()) {
             int n = caller.read(buf, sizeof buf);
             if (n <= 0) break;
             std::string app, reply;
             telnet->fromNet(buf, n, app, reply);
-            if (!reply.empty()) caller.write((const uint8_t*)reply.data(), reply.size());
-            std::string before = node->handle();
-            node->input((const uint8_t*)app.data(), app.size(), millis());
-            if (node->handle() != before) screenDirty = true;
+            sendRaw(reply);
+            callerInput(app);
         }
-        node->poll(millis());
-        sendApp(node->takeOutput());
-        if (node->wantsHangup()) {
-            caller.flush();
-            delay(100);
-            hangUp();
-        } else if (!caller.connected()) {
-            hangUp();
+        if (node) {
+            node->poll(millis());
+            sendApp(node->takeOutput());
+            if (node->wantsHangup()) hangUp();
         }
+        if (telnet && !caller.connected()) hangUp();
     }
     if (screenDirty) drawScreen();
     delay(5);

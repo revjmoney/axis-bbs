@@ -1,0 +1,8 @@
+{
+  "name": "sha256-bconte",
+  "version": "1.0.0",
+  "description": "SHA-256 by Brad Conte (crypto-algorithms), public domain",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": { "srcFilter": "+<*.c> +<*.h>", "includeDir": "." }
+}

@@ -8,6 +8,8 @@
 #include <functional>
 #include <string>
 
+#include "bbs/config.h"
+
 namespace axis::bbs {
 
 struct SysInfo {
@@ -19,10 +21,9 @@ struct SysInfo {
 class Node {
 public:
     enum class State { Login, Menu, Done };
-    static constexpr uint32_t kIdleMs = 5 * 60 * 1000;
     static constexpr size_t   kMaxHandle = 30;
 
-    Node(int nodeNumber, std::function<SysInfo()> info);
+    Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {});
     void        begin(uint32_t nowMs);
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);
@@ -37,6 +38,7 @@ private:
     void prompt();
     int                       node_;
     std::function<SysInfo()>  info_;
+    BbsConfig                 cfg_;
     State                     state_ = State::Login;
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
