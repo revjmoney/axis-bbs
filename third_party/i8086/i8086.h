@@ -2,12 +2,17 @@
 
 #pragma once
 
-#include "fabgl.h"
+#include <stdint.h>
+
+namespace axis { namespace door { struct MemoryBus; } }
 
 #include <stdint.h>
 
 
 #define I8086_SHOW_OPCODE_STATS 0
+#ifndef I80186MODE
+  #define I80186MODE 1
+#endif
 
 #ifndef I80186MODE
   #define I80186MODE 0
@@ -26,25 +31,17 @@ public:
 
   typedef void (*WritePort)(void * context, int address, uint8_t value);
   typedef uint8_t (*ReadPort)(void * context, int address);
-  typedef void (*WriteVideoMemory8)(void * context, int address, uint8_t value);
-  typedef void (*WriteVideoMemory16)(void * context, int address, uint16_t value);
-  typedef uint8_t (*ReadVideoMemory8)(void * context, int address);
-  typedef uint16_t (*ReadVideoMemory16)(void * context, int address);
   typedef bool (*Interrupt)(void * context, int num);
 
 
-  static void setCallbacks(void * context, ReadPort readPort, WritePort writePort, WriteVideoMemory8 writeVideoMemory8, WriteVideoMemory16 writeVideoMemory16, ReadVideoMemory8 readVideoMemory8, ReadVideoMemory16 readVideoMemory16,Interrupt interrupt) {
+  static void setCallbacks(void * context, ReadPort readPort, WritePort writePort, Interrupt interrupt) {
     s_context            = context;
     s_readPort           = readPort;
     s_writePort          = writePort;
-    s_writeVideoMemory8  = writeVideoMemory8;
-    s_writeVideoMemory16 = writeVideoMemory16;
-    s_readVideoMemory8   = readVideoMemory8;
-    s_readVideoMemory16  = readVideoMemory16;
     s_interrupt          = interrupt;
   }
 
-  static void setMemory(uint8_t * memory) { s_memory = memory; }
+  static void setBus(axis::door::MemoryBus * bus) { s_bus = bus; }
 
   static void reset();
 
@@ -113,6 +110,11 @@ public:
 
   static void step();
 
+  // AXIS: generic register access (index: 0 AX 1 CX 2 DX 3 BX 4 SP 5 BP 6 SI 7 DI 8 ES 9 CS 10 SS 11 DS)
+  static uint16_t reg(int index);
+  static void     setReg(int index, uint16_t value);
+  static uint16_t flagsWord();
+
 
 private:
 
@@ -134,15 +136,11 @@ private:
   static void *             s_context;
   static ReadPort           s_readPort;
   static WritePort          s_writePort;
-  static WriteVideoMemory8  s_writeVideoMemory8;
-  static WriteVideoMemory16 s_writeVideoMemory16;
-  static ReadVideoMemory8   s_readVideoMemory8;
-  static ReadVideoMemory16  s_readVideoMemory16;
   static Interrupt          s_interrupt;
 
   static bool               s_pendingIRQ;
   static uint8_t            s_pendingIRQIndex;
-  static uint8_t *          s_memory;
+  static axis::door::MemoryBus * s_bus;
   static bool               s_halted;
 
 };

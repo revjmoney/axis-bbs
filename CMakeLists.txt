@@ -14,8 +14,10 @@ add_library(axiscore STATIC
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp
     src/bbs/setup_gate.cpp
-    third_party/sha256/sha256.c)
-target_include_directories(axiscore PUBLIC src PRIVATE third_party/sha256)
+    third_party/sha256/sha256.c
+    src/door/cpu.cpp
+    third_party/i8086/i8086.cpp)
+target_include_directories(axiscore PUBLIC src third_party/i8086 PRIVATE third_party/sha256)
 
 add_executable(axis_tests
     tests/test_main.cpp
@@ -24,6 +26,7 @@ add_executable(axis_tests
     tests/test_password.cpp
     tests/test_config.cpp
     tests/test_setup_wizard.cpp
-    tests/test_setup_gate.cpp)
+    tests/test_setup_gate.cpp
+    tests/test_cpu.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
