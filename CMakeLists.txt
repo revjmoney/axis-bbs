@@ -19,6 +19,8 @@ add_library(axiscore STATIC
     src/door/guestmem.cpp
     src/door/mz.cpp
     src/door/dosmem.cpp
+    src/door/dos.cpp
+    src/platform/pc/stdhostfs.cpp
     third_party/i8086/i8086.cpp)
 target_include_directories(axiscore PUBLIC src third_party/i8086 PRIVATE third_party/sha256)
 
@@ -32,6 +34,7 @@ add_executable(axis_tests
     tests/test_setup_gate.cpp
     tests/test_cpu.cpp
     tests/test_guestmem.cpp
-    tests/test_mz.cpp)
+    tests/test_mz.cpp
+    tests/test_dos.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)

@@ -86,6 +86,7 @@ void Cpu::setBp(uint16_t v) { i8086::setReg(BP, v); }
 void Cpu::setSp(uint16_t v) { i8086::setReg(SP, v); }
 void Cpu::setDs(uint16_t v) { i8086::setReg(DS, v); }
 void Cpu::setEs(uint16_t v) { i8086::setReg(ES, v); }
+void Cpu::setIp(uint16_t v) { i8086::setIP(v); }
 
 uint8_t Cpu::al() const { return ax() & 0xFF; }
 uint8_t Cpu::ah() const { return ax() >> 8; }

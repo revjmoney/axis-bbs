@@ -29,7 +29,7 @@ public:
     uint16_t ip() const;
     void setAx(uint16_t v); void setBx(uint16_t v); void setCx(uint16_t v); void setDx(uint16_t v);
     void setSi(uint16_t v); void setDi(uint16_t v); void setBp(uint16_t v); void setSp(uint16_t v);
-    void setDs(uint16_t v); void setEs(uint16_t v);
+    void setDs(uint16_t v); void setEs(uint16_t v); void setIp(uint16_t v);
     uint8_t al() const; uint8_t ah() const; uint8_t bl() const; uint8_t bh() const;
     uint8_t cl() const; uint8_t ch() const; uint8_t dl() const; uint8_t dh() const;
     void setAl(uint8_t v); void setAh(uint8_t v); void setBl(uint8_t v); void setBh(uint8_t v);
