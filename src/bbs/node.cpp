@@ -116,12 +116,13 @@ void Node::key(char c) {
     switch (c | 0x20) {  // either case
         case 'i': {
             SysInfo s = info_();
-            char b[256];
+            char b[320];
             std::snprintf(b, sizeof b,
                           "\r\n\r\n   %sSystem%s\r\n   node      %d\r\n   address   %s  (%s)\r\n"
-                          "   wifi      %s, %d dBm\r\n   uptime    %s\r\n   free RAM  %u bytes\r\n",
+                          "   wifi      %s, %d dBm\r\n   uptime    %s\r\n   free RAM  %u bytes\r\n"
+                          "   storage   %s\r\n",
                           HI, DIM, node_, s.ip.c_str(), s.host.c_str(), s.wifi.c_str(), s.rssi,
-                          uptime(s.uptimeSec).c_str(), (unsigned)s.freeHeap);
+                          uptime(s.uptimeSec).c_str(), (unsigned)s.freeHeap, s.storage.c_str());
             out_ += b;
             showMenu();
             break;

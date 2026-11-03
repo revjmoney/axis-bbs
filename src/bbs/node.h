@@ -11,7 +11,7 @@
 namespace axis::bbs {
 
 struct SysInfo {
-    std::string ip, host, wifi, timeText;
+    std::string ip, host, wifi, timeText, storage;
     int         rssi = 0;
     uint32_t    uptimeSec = 0, freeHeap = 0;
 };

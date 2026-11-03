@@ -12,6 +12,7 @@
 #include "bbs/node.h"
 #include "net/telnet.h"
 #include "platform/cyd/board.h"
+#include "platform/cyd/storage.h"
 #include "platform/cyd/wifi.h"
 
 static constexpr int      kNodeNumber = 1;
@@ -42,6 +43,7 @@ static axis::bbs::SysInfo sysInfo() {
     s.uptimeSec = millis() / 1000;
     s.freeHeap = ESP.getFreeHeap();
     s.timeText = timeText().c_str();
+    s.storage = storageSummary();
     return s;
 }
 
@@ -60,6 +62,7 @@ static void drawScreen() {
     tft.drawString(("ip     " + WiFi.localIP().toString() + ":" + String(kTelnetPort)).c_str(), 8, 76);
     tft.drawString("name   axis.local", 8, 90);
     tft.drawString(("wifi   " + String(wifiSsid())).c_str(), 8, 104);
+    tft.drawString((String("store  ") + (storageHasSd() ? "SD card" : "internal flash")).c_str(), 8, 132);
     tft.drawString(("calls  " + String(callsToday) + "    last: " + lastCaller).c_str(), 8, 118);
     tft.setTextSize(2);
     if (node) {
@@ -97,7 +100,9 @@ void setup() {
     Serial.printf("\naxis: AXIS UNDERGROUND CNC booting, panel %s, heap %u\n", panel, ESP.getFreeHeap());
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_ORANGE, TFT_BLACK);
-    tft.drawString("AXIS UNDERGROUND CNC: joining WiFi...", 8, 110);
+    tft.drawString("AXIS UNDERGROUND CNC: checking storage...", 8, 110);
+    storageInit();
+    tft.drawString("AXIS UNDERGROUND CNC: joining WiFi...   ", 8, 110);
     if (!wifiJoinSaved()) {
         Serial.println("axis: no saved WiFi network in range");
         tft.fillScreen(TFT_BLACK);

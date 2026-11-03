@@ -15,6 +15,7 @@ static SysInfo info() {
     s.uptimeSec = 3725;
     s.freeHeap = 150000;
     s.timeText = "2026-11-02 22:30";
+    s.storage = "SD card 7580 MB";
     return s;
 }
 static void type(Node& n, const std::string& s, uint32_t now = 1000) {
@@ -88,6 +89,7 @@ TEST_CASE("info shows the node's address and uptime") {
     CHECK(out.find("192.168.1.77") != std::string::npos);
     CHECK(out.find("axis.local") != std::string::npos);
     CHECK(out.find("1h 2m") != std::string::npos);
+    CHECK(out.find("SD card 7580 MB") != std::string::npos);
 }
 
 TEST_CASE("goodbye logs off and asks to hang up") {
