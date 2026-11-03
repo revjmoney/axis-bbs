@@ -12,6 +12,7 @@ add_library(axiscore STATIC
     src/bbs/node.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
+    src/bbs/setup_wizard.cpp
     third_party/sha256/sha256.c)
 target_include_directories(axiscore PUBLIC src PRIVATE third_party/sha256)
 
@@ -20,6 +21,7 @@ add_executable(axis_tests
     tests/test_telnet.cpp
     tests/test_node.cpp
     tests/test_password.cpp
-    tests/test_config.cpp)
+    tests/test_config.cpp
+    tests/test_setup_wizard.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
