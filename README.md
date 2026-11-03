@@ -8,4 +8,16 @@ Status: design approved, implementation starting.
 - Features and settings log: [docs/FEATURES.md](docs/FEATURES.md)
 - Profiling tools (LORD memory profile on a PC): [tools/profiling/](tools/profiling/)
 
-Copyright (C) 2026 Rev. J. Money. Licensed GPL-3.0-or-later.
+## Credits
+
+AXIS UNDERGROUND CNC is created by **Rev. J. Money**: [rotatocam.com](https://rotatocam.com) and [jmscnc.com](https://jmscnc.com).
+
+## License
+
+Copyright (C) 2026 Rev. J. Money.
+
+This project is free software under the **GNU General Public License v3.0 or later** (see `LICENSE`). You can use, study, change and share it, but anything you distribute that is built from it must also be GPL-3.0 with its source available, and you must keep the copyright notices.
+
+**Additional term under GPLv3 section 7(b):** any copy or derived work, in whole or in part, must keep the "Copyright (C) 2026 Rev. J. Money" notices in the source files, must keep the author credit (Rev. J. Money, rotatocam.com, jmscnc.com) in this README or an equivalent file, and, if it has an interactive interface, must keep that credit visible in its credits or about screen.
+
+Third-party pieces keep their own licenses and are listed in `THIRD_PARTY_NOTICES.md` as they are added.

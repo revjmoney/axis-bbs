@@ -94,7 +94,7 @@ Source layout: `src/bbs/` (BBS core) and `src/door/` (door runtime). The door ru
 
 ### 5.5 Menus and ANSI identity
 - Renegade-style menu system: menus are data (a menu file per menu with commands, keys, security, display file), so menus can be edited without reflashing. Display files are `.ANS` on SD with an ASCII fallback and simple MCI-style codes (`|UN` handle, `|TL` time left, and so on) expanded at send time.
-- The AXIS screens: welcome/matrix screen, login, new user, main menu, message, file, door, sysop, logoff, credits. They are original art for this project (TheDraw fonts from the existing font pack plus CNC motifs: toolpaths, rotary axes, G-code, the RotatoCAM logo). **Claude makes them** (Rev's decision), keeping them legible both in a full 80x25 terminal and on the CYD's 4x8 mirror; Rev edits them later in an ANSI editor. Being original, they are committed to the repo under the project license.
+- The AXIS screens: welcome/matrix screen, login, new user, main menu, message, file, door, sysop, logoff, credits. The **credits / about screen** always shows "AXIS UNDERGROUND CNC by Rev. J. Money" with **rotatocam.com** and **jmscnc.com**, plus the license notice and third-party credits (required by the license's 7(b) term). They are original art for this project (TheDraw fonts from the existing font pack plus CNC motifs: toolpaths, rotary axes, G-code, the RotatoCAM logo). **Claude makes them** (Rev's decision), keeping them legible both in a full 80x25 terminal and on the CYD's 4x8 mirror; Rev edits them later in an ANSI editor. Being original, they are committed to the repo under the project license.
 
 ### 5.6 Message bases (FidoNet-compatible)
 - Storage format: **JAM** message bases on SD (my call: an open, documented format used by real FTN software, which gives true compatibility; tools on the PC can read the bases). Areas: local, echomail, netmail.
@@ -182,7 +182,7 @@ Door work comes first because it is the riskiest part and Rev's top priority.
 - Board tests drive the BBS over telnet from a script (the prompt-reactive driver used for LORD), plus the existing serial bench commands. Never tap real WiFi networks in automated tests.
 
 ## 8. Licensing
-- AXIS code is GPL-3.0-or-later with the existing copyright notices, like the rest of the firmware.
+- AXIS code is GPL-3.0-or-later, with an **additional term under GPLv3 section 7(b)** (Rev's decision): copies and derived works must keep the "Copyright (C) 2026 Rev. J. Money" notices, the author credit (Rev. J. Money, rotatocam.com, jmscnc.com) in the README, and that credit on the credits or about screen of any interactive interface. The exact wording is in the README.
 - **Reuse policy (Rev's decision): build on proven open-source code wherever possible**, licensed MIT, GPL-3.0(-or-later) or public domain (licenses that are compatible with GPL-3.0-or-later, such as BSD, Apache-2.0 and GPL-2.0-or-later, are acceptable when no MIT/GPL-3/public-domain option is as good). Write new code only where no proven component exists or none fits the CYD's memory.
 - **Improve what we reuse:** where a reused component can be made better for the CYD (smaller, faster, less RAM) by refactoring it, or by rewriting a hot path in hand-optimized Xtensa assembly, do it. Every such change is measured against the original on the board (speed, RAM, flash) and kept only if it wins. Original license headers and credits stay; our changes are noted in the file.
 - Candidates to evaluate first (license and fitness to be verified at plan time, not assumed):

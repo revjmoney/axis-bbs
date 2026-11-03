@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- License: every new file starts with `// SPDX-License-Identifier: GPL-3.0-or-later` and `// Copyright (C) 2026 Rev. J. Money`. Vendored code keeps its own header and license file; our changes are noted at the top of the changed file.
+- License: every new file starts with `// SPDX-License-Identifier: GPL-3.0-or-later` and `// Copyright (C) 2026 Rev. J. Money`. Vendored code keeps its own header and license file; our changes are noted at the top of the changed file. The repo license is GPL-3.0-or-later plus the 7(b) attribution term in the README; list each vendored component in `THIRD_PARTY_NOTICES.md` when it is added.
 - Reuse policy: proven open source first (MIT, GPL-3, public domain); refactor or rewrite in assembly only when measured better. emu2 is a behavior reference only; never copy its code.
 - Portability: nothing under `src/door/` may include Windows, POSIX socket, ESP-IDF or Arduino headers. Platform code lives in `src/platform/pc/`.
 - No door files, LORD data or keys in the repo. Tests that need LORD read its folder from the environment variable `AXIS_LORD_DIR` (on Rev's PC: `F:\axis-bbs-work\doors\lord407\game`) and are skipped when it is unset.
