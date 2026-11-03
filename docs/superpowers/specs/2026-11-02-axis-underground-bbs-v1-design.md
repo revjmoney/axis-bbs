@@ -157,6 +157,23 @@ Rev's decision: work on both, **real DOS LORD first**; then a rewrite that works
 - **Runs as a native door:** same door menu, drop file and node handling as DOS doors; very small RAM; shares the cluster's storage and lock manager directly.
 - **Licensing:** the port of LORD.js is GPL (GPL-2.0-or-later code used under GPL-3.0-or-later). LORD's name, text and game design belong to Metropolis Gameport and no permission from them is known; the engine-only approach keeps their content out of our repo. Rev accepts that position.
 
+### 5.13 First-boot setup (Rev's request)
+On the first boot of the firmware (no saved setup), the board walks the new sysop through setting up their BBS.
+
+1. **WiFi on the touchscreen (always):** if no saved network is in range, the CYD shows a scan list (strongest first, open/locked, signal bars, a HIDDEN... entry for typing a name) and a touch keyboard for the password, then tests the join before saving. Reuses the CYD Demoscene touch keyboard (`wifikbd.cpp`, same author), including its lessons: open networks need a confirm, gadget hotspots are listed last, the password is never logged.
+2. **The board asks with a tap how to finish:** two big buttons, **SET UP ON THIS SCREEN** and **SET UP OVER TELNET**.
+   - **Over telnet:** the screen shows `telnet axis.local` (and the IP) and a 6-digit **setup PIN**. The first caller who enters the PIN gets the setup wizard in their terminal; anyone without the PIN gets a "this BBS is being set up" screen.
+   - **On this screen:** the same wizard as touch screens, with the touch keyboard for text and pickers for choices.
+3. **The wizard asks for** (each with a sensible default, all editable later from the sysop menu):
+   - Sysop handle and password (this creates the sysop account), sysop real name.
+   - BBS name (default "Axis Underground CNC"), location (city, state).
+   - Address callers use: the board name (default `axis`, so `axis.local`) and an optional public hostname, telnet port (default 23).
+   - Timezone (default US Eastern).
+   - FidoNet address (default `99:1/0`, private test zone).
+   - New-user defaults: security level, daily time limit, idle timeout (default 5 minutes).
+4. **Saving:** settings go to the config file in storage (SD or LittleFS), the WiFi networks to NVS as today, and a "setup done" flag. The sysop menu can rerun the wizard. Until setup is done the BBS answers callers with the "being set up" screen only.
+5. Boards that already have saved WiFi (like Rev's CYDs from the demoscene firmware) skip step 1 and go straight to step 2.
+
 ## 6. Staged roadmap with exit tests
 
 Door work comes first because it is the riskiest part and Rev's top priority.

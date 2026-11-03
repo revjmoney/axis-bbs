@@ -9,6 +9,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Standalone BBS firmware for the CYD (ESP32-2432S028R) | planned | No demos or built-in games; the only games are installed DOS doors |
 | Works with no SD card (minimal board) | planned | Everything in internal flash (LittleFS), LORD included; SD only adds space; file areas off without SD |
 | Preliminary BBS firmware | working | Boots, joins the saved WiFi, listens on port 23 as `axis.local`, welcome + handle + menu (Info, Credits, Goodbye), busy screen for a second caller, 5 min idle logoff, sysop waiting-for-caller screen; tested with a live call 2026-11-02 |
+| First-boot setup | planned | WiFi on the touchscreen, then the board asks with a tap: finish on the screen or over telnet (setup PIN); asks sysop account, names, location, address, port, timezone, FTN address, new-user defaults |
 | One telnet node per board | in progress | Port 23, LAN only in v1; a second caller gets a "node busy" screen |
 | Multi-board cluster | planned | Boards on the LAN join as node 2, 3, 4...; one BBS with shared data |
 | One caller address | planned | Callers dial `axis.local`; the main answers with a free board's IP so each caller connects directly (no relay), so a failing board never drops other boards' callers |
