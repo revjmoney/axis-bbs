@@ -185,10 +185,83 @@ TEST_CASE("session remote mode: the caller hanging up ends the door") {
     cfg.dir = d;
     cfg.exe = "T.EXE";
     cfg.localMode = false;
+    cfg.carrierGraceMs = 300;
     DoorSession s(cfg, fs, locks, caller, 1);
     for (int i = 0; i < 5; i++) s.step(20);
     caller.hangUp();
     while (s.step(20)) {
     }
     CHECK(s.result() == DoorResult::CarrierLost);
+}
+
+TEST_CASE("session HLT waits for the timer instead of freezing") {
+    fs::path d = tmpDir("hlt");
+    writeExe(d / "T.EXE", {0xFB, 0xF4, 0xB8, 0x05, 0x4C, 0xCD, 0x21});  // sti ; hlt ; mov ax,4C05h ; int 21h
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d;
+    cfg.exe = "T.EXE";
+    cfg.timeLimitSec = 5;
+    DoorSession s(cfg, fs, locks, caller, 1);
+    CHECK(s.run() == DoorResult::Exited);
+    CHECK(s.exitCode() == 5);
+}
+
+TEST_CASE("session a door waiting for a key does not spin the CPU") {
+    fs::path d = tmpDir("idlewait");
+    writeExe(d / "T.EXE", {0xB4, 0x00, 0xCD, 0x16, 0xB8, 0x00, 0x4C, 0xCD, 0x21});  // mov ah,0 ; int 16h ; exit
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d;
+    cfg.exe = "T.EXE";
+    DoorSession s(cfg, fs, locks, caller, 1);
+    s.step(200);
+    CHECK(s.instructions() < 2000);
+    caller.push("x");
+    while (s.step(20)) {
+    }
+    CHECK(s.result() == DoorResult::Exited);
+}
+
+TEST_CASE("session after a hang-up the door gets a grace period to save and exit") {
+    fs::path d = tmpDir("grace");
+    // wait for the carrier to drop, then "save" for 5 timer ticks (about 275 ms), then exit 7:
+    // loop: mov ah,3 ; int 14h ; test al,80h ; jnz loop
+    //       mov ax,40h ; mov es,ax ; mov bx,es:[6Ch] ; add bx,5
+    // wait: cmp es:[6Ch],bx ; jb wait ; mov ax,4C07h ; int 21h
+    writeExe(d / "T.EXE", {0xB4, 0x03, 0xCD, 0x14, 0xA8, 0x80, 0x75, 0xF8, 0xB8, 0x40, 0x00, 0x8E, 0xC0, 0x26, 0x8B,
+                           0x1E, 0x6C, 0x00, 0x83, 0xC3, 0x05, 0x26, 0x39, 0x1E, 0x6C, 0x00, 0x72, 0xF9, 0xB8, 0x07,
+                           0x4C, 0xCD, 0x21});
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d;
+    cfg.exe = "T.EXE";
+    cfg.localMode = false;
+    DoorSession s(cfg, fs, locks, caller, 1);
+    for (int i = 0; i < 5; i++) s.step(20);
+    caller.hangUp();
+    while (s.step(20)) {
+    }
+    CHECK(s.result() == DoorResult::Exited);
+    CHECK(s.exitCode() == 7);
+}
+
+TEST_CASE("session terminate with AH=00h ends the program") {
+    fs::path d = tmpDir("ah00");
+    writeExe(d / "T.EXE", {0xB4, 0x00, 0xCD, 0x21, 0xEB, 0xFE});  // mov ah,0 ; int 21h ; jmp $
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d;
+    cfg.exe = "T.EXE";
+    cfg.timeLimitSec = 2;
+    DoorSession s(cfg, fs, locks, caller, 1);
+    CHECK(s.run() == DoorResult::Exited);
 }

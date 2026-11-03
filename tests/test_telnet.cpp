@@ -73,3 +73,13 @@ TEST_CASE("telnet NAWS subnegotiation sets the window size, even split across re
     CHECK(t.height() == 50);
     CHECK(app == "k");
 }
+
+TEST_CASE("telnet an endless subnegotiation is capped and the stream recovers") {
+    TelnetFilter t;
+    std::string app, reply;
+    feed(t, bytes({255, 250, 24}), app, reply);
+    feed(t, std::string(100000, 'x'), app, reply);
+    CHECK(t.pendingSubnegotiation() <= 64);
+    feed(t, bytes({255, 240}) + "k", app, reply);
+    CHECK(app == "k");
+}

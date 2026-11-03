@@ -51,6 +51,7 @@ bool Fossil::int14() {
                 }
                 waiting_ = true;
                 cpu_.setIp((uint16_t)(cpu_.ip() - 2));
+                cpu_.requestStop();  // give the slice back until the caller types
                 return true;
             }
             cpu_.setAx(in_.front());
@@ -94,6 +95,7 @@ bool Fossil::int14() {
         case 0x0E:  // local keyboard, with wait: never comes, so wait politely
             waiting_ = true;
             cpu_.setIp((uint16_t)(cpu_.ip() - 2));
+            cpu_.requestStop();
             return true;
         case 0x10:  // ^C / ^K check
             cpu_.setAx(0);

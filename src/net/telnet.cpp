@@ -7,6 +7,7 @@ namespace axis::net {
 namespace {
 constexpr uint8_t IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240;
 constexpr uint8_t BINARY = 0, ECHO = 1, SGA = 3, NAWS = 31;
+constexpr size_t  kMaxSubneg = 64;  // NAWS needs 5; nothing we use needs more
 
 std::string cmd(uint8_t verb, uint8_t opt) { return {(char)IAC, (char)verb, (char)opt}; }
 }  // namespace
@@ -57,7 +58,7 @@ void TelnetFilter::fromNet(const uint8_t* p, size_t n, std::string& toApp, std::
             }
             case St::Sb:
                 if (c == IAC) st_ = St::SbIac;
-                else sb_ += (char)c;
+                else if (sb_.size() < kMaxSubneg) sb_ += (char)c;  // a caller can't grow it without end
                 break;
             case St::SbIac:
                 if (c == SE) {
@@ -69,7 +70,7 @@ void TelnetFilter::fromNet(const uint8_t* p, size_t n, std::string& toApp, std::
                     }
                     st_ = St::Data;
                 } else {
-                    sb_ += (char)c;  // IAC IAC inside a subnegotiation
+                    if (sb_.size() < kMaxSubneg) sb_ += (char)c;  // IAC IAC inside a subnegotiation
                     st_ = St::Sb;
                 }
                 break;

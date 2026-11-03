@@ -36,6 +36,7 @@ struct DoorConfig {
     uint32_t              timeLimitSec = 3600;
     bool                  localMode = true;  // keys and screen on the caller stream (sysop at the console)
     std::FILE*            trace = nullptr;
+    uint32_t              carrierGraceMs = 15000;  // after a hang-up the door may save and exit; then it is stopped
     DropFile              dropFile = DropFile::None;  // written into the door folder before start
     CallerInfo            caller;
     std::function<uint64_t()> clockMs;     // default: steady clock
@@ -81,6 +82,8 @@ private:
     uint64_t                    startMs_ = 0;
     uint32_t                    instructions_ = 0;
     uint32_t                    intsTraced_ = 0;
+    bool                        carrierLost_ = false;
+    uint64_t                    lostAtMs_ = 0;
 };
 
 }  // namespace door

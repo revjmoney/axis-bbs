@@ -188,3 +188,15 @@ TEST_CASE("bios font info reports 16-point characters on a 25-row screen") {
     CHECK(r.cpu.cx() == 16);
     CHECK(r.cpu.dl() == 24);
 }
+
+TEST_CASE("bios int16 01 reports the waiting key without taking it") {
+    Rig r;
+    r.kb.push("L");
+    r.cpu.setAx(0x0100);
+    r.bios.dispatch(0x16);
+    CHECK_FALSE(r.cpu.zf());
+    CHECK(r.cpu.al() == 'L');
+    r.cpu.setAx(0x0000);
+    r.bios.dispatch(0x16);
+    CHECK(r.cpu.al() == 'L');
+}

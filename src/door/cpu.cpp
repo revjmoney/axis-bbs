@@ -63,9 +63,13 @@ void Cpu::setPorts(PortIn in, PortOut out) {
 uint32_t Cpu::run(uint32_t maxInstructions) {
     g_stop = false;
     uint32_t n = 0;
-    while (n < maxInstructions && !i8086::halted() && !g_stop) {
+    while (n < maxInstructions && !g_stop) {
+        // a halted CPU re-runs its HLT, which lets a pending interrupt (the timer) wake it;
+        // still halted after that means nothing is due yet, so give the slice back
+        bool wasHalted = i8086::halted();
         i8086::step();
         n++;
+        if (wasHalted && i8086::halted()) break;
     }
     return n;
 }

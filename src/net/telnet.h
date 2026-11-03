@@ -17,6 +17,7 @@ public:
     void fromNet(const uint8_t* p, size_t n, std::string& toApp, std::string& replyToNet);
     // Bytes from the BBS or a door, escaped for the wire (0xFF doubled).
     std::string toNet(const uint8_t* p, size_t n) const;
+    size_t pendingSubnegotiation() const { return sb_.size(); }
     int width() const { return width_; }
     int height() const { return height_; }
 

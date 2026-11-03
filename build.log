@@ -1,2 +1,2 @@
-[1/2] Building CXX object CMakeFiles/axis_tests.dir/tests/test_lord_telnet.cpp.obj
+[1/2] Building CXX object CMakeFiles/axis_tests.dir/tests/test_lord_local.cpp.obj
 [2/2] Linking CXX executable axis_tests.exe

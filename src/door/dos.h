@@ -35,7 +35,7 @@ private:
     std::string asciiz(uint16_t seg, uint16_t off) const;
     void        ok();
     void        fail(int code);
-    int         newHandle(int host);
+    int         newHandle(int host, bool fresh = true);
     bool        keyOrWait(int& c);
     void        tracef(const char* fmt, ...);
 
@@ -52,6 +52,8 @@ private:
     int         exitCode_ = 0, lastError_ = 0;
     uint16_t    dtaSeg_, dtaOff_ = 0x80;
     std::map<int, int>       handles_;  // DOS handle -> host handle (5 and up; 0-4 are the console)
+    std::map<int, int>       refs_;     // host handle -> how many DOS handles share it (dup)
+    void                     release(int dosHandle);
     std::map<uint32_t, FindState> finds_;  // per DTA address
 };
 

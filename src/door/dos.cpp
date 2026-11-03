@@ -44,7 +44,7 @@ Dos::Dos(Cpu& cpu, GuestMemory& mem, DosMemory& dm, HostFs& fs, LockTable& locks
     : cpu_(cpu), mem_(mem), dm_(dm), fs_(fs), locks_(locks), owner_(owner), psp_(psp), dtaSeg_(psp) {}
 
 Dos::~Dos() {
-    for (auto& h : handles_) fs_.close(h.second);
+    for (auto& r : refs_) fs_.close(r.first);
     locks_.releaseOwner(owner_);
 }
 
@@ -71,14 +71,26 @@ void Dos::fail(int code) {
     cpu_.setCf(true);
 }
 
-int Dos::newHandle(int host) {
+int Dos::newHandle(int host, bool fresh) {
     for (int h = 5; h < kMaxHandles; h++)
         if (!handles_.count(h)) {
             handles_[h] = host;
+            refs_[host]++;
             return h;
         }
-    fs_.close(host);
+    if (fresh) fs_.close(host);
     return -1;
+}
+
+void Dos::release(int dosHandle) {
+    auto it = handles_.find(dosHandle);
+    if (it == handles_.end()) return;
+    int host = it->second;
+    handles_.erase(it);
+    if (--refs_[host] <= 0) {
+        refs_.erase(host);
+        fs_.close(host);
+    }
 }
 
 void Dos::tracef(const char* fmt, ...) {
@@ -96,6 +108,7 @@ bool Dos::keyOrWait(int& c) {
     if (c >= 0) return true;
     waiting_ = true;
     cpu_.setIp((uint16_t)(cpu_.ip() - 2));
+    cpu_.requestStop();  // nothing to do until a key arrives: give the slice back now
     return false;
 }
 
@@ -114,6 +127,13 @@ bool Dos::int21() {
         if (con_) con_->write(&ch, 1);
     };
     switch (ah) {
+        case 0x00:  // terminate
+            return int20();
+        case 0x31:  // terminate and stay resident: nothing stays; the door is over
+            exited_ = true;
+            exitCode_ = al;
+            cpu_.requestStop();
+            return true;
         case 0x01:  // read key, echo
         case 0x07:  // read key, no echo
         case 0x08: {
@@ -279,10 +299,8 @@ bool Dos::int21() {
             return true;
         }
         case 0x3E: {
-            auto it = handles_.find(bx);
-            if (it != handles_.end()) {
-                fs_.close(it->second);
-                handles_.erase(it);
+            if (handles_.count(bx)) {
+                release(bx);
                 ok();
             } else if (bx < 5) {
                 ok();
@@ -431,14 +449,20 @@ bool Dos::int21() {
             }
             // reopen is not possible portably; share the host handle (seek position is shared, as in DOS)
             if (ah == 0x45) {
-                int h = newHandle(host);
+                int h = newHandle(host, false);
                 if (h < 0) fail(kTooMany);
                 else {
                     cpu_.setAx((uint16_t)h);
                     ok();
                 }
             } else {
+                if (cx == bx) {
+                    ok();
+                    return true;
+                }
+                release(cx);  // 46h first closes whatever the target handle had open
                 handles_[cx] = host;
+                refs_[host]++;
                 ok();
             }
             return true;

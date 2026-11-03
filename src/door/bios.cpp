@@ -159,17 +159,17 @@ bool Bios::keyboard() {
             waiting_ = true;
             idle_ = true;
             cpu_.setIp((uint16_t)(cpu_.ip() - 2));
+            cpu_.requestStop();  // nothing to do until a key arrives: give the slice back now
             return true;
         }
         cpu_.setAx(keyCode(c));
         return true;
     }
     if (ah == 0x01) {
-        if (kb_ && kb_->available()) {
-            // peek without taking it: read it and push it back is not possible on a stream,
-            // so report "a key is waiting"; the next 00h call takes it
+        int c = kb_ ? kb_->peek() : -1;
+        if (c >= 0) {  // the waiting key, left in place for 00h to take
             cpu_.setZf(false);
-            cpu_.setAx(0x0001);
+            cpu_.setAx(keyCode(c));
         } else {
             cpu_.setZf(true);
             idle_ = true;

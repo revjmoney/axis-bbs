@@ -15,6 +15,7 @@ class ByteStream {
 public:
     virtual int  available() = 0;  // bytes ready to read
     virtual int  read() = 0;       // -1 if none
+    virtual int  peek() = 0;       // the next byte without taking it, -1 if none
     virtual void write(const uint8_t* p, size_t n) = 0;
     virtual bool carrier() = 0;
     virtual ~ByteStream() = default;
@@ -31,6 +32,7 @@ public:
     void        hangUp() { up_ = false; }
 
     int available() override { return (int)in_.size(); }
+    int peek() override { return in_.empty() ? -1 : in_.front(); }
     int read() override {
         if (in_.empty()) return -1;
         int c = in_.front();

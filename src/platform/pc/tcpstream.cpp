@@ -40,22 +40,28 @@ void netInit() {
     }
 #endif
 }
-void sendAll(intptr_t s, const char* p, size_t n) {
+// false if the peer stopped taking data for timeoutMs (or the connection broke)
+bool sendAll(intptr_t s, const char* p, size_t n, int timeoutMs = 10000) {
+    int waited = 0;
     while (n) {
         int w = ::send((decltype(socket(0, 0, 0)))s, p, (int)n, 0);
         if (w > 0) {
             p += w;
             n -= w;
+            waited = 0;
         } else if (w < 0 && wouldBlock()) {
+            if (waited >= timeoutMs) return false;
+            waited += 100;
             fd_set f;
             FD_ZERO(&f);
             FD_SET((decltype(socket(0, 0, 0)))s, &f);
             timeval tv = {0, 100000};
             select((int)s + 1, nullptr, &f, nullptr, &tv);
         } else {
-            return;
+            return false;
         }
     }
+    return true;
 }
 }  // namespace
 
@@ -63,6 +69,7 @@ TcpStream::TcpStream(intptr_t sock) : sock_(sock) {
     nonBlocking(sock_);
     int one = 1;
     setsockopt((decltype(socket(0, 0, 0)))sock_, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+    setsockopt((decltype(socket(0, 0, 0)))sock_, SOL_SOCKET, SO_KEEPALIVE, (const char*)&one, sizeof one);
     std::string hello = telnet_.initialNegotiation();
     sendAll(sock_, hello.data(), hello.size());
 }
@@ -100,10 +107,15 @@ int TcpStream::read() {
     return c;
 }
 
+int TcpStream::peek() {
+    pump();
+    return in_.empty() ? -1 : (uint8_t)in_[0];
+}
+
 void TcpStream::write(const uint8_t* p, size_t n) {
     if (!up_) return;
     std::string w = telnet_.toNet(p, n);
-    sendAll(sock_, w.data(), w.size());
+    if (!sendAll(sock_, w.data(), w.size(), sendTimeoutMs_)) up_ = false;  // the caller stopped reading
 }
 
 bool TcpStream::carrier() {

@@ -16,6 +16,7 @@ public:
     ~ConsoleStream() override;
     int  available() override;
     int  read() override;
+    int  peek() override { return available() ? pending_ : -1; }
     void write(const uint8_t* p, size_t n) override;
     bool carrier() override { return true; }
     void draw(const std::array<std::string, 25>& screen);  // redraw only when the text changed

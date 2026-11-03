@@ -135,7 +135,7 @@ TEST_CASE("LORD 4.07 plays over telnet with FOSSIL and DOOR.SYS") {
 
     Caller c(port);
     // LORD picks one of several intro screens at random
-    bool ok = c.waitFor("more|key|choice, warrior|egend|Seth|Able|Dragon", 30000);
+    bool ok = c.waitFor("LOADING|REALM|more|key|choice, warrior|egend|Seth|Able|Dragon", 30000);
     CHECK(ok);
     for (int i = 0; i < 4 && !c.waitFor("choice, warrior", 3000); i++) c.send("\r");
     c.send("E");
@@ -200,4 +200,17 @@ TEST_CASE("hanging up in the middle of LORD ends the door and keeps its files") 
     CHECK((r == (int)DoorResult::CarrierLost || r == (int)DoorResult::Exited));
     CHECK(fs::exists(d / "lord.dat"));
     CHECK(fs::file_size(d / "lord.dat") > 0);
+}
+
+TEST_CASE("telnet a caller that stops reading drops carrier instead of stalling the door") {
+    axis::pc::TcpListener listener(0);
+    axis::pc::TcpClient   client("127.0.0.1", listener.port());  // connects, then never reads
+    auto                  line = listener.accept(5000);
+    REQUIRE(line);
+    line->setSendTimeout(500);
+    std::string chunk(65536, 'x');
+    auto        t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 2000 && line->carrier(); i++) line->write((const uint8_t*)chunk.data(), chunk.size());
+    CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10));
+    CHECK_FALSE(line->carrier());
 }

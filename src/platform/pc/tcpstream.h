@@ -19,13 +19,16 @@ public:
     ~TcpStream() override;
     int  available() override;
     int  read() override;
+    int  peek() override;
     void write(const uint8_t* p, size_t n) override;
     bool carrier() override;
+    void setSendTimeout(int ms) { sendTimeoutMs_ = ms; }  // a caller that stops reading is treated as gone
 
 private:
     void           pump();
     intptr_t       sock_;
     bool           up_ = true;
+    int            sendTimeoutMs_ = 10000;
     net::TelnetFilter telnet_;
     std::string    in_;
 };

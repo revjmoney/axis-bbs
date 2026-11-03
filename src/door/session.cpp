@@ -20,6 +20,7 @@ public:
     LocalConsole(ByteStream& keys, Bios& bios) : keys_(keys), bios_(bios) {}
     int  available() override { return keys_.available(); }
     int  read() override { return keys_.read(); }
+    int  peek() override { return keys_.peek(); }
     void write(const uint8_t* p, size_t n) override {
         for (size_t i = 0; i < n; i++) bios_.ttyOut(p[i]);
     }
@@ -135,7 +136,14 @@ bool DoorSession::step(uint32_t maxMs) {
         bios_->tick(now);
         if (mem_->outOfMemory()) result_ = DoorResult::OutOfMemory;  // first: the door's data is now wrong
         else if (dos_->exited()) result_ = DoorResult::Exited;
-        else if (!cfg_.localMode && !caller_.carrier()) result_ = DoorResult::CarrierLost;
+        else if (!cfg_.localMode && !caller_.carrier()) {
+            if (!carrierLost_) {
+                carrierLost_ = true;
+                lostAtMs_ = now;
+            } else if (now - lostAtMs_ >= cfg_.carrierGraceMs) {
+                result_ = DoorResult::CarrierLost;  // the door didn't notice in time: stop it
+            }
+        }
         else if (now - startMs_ >= cfg_.timeLimitSec * 1000ull) result_ = DoorResult::TimeLimit;
         if (result_ != DoorResult::Running) return false;
         bool idle = bios_->consumeIdleHint() || dos_->waitingForKey() || bios_->waitingForKey() ||

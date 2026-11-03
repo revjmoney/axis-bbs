@@ -323,3 +323,27 @@ TEST_CASE("dos write then read back on the same handle") {
     r.call(0x3F00);
     CHECK(r.mem.read8(r.cpu.ds() * 16u + 0x500) == 'X');
 }
+
+TEST_CASE("dos closing a duplicate handle keeps the original open") {
+    Rig r("dup");
+    r.str(0x200, "LOG.DAT");
+    r.cpu.setDx(0x200);
+    r.cpu.setCx(0);
+    r.call(0x3C00);
+    uint16_t h = r.cpu.ax();
+    r.cpu.setBx(h);
+    r.call(0x4500);  // dup
+    uint16_t dup = r.cpu.ax();
+    r.cpu.setBx(dup);
+    r.call(0x3E00);  // close the duplicate ("commit by dup and close")
+    r.str(0x300, "KEPT");
+    r.cpu.setBx(h);
+    r.cpu.setCx(4);
+    r.cpu.setDx(0x300);
+    r.call(0x4000);
+    CHECK_FALSE(r.cpu.cf());
+    CHECK(r.cpu.ax() == 4);
+    r.cpu.setBx(h);
+    r.call(0x3E00);
+    CHECK(r.slurp("LOG.DAT") == "KEPT");
+}
