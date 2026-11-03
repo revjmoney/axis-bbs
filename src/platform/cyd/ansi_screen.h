@@ -22,10 +22,11 @@ public:
     void render(LGFX_Sprite& dst, int rows = kRows) const;      // top `rows` rows, 8-bit RGB332 sprite
 };
 
-// A 40-column grid of full-size 8x16 cells, for text that has to be easy to read.
+// A 40-column grid of full-size 8x16 cells, for text that has to be easy to read (15 rows fill
+// the panel; callers render as many as they use).
 class BigText {
 public:
-    static constexpr int kCols = 40, kRows = 9;
+    static constexpr int kCols = 40, kRows = 15;
     AnsiCell cells[kRows][kCols];
     void clear(uint8_t attr = 0x07);
     void text(int row, int col, const char* s, uint8_t attr);

@@ -13,6 +13,13 @@ struct DoorEntry {
     std::string id, name, exe, args, drop = "doorsys";  // drop: "doorsys" (DOOR.SYS) or "dorinfo"
 };
 
+// A file area. Its files live in /files/<id>/ on the SD card.
+struct FileArea {
+    std::string id, name;
+};
+
+std::vector<FileArea> defaultFileAreas();  // Rev's list (design spec, file areas table)
+
 struct BbsConfig {
     std::string sysopHandle, sysopSalt, sysopHash, sysopRealName;
     std::string bbsName = "Axis Underground CNC", location, boardName = "axis", publicHost;
@@ -23,6 +30,7 @@ struct BbsConfig {
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "LORD.EXE", "1 /DREW", "doorsys"}};
+    std::vector<FileArea>  areas = defaultFileAreas();  // "areaN=id|name"; the defaults unless listed
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save
 };
 

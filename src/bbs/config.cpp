@@ -33,9 +33,30 @@ const std::vector<std::string>& tzNames() {
     return v;
 }
 
+std::vector<FileArea> defaultFileAreas() {
+    return {{"rotatocam-pro", "RotatoCAM: Pro"},
+            {"rotatocam-free", "RotatoCAM: Free"},
+            {"cnc-free", "CNC Software: Freeware"},
+            {"cnc-share", "CNC Software: Shareware/Trials"},
+            {"cnc-demos", "CNC Software: Pro Demos"},
+            {"gcode", "G-code and Toolpaths"},
+            {"models", "3D Models"},
+            {"text", "Text Files"},
+            {"freeware", "Freeware"},
+            {"shareware", "Shareware and Free Trials"},
+            {"abandonware", "Abandonware"},
+            {"doors", "BBS Doors"},
+            {"cadcam", "CAD/CAM Software"},
+            {"posts", "Post Processors"},
+            {"bbs", "BBS Software"},
+            {"music-rev", "Music: Rev J Money"},
+            {"music-other", "Music: Other"}};
+}
+
 BbsConfig parseConfig(const std::string& ini) {
     BbsConfig              c;
     std::vector<DoorEntry> listed;
+    std::vector<FileArea>  areas;
     size_t pos = 0;
     while (pos < ini.size()) {
         size_t end = ini.find('\n', pos);
@@ -74,10 +95,14 @@ BbsConfig parseConfig(const std::string& ini) {
                 DoorEntry d{f[0], f[1], f[2], f.size() > 3 ? f[3] : "", f.size() > 4 && !f[4].empty() ? f[4] : "doorsys"};
                 listed.push_back(d);
             }
+        } else if (k.rfind("area", 0) == 0 && k.size() > 4 && std::isdigit((unsigned char)k[4])) {
+            size_t bar = v.find('|');
+            if (bar != std::string::npos && bar > 0) areas.push_back({v.substr(0, bar), v.substr(bar + 1)});
         } else c.unknown.emplace_back(k, v);
     }
     if (listed.empty()) listed = c.doors;  // none in the file: keep the default list
     c.doors = listed;
+    if (!areas.empty()) c.areas = areas;
     return c;
 }
 
@@ -102,6 +127,8 @@ std::string formatConfig(const BbsConfig& c) {
         const DoorEntry& d = c.doors[i];
         kv(("door" + std::to_string(i + 1)).c_str(), d.id + "|" + d.name + "|" + d.exe + "|" + d.args + "|" + d.drop);
     }
+    for (size_t i = 0; i < c.areas.size(); i++)
+        kv(("area" + std::to_string(i + 1)).c_str(), c.areas[i].id + "|" + c.areas[i].name);
     for (auto& u : c.unknown) kv(u.first.c_str(), u.second);
     kv("setup_done", c.setupDone ? "1" : "0");
     return s;

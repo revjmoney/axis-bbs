@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "bbs/node.h"
 
+#include "bbs/login_art.h"
+
 #include <cctype>
 #include <cstdio>
 
@@ -17,24 +19,56 @@ const char* const CYAN = "\x1b[1;36m";
 const char* const AMBER = "\x1b[0;33m";
 const char* const RED = "\x1b[1;31m";
 
-// Placeholder title until the real AXIS ANSI screens are drawn (roadmap stage 9).
-std::string welcome(int node, const SysInfo& s, const std::string& bbsName) {
+std::string uptime(uint32_t sec);
+
+// text padded (or cut) to exactly n columns
+std::string fit(std::string t, size_t n) {
+    if (t.size() > n) t.resize(n);
+    return t + std::string(n - t.size(), ' ');
+}
+
+// One line of the two boxes: label + value in each, 38 columns inside every box.
+std::string boxLine(const char* l1, const std::string& v1, const char* l2, const std::string& v2) {
+    const char* const FRAME = "\x1b[0;35m";
+    const char* const LABEL = "\x1b[0;36m";
+    const char* const VALUE = "\x1b[1;37m";
+    std::string       s = FRAME;
+    s += "\xba ";
+    s += LABEL + fit(l1, 9) + VALUE + fit(v1, 28) + FRAME + "\xba\xba ";
+    s += LABEL + fit(l2, 9) + VALUE + fit(v2, 28) + FRAME + "\xba\r\n";
+    return s;
+}
+
+std::string boxEdge(bool top) {
+    std::string s = "\x1b[0;35m";
+    if (top) {
+        s += "\xc9\xcd\xb5\x1b[1;33m THE BOARD \x1b[0;35m\xc6" + std::string(24, '\xcd') + "\xbb";
+        s += "\xc9\xcd\xb5\x1b[1;33m THE SYSTEM \x1b[0;35m\xc6" + std::string(23, '\xcd') + "\xbb\r\n";
+    } else {
+        s += "\xc8" + std::string(38, '\xcd') + "\xbc\xc8" + std::string(38, '\xcd') + "\xbc\r\n";
+    }
+    return s;
+}
+
+// The caller's first screen: the drippy logo (art/login.ans), then the board and the system.
+std::string welcome(int node, const SysInfo& s, const BbsConfig& cfg) {
     std::string w = CLS;
-    w += AMBER;
-    w += " \xb0\xb1\xb2\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xb2\xb1\xb0\r\n";
-    w += RED;
-    std::string title = bbsName;
-    for (char& ch : title) ch = (char)std::toupper((unsigned char)ch);
-    w += "         " + title + "\r\n";
-    w += AMBER;
-    w += " \xb0\xb1\xb2\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xdb\xb2\xb1\xb0\r\n";
-    w += DIM;
-    w += "   rotary axes \xfa toolpaths \xfa G-code \xfa the underground workshop\r\n\r\n";
-    char line[96];
-    std::snprintf(line, sizeof line, "   %snode %d%s  \xb3  %s  \xb3  %s\r\n\r\n", HI, node, DIM, s.timeText.c_str(),
-                  s.host.c_str());
-    w += line;
-    w += "   Preliminary build: accounts, message bases and doors are on the way.\r\n\r\n";
+    w += kLoginArt;
+    w += RST;
+    w += "\r\n";
+    std::string who = std::to_string(s.nodesTotal ? s.nodes.size() : 1) + " of " + std::to_string(s.nodesTotal) + "  ";
+    for (size_t i = 0; i < s.nodes.size(); i++)
+        who += "[" + std::to_string(i + 1) + "] " + ((int)i + 1 == node ? "you" : s.nodes[i].empty() ? "waiting" : s.nodes[i]) + " ";
+    std::string dial = s.host + "  " + s.ip;
+    w += boxEdge(true);
+    w += boxLine("BBS", cfg.bbsName, "software", std::string("AXIS UNDERGROUND CNC ") + kAxisVersion);
+    w += boxLine("sysop", cfg.sysopHandle.empty() ? "the sysop" : cfg.sysopHandle, "license", "GPL-3.0+ by Rev. J. Money");
+    w += boxLine("from", cfg.location.empty() ? "the underground" : cfg.location, "hardware", s.hardware);
+    w += boxLine("dial", dial, "storage", s.storage);
+    w += boxLine("nodes", who, "up", uptime(s.uptimeSec) + "  calls today " + std::to_string(s.callsToday));
+    w += boxEdge(false);
+    w += "  \x1b[1;33mjmscnc.com\x1b[0;37m the JMSCNC store  \x1b[0;35m\xfa  \x1b[1;33mrotatocam.com\x1b[0;37m RotatoCAM  ";
+    w += "\x1b[0;35m\xfa  \x1b[0;37mFTN " + cfg.ftnAddress + "\r\n";  // 72 columns: no wrap
     return w;
 }
 
@@ -52,7 +86,7 @@ Node::Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg)
 
 void Node::begin(uint32_t nowMs) {
     lastInput_ = nowMs;
-    out_ += welcome(node_, info_(), cfg_.bbsName);
+    out_ += welcome(node_, info_(), cfg_);
     prompt();
 }
 

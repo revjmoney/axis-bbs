@@ -88,3 +88,29 @@ TEST_CASE("config doors round trip") {
     REQUIRE(d.doors.size() == 1);
     CHECK(d.doors[0].exe == "BRE.EXE");
 }
+
+TEST_CASE("config has the default file areas, music and CAD/CAM included") {
+    auto c = parseConfig("");
+    auto has = [&](const std::string& name) {
+        for (auto& a : c.areas)
+            if (a.name == name) return true;
+        return false;
+    };
+    CHECK(c.areas.size() == 17);
+    CHECK(has("RotatoCAM: Pro"));
+    CHECK(has("Abandonware"));
+    CHECK(has("CAD/CAM Software"));
+    CHECK(has("Post Processors"));
+    CHECK(has("BBS Software"));
+    CHECK(has("Music: Rev J Money"));
+    CHECK(has("Music: Other"));
+}
+
+TEST_CASE("config file areas round trip and replace the defaults") {
+    auto c = parseConfig("area1=gcode|G-code and Toolpaths\narea2=music-rev|Music: Rev J Money\n");
+    REQUIRE(c.areas.size() == 2);
+    CHECK(c.areas[1].id == "music-rev");
+    auto d = parseConfig(formatConfig(c));
+    REQUIRE(d.areas.size() == 2);
+    CHECK(d.areas[0].name == "G-code and Toolpaths");
+}

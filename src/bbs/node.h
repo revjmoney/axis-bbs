@@ -7,15 +7,20 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "bbs/config.h"
+#include "bbs/version.h"
 
 namespace axis::bbs {
 
 struct SysInfo {
     std::string ip, host, wifi, timeText, storage;
+    std::string hardware = "ESP32";
     int         rssi = 0;
-    uint32_t    uptimeSec = 0, freeHeap = 0;
+    uint32_t    uptimeSec = 0, freeHeap = 0, callsToday = 0;
+    int         nodesTotal = 1;
+    std::vector<std::string> nodes;  // who is on each node ("" = waiting); this caller's own node too
 };
 
 class Node {

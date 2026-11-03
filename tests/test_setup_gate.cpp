@@ -50,7 +50,7 @@ TEST_CASE("node welcome shows the configured BBS name") {
     c.bbsName = "Shop Floor BBS";
     Node n(1, info, c);
     n.begin(0);
-    CHECK(n.takeOutput().find("SHOP FLOOR BBS") != std::string::npos);
+    CHECK(n.takeOutput().find("Shop Floor BBS") != std::string::npos);  // in THE BOARD box, as configured
 }
 
 TEST_CASE("node idle minutes come from config") {

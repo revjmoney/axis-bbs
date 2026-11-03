@@ -9,9 +9,14 @@
 #include <WiFi.h>
 #include <time.h>
 
+#include <dirent.h>
+#include <sys/stat.h>
+
 #include <memory>
 
 #include "bbs/config.h"
+#include "bbs/eventlog.h"
+#include "bbs/sysop_menu.h"
 #include "door/session.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
@@ -38,6 +43,8 @@ static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
 static std::unique_ptr<WifiStream>              line;  // the caller, when one is online
+static axis::bbs::SysopMenu                     sysop;   // the touchscreen sysop menu (a tap on the WFC)
+static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
 // the door the caller is in, if any (the screen copy is freed meanwhile)
 static std::unique_ptr<axis::PosixHostFs>       doorFs;
 static std::unique_ptr<FlashImageSource>        doorImage;
@@ -72,10 +79,46 @@ static axis::bbs::SysInfo sysInfo() {
     s.wifi = wifiSsid();
     s.rssi = WiFi.RSSI();
     s.uptimeSec = millis() / 1000;
-    s.freeHeap = ESP.getFreeHeap();
+    s.freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);  // byte-addressable (getFreeHeap counts IRAM too)
     s.timeText = timeText().c_str();
     s.storage = storageSummary();
+    s.hardware = "ESP32 CYD " + std::to_string(ESP.getCpuFreqMHz()) + " MHz " +
+                 std::to_string(ESP.getFlashChipSize() >> 20) + " MB flash";
+    s.callsToday = callsToday;
+    s.nodesTotal = 1;  // a cluster adds its boards here
+    s.nodes = {node ? node->handle() : std::string()};
     return s;
+}
+
+// A board event: on the serial log and the sysop's Logs screen, stamped with the time.
+static void logEvent(const String& what) {
+    time_t now = time(nullptr);
+    char   stamp[8] = "--:--";
+    if (now > 1700000000) strftime(stamp, sizeof stamp, "%H:%M", localtime(&now));
+    events.add(std::string(stamp) + " " + what.c_str());
+    Serial.printf("axis: %s\n", what.c_str());
+}
+
+// File areas: one folder each under /files on the SD card (none without a card).
+static void makeAreaFolders() {
+    if (!storageHasSd()) return;
+    ::mkdir("/sd/files", 0777);
+    for (auto& a : cfg.areas) ::mkdir(("/sd/files/" + a.id).c_str(), 0777);
+}
+
+static std::vector<int> areaFileCounts() {
+    std::vector<int> n;
+    for (auto& a : cfg.areas) {
+        int count = -1;
+        if (storageHasSd())
+            if (DIR* d = opendir(("/sd/files/" + a.id).c_str())) {
+                count = 0;
+                while (dirent* e = readdir(d)) count += e->d_name[0] != '.';
+                closedir(d);
+            }
+        n.push_back(count);
+    }
+    return n;
 }
 
 // ------------------------------------------------------------------ screens (placeholder look)
@@ -110,7 +153,7 @@ static void drawWfc() {
     wfc.render(scr, 12);  // the drippy logo and name in small cells: the top 96 pixels
     // the live panel in full-size 8x16 text: 9 rows fill the bottom 144 pixels
     const uint8_t F = 0x04, K = 0x07, V = 0x0F;  // frame in the drips' red
-    const int     last = BigText::kRows - 1;
+    const int     rows = 9, last = rows - 1;  // the bottom 144 pixels
     char          b[48];
     panel.clear(K);
     panel.fill(0, 0, 40, 0xCD, F);
@@ -138,7 +181,7 @@ static void drawWfc() {
     line(3, "wifi", String(wifiSsid()) + " " + String(WiFi.RSSI()) + " dBm");
     line(4, "store", storageHasSd() ? "SD card" : "internal flash");
     line(5, "calls", String(callsToday) + "  last " + lastCaller);
-    line(6, "up", String(b) + "  " + String(ESP.getFreeHeap() / 1024) + " KB free");
+    line(6, "up", String(b) + "  " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) + " KB free");
     if (node) {
         snprintf(b, sizeof b, "%s  %lus", node->handle().empty() ? "(logging in)" : node->handle().c_str(),
                  (unsigned long)((millis() - callStartMs) / 1000));
@@ -147,7 +190,39 @@ static void drawWfc() {
     } else {
         line(7, "sysop", String(cfg.sysopHandle.c_str()) + "   " + timeText().substring(11));
     }
-    panel.render(scr, 96, BigText::kRows);
+    panel.render(scr, 96, rows);
+}
+
+// The sysop menu: drippy title, the screen's text in big VGA cells, then the touch buttons.
+static void drawSysop() {
+    axis::bbs::SysopData d;
+    d.cfg = cfg;
+    d.info = sysInfo();
+    d.log = events;
+    if (sysop.screen() == axis::bbs::SysopMenu::Screen::Files) d.areaFiles = areaFileCounts();
+    static BigText t;
+    t.clear(0x07);
+    std::string ttl = sysop.title();
+    t.text(0, 1, ttl.c_str(), 0x0C);
+    t.text(0, 38 - 10, cfg.boardName.substr(0, 10).c_str(), 0x08);
+    for (int c = 1; c < 1 + (int)ttl.size(); c++)  // paint drips under the title
+        if ((c * 7 + ttl[c - 1]) % 3 == 0) t.text(1, c, (c % 2) ? "\xdb" : "\xdf", 0x04);
+    t.fill(1, 1 + (int)ttl.size() + 1, 38 - (int)ttl.size(), 0xc4, 0x04);
+    auto lines = sysop.lines(d);
+    for (size_t i = 0; i < lines.size(); i++) t.text(2 + (int)i, 1, lines[i].c_str(), 0x0F);
+    t.render(scr, 0, 13);
+    scr.fillRect(0, 208, 320, 32, TFT_BLACK);
+    scr.setFont(&fonts::Font2);
+    scr.setTextDatum(textdatum_t::middle_center);
+    for (auto& b : sysop.buttons()) {
+        uint16_t fill = b.danger ? 0xA000 : 0x4800;  // bright red for erase/redo, deep red for the rest
+        scr.fillRoundRect(b.x, b.y, b.w, b.h, 6, fill);
+        scr.drawRoundRect(b.x, b.y, b.w, b.h, 6, TFT_ORANGE);
+        scr.setTextColor(TFT_WHITE, fill);
+        scr.drawString(b.label.c_str(), b.x + b.w / 2, b.y + b.h / 2);
+    }
+    scr.setTextDatum(textdatum_t::top_left);
+    scr.setFont(&fonts::Font0);
 }
 
 static void drawScreen() {
@@ -185,6 +260,8 @@ static void drawScreen() {
         scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
         scr.drawString("On-screen setup is coming in the next build.", 8, 70);
         bigButton(156, "BACK", 0x2945);
+    } else if (sysop.isOpen()) {
+        drawSysop();
     } else {
         drawWfc();
     }
@@ -212,7 +289,8 @@ static void sendApp(const std::string& s) {
 
 static void hangUp() {
     line.reset();  // closes the connection
-    Serial.printf("axis: hang up after %lus\n", (unsigned long)((millis() - callStartMs) / 1000));
+    logEvent("hang up " + String(node && !node->handle().empty() ? node->handle().c_str() : "") + " after " +
+             String((millis() - callStartMs) / 1000) + "s");
     if (node && !node->handle().empty()) lastCaller = node->handle().c_str();
     node.reset();
     gate.reset();
@@ -230,9 +308,9 @@ static void answer(WiFiClient incoming) {
     }
     line.reset(new WifiStream(incoming));
     callStartMs = millis();
-    Serial.printf("axis: call from %s\n", line->remoteIP().toString().c_str());
+    logEvent("call from " + line->remoteIP().toString());
     line->start();
-    if (cfg.setupDone) {
+    if (cfg.setupDone && mode == Mode::Normal) {
         callsToday++;
         node.reset(new axis::bbs::Node(kNodeNumber, sysInfo, cfg));
         node->begin(millis());
@@ -294,6 +372,7 @@ static void startDoor() {
     doorStartMs = millis();
     Serial.printf("axis: door %s for %s, byte heap %u + %u lent from the screen + %u instruction RAM\n", d.id.c_str(),
                   node->handle().c_str(), heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)lentBytes, (unsigned)iramBytes);
+    logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
     door.reset(new axis::door::DoorSession(c, *doorFs, doorLocks, *line, kNodeNumber));
 }
 
@@ -309,6 +388,9 @@ static void finishDoor() {
     heap_caps_free(doorIram);
     doorIram = nullptr;
     screenReturn();
+    logEvent(String("door ") + node->door().id.c_str() + " ended (" +
+             (r == R::Exited ? "quit" : r == R::OutOfMemory ? "out of memory" : r == R::CarrierLost ? "hung up"
+              : r == R::TimeLimit ? "time limit" : "couldn't start") + ")");
     Serial.printf("axis: door %s done result %d, peak RAM %d KB, %lus, heap before %u after %u, lowest %u\n", node->door().id.c_str(),
                   (int)r, peakKb, (unsigned long)((millis() - doorStartMs) / 1000), doorHeapBefore, ESP.getFreeHeap(), ESP.getMinFreeHeap());
     screenDirty = true;
@@ -336,7 +418,7 @@ static void callerInput(const std::string& app) {
         if (wizard->finished()) {
             cfg = wizard->result();
             bool ok = configSave(cfg);
-            Serial.printf("axis: setup %s over telnet\n", ok ? "saved" : "SAVE FAILED");
+            logEvent(String("setup ") + (ok ? "saved" : "SAVE FAILED") + " over telnet");
             char b[220];
             snprintf(b, sizeof b,
                      "\r\n   \x1b[1;32mSettings saved.\x1b[0;37m Your BBS is open: call %s port %d.\r\n"
@@ -369,7 +451,43 @@ static void callerInput(const std::string& app) {
 }
 
 // ------------------------------------------------------------------ taps and serial commands
+static void newSetupPin() {
+    char b[8];
+    snprintf(b, sizeof b, "%06lu", (unsigned long)(esp_random() % 1000000));
+    setupPin = b;
+}
+
+static void sysopAction(axis::bbs::SysopMenu::Action a) {
+    using A = axis::bbs::SysopMenu::Action;
+    if (a == A::FormatSd) {
+        if (line) {
+            logEvent("sysop: SD format refused, a caller is online");
+            return;
+        }
+        String result;
+        bool   ok = storageFormatSd(result);
+        logEvent(String("sysop: SD format ") + (ok ? "done" : "FAILED") + ": " + result);
+        makeAreaFolders();
+    } else if (a == A::Restart) {
+        logEvent("sysop: restart");
+        delay(200);
+        ESP.restart();
+    } else if (a == A::RerunSetup) {  // nothing changes until the wizard saves
+        logEvent("sysop: setup again");
+        newSetupPin();
+        mode = Mode::SetupChoice;
+        sysop = axis::bbs::SysopMenu();
+    }
+}
+
 static void handleTap(int x, int y) {
+    if (!screenReady()) return;  // a door has the screen's memory
+    if (mode == Mode::Normal) {  // any tap on the WFC opens the sysop menu
+        if (!sysop.isOpen()) sysop.open();
+        else sysopAction(sysop.tap(x, y));
+        screenDirty = true;
+        return;
+    }
     bool top = y >= 92 && y < 144, bottom = y >= 156 && y < 208;
     if (x < 16 || x >= 304) return;
     if (mode == Mode::SetupChoice) {
@@ -435,6 +553,12 @@ static void handleSerial() {
                               (unsigned long)src.key(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
             else
                 Serial.printf("axis: door %s FAILED: %s\n", id.c_str(), src.error());
+        } else if (cmd.startsWith("@SET ") && cmd.indexOf('=') > 5) {  // "@SET location=Myrtle Beach, SC"
+            String kv = cmd.substring(5);
+            cfg = axis::bbs::parseConfig(axis::bbs::formatConfig(cfg) + kv.c_str() + "\n");  // the later line wins
+            bool ok = configSave(cfg);
+            logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
+            screenDirty = true;
         } else if (serialFileCommand(cmd)) {  // @PUT @LS @RM @MKDIR @BAUD (tools/sdput.py)
         } else if (cmd == "@RESETSETUP") {
             configErase();
@@ -458,11 +582,10 @@ void setup() {
     storageInit();
     if (!configMount()) Serial.println("axis: internal flash filesystem failed to mount");
     cfg = configLoad();
+    makeAreaFolders();
     if (!cfg.setupDone) {
         mode = Mode::SetupChoice;
-        char b[8];
-        snprintf(b, sizeof b, "%06lu", (unsigned long)(esp_random() % 1000000));
-        setupPin = b;
+        newSetupPin();
     }
     Serial.printf("axis: settings %s\n", cfg.setupDone ? "loaded" : "not set up yet, first-boot setup");
     if (!wifiJoinSaved()) {

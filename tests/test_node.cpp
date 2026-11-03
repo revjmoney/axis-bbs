@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include "doctest.h"
+#include "bbs/login_art.h"
 #include "bbs/node.h"
 
 using axis::bbs::Node;
@@ -179,4 +180,53 @@ TEST_CASE("a long door does not count as idle time") {
     n.resumeAfterDoor(Node::DoorEnd::Normal, 20 * 60000);
     n.poll(20 * 60000 + 1000);
     CHECK(n.state() == Node::State::Menu);
+}
+
+static SysInfo fullInfo() {
+    SysInfo s = info();
+    s.callsToday = 7;
+    s.nodesTotal = 1;
+    s.nodes = {"Rev"};
+    s.hardware = "ESP32 CYD 240 MHz";
+    return s;
+}
+
+TEST_CASE("login screen shows the drippy logo and the board's details") {
+    axis::bbs::BbsConfig cfg;
+    cfg.sysopHandle = "Rev";
+    cfg.location = "The Workshop";
+    Node n(1, fullInfo, cfg);
+    n.begin(0);
+    std::string out = n.takeOutput();
+    CHECK(out.find(kLoginArt) != std::string::npos);  // the drippy logo from art/login.ans
+    CHECK(out.find("The Workshop") != std::string::npos);
+    CHECK(out.find("axis.local") != std::string::npos);
+    CHECK(out.find("ESP32 CYD") != std::string::npos);
+    CHECK(out.find("calls today 7") != std::string::npos);
+    CHECK(out.find(axis::bbs::kAxisVersion) != std::string::npos);
+}
+
+TEST_CASE("login screen lists the active nodes") {
+    Node n(1, fullInfo);
+    n.begin(0);
+    std::string out = n.takeOutput();
+    CHECK(out.find("1 of 1") != std::string::npos);
+    CHECK(out.find("you") != std::string::npos);
+}
+
+TEST_CASE("login screen credits jmscnc.com and rotatocam.com") {
+    Node n(1, fullInfo);
+    n.begin(0);
+    std::string out = n.takeOutput();
+    CHECK(out.find("jmscnc.com") != std::string::npos);
+    CHECK(out.find("rotatocam.com") != std::string::npos);
+}
+
+TEST_CASE("login screen fits a 25 line terminal") {
+    Node n(1, fullInfo);
+    n.begin(0);
+    std::string out = n.takeOutput();
+    size_t lines = 0;
+    for (size_t i = out.find("\x1b[2J"); i < out.size(); i++) lines += out[i] == '\n';
+    CHECK(lines <= 24);
 }
