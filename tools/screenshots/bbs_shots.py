@@ -5,7 +5,7 @@
 A small ANSI/CP437 terminal (80x25) runs inside this script, so every screenshot shows the
 screen exactly as a real terminal would after that step.
 
-usage: python bbs_shots.py HOST OUTDIR [SCRIPT.py] [--no-busy]
+usage: python bbs_shots.py HOST[:PORT] OUTDIR [SCRIPT.py] [--no-busy]
        SCRIPT.py defines SCRIPT = [(name, keys bytes), ...]; default: login, info, credits, goodbye
 """
 import os
@@ -134,6 +134,10 @@ SCRIPT = [('01-welcome', b''), ('02-logged-in', b'Rev\r\n'), ('03-info', b'i'), 
 
 def main():
     host, out = sys.argv[1], sys.argv[2]
+    port = 23
+    if ':' in host:
+        host, port = host.rsplit(':', 1)
+        port = int(port)
     script = SCRIPT
     if len(sys.argv) > 3 and sys.argv[3].endswith('.py'):
         ns = {}
@@ -141,7 +145,7 @@ def main():
         script = ns['SCRIPT']
     os.makedirs(out, exist_ok=True)
     term = Term()
-    s = socket.create_connection((host, 23), 5)
+    s = socket.create_connection((host, port), 5)
     for name, keys in script:
         if keys:
             s.sendall(keys)
@@ -153,9 +157,9 @@ def main():
     if '--no-busy' in sys.argv:
         return
     time.sleep(0.5)
-    first = socket.create_connection((host, 23), 5)  # holds the node
+    first = socket.create_connection((host, port), 5)  # holds the node
     read(first, 1.0)
-    second = socket.create_connection((host, 23), 5)
+    second = socket.create_connection((host, port), 5)
     busy = Term()
     busy.feed(strip_telnet(read(second, 1.5)).decode('cp437'))
     path = os.path.join(out, '06-second-caller-busy.png')

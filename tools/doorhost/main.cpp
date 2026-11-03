@@ -7,9 +7,12 @@
 //   doorhost --dir ... --exe ... --args ... --run 5000 --keys "\r" --trace dos.log
 //   doorhost --dir ... --exe ... --args ... --script steps.txt --shots DIR
 //       each line "regex<TAB>keys<TAB>shot": wait for the regex on screen, save DIR/shot.b800, type the keys
+//   doorhost --dir ... --exe LORD.EXE --args "1 /DREW" --telnet 2323 [--alias NAME] [--drop doorsys|dorinfo]
+//       wait for one telnet caller and run the door for them (FOSSIL + drop file)
 //       headless: type the keys (\r, \e, \xNN escapes; '|' waits 1 s), run, print the screen and stats
 #include <chrono>
 #include <fstream>
+#include <memory>
 #include <regex>
 #include <cstdio>
 #include <cstring>
@@ -19,6 +22,7 @@
 #include "door/session.h"
 #include "platform/pc/consolestream.h"
 #include "platform/pc/stdhostfs.h"
+#include "platform/pc/tcpstream.h"
 
 using namespace axis::door;
 
@@ -46,6 +50,7 @@ int main(int argc, char** argv) {
     bool        local = false;
     int         runMs = 0;
     std::string keys, tracePath, scriptPath, shotsDir;
+    int         telnetPort = -1;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto        next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -59,7 +64,12 @@ int main(int argc, char** argv) {
         else if (a == "--script") scriptPath = next();
         else if (a == "--shots") shotsDir = next();
         else if (a == "--budget") cfg.ramBudget = (size_t)std::stoi(next()) * 1024;
-        else {
+        else if (a == "--telnet") telnetPort = std::stoi(next());
+        else if (a == "--alias") cfg.caller.alias = cfg.caller.realName = next();
+        else if (a == "--drop") {
+            std::string d = next();
+            cfg.dropFile = d == "dorinfo" ? DropFile::Dorinfo : DropFile::DoorSys;
+        } else {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
             return 2;
         }
@@ -72,6 +82,23 @@ int main(int argc, char** argv) {
     axis::pc::StdHostFs fs(cfg.dir);
     LockTable           locks;
     cfg.localMode = true;
+
+    if (telnetPort >= 0) {  // wait for one caller, run the door for them over FOSSIL, then exit
+        axis::pc::TcpListener listener((uint16_t)telnetPort);
+        std::printf("doorhost: waiting for a telnet caller on port %u\n", listener.port());
+        std::fflush(stdout);
+        std::unique_ptr<axis::pc::TcpStream> line;
+        while (!(line = listener.accept(1000))) {
+        }
+        std::printf("doorhost: caller connected, starting %s\n", cfg.exe.c_str());
+        cfg.localMode = false;
+        if (cfg.dropFile == DropFile::None) cfg.dropFile = DropFile::DoorSys;
+        DoorSession s(cfg, fs, locks, *line, 1);
+        s.run();
+        std::printf("doorhost: door finished: result %d, exit code %d, peak RAM %d KB\n", (int)s.result(), s.exitCode(),
+                    s.memStats().peakRamPages * 4);
+        return 0;
+    }
 
     if (local) {
         axis::pc::ConsoleStream con;

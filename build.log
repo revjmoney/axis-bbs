@@ -1,4 +1,2 @@
-[1/4] Building CXX object CMakeFiles/axiscore.dir/src/door/session.cpp.obj
-[2/4] Linking CXX static library libaxiscore.a
-[3/4] Linking CXX executable doorhost.exe
-[4/4] Linking CXX executable axis_tests.exe
+[1/2] Building CXX object CMakeFiles/axis_tests.dir/tests/test_lord_telnet.cpp.obj
+[2/2] Linking CXX executable axis_tests.exe
