@@ -3,3 +3,6 @@ build/
 .pio/
 local/
 __pycache__/
+build.log
+fw.log
+test.log

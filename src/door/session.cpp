@@ -65,24 +65,22 @@ bool DoorSession::load() {
         }
     }
     // read the program through the door's file system (SD, flash or PC alike)
-    int h = fs_.open(cfg_.exe, 0, false, false);
-    if (h < 0) return false;
-    std::vector<uint8_t> file, buf(4096);  // on the heap: the board's loop task has a small stack
-    for (int n; (n = fs_.read(h, buf.data(), (int)buf.size())) > 0;) file.insert(file.end(), buf.begin(), buf.begin() + n);
-    fs_.close(h);
-    MzInfo mz;
-    if (!parseMz(file.data(), file.size(), mz)) return false;
+    MzInfo         mz;
     const uint8_t* img = nullptr;
     size_t         imgLen = 0;
-    if (cfg_.imageSource) {
-        img = cfg_.imageSource->image(file, mz, kLoadSeg, imgLen);
-    } else {
+    if (cfg_.imageSource) {  // the board: the image is streamed into flash, never held in RAM
+        img = cfg_.imageSource->image(fs_, cfg_.exe, kLoadSeg, mz, imgLen);
+    } else {  // the PC: read and relocate in RAM
+        int h = fs_.open(cfg_.exe, 0, false, false);
+        if (h < 0) return false;
+        std::vector<uint8_t> file, buf(4096);
+        for (int n; (n = fs_.read(h, buf.data(), (int)buf.size())) > 0;) file.insert(file.end(), buf.begin(), buf.begin() + n);
+        fs_.close(h);
+        if (!parseMz(file.data(), file.size(), mz)) return false;
         image_ = relocate(file.data(), file.size(), mz, kLoadSeg);
         img = image_.data();
         imgLen = image_.size();
     }
-    file.clear();
-    file.shrink_to_fit();
     if (!img) return false;
 
     pool_.reset(new PagePool(cfg_.ramBudget));

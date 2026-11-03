@@ -268,13 +268,19 @@ TEST_CASE("session terminate with AH=00h ends the program") {
 }
 
 namespace {
-// hands the session a ready-made image, as the board's flash cache will
+// hands the session a ready-made image, as the board's flash cache will (it reads the file itself)
 struct TestImageSource : ImageSource {
     std::vector<uint8_t> img;
     int                  calls = 0;
-    const uint8_t* image(const std::vector<uint8_t>& exe, const MzInfo& mz, uint16_t loadSeg, size_t& len) override {
+    const uint8_t* image(HostFs& fs, const std::string& exe, uint16_t loadSeg, MzInfo& mz, size_t& len) override {
         calls++;
-        img = relocate(exe.data(), exe.size(), mz, loadSeg);
+        int                  h = fs.open(exe, 0, false, false);
+        std::vector<uint8_t> file(65536);
+        int                  n = fs.read(h, file.data(), (int)file.size());
+        fs.close(h);
+        file.resize(n);
+        if (!parseMz(file.data(), file.size(), mz)) return nullptr;
+        img = relocate(file.data(), file.size(), mz, loadSeg);
         len = img.size();
         return img.data();
     }

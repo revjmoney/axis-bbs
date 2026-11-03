@@ -134,3 +134,46 @@ TEST_CASE("LORD header values") {
     CHECK(mz.minAlloc == 129344);
     CHECK(mz.relocCount == 14988);
 }
+
+// relocateChunk builds the same image as relocate(), one chunk at a time
+static std::vector<uint8_t> chunked(const std::vector<uint8_t>& f, const MzInfo& mz, uint16_t seg, size_t chunk) {
+    size_t                len = (mz.imageSize + kPageSize - 1) / kPageSize * kPageSize;
+    std::vector<uint32_t> relocs = relocTargets(f.data() + mz.relocTable, mz.relocCount, len);
+    std::vector<uint8_t>  out;
+    auto byteAt = [&](uint32_t at) -> uint8_t { return at < mz.imageSize ? f[mz.headerSize + at] : 0; };
+    for (uint32_t base = 0; base < len; base += chunk) {
+        std::vector<uint8_t> c(chunk, 0);
+        for (uint32_t i = 0; i < chunk && base + i < mz.imageSize; i++) c[i] = f[mz.headerSize + base + i];
+        relocateChunk(c.data(), base, chunk, relocs, seg, byteAt);
+        out.insert(out.end(), c.begin(), c.end());
+    }
+    return out;
+}
+
+TEST_CASE("chunked relocation matches relocate on a tiny EXE") {
+    auto   f = tinyExe();
+    MzInfo mz;
+    REQUIRE(parseMz(f.data(), f.size(), mz));
+    CHECK(chunked(f, mz, kLoadSeg, kPageSize) == relocate(f.data(), f.size(), mz, kLoadSeg));
+}
+
+TEST_CASE("chunked relocation handles a word split across chunks") {
+    auto f = tinyExe();
+    f[32 + 2] = 0x12;  // the relocated word's high byte, in the second 2-byte chunk
+    MzInfo mz;
+    REQUIRE(parseMz(f.data(), f.size(), mz));
+    auto whole = relocate(f.data(), f.size(), mz, kLoadSeg);
+    auto parts = chunked(f, mz, kLoadSeg, 2);
+    whole.resize(parts.size());
+    CHECK(parts == whole);
+}
+
+TEST_CASE("chunked relocation matches relocate on LORD.EXE") {
+    const char* dir = std::getenv("AXIS_LORD_DIR");
+    if (!dir) return;
+    std::ifstream        in(std::string(dir) + "/LORD.EXE", std::ios::binary);
+    std::vector<uint8_t> f((std::istreambuf_iterator<char>(in)), {});
+    MzInfo               mz;
+    REQUIRE(parseMz(f.data(), f.size(), mz));
+    CHECK(chunked(f, mz, kLoadSeg, 4096) == relocate(f.data(), f.size(), mz, kLoadSeg));
+}

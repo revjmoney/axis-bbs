@@ -5,16 +5,18 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-#include <vector>
+#include <string>
 
+#include "door/hostfs.h"
 #include "door/mz.h"
 
 namespace axis {
 namespace door {
 
 struct ImageSource {
-    // the image relocated for loadSeg, valid for the whole session; nullptr if it can't be provided
-    virtual const uint8_t* image(const std::vector<uint8_t>& exe, const MzInfo& mz, uint16_t loadSeg, size_t& len) = 0;
+    // reads the program from fs itself (in chunks: it may be bigger than free RAM), fills mz from its
+    // header, and returns the image relocated for loadSeg, valid for the whole session; nullptr on failure
+    virtual const uint8_t* image(HostFs& fs, const std::string& exe, uint16_t loadSeg, MzInfo& mz, size_t& len) = 0;
     virtual ~ImageSource() = default;
 };
 

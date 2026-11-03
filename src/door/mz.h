@@ -5,6 +5,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,14 @@ struct MzInfo {
 
 bool                 parseMz(const uint8_t* file, size_t len, MzInfo& out);
 std::vector<uint8_t> relocate(const uint8_t* file, size_t len, const MzInfo& mz, uint16_t loadSeg);  // padded to whole pages
+
+// The same relocation done a chunk at a time, for images too big for RAM. relocTargets turns `count`
+// raw table entries into image offsets, dropping any whose word doesn't fit in `imageLen` (padded).
+// relocateChunk patches the chunk at image offset `base`; byteAt(off) gives an unrelocated image
+// byte (0 past the image) for a word that straddles two chunks.
+std::vector<uint32_t> relocTargets(const uint8_t* table, uint32_t count, size_t imageLen);
+void relocateChunk(uint8_t* chunk, uint32_t base, size_t chunkLen, const std::vector<uint32_t>& targets,
+                   uint16_t loadSeg, const std::function<uint8_t(uint32_t)>& byteAt);
 
 struct LoadedProgram {
     uint16_t psp, cs, ip, ss, sp;

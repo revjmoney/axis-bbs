@@ -44,6 +44,28 @@ std::vector<uint8_t> relocate(const uint8_t* f, size_t, const MzInfo& mz, uint16
     return img;
 }
 
+std::vector<uint32_t> relocTargets(const uint8_t* table, uint32_t count, size_t imageLen) {
+    std::vector<uint32_t> out;
+    out.reserve(count);
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t at = w16(table, i * 4u + 2) * 16u + w16(table, i * 4u);
+        if (at + 1 < imageLen) out.push_back(at);  // a bad entry: leave the image alone
+    }
+    return out;
+}
+
+void relocateChunk(uint8_t* chunk, uint32_t base, size_t chunkLen, const std::vector<uint32_t>& targets,
+                   uint16_t loadSeg, const std::function<uint8_t(uint32_t)>& byteAt) {
+    for (uint32_t at : targets) {
+        bool lowHere = at >= base && at < base + chunkLen, highHere = at + 1 >= base && at + 1 < base + chunkLen;
+        if (!lowHere && !highHere) continue;
+        uint8_t  b0 = lowHere ? chunk[at - base] : byteAt(at), b1 = highHere ? chunk[at + 1 - base] : byteAt(at + 1);
+        uint16_t v = (uint16_t)(b0 | b1 << 8) + loadSeg;
+        if (lowHere) chunk[at - base] = (uint8_t)v;
+        if (highHere) chunk[at + 1 - base] = v >> 8;
+    }
+}
+
 bool loadProgram(GuestMemory& mem, DosMemory*& dm, const uint8_t* image, size_t imageLen, const MzInfo& mz,
                  const std::string& cmdTail, const std::string& progPath, LoadedProgram& out) {
     uint32_t loadAt = kLoadSeg * 16u;
