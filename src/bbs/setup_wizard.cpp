@@ -12,8 +12,8 @@ namespace axis::bbs {
 namespace {
 const char* const DIM = "\x1b[0;37m";
 const char* const HI = "\x1b[1;37m";
-const char* const CYAN = "\x1b[1;36m";
-const char* const RED = "\x1b[1;31m";
+const char* const CYAN = "\x1b[0;33m";
+const char* const RED = "\x1b[0;33m";
 const char* const AMBER = "\x1b[0;33m";
 
 bool allDigits(const std::string& s) {

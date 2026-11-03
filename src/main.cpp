@@ -134,7 +134,7 @@ static std::vector<int> areaFileCounts() {
 static void title(const char* sub) {
     scr.fillScreen(TFT_BLACK);
     scr.setTextDatum(textdatum_t::top_left);
-    scr.setTextColor(TFT_RED, TFT_BLACK);
+    scr.setTextColor(TFT_ORANGE, TFT_BLACK);
     scr.setTextSize(2);
     String t = cfg.bbsName.c_str();
     t.toUpperCase();
@@ -159,10 +159,10 @@ static AnsiScreen wfc;
 static BigText    panel;
 static void drawWfc() {
     wfc.load(kWfcArt);
-    wfc.render(scr, 12);  // the drippy logo and name in small cells: the top 96 pixels
-    // the live panel in full-size 8x16 text: 9 rows fill the bottom 144 pixels
-    const uint8_t F = 0x04, K = 0x07, V = 0x0F;  // frame in the drips' red
-    const int     rows = 9, last = rows - 1;  // the bottom 144 pixels
+    wfc.render(scr, 8);  // the compact drippy logo in small cells: the top 64 pixels
+    // the live panel in full-size 8x16 text: 11 rows fill the bottom 176 pixels
+    const uint8_t F = 0x06, K = 0x07, V = 0x0F;  // Rev's scheme: orange frame, light grey labels, white values
+    const int     rows = 11, last = rows - 1;
     char          b[48];
     panel.clear(K);
     panel.fill(0, 0, 40, 0xCD, F);
@@ -175,9 +175,10 @@ static void drawWfc() {
         panel.text(r, 0, "\xba", F);
         panel.text(r, 39, "\xba", F);
     }
-    if (node) panel.text(0, 2, "\xb5 CALLER ONLINE \xc6", 0x0A);
-    else panel.text(0, 2, "\xb5 WAITING FOR CALLER \xc6", 0x0B);
-    panel.text(0, 30, "\xb5 node 1 \xc6", F);
+    if (node) panel.text(0, 2, "\xb5 CALLER ONLINE \xc6", 0x0F);
+    else panel.text(0, 2, "\xb5 WAITING FOR CALLER \xc6", 0x0F);
+    panel.text(0, 30, "\xb5 node 1 \xc6", 0x08);
+    panel.text(last, 23, "\xb5 tap: sysop \xc6", 0x08);
     auto line = [&](int r, const char* label, const String& value) {
         panel.text(r, 2, label, K);
         panel.text(r, 9, value.substring(0, 29).c_str(), V);
@@ -188,18 +189,21 @@ static void drawWfc() {
     line(1, "dial", dialName() + ":" + String(cfg.telnetPort));
     line(2, "ip", WiFi.localIP().toString());
     line(3, "wifi", String(wifiSsid()) + " " + String(WiFi.RSSI()) + " dBm");
-    line(4, "store", storageHasSd() ? "SD card" : "internal flash");
-    line(5, "calls", String(callsToday) + "  last " + lastCaller);
-    line(6, "up", String(b) + "  " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) + " KB free");
+    line(4, "store", storageHasSd() ? "SD card, " + String(cfg.areas.size()) + " file areas" : "internal flash");
+    line(5, "doors", String(cfg.doors.size()) + ": " + (cfg.doors.empty() ? String("") : String(cfg.doors[0].name.c_str())));
+    line(6, "calls", String(callsToday) + "  last " + lastCaller);
+    line(7, "up", String(b) + "  " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) + " KB free");
+    line(8, "from", cfg.location.c_str());
     if (node) {
         snprintf(b, sizeof b, "%s  %lus", node->handle().empty() ? "(logging in)" : node->handle().c_str(),
                  (unsigned long)((millis() - callStartMs) / 1000));
-        panel.text(7, 2, "online", K);
-        panel.text(7, 9, b, 0x0E);
+        panel.text(9, 2, "online", K);
+        panel.text(9, 9, b, 0x06);
     } else {
-        line(7, "sysop", String(cfg.sysopHandle.c_str()) + "   " + timeText().substring(11));
+        String now = timeText();  // "2026-11-03 21:40", or "clock not set" before the first time sync
+        line(9, "sysop", String(cfg.sysopHandle.c_str()) + (now[4] == '-' ? "   " + now.substring(11) : String("")));
     }
-    panel.render(scr, 96, rows);
+    panel.render(scr, 64, rows);
 }
 
 // The sysop menu: drippy title, the screen's text in big VGA cells, then the touch buttons.
@@ -212,11 +216,11 @@ static void drawSysop() {
     static BigText t;
     t.clear(0x07);
     std::string ttl = sysop.title();
-    t.text(0, 1, ttl.c_str(), 0x0C);
+    t.text(0, 1, ttl.c_str(), 0x0F);
     t.text(0, 38 - 10, cfg.boardName.substr(0, 10).c_str(), 0x08);
     for (int c = 1; c < 1 + (int)ttl.size(); c++)  // paint drips under the title
-        if ((c * 7 + ttl[c - 1]) % 3 == 0) t.text(1, c, (c % 2) ? "\xdb" : "\xdf", 0x04);
-    t.fill(1, 1 + (int)ttl.size() + 1, 38 - (int)ttl.size(), 0xc4, 0x04);
+        if ((c * 7 + ttl[c - 1]) % 3 == 0) t.text(1, c, (c % 2) ? "\xdb" : "\xdf", 0x06);
+    t.fill(1, 1 + (int)ttl.size() + 1, 38 - (int)ttl.size(), 0xc4, 0x08);
     auto lines = sysop.lines(d);
     for (size_t i = 0; i < lines.size(); i++) t.text(2 + (int)i, 1, lines[i].c_str(), 0x0F);
     t.render(scr, 0, 13);
@@ -224,10 +228,11 @@ static void drawSysop() {
     scr.setFont(&fonts::Font2);
     scr.setTextDatum(textdatum_t::middle_center);
     for (auto& b : sysop.buttons()) {
-        uint16_t fill = b.danger ? 0xA000 : 0x4800;  // bright red for erase/redo, deep red for the rest
+        // Rev's scheme: dark grey buttons outlined in orange; erase/redo buttons solid orange
+        uint16_t fill = b.danger ? 0xFC00 : 0x2104, ink = b.danger ? TFT_BLACK : TFT_WHITE;
         scr.fillRoundRect(b.x, b.y, b.w, b.h, 6, fill);
-        scr.drawRoundRect(b.x, b.y, b.w, b.h, 6, TFT_ORANGE);
-        scr.setTextColor(TFT_WHITE, fill);
+        scr.drawRoundRect(b.x, b.y, b.w, b.h, 6, b.danger ? TFT_WHITE : 0xFC00);
+        scr.setTextColor(ink, fill);
         scr.drawString(b.label.c_str(), b.x + b.w / 2, b.y + b.h / 2);
     }
     scr.setTextDatum(textdatum_t::top_left);
@@ -380,7 +385,7 @@ static void doorStatusLine() {  // straight to the panel: there is no screen cop
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(textdatum_t::top_left);
     tft.setTextSize(2);
-    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
     tft.drawString(("IN DOOR: " + node->door().name).substr(0, 26).c_str(), 6, 100);
     tft.setTextColor(TFT_ORANGE, TFT_BLACK);
     tft.drawString(node->handle().substr(0, 26).c_str(), 6, 124);
@@ -671,7 +676,7 @@ void setup() {
     if (!wifiJoinSaved()) {
         Serial.println("axis: no saved WiFi network in range");
         title("no WiFi");
-        scr.setTextColor(TFT_RED, TFT_BLACK);
+        scr.setTextColor(TFT_ORANGE, TFT_BLACK);
         scr.drawString("No saved WiFi network in range.", 8, 110);
         screenPush();
         return;  // the touch WiFi picker comes with the next build

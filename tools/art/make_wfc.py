@@ -1,92 +1,82 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Rev. J. Money
-"""Draw the AXIS waiting-for-caller screen as an 80x30 CP437 ANSI file (art/wfc.ans).
+"""Draw the AXIS waiting-for-caller logo as CP437 ANSI (art/wfc.ans), 80 columns by 8 rows.
 
-Big drippy block letters, original art (no TheDraw font). Rows 17-28 are left for the
-live status the firmware writes in. Edit art/wfc.ans in PabloDraw or Moebius afterwards,
-then run tools/art/ans2header.py to rebuild the firmware copy.
+A compact drippy logo for the top 64 pixels of the CYD's waiting-for-caller screen (4x8 cells);
+the firmware draws the live board info under it. Rev's scheme: black, grey, orange, white.
+Original art (no TheDraw font). The file is 30 rows tall for the firmware's AnsiScreen; rows 8
+and down are left blank. Edit art/wfc.ans in PabloDraw or Moebius, then rebuild the firmware copy
+with tools/art/ans2header.py.
 
 usage: python -I tools/art/make_wfc.py art/wfc.ans
 """
 import random
 import sys
 
-W, H = 80, 30
-FULL, DARK, MED, LIGHT, TOP, BOT = 0xDB, 0xB2, 0xB1, 0xB0, 0xDF, 0xDC
+W, H, USED = 80, 30, 8
+TOPROW = 1  # a row of headroom so the letter tops aren't flush with the screen edge
+FULL, MED, LIGHT, TOP, BOT, DOT = 0xDB, 0xB1, 0xB0, 0xDF, 0xDC, 0xFA
 
-LETTERS = {
-    'A': ["  █████  ", " ███ ███ ", "███   ███", "█████████", "███   ███", "███   ███", "███   ███"],
-    'X': ["███   ███", " ███ ███ ", "  █████  ", "   ███   ", "  █████  ", " ███ ███ ", "███   ███"],
-    'I': ["█████", " ███ ", " ███ ", " ███ ", " ███ ", " ███ ", "█████"],
-    'S': [" ████████", "███      ", "███      ", " ███████ ", "      ███", "      ███", "████████ "],
+LETTERS = {  # 5 rows; each pixel becomes 3 columns
+    'A': [" ### ", "#   #", "#####", "#   #", "#   #"],
+    'X': ["#   #", " # # ", "  #  ", " # # ", "#   #"],
+    'I': ["###", " # ", " # ", " # ", "###"],
+    'S': [" ####", "#    ", " ### ", "    #", "#### "],
 }
+# CGA attributes: 0x0F white, 0x07 light grey, 0x08 dark grey, 0x06 brown (VGA orange)
+BAND = [(FULL, 0x0F), (TOP, 0x7F), (TOP, 0x67), (FULL, 0x06), (FULL, 0x06)]
 
 
 def main(out):
-    rnd = random.Random(1337)
+    rnd = random.Random(80)
     grid = [[(0x20, 0x07) for _ in range(W)] for _ in range(H)]
 
     def put(r, c, ch, attr):
-        if 0 <= r < H and 0 <= c < W:
+        if 0 <= r < USED and 0 <= c < W:
             grid[r][c] = (ch, attr)
 
-    def text(r, c, s, attr):
-        for i, ch in enumerate(s):
-            put(r, c + i, ord(ch) if isinstance(ch, str) else ch, attr)
-
-    # logo mask: letters doubled sideways, 2 columns of gap between letters
     mask = [[False] * W for _ in range(H)]
-    top, col = 0, 2
+    col = 2
     for letter in "AXIS":
         rows = LETTERS[letter]
         for r, line in enumerate(rows):
             for c, px in enumerate(line):
-                if px == '█':
-                    mask[top + r][col + 2 * c] = mask[top + r][col + 2 * c + 1] = True
-        col += 2 * len(rows[0]) + 4
+                if px == '#':
+                    for k in range(3):
+                        mask[r + TOPROW][col + 3 * c + k] = True
+        col += 3 * len(rows[0]) + 3
 
-    # letter body: bright crown, a shaded band, deep red body
-    for r in range(H):
+    for _ in range(26):  # spray specks
+        put(rnd.randrange(USED - 1), rnd.randrange(W), rnd.choice([LIGHT, DOT, DOT]), rnd.choice([0x08, 0x08, 0x06]))
+    T = TOPROW
+    for r in range(T, T + 5):  # shadow, then the letters
+        for c in range(W - 1):
+            if mask[r][c] and not mask[r + 1][c + 1]:
+                put(r + 1, c + 1, LIGHT, 0x08)
+    for r in range(T, T + 5):
         for c in range(W):
-            if not mask[r][c]:
-                continue
-            band = r - top
-            if band == 0:
-                put(r, c, FULL, 0x0C)
-            elif band == 1:
-                put(r, c, DARK, 0x4C)
-            else:
-                put(r, c, FULL, 0x04)
-
-    # paint drips off the bottom of each letter: long runs, short runs, falling drops
-    base = top + 6
-    for c in range(W):
-        if not mask[base][c] or rnd.random() > 0.55:
+            if mask[r][c]:
+                put(r, c, *BAND[r - T])
+    for c in range(W):  # drips off the bottom row (the banner, drawn last, covers any that reach it)
+        if not mask[T + 4][c] or rnd.random() > 0.55:
             continue
-        length = rnd.choice([1, 1, 2, 2, 3, 3, 4])
-        rr = base + 1
-        for i in range(length):
-            put(rr, c, FULL if i < length - 1 else TOP, 0x04)
-            rr += 1
-        if rnd.random() < 0.35 and rr + 1 < 11:
-            put(rr + 1, c, BOT, 0x04)  # a drop falling away
+        colour = rnd.choice([0x06, 0x06, 0x06, 0x08])
+        if rnd.random() < 0.5:
+            put(T + 5, c, FULL, colour)
+            put(T + 6, c, TOP, colour)
+        else:
+            put(T + 5, c, TOP, colour)
+    # the name, black on orange, at the right of the logo
+    name = " U N D E R G R O U N D   C N C "
+    c0 = W - len(name) - 1
+    put(7, c0 - 1, 0xDE, 0x06)
+    for i, ch in enumerate(name):
+        put(7, c0 + i, ord(ch), 0x60)
+    put(7, c0 + len(name), 0xDD, 0x06)
+    tag = "Axis Micro BBS Firmware"
+    for i, ch in enumerate(tag):
+        put(7, 2 + i, ord(ch), 0x08)
 
-    # name and tagline
-    name = " ".join("UNDERGROUND") + "   " + " ".join("CNC")
-    text(11, (W - len(name)) // 2, name, 0x0E)
-    tag = "rotary axes \xfa toolpaths \xfa G-code \xfa the underground workshop"
-
-    # status panel frame (the firmware writes the live values inside)
-    text(16, 0, [0xC9] + [0xCD] * 78 + [0xBB], 0x08)
-    for r in range(17, 28):
-        put(r, 0, 0xBA, 0x08)
-        put(r, 79, 0xBA, 0x08)
-    text(28, 0, [0xC8] + [0xCD] * 78 + [0xBC], 0x08)
-    text(16, 3, [0xB5] + [ord(ch) for ch in " WAITING FOR CALLER "] + [0xC6], 0x0B)
-    text(16, 60, [0xB5] + [ord(ch) for ch in " node 1 "] + [0xC6], 0x08)
-    text(29, 2, "Axis Micro BBS Firmware by Rev. J. Money  \xfa  rotatocam.com  \xfa  jmscnc.com".encode('latin1'), 0x08)
-
-    # write ANSI: clear, then each row with SGR changes only where the colour changes
     cga = [0, 4, 2, 6, 1, 5, 3, 7]  # CGA index -> ANSI colour number
     data = bytearray(b"\x1b[0m\x1b[2J\x1b[H")
     for r in range(H):
@@ -98,9 +88,7 @@ def main(out):
                 data += f"\x1b[0;{'1;' if fg > 7 else ''}{30 + cga[fg & 7]};{40 + cga[bg & 7]}m".encode()
                 last = attr
             data.append(ch)
-        data += b"\x1b[0m"
-        if r < H - 1:
-            data += b"\r\n"
+        data += b"\x1b[0m"  # full 80-column rows: no CR LF (BBS terminals wrap right after column 80)
     open(out, "wb").write(bytes(data))
     print(out, len(data), "bytes")
 

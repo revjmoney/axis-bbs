@@ -5,15 +5,17 @@
 #include <cctype>
 #include <cstdio>
 
+#include "bbs/theme.h"
+
 namespace axis::bbs {
 
 namespace {
 const char* const CLS = "\x1b[0m\x1b[2J\x1b[H";
 const char* const DIM = "\x1b[0;37m";
 const char* const HI = "\x1b[1;37m";
-const char* const CYAN = "\x1b[1;36m";
-const char* const YEL = "\x1b[1;33m";
-const char* const MAG = "\x1b[0;35m";
+const char* const CYAN = "\x1b[0;33m";
+const char* const YEL = "\x1b[1;37m";
+const char* const MAG = "\x1b[1;30m";
 const char* const AMBER = "\x1b[0;33m";
 
 std::string ext(const std::string& n) {
@@ -68,8 +70,7 @@ void AnsiViewer::showPacks() {
         if (ext(f.name) == "ZIP") packs_.push_back(f);
     std::string s = CLS;
     s += "\r\n   ";
-    s += YEL;
-    s += "ANSI PACK VIEWER";
+    s += theme::fade("A N S I   P A C K   V I E W E R");
     s += DIM;
     s += "   artpacks from the " + areaName_ + " file area\r\n";
     s += MAG;

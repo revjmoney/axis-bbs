@@ -3,6 +3,7 @@
 #include "bbs/node.h"
 
 #include "bbs/login_art.h"
+#include "bbs/theme.h"
 
 #include <cctype>
 #include <cstdio>
@@ -15,9 +16,9 @@ const char* const CLS = "\x1b[0m\x1b[2J\x1b[H";
 const char* const RST = "\x1b[0m";
 const char* const DIM = "\x1b[0;37m";
 const char* const HI = "\x1b[1;37m";
-const char* const CYAN = "\x1b[1;36m";
+const char* const CYAN = "\x1b[0;33m";
 const char* const AMBER = "\x1b[0;33m";
-const char* const RED = "\x1b[1;31m";
+const char* const RED = "\x1b[0;33m";
 
 std::string uptime(uint32_t sec);
 
@@ -29,8 +30,8 @@ std::string fit(std::string t, size_t n) {
 
 // One line of the two boxes: label + value in each, 38 columns inside every box.
 std::string boxLine(const char* l1, const std::string& v1, const char* l2, const std::string& v2) {
-    const char* const FRAME = "\x1b[0;35m";
-    const char* const LABEL = "\x1b[0;36m";
+    const char* const FRAME = "\x1b[0;33m";
+    const char* const LABEL = "\x1b[0;37m";
     const char* const VALUE = "\x1b[1;37m";
     std::string       s = FRAME;
     s += "\xba ";
@@ -40,10 +41,10 @@ std::string boxLine(const char* l1, const std::string& v1, const char* l2, const
 }
 
 std::string boxEdge(bool top) {
-    std::string s = "\x1b[0;35m";
+    std::string s = "\x1b[0;33m";
     if (top) {
-        s += "\xc9\xcd\xb5\x1b[1;33m THE BOARD \x1b[0;35m\xc6" + std::string(24, '\xcd') + "\xbb";
-        s += "\xc9\xcd\xb5\x1b[1;33m THE SYSTEM \x1b[0;35m\xc6" + std::string(23, '\xcd') + "\xbb";
+        s += "\xc9\xcd\xb5 " + theme::fade("THE BOARD") + " " + theme::ORANGE + "\xc6" + std::string(24, '\xcd') + "\xbb";
+        s += "\xc9\xcd\xb5 " + theme::fade("THE SYSTEM") + " " + theme::ORANGE + "\xc6" + std::string(23, '\xcd') + "\xbb";
     } else {
         s += "\xc8" + std::string(38, '\xcd') + "\xbc\xc8" + std::string(38, '\xcd') + "\xbc";
     }
@@ -66,8 +67,8 @@ std::string welcome(int node, const SysInfo& s, const BbsConfig& cfg) {
     w += boxLine("dial", dial, "storage", s.storage);
     w += boxLine("nodes", who, "up", uptime(s.uptimeSec) + "  calls today " + std::to_string(s.callsToday));
     w += boxEdge(false);
-    w += "  \x1b[1;33mjmscnc.com\x1b[0;37m the JMSCNC store  \x1b[0;35m\xfa  \x1b[1;33mrotatocam.com\x1b[0;37m RotatoCAM  ";
-    w += "\x1b[0;35m\xfa  \x1b[0;37mFTN " + cfg.ftnAddress + "\r\n";  // 72 columns: no wrap
+    w += "  \x1b[1;37mjmscnc.com\x1b[0;37m the JMSCNC store  \x1b[0;33m\xfa  \x1b[1;37mrotatocam.com\x1b[0;37m RotatoCAM  ";
+    w += "\x1b[0;33m\xfa  \x1b[0;37mFTN " + cfg.ftnAddress + "\r\n";  // 72 columns: no wrap
     return w;
 }
 
@@ -91,13 +92,9 @@ void Node::begin(uint32_t nowMs) {
 
 void Node::prompt() {
     if (state_ == State::Login) {
-        out_ += CYAN;
-        out_ += "   Handle: ";
-        out_ += HI;
+        out_ += "   " + theme::fade("Handle") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Menu) {
-        out_ += DIM;
-        out_ += "\r\n   Command: ";
-        out_ += HI;
+        out_ += "\r\n   " + theme::fade("Command") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Doors) {
         out_ += DIM;
         out_ += "\r\n   Door number (Enter for the menu): ";
@@ -143,12 +140,8 @@ void Node::showMenu() {
     out_ += "\r\n\r\n";
     out_ += DIM;
     out_ += "   ";
-    for (const char* item : {"[F]", "Files", "[D]", "Doors", "[I]", "Info", "[C]", "Credits", "[G]", "Goodbye"}) {
-        bool isKey = item[0] == '[';
-        out_ += isKey ? CYAN : DIM;
-        out_ += item;
-        out_ += isKey ? " " : "   ";
-    }
+    out_ += theme::key("F", "iles   ") + theme::key("D", "oors   ") + theme::key("I", "nfo   ") + theme::key("C", "redits   ") +
+            theme::key("G", "oodbye");
     out_ += "\r\n";
     prompt();
 }
@@ -299,7 +292,7 @@ std::string Node::takeOutput() {
 }
 
 std::string busyScreen() {
-    std::string s = "\x1b[0m\r\n\x1b[1;31m   AXIS UNDERGROUND CNC\x1b[0;37m: all nodes are busy right now.\r\n";
+    std::string s = "\x1b[0m\r\n\x1b[0;33m   AXIS UNDERGROUND CNC\x1b[0;37m: all nodes are busy right now.\r\n";
     s += "   Try again in a few minutes.\x1b[0m\r\n";
     return s;
 }

@@ -7,13 +7,13 @@ namespace axis::bbs {
 SetupGate::SetupGate(std::string pin) : pin_(std::move(pin)) {}
 
 void SetupGate::begin() {
-    out_ += "\x1b[0m\x1b[2J\x1b[H\r\n   \x1b[1;31mAXIS UNDERGROUND CNC\x1b[0;37m\r\n\r\n";
+    out_ += "\x1b[0m\x1b[2J\x1b[H\r\n   \x1b[0;33mAXIS UNDERGROUND CNC\x1b[0;37m\r\n\r\n";
     out_ += "   This BBS is being set up. If you are the sysop, type the setup PIN\r\n";
     out_ += "   shown on the board's screen.\r\n";
     prompt();
 }
 
-void SetupGate::prompt() { out_ += "\r\n   \x1b[1;36mSetup PIN: \x1b[1;37m"; }
+void SetupGate::prompt() { out_ += "\r\n   \x1b[0;33mSetup PIN: \x1b[1;37m"; }
 
 void SetupGate::input(const uint8_t* p, size_t n) {
     for (size_t i = 0; i < n && !passed_ && !rejected(); i++) {

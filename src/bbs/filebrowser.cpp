@@ -14,10 +14,10 @@ namespace {
 const char* const CLS = "\x1b[0m\x1b[2J\x1b[H";
 const char* const DIM = "\x1b[0;37m";
 const char* const HI = "\x1b[1;37m";
-const char* const CYAN = "\x1b[1;36m";
-const char* const YEL = "\x1b[1;33m";
-const char* const MAG = "\x1b[0;35m";
-const char* const GRN = "\x1b[0;32m";
+const char* const CYAN = "\x1b[0;33m";
+const char* const YEL = "\x1b[1;37m";
+const char* const MAG = "\x1b[1;30m";
+const char* const GRN = "\x1b[0;37m";
 const char* const AMBER = "\x1b[0;33m";
 
 bool sameName(const std::string& a, const std::string& b) {
@@ -52,8 +52,7 @@ void FileBrowser::showAreas() {
     line_.clear();
     out_ += CLS;
     out_ += "\r\n   ";
-    out_ += YEL;
-    out_ += "FILE AREAS";
+    out_ += theme::fade("F I L E   A R E A S");
     out_ += MAG;
     out_ += "  \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
     for (size_t i = 0; i < areas_.size(); i++) {

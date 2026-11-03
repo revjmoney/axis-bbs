@@ -22,8 +22,9 @@ LETTERS = {
     'I': ["█████", " ███ ", " ███ ", " ███ ", " ███ ", " ███ ", "█████"],
     'S': [" ████████", "███      ", "███      ", " ███████ ", "      ███", "      ███", "████████ "],
 }
-# CGA attributes (fg | bg << 4); 0x0E yellow, 0x0C bright red, 0x04 red, 0x06 brown/orange
-BAND = [(FULL, 0x0E), (TOP, 0x6E), (FULL, 0x06), (TOP, 0x46), (FULL, 0x0C), (FULL, 0x04), (FULL, 0x04)]
+# CGA attributes (fg | bg << 4). Rev's scheme: black, grey, orange, white. 0x0F white, 0x07 light
+# grey, 0x08 dark grey, 0x06 brown (VGA orange). White crown, light grey, then orange paint.
+BAND = [(FULL, 0x0F), (TOP, 0x7F), (FULL, 0x07), (TOP, 0x67), (FULL, 0x06), (FULL, 0x06), (FULL, 0x06)]
 
 
 def draw():
@@ -47,7 +48,7 @@ def draw():
     # spray specks behind everything
     for _ in range(70):
         r, c = rnd.randrange(H - 1), rnd.randrange(W)
-        put(r, c, rnd.choice([LIGHT, DOT, DOT, 0xF9]), rnd.choice([0x05, 0x0D, 0x03, 0x08, 0x08]))
+        put(r, c, rnd.choice([LIGHT, DOT, DOT, 0xF9]), rnd.choice([0x08, 0x08, 0x07, 0x06]))
     # drop shadow: one right, one down
     for r in range(H):
         for c in range(W):
@@ -63,14 +64,14 @@ def draw():
     for r in range(top, top + 3):
         for c in range(1, W):
             if mask[r][c] and not mask[r][c - 1] and rnd.random() < 0.6:
-                put(r, c, BOT if r == top else FULL, 0x0F if r == top else 0x0E)
-    # drips off the bottom: red runs, some orange, a few drops falling away
+                put(r, c, BOT if r == top else FULL, 0x0F)
+    # drips off the bottom: orange runs, the odd dark grey one, a few drops falling away
     base = top + 6
     for c in range(W):
         if not mask[base][c] or rnd.random() > 0.6:
             continue
         length = rnd.choice([1, 1, 2, 2, 3, 3, 4])
-        colour = rnd.choice([0x04, 0x04, 0x04, 0x06, 0x0C])
+        colour = rnd.choice([0x06, 0x06, 0x06, 0x06, 0x08])
         rr = base + 1
         for i in range(length):
             put(rr, c, FULL if i < length - 1 else TOP, colour)
@@ -80,8 +81,8 @@ def draw():
     # banner
     name = "U N D E R G R O U N D    C N C"
     c0 = (W - len(name) - 6) // 2
-    banner = [(0xDE, 0x05), (0x20, 0x50), (0x20, 0x50)] + [(ord(ch), 0x5F if ch != ' ' else 0x50) for ch in name] + \
-             [(0x20, 0x50), (0x20, 0x50), (0xDD, 0x05)]
+    banner = [(0xDE, 0x06), (0x20, 0x60), (0x20, 0x60)] + [(ord(ch), 0x60) for ch in name] + \
+             [(0x20, 0x60), (0x20, 0x60), (0xDD, 0x06)]  # black on orange
     for i, (ch, attr) in enumerate(banner):
         put(H - 1, c0 + i, ch, attr)
     return grid

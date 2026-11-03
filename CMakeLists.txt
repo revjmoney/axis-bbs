@@ -73,7 +73,8 @@ add_executable(axis_tests
     tests/test_transfer.cpp
     tests/test_theme.cpp
     tests/test_transferjob.cpp
-    tests/test_uploadproc.cpp)
+    tests/test_uploadproc.cpp
+    tests/test_palette.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)
