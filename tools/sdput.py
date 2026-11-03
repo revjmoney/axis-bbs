@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Rev. J. Money
 """Copy a folder onto the board's storage over USB serial, checking every file's byte sum.
 
-usage: python -I tools/sdput.py COM18 LOCAL_FOLDER /doors/lord
+usage: python -I tools/sdput.py COM18 LOCAL_FOLDER /doors/lord [--baud=921600]
 
 Uses the firmware's @MKDIR/@LS/@PUT commands (src/platform/cyd/serialfiles.h). From Git Bash,
 prefix MSYS_NO_PATHCONV=1 so the board path isn't rewritten into a Windows path.
@@ -45,13 +45,21 @@ def answer_any(s, timeout=10):
     return line.decode("ascii", "replace").strip()
 
 
-def main(port, local, remote):
+def main(port, local, remote, baud=115200):
     remote = remote.rstrip("/")
-    s = serial.Serial(port, 115200, timeout=2)
-    s.dtr = False
-    s.rts = False
+    s = serial.Serial()
+    s.port, s.baudrate, s.timeout = port, 115200, 2
+    s.dtr = s.rts = False  # set before opening, or opening resets the board
+    s.open()
     time.sleep(0.3)
     s.reset_input_buffer()
+    if baud != 115200:  # the firmware's @BAUD: faster for big files, back to 115200 at the end
+        s.write(f"\n@BAUD {baud}\n".encode())
+        answer(s)
+        s.flush()
+        s.baudrate = baud
+        time.sleep(0.2)
+        s.reset_input_buffer()
     s.write(f"\n@MKDIR {remote}\n".encode())
     if answer(s) != "@OK":
         sys.exit("board did not make the folder")
@@ -84,10 +92,15 @@ def main(port, local, remote):
     have = listing(s, remote)
     bad = [n for n in files if have.get(n) != os.path.getsize(os.path.join(local, n))]
     print(f"done: {sent // 1024} KB in {int(time.time() - t0)} s; board listing {'matches' if not bad else 'DIFFERS: ' + ', '.join(bad)}")
+    if baud != 115200:
+        s.write(b"@BAUD 115200\n")
+        time.sleep(0.3)
     sys.exit(1 if bad else 0)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    args = [a for a in sys.argv[1:] if not a.startswith("--baud=")]
+    rate = next((int(a.split("=")[1]) for a in sys.argv[1:] if a.startswith("--baud=")), 115200)
+    if len(args) != 3:
         sys.exit(__doc__)
-    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    main(args[0], args[1], args[2], rate)

@@ -113,7 +113,8 @@ static std::vector<int> areaFileCounts() {
         if (storageHasSd())
             if (DIR* d = opendir(("/sd/files/" + a.id).c_str())) {
                 count = 0;
-                while (dirent* e = readdir(d)) count += e->d_name[0] != '.';
+                while (dirent* e = readdir(d))  // FILES.BBS is the area's description list, not a file
+                    count += e->d_name[0] != '.' && strcasecmp(e->d_name, "FILES.BBS") != 0;
                 closedir(d);
             }
         n.push_back(count);
