@@ -13,11 +13,14 @@ namespace door {
 class Cpu {
 public:
     using IntHandler = std::function<bool(int num)>;  // true = handled in C++, skip the IVT
+    using PortIn = std::function<uint8_t(int port)>;
+    using PortOut = std::function<void(int port, uint8_t value)>;
 
     explicit Cpu(MemoryBus& mem);
     ~Cpu();
     void     reset(uint16_t cs, uint16_t ip, uint16_t ss, uint16_t sp, uint16_t ds, uint16_t es);
     void     setIntHandler(IntHandler h);
+    void     setPorts(PortIn in, PortOut out);  // default: reads FFh, writes ignored
     uint32_t run(uint32_t maxInstructions);  // instructions executed; stops early on halt or requestStop()
     void     requestStop();
     bool     halted() const;

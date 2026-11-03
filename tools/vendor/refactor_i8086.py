@@ -90,7 +90,8 @@ def main(d):
   // AXIS: generic register access (index: 0 AX 1 CX 2 DX 3 BX 4 SP 5 BP 6 SI 7 DI 8 ES 9 CS 10 SS 11 DS)
   static uint16_t reg(int index);
   static void     setReg(int index, uint16_t value);
-  static uint16_t flagsWord();''')
+  static uint16_t flagsWord();
+  static void     setFlagsWord(uint16_t value);''')
     open(f'{d}/i8086.h', 'w', encoding='utf-8').write(h)
 
     c = open(f'{d}/i8086.cpp', encoding='utf-8').read()
@@ -182,6 +183,7 @@ static inline uint16_t WR16(uint32_t a, uint16_t v) {
     c = must(c, '}   // namespace fabgl', '''uint16_t i8086::reg(int index)              { return regs16[index]; }
 void     i8086::setReg(int index, uint16_t v) { regs16[index] = v; }
 uint16_t i8086::flagsWord()                   { return make_flags(); }
+void     i8086::setFlagsWord(uint16_t v)      { set_flags(v); }
 
 
 }   // namespace fabgl''')

@@ -117,7 +117,10 @@ int StdHostFs::open(const std::string& dosPath, int access, bool create, bool tr
 int StdHostFs::read(int h, void* buf, int n) {
     auto it = open_.find(h);
     if (it == open_.end()) return -6;
-    std::fflush(it->second.f);
+    if (it->second.writing) {  // switching from writing to reading needs a seek (never fflush a read stream)
+        std::fseek(it->second.f, 0, SEEK_CUR);
+        it->second.writing = false;
+    }
     return (int)std::fread(buf, 1, n, it->second.f);
 }
 
@@ -133,9 +136,12 @@ int StdHostFs::write(int h, const void* buf, int n) {
         std::fseek(f, pos, SEEK_SET);
         return ec ? -5 : 0;
     }
-    std::fseek(f, 0, SEEK_CUR);  // switching from reading to writing needs a seek
+    if (!it->second.writing) {
+        std::fseek(f, 0, SEEK_CUR);  // switching from reading to writing needs a seek
+        it->second.writing = true;
+    }
     int w = (int)std::fwrite(buf, 1, n, f);
-    std::fflush(f);
+    std::fflush(f);  // other nodes read the same files: keep the disk current
     return w;
 }
 
@@ -143,6 +149,7 @@ int64_t StdHostFs::seek(int h, int64_t off, int whence) {
     auto it = open_.find(h);
     if (it == open_.end()) return -6;
     std::FILE* f = it->second.f;
+    it->second.writing = false;
     if (std::fseek(f, (long)off, whence == 0 ? SEEK_SET : whence == 1 ? SEEK_CUR : SEEK_END) != 0) return -25;
     return std::ftell(f);
 }

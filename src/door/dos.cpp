@@ -102,6 +102,7 @@ bool Dos::keyOrWait(int& c) {
 bool Dos::int20() {
     exited_ = true;
     exitCode_ = 0;
+    cpu_.requestStop();  // nothing after the exit may run
     return true;
 }
 
@@ -335,6 +336,7 @@ bool Dos::int21() {
             }
             cpu_.setAx((uint16_t)done);
             ok();
+            tracef("21 AH=%02X handle %u wanted %u got %u\n", ah, bx, cx, done);
             return true;
         }
         case 0x41: {
@@ -474,6 +476,7 @@ bool Dos::int21() {
         case 0x4C:
             exited_ = true;
             exitCode_ = al;
+            cpu_.requestStop();  // nothing after the exit may run
             return true;
         case 0x4D:
             cpu_.setAx((uint16_t)exitCode_);

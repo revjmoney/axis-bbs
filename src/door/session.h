@@ -48,6 +48,7 @@ public:
     GuestMemory::Stats memStats() const;
     std::array<std::string, 25> screen() const;
     uint32_t   instructions() const { return instructions_; }
+    std::string debugState() const;  // registers and the bytes at CS:IP, for tracing
 
     // services beyond DOS and BIOS (the FOSSIL driver joins here in remote mode)
     void addService(std::function<bool(int)> s) { extra_ = std::move(s); }
@@ -72,6 +73,7 @@ private:
     bool                        loaded_ = false;
     uint64_t                    startMs_ = 0;
     uint32_t                    instructions_ = 0;
+    uint32_t                    intsTraced_ = 0;
 };
 
 }  // namespace door

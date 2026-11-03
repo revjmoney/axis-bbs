@@ -91,7 +91,16 @@ bool DoorSession::load() {
         if (v == 0x20) return dos_->int20();
         return extra_ ? extra_(v) : false;
     });
-    cpu_->setIntHandler([this](int n) { return bios_->route(n); });
+    cpu_->setIntHandler([this](int n) {
+        if (cfg_.trace && intsTraced_ < 5000 && n != Bios::kChainVector) {
+            intsTraced_++;
+            std::fprintf(cfg_.trace, "INT %02X AX=%04X BX=%04X CX=%04X DX=%04X from %04X:%04X\n", n, cpu_->ax(), cpu_->bx(),
+                         cpu_->cx(), cpu_->dx(), cpu_->cs(), cpu_->ip());
+        }
+        return bios_->route(n);
+    });
+    cpu_->setPorts([this](int port) { return bios_->portIn(port); },
+                   [this](int port, uint8_t v) { bios_->portOut(port, v); });
     cpu_->reset(lp.cs, lp.ip, lp.ss, lp.sp, lp.psp, lp.psp);
     return !mem_->outOfMemory();
 }
@@ -126,6 +135,16 @@ DoorResult DoorSession::run() {
     while (step(100)) {
     }
     return result_;
+}
+
+std::string DoorSession::debugState() const {
+    if (!cpu_) return "not loaded";
+    char b[200];
+    uint32_t at = (cpu_->cs() * 16u + cpu_->ip()) & 0xFFFFF;
+    std::snprintf(b, sizeof b, "CS:IP=%04X:%04X SS:SP=%04X:%04X DS=%04X ES=%04X AX=%04X BX=%04X CX=%04X DX=%04X bytes %02X %02X %02X %02X %02X %02X",
+                  cpu_->cs(), cpu_->ip(), cpu_->ss(), cpu_->sp(), cpu_->ds(), cpu_->es(), cpu_->ax(), cpu_->bx(), cpu_->cx(), cpu_->dx(),
+                  mem_->read8(at), mem_->read8(at + 1), mem_->read8(at + 2), mem_->read8(at + 3), mem_->read8(at + 4), mem_->read8(at + 5));
+    return b;
 }
 
 int DoorSession::exitCode() const { return dos_ ? dos_->exitCode() : -1; }

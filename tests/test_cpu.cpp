@@ -99,3 +99,12 @@ TEST_CASE("carry and zero flags can be read and set") {
     cpu.setCf(false);
     CHECK_FALSE(cpu.cf());
 }
+
+TEST_CASE("a program starts with interrupts enabled, as under DOS") {
+    FlatBus bus;
+    bus.load(0x1000, {0x9C, 0x58, 0xF4});  // pushf ; pop ax ; hlt
+    Cpu cpu(bus);
+    cpu.reset(0x0100, 0, 0x0200, 0xFFFE, 0x0100, 0x0100);
+    cpu.run(10);
+    CHECK((cpu.ax() & 0x0200) != 0);
+}

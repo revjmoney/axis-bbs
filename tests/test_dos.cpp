@@ -278,3 +278,48 @@ TEST_CASE("dos unknown function sets carry and is traced") {
     std::fclose(t);
     CHECK(std::string(buf, n).find("AH=EE") != std::string::npos);
 }
+
+TEST_CASE("dos one read larger than 512 bytes gets the whole file") {
+    Rig r("bigread");
+    std::string body;
+    for (int i = 0; i < 1361; i++) body += (char)('A' + i % 26);
+    r.file("PLAYEXT.DAT", body);
+    r.str(0x200, "PLAYEXT.DAT");
+    r.cpu.setDx(0x200);
+    r.call(0x3D44);
+    uint16_t h = r.cpu.ax();
+    r.cpu.setBx(h);
+    r.cpu.setCx(1361);
+    r.cpu.setDx(0x1000);
+    r.call(0x3F00);
+    CHECK(r.cpu.ax() == 1361);
+    CHECK(r.mem.read8(r.cpu.ds() * 16u + 0x1000 + 1360) == (uint8_t)('A' + 1360 % 26));
+}
+
+TEST_CASE("dos write then read back on the same handle") {
+    Rig r("rw");
+    r.file("RW.DAT", std::string(2000, '.'));
+    r.str(0x200, "RW.DAT");
+    r.cpu.setDx(0x200);
+    r.call(0x3D02);
+    uint16_t h = r.cpu.ax();
+    r.str(0x300, "XYZ");
+    r.cpu.setBx(h);
+    r.cpu.setCx(3);
+    r.cpu.setDx(0x300);
+    r.call(0x4000);
+    r.cpu.setBx(h);
+    r.cpu.setCx(1000);
+    r.cpu.setDx(0x400);
+    r.call(0x3F00);
+    CHECK(r.cpu.ax() == 1000);
+    r.cpu.setBx(h);
+    r.cpu.setCx(0);
+    r.cpu.setDx(0);
+    r.call(0x4200);
+    r.cpu.setBx(h);
+    r.cpu.setCx(3);
+    r.cpu.setDx(0x500);
+    r.call(0x3F00);
+    CHECK(r.mem.read8(r.cpu.ds() * 16u + 0x500) == 'X');
+}

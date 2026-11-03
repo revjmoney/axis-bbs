@@ -14,13 +14,17 @@ using fabgl::i8086;
 namespace {
 Cpu*            g_active = nullptr;  // the core is static: one Cpu at a time
 Cpu::IntHandler g_handler;
+Cpu::PortIn     g_in;
+Cpu::PortOut    g_out;
 volatile bool   g_stop = false;
 
 enum { AX = 0, CX, DX, BX, SP, BP, SI, DI, ES, CS, SS, DS };
 
 bool    onInterrupt(void*, int num) { return g_handler ? g_handler(num) : false; }
-uint8_t onReadPort(void*, int) { return 0xFF; }  // no hardware behind the ports
-void    onWritePort(void*, int, uint8_t) {}
+uint8_t onReadPort(void*, int port) { return g_in ? g_in(port) : 0xFF; }
+void    onWritePort(void*, int port, uint8_t v) {
+    if (g_out) g_out(port, v);
+}
 }  // namespace
 
 Cpu::Cpu(MemoryBus& mem) : mem_(mem) {
@@ -31,6 +35,8 @@ Cpu::Cpu(MemoryBus& mem) : mem_(mem) {
 Cpu::~Cpu() {
     g_active = nullptr;
     g_handler = nullptr;
+    g_in = nullptr;
+    g_out = nullptr;
 }
 
 void Cpu::reset(uint16_t cs, uint16_t ip, uint16_t ss, uint16_t sp, uint16_t ds, uint16_t es) {
@@ -43,10 +49,16 @@ void Cpu::reset(uint16_t cs, uint16_t ip, uint16_t ss, uint16_t sp, uint16_t ds,
     i8086::setReg(SP, sp);
     i8086::setReg(DS, ds);
     i8086::setReg(ES, es);
+    i8086::setFlagsWord(0x0202);  // interrupts on, as DOS starts a program
     g_stop = false;
 }
 
 void Cpu::setIntHandler(IntHandler h) { g_handler = std::move(h); }
+
+void Cpu::setPorts(PortIn in, PortOut out) {
+    g_in = std::move(in);
+    g_out = std::move(out);
+}
 
 uint32_t Cpu::run(uint32_t maxInstructions) {
     g_stop = false;

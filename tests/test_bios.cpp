@@ -173,3 +173,18 @@ TEST_CASE("bios timer stub calls a program's INT 1Ch hook and returns") {
     CHECK(r.mem.read16(0x46C) == 1);                 // and the BIOS counted the tick
     CHECK(r.cpu.cs() == 0x0200);                     // back in the program
 }
+
+TEST_CASE("bios video status port toggles its retrace bits") {
+    Rig r;
+    uint8_t a = r.bios.portIn(0x3DA), b = r.bios.portIn(0x3DA);
+    CHECK((a & 1) != (b & 1));
+    CHECK((a & 8) != (b & 8));
+}
+
+TEST_CASE("bios font info reports 16-point characters on a 25-row screen") {
+    Rig r;
+    r.cpu.setBx(0x0000);
+    r.int10(0x1130);
+    CHECK(r.cpu.cx() == 16);
+    CHECK(r.cpu.dl() == 24);
+}

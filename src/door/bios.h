@@ -37,6 +37,8 @@ public:
     bool isStub(int vector) const;           // the vector still points at our stub
     std::array<std::string, 25> screenText() const;
     void ttyOut(uint8_t ch) { teletype(ch); }  // DOS console output on the local screen
+    uint8_t portIn(int port);                    // the bits of PC hardware doors poll directly
+    void    portOut(int port, uint8_t value);
 
 private:
     uint8_t  curRow() const;
@@ -57,6 +59,7 @@ private:
     bool                     idle_ = false, waiting_ = false;
     bool                     started_ = false;
     uint64_t                 startMs_ = 0, raised_ = 0;
+    uint8_t                  retrace_ = 0;
 };
 
 }  // namespace door

@@ -23,6 +23,7 @@ add_library(axiscore STATIC
     src/door/bios.cpp
     src/door/session.cpp
     src/platform/pc/stdhostfs.cpp
+    src/platform/pc/consolestream.cpp
     third_party/i8086/i8086.cpp)
 target_include_directories(axiscore PUBLIC src third_party/i8086 PRIVATE third_party/sha256)
 
@@ -39,6 +40,10 @@ add_executable(axis_tests
     tests/test_mz.cpp
     tests/test_dos.cpp
     tests/test_bios.cpp
-    tests/test_session.cpp)
+    tests/test_session.cpp
+    tests/test_lord_local.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
+
+add_executable(doorhost tools/doorhost/main.cpp)
+target_link_libraries(doorhost PRIVATE axiscore)

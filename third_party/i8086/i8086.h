@@ -114,6 +114,7 @@ public:
   static uint16_t reg(int index);
   static void     setReg(int index, uint16_t value);
   static uint16_t flagsWord();
+  static void     setFlagsWord(uint16_t value);
 
 
 private:

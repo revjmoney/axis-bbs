@@ -1971,6 +1971,7 @@ void i8086::stepEx(uint8_t const * opcode_stream)
 uint16_t i8086::reg(int index)              { return regs16[index]; }
 void     i8086::setReg(int index, uint16_t v) { regs16[index] = v; }
 uint16_t i8086::flagsWord()                   { return make_flags(); }
+void     i8086::setFlagsWord(uint16_t v)      { set_flags(v); }
 
 
 }   // namespace fabgl

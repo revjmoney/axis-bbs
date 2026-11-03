@@ -229,8 +229,19 @@ bool Bios::dispatch(int v) {
                     cpu_.setAx((uint16_t)(kCols << 8 | mem_.read8(kBda + 0x49)));
                     cpu_.setBh(0);
                     return true;
+                case 0x11:
+                    if (al == 0x30) {  // font information: 16-point characters, 25 rows
+                        cpu_.setCx(16);
+                        cpu_.setDl(kRows - 1);
+                        cpu_.setEs(kStubSeg);
+                        cpu_.setBp(0xFA6E);
+                    }
+                    return true;
                 case 0x12:
-                    if (cpu_.bl() == 0x10) cpu_.setBx(0x0003);  // EGA+: colour, 256 KB
+                    if (cpu_.bl() == 0x10) {  // EGA+: colour, 256 KB
+                        cpu_.setBx(0x0003);
+                        cpu_.setCx(0x0009);
+                    }
                     return true;
                 case 0x1A:
                     if (al == 0) {
@@ -309,6 +320,21 @@ int Bios::tick(uint64_t nowMs) {
     }
     return 0;
 }
+
+uint8_t Bios::portIn(int port) {
+    switch (port) {
+        case 0x3DA:  // CGA/VGA status: retrace bits flip on every read so snow-avoidance loops finish
+        case 0x3BA:
+            retrace_ ^= 0x09;
+            return retrace_;
+        case 0x61: return 0x00;  // speaker / system control
+        case 0x21:
+        case 0xA1: return 0x00;  // interrupt masks: everything enabled
+        default: return 0xFF;
+    }
+}
+
+void Bios::portOut(int, uint8_t) {}  // PIC end-of-interrupt, speaker, CRT cursor: nothing to do
 
 bool Bios::consumeIdleHint() {
     bool i = idle_;

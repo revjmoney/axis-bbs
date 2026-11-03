@@ -126,3 +126,22 @@ TEST_CASE("session local mode: DOS output shows on the screen and keys reach the
     CHECK(s.result() == DoorResult::Exited);
     CHECK(s.screen()[0].substr(0, 5) == "KEY?z");
 }
+
+TEST_CASE("session exit stops the CPU at once") {
+    fs::path d = tmpDir("exitstop");
+    // mov ax,4C00h ; int 21h ; then (must never run) create BAD.DAT: mov ah,3Ch ; xor cx,cx ; mov dx,name ; push cs ; pop ds ; int 21h ; jmp $
+    std::vector<uint8_t> code = {0xB8, 0x00, 0x4C, 0xCD, 0x21, 0xB4, 0x3C, 0x31, 0xC9, 0xBA, 0x00, 0x00, 0x0E, 0x1F, 0xCD, 0x21, 0xEB, 0xFE};
+    code[10] = (uint8_t)code.size();
+    for (char c : std::string("BAD.DAT")) code.push_back((uint8_t)c);
+    code.push_back(0);
+    writeExe(d / "T.EXE", code);
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d;
+    cfg.exe = "T.EXE";
+    DoorSession s(cfg, fs, locks, caller, 1);
+    CHECK(s.run() == DoorResult::Exited);
+    CHECK_FALSE(fs::exists(d / "BAD.DAT"));
+}

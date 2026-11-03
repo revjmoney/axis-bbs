@@ -40,6 +40,7 @@ private:
     struct Open {
         std::FILE*            f;
         std::filesystem::path path;
+        bool                  writing = false;  // last operation was a write (C needs a seek to switch)
     };
     std::filesystem::path       root_;
     std::string                 cwd_;
