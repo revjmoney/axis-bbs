@@ -113,7 +113,7 @@ TEST_CASE("LORD 4.07 plays locally in our runtime") {
     REQUIRE(forest);
     // looking around sometimes finds an event instead of a monster: keep looking
     bool fight = false;
-    for (int i = 0; i < 10 && !fight; i++) {
+    for (int i = 0; i < 20 && !fight; i++) {
         // some events send the character back to town: head out to the forest again
         auto lines = s.screen();
         for (int r = 24; r >= 0; r--) {
@@ -123,6 +123,11 @@ TEST_CASE("LORD 4.07 plays locally in our runtime") {
         }
         send(s, keys, "L");
         fight = waitFor(s, "Attack", 3000);
+        if (!fight && std::getenv("AXIS_LORD_DEBUG"))
+            MESSAGE("miss " << i << " result " << (int)s.result() << " keys waiting " << keys.available() << " instr "
+                            << s.instructions() << " " << s.debugState() << ":\n" << screenText(s));
+        // the "Sleepless in a tower" event only takes a castle letter
+        if (!fight && screenText(s).find("Where do we go now") != std::string::npos) send(s, keys, "C");
         if (!fight) send(s, keys, "N\r");  // a forest event: decline its question, dismiss it
     }
     if (!fight) MESSAGE("screen after looking:\n" << screenText(s));

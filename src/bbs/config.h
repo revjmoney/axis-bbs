@@ -8,6 +8,11 @@
 
 namespace axis::bbs {
 
+// A door on the Doors menu. Its files live in /doors/<id>/ on the board's storage.
+struct DoorEntry {
+    std::string id, name, exe, args, drop = "doorsys";  // drop: "doorsys" (DOOR.SYS) or "dorinfo"
+};
+
 struct BbsConfig {
     std::string sysopHandle, sysopSalt, sysopHash, sysopRealName;
     std::string bbsName = "Axis Underground CNC", location, boardName = "axis", publicHost;
@@ -16,6 +21,8 @@ struct BbsConfig {
     std::string ftnAddress = "99:1/0";
     int         newUserSecurity = 10, dailyMinutes = 60, idleMinutes = 5;
     bool        setupDone = false;
+    // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
+    std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "LORD.EXE", "1 /DREW", "doorsys"}};
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save
 };
 

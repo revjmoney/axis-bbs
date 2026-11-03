@@ -8,5 +8,8 @@
 extern LGFX_Sprite scr;   // 320x240, RGB332
 
 bool screenInit();        // allocate the copy (76.8 KB)
+uint8_t* screenLend(size_t& bytes);  // the copy's RAM for a door (drawing pauses); stays allocated
+void     screenReturn();              // the door is done: the copy is ours again (redraw it)
+bool     screenReady();               // the copy can be drawn on
 void screenPush();        // show it on the panel
 void screenShot();        // dump it over serial: "@SHOT 320 240" then hex rows, then "@SHOT END"

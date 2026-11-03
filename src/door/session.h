@@ -38,6 +38,8 @@ struct DoorConfig {
     std::FILE*            trace = nullptr;
     uint32_t              carrierGraceMs = 15000;  // after a hang-up the door may save and exit; then it is stopped
     ImageSource*          imageSource = nullptr;  // nullptr: relocate into RAM (the PC)
+    std::vector<std::pair<uint8_t*, size_t>> arenas;  // host memory lent for pages first (counts in ramBudget)
+    std::function<void()> onOutOfMemory;          // told the moment a page can't be had (diagnostics)
     DropFile              dropFile = DropFile::None;  // written into the door folder before start
     CallerInfo            caller;
     std::function<uint64_t()> clockMs;     // default: steady clock
@@ -53,6 +55,8 @@ public:
     DoorResult result() const { return result_; }
     int        exitCode() const;
     GuestMemory::Stats memStats() const;
+    size_t     poolPages() const { return pool_ ? pool_->usedPages() : 0; }
+    size_t     poolBudget() const { return pool_ ? pool_->budgetPages() : 0; }
     std::array<std::string, 25> screen() const;
     std::vector<uint8_t> textPage() const { return bios_ ? bios_->textPage() : std::vector<uint8_t>(); }
     uint32_t   instructions() const { return instructions_; }

@@ -71,3 +71,20 @@ TEST_CASE("timezone rules") {
     CHECK(std::string(tzRule("nowhere")).empty());
     CHECK(tzNames().size() == 10);
 }
+
+TEST_CASE("config has LORD as the default door") {
+    auto c = axis::bbs::parseConfig("");
+    REQUIRE(c.doors.size() == 1);
+    CHECK(c.doors[0].id == "lord");
+    CHECK(c.doors[0].args == "1 /DREW");
+}
+
+TEST_CASE("config doors round trip") {
+    auto c = axis::bbs::parseConfig("door1=bre|Barren Realms Elite|BRE.EXE|/N1|dorinfo\n");
+    REQUIRE(c.doors.size() == 1);
+    CHECK(c.doors[0].name == "Barren Realms Elite");
+    CHECK(c.doors[0].drop == "dorinfo");
+    auto d = axis::bbs::parseConfig(axis::bbs::formatConfig(c));
+    REQUIRE(d.doors.size() == 1);
+    CHECK(d.doors[0].exe == "BRE.EXE");
+}

@@ -5,12 +5,14 @@
 // One node per board for now; callers beyond that hear "busy".
 #include <Arduino.h>
 #include <ESPmDNS.h>
+#include <esp_heap_caps.h>
 #include <WiFi.h>
 #include <time.h>
 
 #include <memory>
 
 #include "bbs/config.h"
+#include "door/session.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
 #include "bbs/setup_wizard.h"
@@ -36,6 +38,13 @@ static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
 static std::unique_ptr<WifiStream>              line;  // the caller, when one is online
+// the door the caller is in, if any (the screen copy is freed meanwhile)
+static std::unique_ptr<axis::PosixHostFs>       doorFs;
+static std::unique_ptr<FlashImageSource>        doorImage;
+static std::unique_ptr<axis::door::DoorSession> door;
+static axis::door::LockTable                    doorLocks;
+static uint32_t                                 doorHeapBefore = 0, doorStartMs = 0;
+static uint8_t*                                 doorIram = nullptr;  // instruction RAM lent to the door
 static std::unique_ptr<axis::bbs::Node>         node;
 static std::unique_ptr<axis::bbs::SetupGate>    gate;
 static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
@@ -142,6 +151,7 @@ static void drawWfc() {
 }
 
 static void drawScreen() {
+    if (!screenReady()) return;  // a door is running
     if (mode == Mode::SetupChoice) {
         title("first-boot setup");
         scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
@@ -195,7 +205,9 @@ static void applyNetwork() {
 }
 
 static void sendApp(const std::string& s) {
-    if (!s.empty() && line) line->write((const uint8_t*)s.data(), s.size());
+    if (s.empty() || !line) return;
+    line->write((const uint8_t*)s.data(), s.size());
+    line->flush();
 }
 
 static void hangUp() {
@@ -231,6 +243,82 @@ static void answer(WiFiClient incoming) {
         sendApp(gate->takeOutput());
     }
     screenDirty = true;
+}
+
+// ------------------------------------------------------------------ doors
+static void doorStatusLine() {  // straight to the panel: there is no screen copy during a door
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(textdatum_t::top_left);
+    tft.setTextSize(2);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawString(("IN DOOR: " + node->door().name).substr(0, 26).c_str(), 6, 100);
+    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
+    tft.drawString(node->handle().substr(0, 26).c_str(), 6, 124);
+}
+
+static void startDoor() {
+    const axis::bbs::DoorEntry& d = node->door();
+    sendApp(node->takeOutput());
+    doorHeapBefore = ESP.getFreeHeap();
+    size_t   lentBytes = 0;
+    uint8_t* lentRam = screenLend(lentBytes);
+    doorStatusLine();
+    std::string dir = std::string(storageRoot()) + "/doors/" + d.id;
+    doorFs.reset(new axis::PosixHostFs(dir));
+    doorImage.reset(new FlashImageSource(d.id.c_str()));
+    axis::door::DoorConfig c;
+    c.dir = dir;
+    c.exe = d.exe;
+    c.args = d.args;
+    c.localMode = false;
+    c.imageSource = doorImage.get();
+    c.arenas.emplace_back(lentRam, lentBytes);  // the screen copy becomes the door's first pages
+    // Spare instruction RAM: malloc never hands it out (it can't be read a byte at a time), but
+    // guest pages are only touched as words, so a door can use it. About 40 KB on this board.
+    size_t iramBytes = heap_caps_get_largest_free_block(MALLOC_CAP_EXEC) / 4096 * 4096;
+    doorIram = iramBytes ? (uint8_t*)heap_caps_malloc(iramBytes, MALLOC_CAP_EXEC) : nullptr;
+    if (doorIram) c.arenas.emplace_back(doorIram, iramBytes);
+    else iramBytes = 0;
+    c.dropFile = d.drop == "dorinfo" ? axis::door::DropFile::Dorinfo : axis::door::DropFile::DoorSys;
+    c.caller.alias = c.caller.realName = node->handle();
+    c.caller.node = kNodeNumber;
+    c.caller.minutesLeft = cfg.dailyMinutes;
+    c.timeLimitSec = (uint32_t)cfg.dailyMinutes * 60u;
+    c.clockMs = [] { return (uint64_t)millis(); };
+    c.sleepMs = [](uint32_t ms) { delay(ms); };
+    c.onOutOfMemory = [] {  // byte-addressable heap is what pages and everything else need
+        Serial.printf("axis: door out of memory: byte heap %u, largest %u, pool %u of %u pages\n",
+                      heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                      door ? (unsigned)door->poolPages() : 0u, door ? (unsigned)door->poolBudget() : 0u);
+    };
+    doorStartMs = millis();
+    Serial.printf("axis: door %s for %s, byte heap %u + %u lent from the screen + %u instruction RAM\n", d.id.c_str(),
+                  node->handle().c_str(), heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)lentBytes, (unsigned)iramBytes);
+    door.reset(new axis::door::DoorSession(c, *doorFs, doorLocks, *line, kNodeNumber));
+}
+
+static void finishDoor() {
+    using R = axis::door::DoorResult;
+    using E = axis::bbs::Node::DoorEnd;
+    R   r = door->result();
+    int peakKb = (int)door->memStats().peakRamPages * 4;
+    door.reset();
+    doorImage.reset();
+    doorFs.reset();
+    doorLocks.releaseOwner(kNodeNumber);
+    heap_caps_free(doorIram);
+    doorIram = nullptr;
+    screenReturn();
+    Serial.printf("axis: door %s done result %d, peak RAM %d KB, %lus, heap before %u after %u, lowest %u\n", node->door().id.c_str(),
+                  (int)r, peakKb, (unsigned long)((millis() - doorStartMs) / 1000), doorHeapBefore, ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    screenDirty = true;
+    if (!line || !line->carrier() || r == R::CarrierLost) {
+        hangUp();
+        return;
+    }
+    E how = r == R::OutOfMemory ? E::OutOfMemory : r == R::TimeLimit ? E::TimeLimit : r == R::LoadError ? E::LoadError : E::Normal;
+    node->resumeAfterDoor(how, millis());
+    sendApp(node->takeOutput());
 }
 
 // keystrokes from the caller, already through the telnet filter
@@ -408,11 +496,21 @@ void loop() {
         return;
     }
     if (server.hasClient()) answer(server.available());
+    if (door) {  // the door owns the caller's line; the BBS waits
+        bool running = door->step(30);
+        if (line) line->flush();  // whatever the door drew this slice
+        if (!running) finishDoor();
+        return;
+    }
     if (line) {
         std::string app = line->takeInput();
         if (!app.empty()) callerInput(app);
         if (line && node) {
             node->poll(millis());
+            if (node->state() == axis::bbs::Node::State::InDoor) {
+                startDoor();
+                return;
+            }
             sendApp(node->takeOutput());
             if (node->wantsHangup()) hangUp();
         }

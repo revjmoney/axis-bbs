@@ -88,3 +88,53 @@ TEST_CASE("block copies cross pages") {
     mem.readBlock(0x0F00, back.data(), back.size());
     CHECK(back == src);
 }
+
+TEST_CASE("page pool hands out a lent arena first and never frees it") {
+    std::vector<uint8_t> arena(3 * kPageSize + 100);  // room for 3 whole pages
+    PagePool             pool(8 * kPageSize);
+    pool.addArena(arena.data(), arena.size());
+    uint8_t*             a = pool.alloc();
+    uint8_t*             b = pool.alloc();
+    uint8_t*             c = pool.alloc();
+    uint8_t*             d = pool.alloc();  // from the heap
+    CHECK(a == arena.data());
+    CHECK(b == arena.data() + kPageSize);
+    CHECK(c == arena.data() + 2 * kPageSize);
+    CHECK((d < arena.data() || d >= arena.data() + arena.size()));
+    pool.releaseAll();  // frees d only (the arena belongs to the screen)
+    CHECK(pool.alloc() == arena.data());
+}
+
+TEST_CASE("arena pages count against the budget") {
+    std::vector<uint8_t> arena(2 * kPageSize);
+    PagePool             pool(2 * kPageSize);
+    pool.addArena(arena.data(), arena.size());
+    CHECK(pool.alloc() != nullptr);
+    CHECK(pool.alloc() != nullptr);
+    CHECK(pool.alloc() == nullptr);
+}
+
+TEST_CASE("page pool uses every lent arena before the heap") {
+    std::vector<uint8_t> a(kPageSize), b(2 * kPageSize);
+    PagePool             pool(8 * kPageSize);
+    pool.addArena(a.data(), a.size());
+    pool.addArena(b.data(), b.size());
+    std::vector<uint8_t*> got;
+    for (int i = 0; i < 4; i++) got.push_back(pool.alloc());
+    int lent = 0;
+    for (uint8_t* p : got) lent += (p == a.data() || p == b.data() || p == b.data() + kPageSize);
+    CHECK(lent == 3);
+}
+
+TEST_CASE("guest bytes and words read back through word-only pages") {
+    PagePool    pool(64 * 1024);
+    GuestMemory mem(pool);
+    mem.mapZero(0x20000, 0x2000);
+    mem.write8(0x20001, 0xAB);
+    mem.write16(0x20FFF, 0x1234);  // across a page boundary
+    CHECK(mem.read8(0x20000) == 0);
+    CHECK(mem.read8(0x20001) == 0xAB);
+    CHECK(mem.read8(0x20002) == 0);
+    CHECK(mem.read16(0x20FFF) == 0x1234);
+    CHECK(mem.read8(0x21000) == 0x12);
+}

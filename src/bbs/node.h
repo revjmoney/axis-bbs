@@ -20,7 +20,8 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Login, Menu, Done };
+    enum class State { Login, Menu, Doors, InDoor, Done };
+    enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError };
     static constexpr size_t   kMaxHandle = 30;
 
     Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {});
@@ -31,10 +32,15 @@ public:
     bool        wantsHangup() const { return state_ == State::Done; }
     State       state() const { return state_; }
     const std::string& handle() const { return handle_; }
+    // the door the caller picked ("" unless InDoor); the host runs it, then calls resumeAfterDoor
+    std::string      doorRequested() const { return state_ == State::InDoor ? cfg_.doors[door_].id : ""; }
+    const DoorEntry& door() const { return cfg_.doors[door_]; }
+    void             resumeAfterDoor(DoorEnd how, uint32_t nowMs);
 
 private:
     void key(char c);
     void showMenu();
+    void showDoors();
     void prompt();
     int                       node_;
     std::function<SysInfo()>  info_;
@@ -42,6 +48,7 @@ private:
     State                     state_ = State::Login;
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
+    size_t                    door_ = 0;
 };
 
 // Sent to a caller who connects while the node is in use.

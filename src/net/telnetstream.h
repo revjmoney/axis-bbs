@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Rev. J. Money
 // One telnet caller as a ByteStream: negotiation and IAC handling through TelnetFilter, a peekable
 // input queue, and writes that give up (dropping carrier) after a stretch with no progress, so a
-// caller who stops reading can't hang the board. Portable: a platform supplies the raw socket calls.
+// caller who stops reading can't hang the board. Output is batched (doors write a byte at a time,
+// and a packet per byte costs the board a network buffer each): it goes out on flush(), when the
+// door looks for a key, or when 1 KB is waiting. Portable: a platform supplies the raw socket calls.
 #pragma once
 #include <cstdint>
 #include <string>
@@ -18,9 +20,10 @@ public:
     int  available() override;
     int  read() override;
     int  peek() override;
-    void write(const uint8_t* p, size_t n) override;  // escaped for the wire
+    void write(const uint8_t* p, size_t n) override;  // escaped for the wire, batched
+    void flush();                                       // send what is waiting
     bool carrier() override;
-    void writeRaw(const std::string& s);  // already wire-ready (a busy screen, say)
+    void writeRaw(const std::string& s);  // already wire-ready (a busy screen, say); sent now
     std::string takeInput();               // every waiting key, for the BBS menus
     void        hangUp();
     const TelnetFilter& telnet() const { return telnet_; }
@@ -38,7 +41,7 @@ private:
     void         pump();
     bool         sendAll(const char* p, size_t n);
     TelnetFilter telnet_;
-    std::string  in_;
+    std::string  in_, out_;
     bool         up_ = true;
 };
 

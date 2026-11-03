@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "bbs/config.h"
 
+#include <cctype>
 #include <cstdlib>
 
 namespace axis::bbs {
@@ -33,7 +34,8 @@ const std::vector<std::string>& tzNames() {
 }
 
 BbsConfig parseConfig(const std::string& ini) {
-    BbsConfig c;
+    BbsConfig              c;
+    std::vector<DoorEntry> listed;
     size_t pos = 0;
     while (pos < ini.size()) {
         size_t end = ini.find('\n', pos);
@@ -60,8 +62,22 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "daily_minutes") c.dailyMinutes = n;
         else if (k == "idle_minutes") c.idleMinutes = n;
         else if (k == "setup_done") c.setupDone = n == 1;
-        else c.unknown.emplace_back(k, v);
+        else if (k.rfind("door", 0) == 0 && k.size() > 4 && std::isdigit((unsigned char)k[4])) {
+            std::vector<std::string> f;
+            for (size_t a = 0;;) {
+                size_t bar = v.find('|', a);
+                f.push_back(v.substr(a, bar == std::string::npos ? std::string::npos : bar - a));
+                if (bar == std::string::npos) break;
+                a = bar + 1;
+            }
+            if (f.size() >= 3 && !f[0].empty()) {
+                DoorEntry d{f[0], f[1], f[2], f.size() > 3 ? f[3] : "", f.size() > 4 && !f[4].empty() ? f[4] : "doorsys"};
+                listed.push_back(d);
+            }
+        } else c.unknown.emplace_back(k, v);
     }
+    if (listed.empty()) listed = c.doors;  // none in the file: keep the default list
+    c.doors = listed;
     return c;
 }
 
@@ -82,6 +98,10 @@ std::string formatConfig(const BbsConfig& c) {
     kv("new_user_security", std::to_string(c.newUserSecurity));
     kv("daily_minutes", std::to_string(c.dailyMinutes));
     kv("idle_minutes", std::to_string(c.idleMinutes));
+    for (size_t i = 0; i < c.doors.size(); i++) {
+        const DoorEntry& d = c.doors[i];
+        kv(("door" + std::to_string(i + 1)).c_str(), d.id + "|" + d.name + "|" + d.exe + "|" + d.args + "|" + d.drop);
+    }
     for (auto& u : c.unknown) kv(u.first.c_str(), u.second);
     kv("setup_done", c.setupDone ? "1" : "0");
     return s;

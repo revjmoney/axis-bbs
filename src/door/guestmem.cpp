@@ -12,18 +12,40 @@ PagePool::PagePool(size_t budgetBytes) : budget_(budgetBytes / kPageSize) {}
 
 PagePool::~PagePool() { releaseAll(); }
 
+void PagePool::addArena(uint8_t* arena, size_t bytes) {
+    if (!arena || bytes < kPageSize) return;
+    arenas_.emplace_back(arena, bytes / kPageSize * kPageSize);
+    for (size_t off = bytes / kPageSize * kPageSize; off > 0; off -= kPageSize) spare_.push_back(arena + off - kPageSize);
+}
+
+bool PagePool::lent(const uint8_t* p) const {
+    for (auto& a : arenas_)
+        if (p >= a.first && p < a.first + a.second) return true;
+    return false;
+}
+
 uint8_t* PagePool::alloc() {
     if (used_.size() >= budget_) return nullptr;
-    uint8_t* p = (uint8_t*)std::malloc(kPageSize);
-    if (!p) return nullptr;  // the heap ran out before the budget did
+    uint8_t* p = nullptr;
+    if (!spare_.empty()) {
+        p = spare_.back();
+        spare_.pop_back();
+    } else {
+        p = (uint8_t*)std::malloc(kPageSize);
+        if (!p) return nullptr;  // the heap ran out before the budget did
+    }
     used_.push_back(p);
     if (used_.size() > peak_) peak_ = used_.size();
     return p;
 }
 
 void PagePool::releaseAll() {
-    for (uint8_t* p : used_) std::free(p);
+    for (uint8_t* p : used_)
+        if (!lent(p)) std::free(p);
     used_.clear();
+    spare_.clear();
+    for (auto& a : arenas_)
+        for (size_t off = a.second; off > 0; off -= kPageSize) spare_.push_back(a.first + off - kPageSize);
 }
 
 GuestMemory::GuestMemory(PagePool& pool) : pool_(pool) {}
@@ -64,8 +86,12 @@ uint8_t* GuestMemory::writable(int page) {
         oom_ = true;
         return nullptr;
     }
-    if (p.kind == ReadOnly) std::memcpy(r, p.ro, kPageSize);
-    else std::memset(r, 0, kPageSize);
+    volatile uint32_t* w = (volatile uint32_t*)r;  // word stores only (see the header)
+    if (p.kind == ReadOnly)
+        for (int i = 0; i < kPageSize / 4; i++)
+            w[i] = p.ro[i * 4] | p.ro[i * 4 + 1] << 8 | p.ro[i * 4 + 2] << 16 | (uint32_t)p.ro[i * 4 + 3] << 24;
+    else
+        for (int i = 0; i < kPageSize / 4; i++) w[i] = 0;
     p.ram = r;
     p.kind = Ram;
     int ram = 0;
@@ -76,7 +102,7 @@ uint8_t* GuestMemory::writable(int page) {
 
 uint8_t GuestMemory::read8(uint32_t a) {
     const Page& p = pages_[(a >> 12) & 0xFF];
-    if (p.ram) return p.ram[a & 0xFFF];
+    if (p.ram) return (uint8_t)(((const volatile uint32_t*)p.ram)[(a & 0xFFF) >> 2] >> ((a & 3) * 8));
     if (p.ro) return p.ro[a & 0xFFF];
     return p.kind == Zero ? 0 : 0xFF;
 }
@@ -85,7 +111,10 @@ uint16_t GuestMemory::read16(uint32_t a) { return read8(a) | read8((a + 1) & 0xF
 
 void GuestMemory::write8(uint32_t a, uint8_t v) {
     uint8_t* r = writable((a >> 12) & 0xFF);
-    if (r) r[a & 0xFFF] = v;
+    if (!r) return;
+    volatile uint32_t& w = ((volatile uint32_t*)r)[(a & 0xFFF) >> 2];
+    unsigned           shift = (a & 3) * 8;
+    w = (w & ~(0xFFu << shift)) | (uint32_t)v << shift;
 }
 
 void GuestMemory::write16(uint32_t a, uint16_t v) {

@@ -119,3 +119,64 @@ TEST_CASE("unknown menu keys redraw the menu prompt") {
 TEST_CASE("busy screen tells the caller the node is busy") {
     CHECK(axis::bbs::busyScreen().find("busy") != std::string::npos);
 }
+
+TEST_CASE("menu shows Doors") {
+    Node n(1, info);
+    n.begin(0);
+    type(n, "Rev\r");
+    CHECK(n.takeOutput().find("[D]") != std::string::npos);
+}
+
+TEST_CASE("D lists the configured doors") {
+    Node n = loggedIn();
+    type(n, "d");
+    std::string out = n.takeOutput();
+    CHECK(out.find("Legend of the Red Dragon") != std::string::npos);
+    CHECK(out.find("[1]") != std::string::npos);
+    CHECK(n.state() == Node::State::Doors);
+}
+
+TEST_CASE("choosing LORD requests the door") {
+    Node n = loggedIn();
+    type(n, "d1");
+    CHECK(n.state() == Node::State::InDoor);
+    CHECK(n.doorRequested() == "lord");
+    CHECK(n.door().exe == "LORD.EXE");
+}
+
+TEST_CASE("a key that is not a door goes back to the menu") {
+    Node n = loggedIn();
+    type(n, "dq");
+    CHECK(n.state() == Node::State::Menu);
+    CHECK(n.doorRequested().empty());
+}
+
+TEST_CASE("after the door the caller is back at the menu") {
+    Node n = loggedIn();
+    type(n, "d1");
+    n.takeOutput();
+    n.resumeAfterDoor(Node::DoorEnd::Normal, 50000);
+    CHECK(n.state() == Node::State::Menu);
+    CHECK(n.doorRequested().empty());
+    CHECK(n.takeOutput().find("Command:") != std::string::npos);
+}
+
+TEST_CASE("door out of memory returns the caller to the menu") {
+    Node n = loggedIn();
+    type(n, "d1");
+    n.takeOutput();
+    n.resumeAfterDoor(Node::DoorEnd::OutOfMemory, 50000);
+    std::string out = n.takeOutput();
+    CHECK(out.find("out of memory") != std::string::npos);
+    CHECK(n.state() == Node::State::Menu);
+}
+
+TEST_CASE("a long door does not count as idle time") {
+    Node n = loggedIn();
+    type(n, "d1", 1000);
+    n.poll(20 * 60000);  // 20 minutes in the door
+    CHECK(n.state() == Node::State::InDoor);
+    n.resumeAfterDoor(Node::DoorEnd::Normal, 20 * 60000);
+    n.poll(20 * 60000 + 1000);
+    CHECK(n.state() == Node::State::Menu);
+}

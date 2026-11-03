@@ -6,6 +6,7 @@ namespace axis::net {
 
 namespace {
 constexpr size_t kMaxQueued = 4096;  // stop reading the socket while this many keys wait
+constexpr size_t kBatch = 1024;      // send once this much output is waiting
 }
 
 void TelnetStream::start() { writeRaw(telnet_.initialNegotiation()); }
@@ -22,11 +23,13 @@ void TelnetStream::pump() {
 }
 
 int TelnetStream::available() {
+    flush();  // the door is looking for a key: the caller should see the prompt first
     pump();
     return (int)in_.size();
 }
 
 int TelnetStream::peek() {
+    flush();
     pump();
     return in_.empty() ? -1 : (uint8_t)in_[0];
 }
@@ -63,12 +66,21 @@ bool TelnetStream::sendAll(const char* p, size_t n) {
 }
 
 void TelnetStream::writeRaw(const std::string& s) {
-    if (!up_ || s.empty()) return;
-    if (!sendAll(s.data(), s.size())) hangUp();
+    out_ += s;
+    flush();
+}
+
+void TelnetStream::flush() {
+    if (out_.empty()) return;
+    std::string s;
+    s.swap(out_);
+    if (up_ && !sendAll(s.data(), s.size())) hangUp();
 }
 
 void TelnetStream::write(const uint8_t* p, size_t n) {
-    if (n) writeRaw(telnet_.toNet(p, n));
+    if (!n || !up_) return;
+    out_ += telnet_.toNet(p, n);
+    if (out_.size() >= kBatch) flush();
 }
 
 bool TelnetStream::carrier() {
@@ -79,6 +91,7 @@ bool TelnetStream::carrier() {
 void TelnetStream::hangUp() {
     if (!up_) return;
     up_ = false;
+    out_.clear();
     rawClose();
 }
 

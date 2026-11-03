@@ -57,6 +57,7 @@ TEST_CASE("telnet stream doubles 0xFF on the way out") {
     FakeLine l;
     uint8_t  b[] = {'A', 0xFF, 'B'};
     l.write(b, 3);
+    l.flush();
     CHECK(l.toCaller == std::string("A\xFF\xFF" "B", 4));
 }
 
@@ -64,6 +65,7 @@ TEST_CASE("telnet stream finishes a write the socket takes in pieces") {
     FakeLine l;
     l.acceptPerWrite = 2;
     l.write((const uint8_t*)"hello", 5);
+    l.flush();
     CHECK(l.toCaller == "hello");
     CHECK(l.carrier());
 }
@@ -72,6 +74,7 @@ TEST_CASE("telnet stream drops carrier after 10 s with no progress") {
     FakeLine l;
     l.acceptPerWrite = 0;
     l.write((const uint8_t*)"stuck", 5);
+    l.flush();
     CHECK_FALSE(l.carrier());
     CHECK(l.closed);
     CHECK(l.now >= 10000);
@@ -90,4 +93,39 @@ TEST_CASE("telnet stream hands the BBS all waiting keys at once") {
     l.fromCaller = "abc\r\n";
     CHECK(l.takeInput() == "abc\r");
     CHECK(l.takeInput().empty());
+}
+
+namespace {
+struct CountingLine : FakeLine {
+    int writes = 0;
+    int rawWrite(const uint8_t* p, size_t n) override {
+        writes++;
+        return FakeLine::rawWrite(p, n);
+    }
+};
+}  // namespace
+
+TEST_CASE("telnet stream batches a door's one-byte writes until flush") {
+    CountingLine l;
+    for (char c : std::string("Legend of the Red Dragon")) l.write((const uint8_t*)&c, 1);
+    CHECK(l.writes == 0);
+    l.flush();
+    CHECK(l.writes == 1);
+    CHECK(l.toCaller == "Legend of the Red Dragon");
+}
+
+TEST_CASE("telnet stream flushes when the door waits for a key") {
+    CountingLine l;
+    l.write((const uint8_t*)"Your choice? ", 13);
+    CHECK(l.available() == 0);
+    CHECK(l.toCaller == "Your choice? ");
+}
+
+TEST_CASE("telnet stream flushes a full buffer by itself") {
+    CountingLine l;
+    std::string  big(3000, 'x');
+    for (char c : big) l.write((const uint8_t*)&c, 1);
+    CHECK(l.writes >= 2);
+    l.flush();
+    CHECK(l.toCaller == big);
 }

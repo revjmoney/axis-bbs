@@ -84,9 +84,13 @@ bool DoorSession::load() {
     if (!img) return false;
 
     pool_.reset(new PagePool(cfg_.ramBudget));
+    for (auto& a : cfg_.arenas) pool_->addArena(a.first, a.second);
     mem_.reset(new GuestMemory(*pool_));
     cpu_.reset(new Cpu(*mem_));
-    mem_->onOutOfMemory([this] { cpu_->requestStop(); });
+    mem_->onOutOfMemory([this] {
+        cpu_->requestStop();
+        if (cfg_.onOutOfMemory) cfg_.onOutOfMemory();
+    });
     std::string exe = cfg_.exe;
     for (char& c : exe) c = (char)std::toupper((unsigned char)c);
     LoadedProgram lp;

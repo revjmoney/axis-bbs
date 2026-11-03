@@ -21,6 +21,9 @@ constexpr int      kPageCount = 256;
 class PagePool {
 public:
     explicit PagePool(size_t budgetBytes);
+    // Memory lent by the host (the CYD's screen copy, its spare instruction RAM): used for pages
+    // before the heap, never freed here. Must be 4-byte aligned; pages are only touched as words.
+    void addArena(uint8_t* arena, size_t bytes);
     ~PagePool();
     uint8_t* alloc();  // nullptr when the budget is used up
     void     releaseAll();
@@ -29,10 +32,14 @@ public:
     size_t   budgetPages() const { return budget_; }
 
 private:
+    bool                  lent(const uint8_t* p) const;
     size_t                budget_, peak_ = 0;
-    std::vector<uint8_t*> used_;
+    std::vector<uint8_t*> used_, spare_;  // spare_: lent pages not handed out yet
+    std::vector<std::pair<uint8_t*, size_t>> arenas_;
 };
 
+// Guest RAM pages are read and written only as aligned 32-bit words, so they can live in the
+// ESP32's instruction RAM (which faults on byte access) as well as in ordinary RAM.
 class GuestMemory : public MemoryBus {
 public:
     explicit GuestMemory(PagePool& pool);

@@ -7,3 +7,9 @@ build.log
 fw.log
 test.log
 dc*.log
+door.log
+ll.log
+llfail.log
+t.log
+dh.log
+shots/term-check/

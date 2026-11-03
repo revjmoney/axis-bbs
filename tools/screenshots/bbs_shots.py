@@ -2,8 +2,8 @@
 # Copyright (C) 2026 Rev. J. Money
 """Call the BBS over telnet, play a scripted session, and save what the caller sees as PNGs.
 
-A small ANSI/CP437 terminal (80x25) runs inside this script, so every screenshot shows the
-screen exactly as a real terminal would after that step.
+A small ANSI/CP437 terminal (80x25, IBM VGA font) runs inside this script, so every screenshot
+shows the screen the way a real BBS terminal would after that step.
 
 usage: python bbs_shots.py HOST[:PORT] OUTDIR [SCRIPT.py] [--no-busy]
        SCRIPT.py defines SCRIPT = [(name, keys bytes), ...]; default: login, info, credits, goodbye
@@ -23,10 +23,20 @@ PAL = [(0, 0, 0), (170, 0, 0), (0, 170, 0), (170, 85, 0), (0, 0, 170), (170, 0, 
 
 
 class Term:
+    """80x25 ANSI terminal: SGR colours (bold = bright), cursor moves (H f A B C D), save and
+    restore (s u), erase (J K), CP437 glyphs drawn with the IBM VGA 8x16 font."""
+
     def __init__(self):
-        self.reset_screen()
         self.fg, self.bg, self.bold = 7, 0, False
         self.esc = None
+        self.saved = (0, 0)
+        self.reset_screen()
+
+    def text(self):
+        return '\n'.join(''.join(c[0] for c in row) for row in self.cells)
+
+    def blank(self):
+        return (' ', 7, self.bg)
 
     def reset_screen(self):
         self.cells = [[(' ', 7, 0) for _ in range(COLS)] for _ in range(ROWS)]
@@ -43,10 +53,55 @@ class Term:
                 self.fg, self.bg, self.bold = 7, 0, False
             elif p == 1:
                 self.bold = True
+            elif p == 22:
+                self.bold = False
             elif 30 <= p <= 37:
                 self.fg = p - 30
+            elif p == 39:
+                self.fg = 7
             elif 40 <= p <= 47:
                 self.bg = p - 40
+            elif p == 49:
+                self.bg = 0
+
+    def csi(self, cmd, nums):
+        n = nums[0] if nums and nums[0] else 1
+        if cmd == 'm':
+            self.sgr(nums)
+        elif cmd in 'Hf':
+            self.y = max(0, min(ROWS - 1, (nums[0] if nums and nums[0] else 1) - 1))
+            self.x = max(0, min(COLS - 1, (nums[1] if len(nums) > 1 and nums[1] else 1) - 1))
+        elif cmd == 'A':
+            self.y = max(0, self.y - n)
+        elif cmd == 'B':
+            self.y = min(ROWS - 1, self.y + n)
+        elif cmd == 'C':
+            self.x = min(COLS - 1, self.x + n)
+        elif cmd == 'D':
+            self.x = max(0, self.x - n)
+        elif cmd == 's':
+            self.saved = (self.x, self.y)
+        elif cmd == 'u':
+            self.x, self.y = self.saved
+        elif cmd == 'J':
+            mode = nums[0] if nums else 0
+            if mode == 2:
+                self.reset_screen()
+            elif mode == 0:
+                for i in range(self.x, COLS):
+                    self.cells[self.y][i] = self.blank()
+                for r in range(self.y + 1, ROWS):
+                    self.cells[r] = [self.blank() for _ in range(COLS)]
+            elif mode == 1:
+                for r in range(self.y):
+                    self.cells[r] = [self.blank() for _ in range(COLS)]
+                for i in range(self.x + 1):
+                    self.cells[self.y][i] = self.blank()
+        elif cmd == 'K':
+            mode = nums[0] if nums else 0
+            rng = range(self.x, COLS) if mode == 0 else range(self.x + 1) if mode == 1 else range(COLS)
+            for i in rng:
+                self.cells[self.y][i] = self.blank()
 
     def feed(self, text):
         for ch in text:
@@ -57,19 +112,10 @@ class Term:
                 if not self.esc.startswith('['):
                     self.esc = None
                     continue
-                cmd, args = self.esc[-1], self.esc[1:-1]
+                cmd, args = self.esc[-1], self.esc[1:-1].lstrip('?')
                 nums = [int(a) if a.isdigit() else 0 for a in args.split(';')] if args else []
                 self.esc = None
-                if cmd == 'm':
-                    self.sgr(nums)
-                elif cmd == 'J' and (nums or [0])[0] == 2:
-                    self.reset_screen()
-                elif cmd in 'Hf':
-                    self.y = max(0, min(ROWS - 1, (nums[0] if nums else 1) - 1))
-                    self.x = max(0, min(COLS - 1, (nums[1] if len(nums) > 1 else 1) - 1))
-                elif cmd == 'K':
-                    for i in range(self.x, COLS):
-                        self.cells[self.y][i] = (' ', 7, self.bg)
+                self.csi(cmd, nums)
                 continue
             if ch == '\x1b':
                 self.esc = ''
@@ -81,7 +127,9 @@ class Term:
                     self.scroll()
             elif ch == '\b':
                 self.x = max(0, self.x - 1)
-            elif ch >= ' ':
+            elif ch == '\x0c':
+                self.reset_screen()
+            elif ch not in '\x00\x07':
                 if self.x >= COLS:
                     self.x = 0
                     self.y += 1
@@ -92,22 +140,33 @@ class Term:
                 self.x += 1
 
     def png(self, path, title):
-        font = ImageFont.truetype('consola.ttf', 16)
-        cw, ch = 9, 18
-        img = Image.new('RGB', (COLS * cw + 16, ROWS * ch + 40), (20, 20, 20))
-        d = ImageDraw.Draw(img)
-        d.text((8, 6), title, font=ImageFont.truetype('consola.ttf', 14), fill=(200, 200, 200))
+        font = vga_font()
+        top = 24
+        img = Image.new('RGB', (COLS * 8, ROWS * 16 + top), (20, 20, 20))
+        px = img.load()
         for r, row in enumerate(self.cells):
             for c, (g, fg, bg) in enumerate(row):
-                x0, y0 = 8 + c * cw, 30 + r * ch
-                if bg:
-                    d.rectangle([x0, y0, x0 + cw - 1, y0 + ch - 1], fill=PAL[bg])
-                if g != ' ':
-                    d.text((x0, y0), g, font=font, fill=PAL[fg])
+                code = g.encode('cp437', 'replace')[0]
+                x0, y0 = c * 8, top + r * 16
+                for y in range(16):
+                    bits = font[code * 16 + y]
+                    for x in range(8):
+                        px[x0 + x, y0 + y] = PAL[fg] if bits & (0x80 >> x) else PAL[bg]
+        d = ImageDraw.Draw(img)
+        d.text((6, 4), title, font=ImageFont.truetype('consola.ttf', 14), fill=(200, 200, 200))
         if 0 <= self.y < ROWS and self.x < COLS:  # cursor
-            d.rectangle([8 + self.x * cw, 30 + self.y * ch + ch - 3, 8 + self.x * cw + cw - 1, 30 + self.y * ch + ch - 1],
-                        fill=(200, 200, 200))
+            d.rectangle([self.x * 8, top + self.y * 16 + 13, self.x * 8 + 7, top + self.y * 16 + 15], fill=(200, 200, 200))
         img.save(path)
+
+
+_FONT = []
+
+
+def vga_font():  # the IBM VGA 8x16 font (third_party/vga_font), as b800png.py uses
+    if not _FONT:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'third_party', 'vga_font', 'font8x16.h')
+        _FONT.extend(int(n) for n in re.findall(r'\b\d+\b', open(path).read().split('{', 1)[1])[:4096])
+    return _FONT
 
 
 def strip_telnet(data):
@@ -146,10 +205,23 @@ def main():
     os.makedirs(out, exist_ok=True)
     term = Term()
     s = socket.create_connection((host, port), 5)
-    for name, keys in script:
+    # a step is (name, keys), (name, keys, seconds) or (name, keys, seconds, regex): with a regex,
+    # wait up to that long for it to show on screen, then let the screen settle for a second
+    for step in script:
+        name, keys = step[0], step[1]
+        secs = step[2] if len(step) > 2 else 1.5
         if keys:
             s.sendall(keys)
-        term.feed(strip_telnet(read(s, 1.5)).decode('cp437'))
+        if len(step) > 3:
+            end, seen = time.time() + secs, False
+            while time.time() < end and not seen:
+                term.feed(strip_telnet(read(s, 0.5)).decode('cp437'))
+                seen = re.search(step[3], term.text(), re.I) is not None
+            term.feed(strip_telnet(read(s, 1.0)).decode('cp437'))
+            if not seen:
+                print('MISS', name, step[3])
+        else:
+            term.feed(strip_telnet(read(s, secs)).decode('cp437'))
         path = os.path.join(out, name + '.png')
         term.png(path, f'AXIS UNDERGROUND CNC  telnet {host}  step: {name}')
         print(path)

@@ -65,14 +65,52 @@ void Node::prompt() {
         out_ += DIM;
         out_ += "\r\n   Command: ";
         out_ += HI;
+    } else if (state_ == State::Doors) {
+        out_ += DIM;
+        out_ += "\r\n   Door number (Enter for the menu): ";
+        out_ += HI;
     }
+}
+
+void Node::showDoors() {
+    out_ += "\r\n\r\n   ";
+    out_ += HI;
+    out_ += "Doors";
+    out_ += "\r\n";
+    for (size_t i = 0; i < cfg_.doors.size() && i < 9; i++) {
+        char b[96];
+        std::snprintf(b, sizeof b, "   %s[%u]%s %s\r\n", CYAN, (unsigned)(i + 1), DIM, cfg_.doors[i].name.c_str());
+        out_ += b;
+    }
+    state_ = State::Doors;
+    prompt();
+}
+
+void Node::resumeAfterDoor(DoorEnd how, uint32_t nowMs) {
+    if (state_ != State::InDoor) return;
+    lastInput_ = nowMs;
+    state_ = State::Menu;
+    out_ += RST;
+    out_ += "\x1b[2J\x1b[H\r\n   ";
+    out_ += DIM;
+    out_ += "Back from " + door().name + ".";
+    const char* why = how == DoorEnd::OutOfMemory ? "The door ran out of memory and was closed; your game is saved up to its last write."
+                      : how == DoorEnd::TimeLimit ? "Time is up for this call in the door."
+                      : how == DoorEnd::LoadError ? "That door couldn't be started (its files may be missing)."
+                                                  : nullptr;
+    if (why) {
+        out_ += "\r\n   ";
+        out_ += AMBER;
+        out_ += why;
+    }
+    showMenu();
 }
 
 void Node::showMenu() {
     out_ += "\r\n\r\n";
     out_ += DIM;
     out_ += "   ";
-    for (const char* item : {"[I]", "Info", "[C]", "Credits", "[G]", "Goodbye"}) {
+    for (const char* item : {"[D]", "Doors", "[I]", "Info", "[C]", "Credits", "[G]", "Goodbye"}) {
         bool isKey = item[0] == '[';
         out_ += isKey ? CYAN : DIM;
         out_ += item;
@@ -116,8 +154,28 @@ void Node::key(char c) {
         }
         return;
     }
+    if (state_ == State::Doors) {
+        size_t pick = c >= '1' && c <= '9' ? (size_t)(c - '1') : cfg_.doors.size();
+        if (pick < cfg_.doors.size()) {
+            door_ = pick;
+            state_ = State::InDoor;
+            out_ += c;
+            out_ += "\r\n\r\n   ";
+            out_ += DIM;
+            out_ += "Opening " + door().name + "...";
+            out_ += RST;
+            out_ += "\r\n";
+        } else {
+            state_ = State::Menu;
+            showMenu();
+        }
+        return;
+    }
     if (state_ != State::Menu) return;
     switch (c | 0x20) {  // either case
+        case 'd':
+            showDoors();
+            break;
         case 'i': {
             SysInfo s = info_();
             char b[320];
@@ -160,7 +218,7 @@ void Node::key(char c) {
 }
 
 void Node::poll(uint32_t nowMs) {
-    if (state_ != State::Done && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
+    if (state_ != State::Done && state_ != State::InDoor && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";
         out_ += AMBER;
         out_ += "Logged off: idle too long.";
