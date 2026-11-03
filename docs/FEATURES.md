@@ -14,8 +14,8 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Multi-board cluster | planned | Boards on the LAN join as node 2, 3, 4...; one BBS with shared data |
 | One caller address | planned | Callers dial `axis.local`; the main answers with a free board's IP so each caller connects directly (no relay), so a failing board never drops other boards' callers |
 | Main-board failover | planned | Lowest surviving node becomes main within ~5 s; callers stay connected; full replica on every board (SD, or LittleFS if it fits) |
-| Real DOS doors on the board | planned | 8086 runtime, high-level DOS, FOSSIL on INT 14h to telnet, door code served from flash |
-| LORD 4.07 | planned (first door) | Profiled on the PC: 92 KB written, 184 KB read-only in a short session |
+| Real DOS doors on the board | in progress (PC build working) | 8086 runtime, high-level DOS, FOSSIL on INT 14h to telnet, door code served from flash |
+| LORD 4.07 | in progress | Plays locally in the AXIS runtime on the PC (logon, new character, forest fight, quit); peak RAM 100 KB of the 128 KB budget; telnet and the CYD port next |
 | Native LORD rewrite | planned (after real LORD) | C++ port of Synchronet's LORD.js; same screens and play as the original, verified side by side; reads content from the installed LORD files; same save files |
 | Door installer | planned | Downloads the unmodified lord407.zip hosted in this repo, unpacks to SD or LittleFS, copies code to the `door` partition |
 | Drop files | planned | DOOR.SYS and DORINFO1.DEF first; others table-driven later |
@@ -64,3 +64,4 @@ Living record of every feature and setting, updated as the project goes. Status:
 - **2026-11-02:** First firmware: boots, joins the saved WiFi, answers telnet calls on `axis.local:23` with a placeholder welcome, handle prompt and Info / Credits / Goodbye menu. Telnet filter and session logic have PC tests (17 passing). Flashed to the newer CYD (MAC 8c:94:df:4f:1c:4c, COM18): 911 KB of 1.5 MB flash, 230 KB RAM free while serving.
 - **2026-11-02:** First-boot setup over telnet working (choice screen, setup PIN, wizard, settings saved to internal flash `/axis.ini`, BBS name and idle time used by the node). CYD screen screenshots via `@SHOT` + `tools/screenshots/cyd_shot.py`. SD format tool wiped Rev's 15 GB card to fresh FAT32. Third SD card works; first two were dead.
 - **2026-11-02:** Drippy ANSI WFC on the CYD: original block-letter AXIS with paint drips (no TheDraw font needed; Font37DripR wasn't on this PC), status panel in big readable text, red frame. Default file areas added to the design.
+- **2026-11-03:** Stage 1 reached on the PC: the real LORD 4.07 runs in the AXIS door runtime (refactored FabGL 8086 core, paged memory, high-level DOS, BIOS with hookable vectors). Fixes found by running LORD: interrupts on at start, CGA status port toggling, font info call, exit stops the CPU, a Windows read bug. Peak 100 KB RAM. 101 tests.
