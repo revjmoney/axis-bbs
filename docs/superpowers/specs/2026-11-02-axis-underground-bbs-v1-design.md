@@ -18,11 +18,13 @@ Rev's priorities, in his order: native implementation, working DOS doors, FidoNe
 - **Real DOS doors running on the CYD**, starting with LORD 4.07, in a purpose-built 8086 door runtime. A door counts as supported only after it has been launched, played over telnet, and returned the caller to the BBS correctly.
 - **Message storage that is genuinely FidoNet-compatible** (FTN addressing, MSGID/REPLY, origin lines, echomail and netmail areas), not a local board with a FidoNet label.
 - **A sysop console**: a live view of the caller on the CYD screen plus full sysop screens over telnet.
+- **Multi-board cluster:** a CYD that boots and finds an AXIS board already on the LAN joins it as node 2, 3, 4 and so on; together they are one BBS. If the main board goes offline, the next node takes over as main and callers carry on (section 5.11). (Rev's decision.)
 - **Persistent configuration** on SD and NVS; nothing important lives only in RAM.
+- **Minimal board with no SD card (Rev's decision):** the BBS, including LORD, must work on a bare CYD with no SD card, storing everything in internal flash. An SD card adds space (more doors' data, bigger message bases, file areas) but is never required.
 - The AXIS ANSI identity across every screen. The ANSI renderer, CP437 font and touch/board code are copied from the CYD Demoscene project (same author, GPL) rather than written again.
 
 ### Non-goals (v1)
-- More than one simultaneous node (comes with the PSRAM mod, an ESP32-S3 board, or a second ESP32 as a door box; see section 11).
+- More than one node **on a single board** (comes with the PSRAM mod or an ESP32-S3 board; see section 11). Multi-node in v1 comes from **several CYD boards clustering on the LAN**, one node per board (section 5.11).
 - SD card swap for door memory (Rev is finding a good SD card for this; the memory layer must stay swap-ready).
 - A BinkP mailer, QWK offline mail, inter-BBS door leagues, RIP graphics.
 - Running doors that need a 386, protected mode, a DOS extender or an FPU.
@@ -75,7 +77,9 @@ Source layout: `src/bbs/` (BBS core) and `src/door/` (door runtime). The door ru
 - **Door launch:** the BBS writes the caller's session state (a few hundred bytes) and the drop file, releases every arena except WiFi, the telnet connection, the node bridge and a minimal sysop status display, then starts the door runtime with all remaining RAM. On door exit the BBS reloads from SD and returns the caller to the door menu.
 - **Door guest memory** is a 1 MB real-mode address space described by a 256-entry page table (4 KB pages). Each page is one of: backed read-only by flash (door code), backed by a RAM page (written data), zero-on-first-touch, or unmapped. Pages are allocated on first write (copy-on-write from flash for pre-loaded image pages). Because the largest free block may be ~100 KB, RAM pages come from a pool of individually allocated 4 KB blocks, never one big buffer.
 - **Door RAM budget (target):** 128 KB of page pool for LORD (92 KB measured plus headroom). The real figure is set by measuring free heap in BBS mode with WiFi and telnet up. **Fallback order (Rev's decision):** first free more memory by turning off the CYD screen mirror while a door runs (the status line stays); if LORD still exceeds the pool, the runtime reports a clean "out of door memory" to the caller and the sysop log and returns to the BBS without corrupting anything. That outcome is the signal to add SD swap once Rev's card turns up. The page table interface is the hook where SD swap plugs in later.
-- **Partition table (my call, adjusted once the app size is known):** NVS, a ~1.75 MB app slot, a **~1.9 MB `door` data partition** for door code images, and a small LittleFS for fallback screens. No OTA slot in v1. Everything else (users, messages, files, door data, art) lives on the SD card.
+- **Storage backends:** every subsystem reads and writes through one storage interface with three implementations: **SD card** (used when a card is present), **internal flash LittleFS** (minimal boards), and **cluster** (a follower asking the main, section 5.11). Nothing above that interface knows which one it is on.
+- **One partition table for every board (my call, adjusted once the app size is known):** NVS + otadata 64 KB, **app 1.5 MB**, **`door` raw partition 768 KB** for door code images (LORD uses about 504 KB), and **LittleFS for the rest, about 1.7 MB**. No OTA slot in v1. With an SD card, data lives on the card and LittleFS holds config, fallback screens and caches; without one, LittleFS is the data store.
+- **No-SD budget (minimal board):** LORD's game data is about 830 KB (LORDTXT.DAT, EVENTS.DAT, enemies, items, LORDRIP.DAT; docs, LORDCFG and batch files are not installed), BBS screens and menus about 150 to 250 KB, users and message bases with the remainder (about 600 KB), enforced by message-base size limits and purge rules. File areas are off on a minimal board (no room), and only doors whose code fits the `door` partition and whose data fits LittleFS can be installed. If the 1.5 MB app slot proves too small, the `door` partition shrinks first.
 - **Door code in flash:** when the sysop installs a door, the BBS copies its EXE load image into the `door` partition, **relocated for the fixed load segment the runtime always uses**, and memory-maps it. LORD's image (348 KB) plus LORD.OVR (156 KB) take about 500 KB, leaving room for more doors. Overlay and data files are still read through DOS file calls; the flash copy is a fast path, the SD copy stays authoritative. A content key avoids re-copying an image that is already there. The partition belongs to the BBS alone; door images are added and removed by the sysop's door installer.
 
 ### 5.3 Node session and telnet
@@ -123,6 +127,19 @@ The core of v1. Components:
 ### 5.10 Nightly maintenance
 A daily event (default 4:00 AM, matching the existing clock resync) that, with no caller online: runs door maintenance (LORD), tosses and scans FTN packets, packs and purges message bases per limits, and rotates logs.
 
+### 5.11 Multi-board cluster (one node per board)
+Rev's decisions: a board that finds an AXIS board already on the network joins it as the next node; if the main board goes offline, the next board shows a message and **takes over as the main board** so callers continue (option B).
+
+- **Discovery:** at boot each board announces itself and listens on the LAN (my call: mDNS service `_axisbbs._tcp` plus a UDP broadcast fallback on a fixed port). No answer within a few seconds: become **main**, node 1. An answer: join the main as a **follower** and receive the next free node number. Node numbers are remembered per board (by MAC) so a board keeps its number across reboots.
+- **Main board role:** authoritative copy of shared data (users, message bases, file area indexes, door shared data such as LORD's player and game files, the node table, logs) and the **lock manager** for door record locks and file sharing across boards. The sysop console on the main board shows every node.
+- **Followers:** run their own caller and doors (door code from their own flash), and send every shared-data read, write and lock to the main. Each follower keeps a **full replica** of the shared data on its own storage (SD card, or LittleFS on a minimal board), kept current from the main's change stream. A minimal board can hold a full replica only while the shared data fits its LittleFS; boards without a complete replica can serve callers but are skipped when choosing a new main.
+- **Replication model (my call):** the main assigns every change a sequence number in an append-only change log (record writes, message appends, file writes with offsets). Followers apply changes in order and acknowledge; a rejoining board asks for everything after its last sequence number, or a full resync if it is too far behind.
+- **Failover:** the main sends a heartbeat (about once a second). If followers miss it for a set time (my call: 5 s), the **lowest-numbered surviving node that holds a complete replica** becomes main, bumps the cluster **epoch**, and the others follow it. Every board shows a message on its screen and to callers ("MAIN NODE LOST, NODE 2 IS NOW MAIN"); callers stay connected. A caller who was inside a door on the lost main board loses that session, but the shared data stays intact up to the last replicated change.
+- **Split-brain guard:** every change and heartbeat carries the epoch. A board that comes back with an older epoch (the old main after a reboot or network glitch) must join as a follower and resync; it never acts as main again until it is elected. If two mains ever see each other, the higher epoch wins and the other demotes and resyncs from it; changes the loser made after the split are kept in a quarantine log for the sysop to review instead of being merged silently.
+- **Doors across boards:** door file I/O for shared door folders and INT 21h record locks go through the main's lock manager, so two players on different boards share one LORD world, as multi-node LORD did on 1990s systems. Per-node files (drop files, node temp folders) stay local.
+- **Built in from the first BBS stage:** all BBS and door data access goes through one storage interface with a local implementation (single board) and a cluster implementation (follower to main); the single-board case is just a cluster of one.
+- **Callers:** how callers reach nodes 2+ is an open question (section 10).
+
 ## 6. Staged roadmap with exit tests
 
 Door work comes first because it is the riskiest part and Rev's top priority.
@@ -139,6 +156,7 @@ Door work comes first because it is the riskiest part and Rev's top priority.
 | 7 | File areas + ZMODEM download | download a file with SyncTERM, CRC matches |
 | 8 | Sysop console (CYD screen + telnet sysop screens) and nightly maintenance | all sysop screens reachable; config changes persist; nightly event runs LORD maintenance and toss/scan |
 | 9 | AXIS art pass and polish | every screen has AXIS art; Rev signs off on the look |
+| 10 | Multi-board cluster: discovery, node numbering, shared-data access through the main, lock manager, replication, failover | two boards: node 2 joins automatically; a post on node 2 appears on node 1; two callers share one LORD world; unplugging node 1 makes node 2 main within ~5 s with callers still connected and no lost data; node 1 rejoins as a follower and catches up |
 
 ## 7. Testing approach
 - The door runtime is tested first on the PC build against real doors, with the same source compiled for the board.
@@ -160,7 +178,7 @@ Door work comes first because it is the riskiest part and Rev's top priority.
   - Board, display, ANSI renderer, CP437 font, WiFi and NTP: our own CYD Demoscene code (GPL-3.0-or-later).
 - emu2 is GPL-2.0 and its "or later" status is unconfirmed, so it stays a reference to compare behavior, not code to copy, unless its license turns out to be GPL-2.0-or-later.
 - No unpacked door files, door data or third-party ANSI art in the repo. LORD is owned by Metropolis (Gameport) and is still sold; sysops supply their own registration.
-- **Exception (Rev's decision):** the repo hosts the **unmodified LORD 4.07 shareware distribution zip** (`lord407.zip`, as downloaded from gameport.com/demos/lord407.zip) in its own folder, e.g. `doors/lord407.zip`, with a NOTICE saying it is Metropolis Gameport shareware, not covered by the GPL, shared under LORD.DOC's terms (unmodified, free, website downloads allowed; not to be bundled on CD-ROM, floppy or other media without consent). The door installer downloads that zip from the repo and unpacks it on the SD card at install time. The zip is never unpacked into the repo, never modified, never baked into the firmware image or a prebuilt SD image. If Metropolis objects, the installer falls back to the Gameport URL.
+- **Exception (Rev's decision):** the repo hosts the **unmodified LORD 4.07 shareware distribution zip** (`lord407.zip`, as downloaded from gameport.com/demos/lord407.zip) in its own folder, e.g. `doors/lord407.zip`, with a NOTICE saying it is Metropolis Gameport shareware, not covered by the GPL, shared under LORD.DOC's terms (unmodified, free, website downloads allowed; not to be bundled on CD-ROM, floppy or other media without consent). The door installer downloads that zip from the repo over WiFi and unpacks it to the SD card, or straight into LittleFS on a minimal board, at install time. The zip is never unpacked into the repo, never modified, never baked into the firmware image or a prebuilt SD image. If Metropolis objects, the installer falls back to the Gameport URL.
 - Registration keys are tied to the sysop name and BBS name; the BBS must pass exactly the configured sysop name and BBS name to LORD. Keys never go in the repo.
 
 ## 9. Left to the builder
@@ -173,22 +191,29 @@ Door work comes first because it is the riskiest part and Rev's top priority.
 ## 10. Decisions from the builder check
 - **Long LORD sessions:** turn off the screen mirror during doors first; if memory still runs out, LORD exits cleanly and that triggers adding SD swap. (Rev)
 - **Network exposure:** LAN only for v1. (Rev)
+- **No SD card required:** a minimal board stores everything in internal flash, LORD included; SD only adds space. (Rev)
 - **Firmware:** the BBS is a separate firmware with no games or demos built in, so there is no shared app slot to outgrow and no shared flash partition. (Rev)
 - **FTN address:** private test zone for v1, fsxNet with v2. (Rev)
 - **ANSI screens:** Claude makes them, legible on a terminal and on the CYD mirror; Rev edits later. (Rev)
 - **Hosting LORD:** the repo hosts the unmodified lord407.zip for the installer (section 8). (Rev)
+- **Multi-board:** boards on the LAN cluster into one BBS, one node per board; the next node takes over if the main goes offline (option B, full replicas on every board). (Rev)
 - **Reuse first:** proven MIT, GPL-3 or public-domain code wherever possible; refactor it or rewrite hot paths in assembly when that measurably improves it (section 8). (Rev)
+
+### Still open
+- How callers reach nodes 2 and up: one address that hands callers to a free board, or each board on its own address.
 
 ### Calls Claude made (check these)
 - JAM as the message base format; INI-style text config files on SD.
-- Partition layout: ~1.75 MB app, ~1.9 MB `door` partition, small LittleFS, no OTA slot in v1.
+- Partition layout for every board: app 1.5 MB, `door` 768 KB, LittleFS ~1.7 MB, no OTA slot in v1; file areas off on boards without SD.
 - FTN test address `99:1/0`.
 - ZMODEM download in v1, uploads in v1.1.
 - Door RAM pool target 128 KB, set finally by measurement.
 - Telnet port 23, a second caller gets a "node busy" screen.
 - Nightly maintenance at 4:00 AM.
+- Cluster: mDNS `_axisbbs._tcp` + UDP broadcast discovery, 1 s heartbeat, 5 s failover, lowest surviving node becomes main, epoch numbers, quarantine log instead of silent merges after a split.
+- The cluster is stage 10 of v1, after the single-board BBS works, but its storage interface is used from stage 5 on.
 - Door work (stages 1 to 4) comes before the BBS core (stage 5), because it is the riskiest part.
 
 ## 11. Later versions
 - v2: SD swap for door memory; BinkP mailer and a real FTN node address; QWK; more drop file types; uploads.
-- Multi-node: the PSRAM mod on the CYD (8 MB chip on the SOIC-8 flash footprint, CS on GPIO16, CLK on GPIO17, RGB LED removed), or an ESP32-S3 board with 8 MB PSRAM, or the spare ESP32 as a door box over UART. Node isolation then comes from one page table and one FOSSIL bridge per node, which this design already has.
+- More than one node per board: the PSRAM mod on the CYD (8 MB chip on the SOIC-8 flash footprint, CS on GPIO16, CLK on GPIO17, RGB LED removed), or an ESP32-S3 board with 8 MB PSRAM, or the spare ESP32 as a door box over UART. Node isolation then comes from one page table and one FOSSIL bridge per node, which this design already has.
