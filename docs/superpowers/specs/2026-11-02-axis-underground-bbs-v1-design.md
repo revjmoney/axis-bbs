@@ -1,0 +1,194 @@
+# AXIS UNDERGROUND CNC: BBS v1 design
+
+Date: 2026-11-02. Status: draft for Rev's approval.
+
+## 1. Intent
+
+Turn the CYD (ESP32-2432S028R) into a real, working, old-school BBS called **AXIS UNDERGROUND CNC**: something that feels like finding an underground board in the 1990s, themed around CNC machining, toolpaths, rotary axes, G-code, RotatoCAM and demoscene culture.
+
+It must be a real BBS, not a demo that looks like one: callers telnet in, log in with a handle, read and post messages, browse files, and play **real DOS door games** that run on the CYD itself. The first door is **Legend of the Red Dragon (LORD) 4.07**.
+
+Rev's priorities, in his order: native implementation, working DOS doors, FidoNet-style message boards, a serious sysop console, and an unmistakable underground ANSI identity. Multi-node is wanted but is explicitly a later version.
+
+## 2. Goals, non-goals, anti-goals
+
+### Goals (v1)
+- **A standalone BBS firmware** for the CYD, its own project and repo. It has no demos and no built-in games: the only games are DOS doors installed from the SD card. (Rev's decision.)
+- **One telnet node**, with a complete caller experience: ANSI welcome, login and new-user signup, Renegade-style menus, message areas, file areas, door menu, logoff.
+- **Real DOS doors running on the CYD**, starting with LORD 4.07, in a purpose-built 8086 door runtime. A door counts as supported only after it has been launched, played over telnet, and returned the caller to the BBS correctly.
+- **Message storage that is genuinely FidoNet-compatible** (FTN addressing, MSGID/REPLY, origin lines, echomail and netmail areas), not a local board with a FidoNet label.
+- **A sysop console**: a live view of the caller on the CYD screen plus full sysop screens over telnet.
+- **Persistent configuration** on SD and NVS; nothing important lives only in RAM.
+- The AXIS ANSI identity across every screen. The ANSI renderer, CP437 font and touch/board code are copied from the CYD Demoscene project (same author, GPL) rather than written again.
+
+### Non-goals (v1)
+- More than one simultaneous node (comes with the PSRAM mod, an ESP32-S3 board, or a second ESP32 as a door box; see section 11).
+- SD card swap for door memory (Rev is finding a good SD card for this; the memory layer must stay swap-ready).
+- A BinkP mailer, QWK offline mail, inter-BBS door leagues, RIP graphics.
+- Running doors that need a 386, protected mode, a DOS extender or an FPU.
+- Exposure to the internet. v1 is **LAN only**; internet access (login throttling, bot filtering, non-default port, sysop screens off plain telnet) is a later step. (Rev's decision.)
+
+### Anti-goals (failure even if it "works")
+- A fake: simulated screens, scripted "users", a door that is really a re-implementation, or a feature labeled as working that was never tested end to end.
+- A generic modern web or app UI. This is a terminal BBS in CP437 ANSI.
+- Pulling demos, the clock, pets or any other demoscene feature into the BBS. The BBS is its own thing.
+- Committing any third-party door files or copyrighted ANSI art to the repo. Doors are installed by the sysop from their own archives.
+- Bypassing door registration or licensing. The runtime accepts whatever key a door itself accepts.
+
+## 3. Constraints and measured facts
+
+| Fact | Value | Source |
+|---|---|---|
+| CPU | ESP32-D0WD-V3, 2x Xtensa LX6 @ 240 MHz | board |
+| RAM | 520 KB internal SRAM, **no PSRAM** | board, probe |
+| Flash | 4 MB, all of it the BBS firmware's own (its own partition table, see 5.2) | board |
+| Free heap, bare ESP32 sketch, no WiFi | 346 KB total, 114 KB largest block | probe on the spare board, 2026-11-02 |
+| Free heap in the demo firmware with WiFi | about 92 KB, but with frame buffers and a demo arena allocated that the BBS firmware does not have | brain note |
+| SD | SPI (VSPI), FATFS; ~1.7 MB/s sequential read at 20 MHz, ~3.5 ms random 4 KB read | research notes |
+| LORD 4.07 per its EXE header | 348 KB load image + 129 KB min alloc = 467 KB; docs say "requires 350k conventional" | measured, LORD.DOC |
+| **LORD 4.07 measured page touch** (short session: logon, new character, news, forest, fights, stats) | **92 KB written, 184 KB read-only touched**, plus the B800 text page | patched emu2 on the i5, 2026-11-02 |
+| LORD runtime behavior | Turbo Pascal, real mode, FOSSIL or internal COM, overlays in LORD.OVR (EMS optional, `NOEMS`), drop file DOOR.SYS / DORINFO1.DEF | measured, LORD.DOC |
+
+Key consequence: LORD fits a no-swap CYD only if its **code is served read-only from flash** and RAM holds only the pages it writes. The 92 KB figure is from a short session; longer play will touch more overlays and heap, so the budget below keeps headroom.
+
+## 4. Decisions Rev made
+
+- Real BBS, native code, Renegade as the main reference (also Mystic, ENiGMA½, Iniquity), AXIS UNDERGROUND CNC identity.
+- v1 = **one node + real doors on the stock CYD**.
+- **No SD swap in v1.**
+- **LORD is the first door.**
+- **Language:** C++ for the BBS; hand-optimized Xtensa assembly where it measurably pays (the 8086 core and other hot paths). Rev asked for assembly; each assembly routine stays only if it beats the C++ version on the board.
+- **Modular memory:** parts of the BBS that are not in use must not occupy RAM (in particular, the BBS gets out of the way while a door runs).
+- **The BBS is a standalone firmware with no games or demos built in.** The demoscene firmware is untouched.
+
+## 5. Architecture
+
+### 5.1 Firmware and project
+AXIS is its own PlatformIO project and git repo (proposed `F:\axis-bbs`), not a mode of the demoscene firmware. It boots straight into the BBS: board init, SD mount, WiFi join (the demoscene firmware's saved-network logic is a good model), telnet listener, waiting-for-caller screen. There are no demos, frame-buffer double buffering or demo arenas, so the heap starts large and unfragmented.
+
+Reused from the CYD Demoscene project by copying (same author, GPL-3.0-or-later, notices kept): board and touch correction, the ILI9341/LovyanGFX setup, the 4x8 ANSI text renderer and CP437 font, WiFi join and NTP, and the PC-side ANSI and TheDraw font tooling.
+
+Source layout: `src/bbs/` (BBS core) and `src/door/` (door runtime). The door runtime core must also compile as a **PC build** (Windows or Linux, plain C++) so it can be tested against real doors on the PC before it ever touches the board.
+
+### 5.2 Memory plan
+- **Arenas per subsystem.** Each BBS subsystem (menus and screens, message bases, file areas, user editor, FidoNet tosser, sysop screens) allocates from its own arena and releases it when the caller leaves that part of the board. RAM holds working copies only; the SD card is the source of truth.
+- **Door launch:** the BBS writes the caller's session state (a few hundred bytes) and the drop file, releases every arena except WiFi, the telnet connection, the node bridge and a minimal sysop status display, then starts the door runtime with all remaining RAM. On door exit the BBS reloads from SD and returns the caller to the door menu.
+- **Door guest memory** is a 1 MB real-mode address space described by a 256-entry page table (4 KB pages). Each page is one of: backed read-only by flash (door code), backed by a RAM page (written data), zero-on-first-touch, or unmapped. Pages are allocated on first write (copy-on-write from flash for pre-loaded image pages). Because the largest free block may be ~100 KB, RAM pages come from a pool of individually allocated 4 KB blocks, never one big buffer.
+- **Door RAM budget (target):** 128 KB of page pool for LORD (92 KB measured plus headroom). The real figure is set by measuring free heap in BBS mode with WiFi and telnet up. **Fallback order (Rev's decision):** first free more memory by turning off the CYD screen mirror while a door runs (the status line stays); if LORD still exceeds the pool, the runtime reports a clean "out of door memory" to the caller and the sysop log and returns to the BBS without corrupting anything. That outcome is the signal to add SD swap once Rev's card turns up. The page table interface is the hook where SD swap plugs in later.
+- **Partition table (my call, adjusted once the app size is known):** NVS, a ~1.75 MB app slot, a **~1.9 MB `door` data partition** for door code images, and a small LittleFS for fallback screens. No OTA slot in v1. Everything else (users, messages, files, door data, art) lives on the SD card.
+- **Door code in flash:** when the sysop installs a door, the BBS copies its EXE load image into the `door` partition, **relocated for the fixed load segment the runtime always uses**, and memory-maps it. LORD's image (348 KB) plus LORD.OVR (156 KB) take about 500 KB, leaving room for more doors. Overlay and data files are still read through DOS file calls; the flash copy is a fast path, the SD copy stays authoritative. A content key avoids re-copying an image that is already there. The partition belongs to the BBS alone; door images are added and removed by the sysop's door installer.
+
+### 5.3 Node session and telnet
+- One listening socket on port 23 (configurable). A second caller while the node is busy gets a short ANSI "node busy, try later" screen and is disconnected.
+- Telnet handling in native code, outside the door: negotiate WILL ECHO, WILL SUPPRESS-GO-AHEAD, BINARY both ways; ask for NAWS and TTYPE; strip IAC sequences on input, turn CR NUL / CR LF into CR, double 0xFF on output. CP437 bytes pass through untouched.
+- Session state per node: user record, security level, time left today, current menu, message read pointers, door in progress, connect time. Inactivity timeout and daily time limits as in classic BBSes.
+
+### 5.4 Users and security
+- User records on SD in a fixed-size record file (Renegade USERS.DAT style), indexed by handle. Fields: handle, real name (optional), location, password hash (salted SHA-256 via mbedTLS), security level, flags, time per day, calls, last call, posts, uploads/downloads, door stats.
+- New-user application with handle uniqueness and a bad-handle list. Security levels gate menus, areas and doors. The first user created is the sysop (or a sysop account is set on the bench).
+
+### 5.5 Menus and ANSI identity
+- Renegade-style menu system: menus are data (a menu file per menu with commands, keys, security, display file), so menus can be edited without reflashing. Display files are `.ANS` on SD with an ASCII fallback and simple MCI-style codes (`|UN` handle, `|TL` time left, and so on) expanded at send time.
+- The AXIS screens: welcome/matrix screen, login, new user, main menu, message, file, door, sysop, logoff, credits. They are original art for this project (TheDraw fonts from the existing font pack plus CNC motifs: toolpaths, rotary axes, G-code, the RotatoCAM logo). **Claude makes them** (Rev's decision), keeping them legible both in a full 80x25 terminal and on the CYD's 4x8 mirror; Rev edits them later in an ANSI editor. Being original, they are committed to the repo under the project license.
+
+### 5.6 Message bases (FidoNet-compatible)
+- Storage format: **JAM** message bases on SD (my call: an open, documented format used by real FTN software, which gives true compatibility; tools on the PC can read the bases). Areas: local, echomail, netmail.
+- Every message carries FTN fields: from/to addresses (zone:net/node.point), MSGID and REPLY kludges, origin line, tear line, SEEN-BY/PATH for echomail. Replies thread by MSGID/REPLY.
+- Reading: new-scan, read forward/back, reply, post, thread follow, per-user last-read pointers (JAM .JLR).
+- **FTN address (Rev's decision):** a private test zone for v1 (my call: zone 99, e.g. `99:1/0` for the BBS, configurable), with the network named in config so packets and origin lines are consistent. Joining fsxNet (a real node number) comes with the v2 mailer.
+- v1 FidoNet transport: **import and export of FTN Type-2+ `.PKT` packets** through SD `inbound/` and `outbound/` folders (toss and scan run as sysop commands and in nightly maintenance). A live mailer (BinkP over TCP) and QWK are v2.
+
+### 5.7 File areas
+- File areas as folders on SD, with a description list per area (FILES.BBS style) and a small index for fast listing.
+- Listing, searching, viewing descriptions, and **ZMODEM download over telnet** (SyncTERM and NetRunner support it). Uploads (ZMODEM) are v1.1 unless they come cheaply with the same code.
+
+### 5.8 Door runtime
+The core of v1. Components:
+1. **8086 CPU core** with the 80186/286 real-mode additions doors use; no protected mode, no FPU. Start from the MIT-licensed FabGL i8086 core (derived from 8086tiny) or write a fresh one; every memory access goes through the page-table accessor. Written in C++ first, then the dispatch loop, flag logic and memory accessor are hand-optimized in Xtensa assembly against a benchmark on the board.
+2. **MZ loader** that places the door at a fixed segment, builds a PSP, environment and command line (`LORD.EXE 1 /DREW` style), and maps the pre-relocated flash image.
+3. **High-level DOS (INT 21h) in C++**, no DOS kernel: file handles, FCBs where needed, directory search, date/time, memory blocks (alloc/resize/free over the page pool), exec of a batch-free door, sharing modes and **record locking (5Ch)** reported as working, SHARE reported installed, EMS and XMS reported absent. Behaviors learned from LORD so far: it opens files with AL=44h (access value 4; DOS masks access to bits 0 to 1, so treat as read), LORDCFG writes `lord.dat` in lowercase (case-insensitive file lookup on FATFS), and LORD runs as `LORD.EXE <node> NOEMS /DREW`.
+4. **Minimal BIOS**: data area, INT 10h basics, INT 16h keyboard fed from telnet, INT 1Ah time, 18.2 Hz timer (INT 08h then 1Ch) driven by real time. The B800 text page is plain RAM (useful for the sysop view, never sent to the caller).
+5. **FOSSIL driver on INT 14h** (functions 00h to 1Bh, signature 1954h, driver info structure) connected to the node's telnet bridge. Function list must be checked against the FOSSIL Rev 5 spec (FSC-0015 / X00REF) before coding, since the research could not load the spec text.
+6. **Idle detection and yield**: LORD polls INT 16h AH=01h and calls INT 15h AX=1000h (DESQview give up time slice) while waiting for input. The runtime treats these as yield points so the CPU idles and WiFi stays responsive.
+7. **Drop files**: DOOR.SYS (52 lines) and DORINFO1.DEF in v1, generated per node into the door's node folder; the other formats (PCBOARD.SYS, SFDOORS.DAT, CALLINFO.BBS, CHAIN.TXT, DOOR32.SYS) are a table-driven addition once a door needs them.
+8. **Door management**: a door record per door (name, folder on SD, command line, drop file type, security, time limit, node folder, nightly maintenance command). LORD's daily maintenance runs from the nightly event.
+9. **Exit handling**: return code captured, carrier loss handled (the door sees carrier drop via FOSSIL status and exits; a watchdog kills it after a timeout), time limit enforced, then back to the BBS.
+
+### 5.9 Sysop console
+- **On the CYD screen** (the mirror turns off while a door runs to free memory; the status line stays): a waiting-for-caller screen (AXIS art, uptime, last caller, calls today, free heap, SD space, WiFi signal); when a caller is on, a live mirror of what the caller sees (existing 4x8 ANSI renderer, 80x25) with a status bar (handle, security, time left, area or door). Touch actions: chat request, give or take time, kick, toggle the mirror.
+- **Over telnet**, for sysop-level users: user editor, security levels, message area and FTN configuration, file area configuration, door configuration, logs and errors, system status (heap, arenas, uptime, SD usage, WiFi), node status, nightly event control, and reboot.
+- Configuration lives in files on SD (my call: simple INI-style text files, editable on a PC too), with WiFi and boot flags in NVS as today. Every sysop change is written immediately.
+- Logs: a rolling system log and caller log on SD.
+
+### 5.10 Nightly maintenance
+A daily event (default 4:00 AM, matching the existing clock resync) that, with no caller online: runs door maintenance (LORD), tosses and scans FTN packets, packs and purges message bases per limits, and rotates logs.
+
+## 6. Staged roadmap with exit tests
+
+Door work comes first because it is the riskiest part and Rev's top priority.
+
+| Stage | Work | Exit test |
+|---|---|---|
+| 0 (done) | Profile LORD on the PC | LORD runs under patched emu2 on the i5; 92 KB written / 184 KB read-only in a short session |
+| 1 | Door runtime PC build: CPU core, page-table memory, MZ loader, HLE DOS subset, BIOS basics | LORD 4.07 runs locally (`/L` style) in our runtime on the PC, through new character, forest fight, and clean quit |
+| 2 | FOSSIL + telnet bridge + DOOR.SYS on the PC build | LORD played over telnet from SyncTERM against the PC build, quits back cleanly; carrier drop handled |
+| 3 | CYD port of the runtime in BBS mode (minimal shell that just launches LORD) | LORD played over WiFi telnet on the CYD; measured free heap and peak page use logged; a long session does not run out of pages |
+| 4 | Performance: benchmark harness, then hand Xtensa assembly for the hot paths | measured speedup recorded per routine; assembly kept only where it wins; LORD feels responsive at 33.6k-style output |
+| 5 | BBS core: telnet session, users, login/new user, menus, ANSI display files, door menu | full call: new user, log in, menus, launch LORD, return, log off; user stats persist across reboot |
+| 6 | Message bases: JAM storage, read/post/reply/thread, FTN fields, PKT import/export | post and reply survive reboot; a PKT exported is read correctly by a PC FTN tool, and a PKT from a PC tool imports correctly |
+| 7 | File areas + ZMODEM download | download a file with SyncTERM, CRC matches |
+| 8 | Sysop console (CYD screen + telnet sysop screens) and nightly maintenance | all sysop screens reachable; config changes persist; nightly event runs LORD maintenance and toss/scan |
+| 9 | AXIS art pass and polish | every screen has AXIS art; Rev signs off on the look |
+
+## 7. Testing approach
+- The door runtime is tested first on the PC build against real doors, with the same source compiled for the board.
+- A trace mode logs DOS and FOSSIL calls per door (like the emu2 traces used in stage 0) so incompatibilities show up as concrete missing calls.
+- The patched emu2 on the i5 (`~/axis`) stays available as a reference to compare behavior and page-touch profiles.
+- Board tests drive the BBS over telnet from a script (the prompt-reactive driver used for LORD), plus the existing serial bench commands. Never tap real WiFi networks in automated tests.
+
+## 8. Licensing
+- AXIS code is GPL-3.0-or-later with the existing copyright notices, like the rest of the firmware.
+- **Reuse policy (Rev's decision): build on proven open-source code wherever possible**, licensed MIT, GPL-3.0(-or-later) or public domain (licenses that are compatible with GPL-3.0-or-later, such as BSD, Apache-2.0 and GPL-2.0-or-later, are acceptable when no MIT/GPL-3/public-domain option is as good). Write new code only where no proven component exists or none fits the CYD's memory.
+- **Improve what we reuse:** where a reused component can be made better for the CYD (smaller, faster, less RAM) by refactoring it, or by rewriting a hot path in hand-optimized Xtensa assembly, do it. Every such change is measured against the original on the board (speed, RAM, flash) and kept only if it wins. Original license headers and credits stay; our changes are noted in the file.
+- Candidates to evaluate first (license and fitness to be verified at plan time, not assumed):
+  - 8086 core: FabGL `i8086` (MIT, derived from 8086tiny, MIT); 8086tiny itself.
+  - Telnet option handling: a small proven library if one fits, else our own (the protocol is small).
+  - ZMODEM: an embeddable implementation with a compatible license (lrzsz is GPL-2.0-or-later and too big as-is; look for a small one, or port the core of lrzsz).
+  - JAM message bases and FTN packet code: existing open implementations from FTN projects (license per project), or written from the published JAM and FTS/FSC specs.
+  - Config parsing: inih (BSD-3) or similar.
+  - Hashing: mbedTLS SHA-256, already part of the ESP32 SDK.
+  - Board, display, ANSI renderer, CP437 font, WiFi and NTP: our own CYD Demoscene code (GPL-3.0-or-later).
+- emu2 is GPL-2.0 and its "or later" status is unconfirmed, so it stays a reference to compare behavior, not code to copy, unless its license turns out to be GPL-2.0-or-later.
+- No unpacked door files, door data or third-party ANSI art in the repo. LORD is owned by Metropolis (Gameport) and is still sold; sysops supply their own registration.
+- **Exception (Rev's decision):** the repo hosts the **unmodified LORD 4.07 shareware distribution zip** (`lord407.zip`, as downloaded from gameport.com/demos/lord407.zip) in its own folder, e.g. `doors/lord407.zip`, with a NOTICE saying it is Metropolis Gameport shareware, not covered by the GPL, shared under LORD.DOC's terms (unmodified, free, website downloads allowed; not to be bundled on CD-ROM, floppy or other media without consent). The door installer downloads that zip from the repo and unpacks it on the SD card at install time. The zip is never unpacked into the repo, never modified, never baked into the firmware image or a prebuilt SD image. If Metropolis objects, the installer falls back to the Gameport URL.
+- Registration keys are tied to the sysop name and BBS name; the BBS must pass exactly the configured sysop name and BBS name to LORD. Keys never go in the repo.
+
+## 9. Left to the builder
+- Exact source layout inside `src/bbs/` and `src/door/`, class design, arena sizes.
+- Which proven component to adopt for each part (section 8 lists candidates), as long as the license fits and, for the CPU core, the memory accessor is pluggable.
+- Telnet buffer sizes, task and core assignment (BBS logic vs door CPU vs display mirror).
+- The JAM implementation details and the INI file schema.
+- Which hot paths become assembly, decided by measurement.
+
+## 10. Decisions from the builder check
+- **Long LORD sessions:** turn off the screen mirror during doors first; if memory still runs out, LORD exits cleanly and that triggers adding SD swap. (Rev)
+- **Network exposure:** LAN only for v1. (Rev)
+- **Firmware:** the BBS is a separate firmware with no games or demos built in, so there is no shared app slot to outgrow and no shared flash partition. (Rev)
+- **FTN address:** private test zone for v1, fsxNet with v2. (Rev)
+- **ANSI screens:** Claude makes them, legible on a terminal and on the CYD mirror; Rev edits later. (Rev)
+- **Hosting LORD:** the repo hosts the unmodified lord407.zip for the installer (section 8). (Rev)
+- **Reuse first:** proven MIT, GPL-3 or public-domain code wherever possible; refactor it or rewrite hot paths in assembly when that measurably improves it (section 8). (Rev)
+
+### Calls Claude made (check these)
+- JAM as the message base format; INI-style text config files on SD.
+- Partition layout: ~1.75 MB app, ~1.9 MB `door` partition, small LittleFS, no OTA slot in v1.
+- FTN test address `99:1/0`.
+- ZMODEM download in v1, uploads in v1.1.
+- Door RAM pool target 128 KB, set finally by measurement.
+- Telnet port 23, a second caller gets a "node busy" screen.
+- Nightly maintenance at 4:00 AM.
+- Door work (stages 1 to 4) comes before the BBS core (stage 5), because it is the riskiest part.
+
+## 11. Later versions
+- v2: SD swap for door memory; BinkP mailer and a real FTN node address; QWK; more drop file types; uploads.
+- Multi-node: the PSRAM mod on the CYD (8 MB chip on the SOIC-8 flash footprint, CS on GPIO16, CLK on GPIO17, RGB LED removed), or an ESP32-S3 board with 8 MB PSRAM, or the spare ESP32 as a door box over UART. Node isolation then comes from one page table and one FOSSIL bridge per node, which this design already has.
