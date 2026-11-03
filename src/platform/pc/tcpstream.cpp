@@ -76,6 +76,20 @@ TcpStream::TcpStream(intptr_t sock) : sock_(sock) {
 
 TcpStream::~TcpStream() { closeSock(sock_); }
 
+std::unique_ptr<TcpStream> TcpStream::dial(const char* host, uint16_t port) {
+    netInit();
+    intptr_t    sock = (intptr_t)socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    inet_pton(AF_INET, host, &a.sin_addr);
+    if (connect((decltype(socket(0, 0, 0)))sock, (sockaddr*)&a, sizeof a) != 0) {
+        closeSock(sock);
+        return nullptr;
+    }
+    return std::unique_ptr<TcpStream>(new TcpStream(sock));
+}
+
 void TcpStream::pump() {
     if (!up_) return;
     char buf[1024];

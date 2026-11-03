@@ -35,7 +35,7 @@ std::string boxLine(const char* l1, const std::string& v1, const char* l2, const
     std::string       s = FRAME;
     s += "\xba ";
     s += LABEL + fit(l1, 9) + VALUE + fit(v1, 28) + FRAME + "\xba\xba ";
-    s += LABEL + fit(l2, 9) + VALUE + fit(v2, 28) + FRAME + "\xba\r\n";
+    s += LABEL + fit(l2, 9) + VALUE + fit(v2, 28) + FRAME + "\xba";  // 80 columns: the terminal wraps by itself
     return s;
 }
 
@@ -43,9 +43,9 @@ std::string boxEdge(bool top) {
     std::string s = "\x1b[0;35m";
     if (top) {
         s += "\xc9\xcd\xb5\x1b[1;33m THE BOARD \x1b[0;35m\xc6" + std::string(24, '\xcd') + "\xbb";
-        s += "\xc9\xcd\xb5\x1b[1;33m THE SYSTEM \x1b[0;35m\xc6" + std::string(23, '\xcd') + "\xbb\r\n";
+        s += "\xc9\xcd\xb5\x1b[1;33m THE SYSTEM \x1b[0;35m\xc6" + std::string(23, '\xcd') + "\xbb";
     } else {
-        s += "\xc8" + std::string(38, '\xcd') + "\xbc\xc8" + std::string(38, '\xcd') + "\xbc\r\n";
+        s += "\xc8" + std::string(38, '\xcd') + "\xbc\xc8" + std::string(38, '\xcd') + "\xbc";
     }
     return s;
 }
@@ -53,9 +53,8 @@ std::string boxEdge(bool top) {
 // The caller's first screen: the drippy logo (art/login.ans), then the board and the system.
 std::string welcome(int node, const SysInfo& s, const BbsConfig& cfg) {
     std::string w = CLS;
-    w += kLoginArt;
+    w += kLoginArt;  // 80-column rows: each one wraps to the next by itself
     w += RST;
-    w += "\r\n";
     std::string who = std::to_string(s.nodesTotal ? s.nodes.size() : 1) + " of " + std::to_string(s.nodesTotal) + "  ";
     for (size_t i = 0; i < s.nodes.size(); i++)
         who += "[" + std::to_string(i + 1) + "] " + ((int)i + 1 == node ? "you" : s.nodes[i].empty() ? "waiting" : s.nodes[i]) + " ";
@@ -205,8 +204,11 @@ void Node::key(char c) {
         }
         return;
     }
+    if (state_ == State::Transfer) return;  // the line belongs to the transfer
     if (state_ == State::Files) {
-        if (!browser_->key(c)) {
+        bool stay = browser_->key(c);
+        if (stay && browser_->wantsTransfer()) state_ = State::Transfer;
+        if (!stay) {
             browser_.reset();
             state_ = State::Menu;
             out_ += "\x1b[0m\x1b[2J\x1b[H";
@@ -272,8 +274,15 @@ void Node::key(char c) {
     }
 }
 
+void Node::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t nowMs) {
+    if (state_ != State::Transfer) return;
+    lastInput_ = nowMs;
+    browser_->transferDone(ok, bytes, ms, note, 0);
+    state_ = State::Files;
+}
+
 void Node::poll(uint32_t nowMs) {
-    if (state_ != State::Done && state_ != State::InDoor && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
+    if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";
         out_ += AMBER;
         out_ += "Logged off: idle too long.";

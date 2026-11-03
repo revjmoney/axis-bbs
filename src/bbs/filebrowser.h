@@ -8,6 +8,7 @@
 
 #include "bbs/config.h"
 #include "bbs/filelib.h"
+#include "bbs/transferjob.h"
 
 namespace axis::bbs {
 
@@ -20,15 +21,21 @@ public:
         : areas_(areas), lib_(lib), out_(out) {}
     void begin();       // show the area list
     bool key(char c);   // false once the caller leaves Files
+    // a download or upload the caller asked for: the host runs it, then calls transferDone
+    bool                   wantsTransfer() const { return st_ == St::Transfer; }
+    const TransferRequest& transfer() const { return req_; }
+    void transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t size);
 
 private:
-    enum class St { Areas, List, ViewName, Viewing };
+    enum class St { Areas, List, ViewName, Viewing, DownName, UpDesc, Proto, UpName, Transfer };
     void showAreas();
     void openArea(size_t i);
     void showPage();
     void listPrompt();
     void view(const std::string& name);
     void showMoreText();
+    void askProtocol();
+    void startTransfer();
     bool lineKey(char c, size_t max);  // true when Enter ends the line (in line_)
 
     const std::vector<FileArea>& areas_;
@@ -41,6 +48,7 @@ private:
     std::vector<FileEntry>       files_;
     std::vector<std::string>     text_;  // the file being viewed, as lines
     size_t                       shown_ = 0;
+    TransferRequest              req_;
 };
 
 }  // namespace axis::bbs

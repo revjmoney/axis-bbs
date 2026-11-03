@@ -25,6 +25,14 @@ public:
     virtual ~RandomFile() = default;
 };
 
+// A new file being written; nothing is visible until finish(true).
+class WriteFile {
+public:
+    virtual bool write(const uint8_t* p, size_t n) = 0;
+    virtual bool finish(bool keep) = 0;  // keep: make it part of the area; else throw it away
+    virtual ~WriteFile() = default;
+};
+
 class FileLibrary {
 public:
     virtual std::vector<FileEntry> list(const std::string& areaId) = 0;
@@ -32,6 +40,9 @@ public:
     virtual bool read(const std::string& areaId, const std::string& name, std::string& out, size_t max) = 0;
     // nullptr if it isn't there. The default reads the whole file into memory (fine for tests).
     virtual std::unique_ptr<RandomFile> open(const std::string& areaId, const std::string& name);
+    // uploads: nullptr / false where the store is read-only
+    virtual std::unique_ptr<WriteFile> create(const std::string&, const std::string&) { return nullptr; }
+    virtual bool describe(const std::string&, const std::string&, const std::string&) { return false; }  // add to FILES.BBS
     virtual ~FileLibrary() = default;
 };
 

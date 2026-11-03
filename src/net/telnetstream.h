@@ -42,6 +42,7 @@ private:
     bool         sendAll(const char* p, size_t n);
     TelnetFilter telnet_;
     std::string  in_, out_;
+    size_t       inPos_ = 0;  // next unread byte of in_
     bool         up_ = true;
 };
 

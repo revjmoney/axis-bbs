@@ -130,14 +130,14 @@ class Term:
             elif ch == '\x0c':
                 self.reset_screen()
             elif ch not in '\x00\x07':
-                if self.x >= COLS:
+                fg = self.fg + (8 if self.bold else 0)
+                self.cells[self.y][self.x] = (ch, fg, self.bg)
+                self.x += 1
+                if self.x >= COLS:  # BBS terminals (SyncTERM, ANSI.SYS) wrap right after column 80
                     self.x = 0
                     self.y += 1
                     if self.y >= ROWS:
                         self.scroll()
-                fg = self.fg + (8 if self.bold else 0)
-                self.cells[self.y][self.x] = (ch, fg, self.bg)
-                self.x += 1
 
     def png(self, path, title):
         font = vga_font()

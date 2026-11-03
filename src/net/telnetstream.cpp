@@ -11,8 +11,13 @@ constexpr size_t kBatch = 1024;      // send once this much output is waiting
 
 void TelnetStream::start() { writeRaw(telnet_.initialNegotiation()); }
 
+// Refill from the socket only once everything already read is used up: asking the socket for
+// every byte (and shifting the buffer by one) made uploads crawl at 3 KB/s.
 void TelnetStream::pump() {
-    uint8_t buf[128];
+    if (inPos_ < in_.size()) return;
+    in_.clear();
+    inPos_ = 0;
+    uint8_t buf[1024];
     while (up_ && in_.size() < kMaxQueued) {
         int n = rawRead(buf, sizeof buf);
         if (n <= 0) break;
@@ -25,25 +30,26 @@ void TelnetStream::pump() {
 int TelnetStream::available() {
     flush();  // the door is looking for a key: the caller should see the prompt first
     pump();
-    return (int)in_.size();
+    return (int)(in_.size() - inPos_);
 }
 
 int TelnetStream::peek() {
     flush();
     pump();
-    return in_.empty() ? -1 : (uint8_t)in_[0];
+    return inPos_ < in_.size() ? (uint8_t)in_[inPos_] : -1;
 }
 
 int TelnetStream::read() {
     int c = peek();
-    if (c >= 0) in_.erase(0, 1);
+    if (c >= 0) inPos_++;
     return c;
 }
 
 std::string TelnetStream::takeInput() {
     pump();
-    std::string s;
-    s.swap(in_);
+    std::string s = in_.substr(inPos_);
+    in_.clear();
+    inPos_ = 0;
     return s;
 }
 

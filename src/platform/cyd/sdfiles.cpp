@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "platform/cyd/sdfiles.h"
 
+
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -31,6 +32,31 @@ struct SdFile : axis::bbs::RandomFile {
             got += (size_t)r;
         }
         return true;
+    }
+};
+
+// an upload: written to a hidden temp file, renamed into the area only when it is complete
+struct SdWrite : axis::bbs::WriteFile {
+    int         fd = -1;
+    std::string temp, final;
+    ~SdWrite() override { finish(false); }
+    bool write(const uint8_t* p, size_t n) override {
+        size_t done = 0;
+        while (done < n) {
+            int w = ::write(fd, p + done, n - done);
+            if (w <= 0) return false;
+            done += (size_t)w;
+        }
+        return true;
+    }
+    bool finish(bool keep) override {
+        if (fd < 0) return false;
+        ::close(fd);
+        fd = -1;
+        struct stat st;
+        if (keep && ::stat(final.c_str(), &st) != 0 && ::rename(temp.c_str(), final.c_str()) == 0) return true;
+        ::unlink(temp.c_str());
+        return false;
     }
 };
 
@@ -67,6 +93,28 @@ std::unique_ptr<axis::bbs::RandomFile> SdFileLibrary::open(const std::string& ar
     if (f->fd < 0) return nullptr;
     f->bytes = (uint32_t)st.st_size;
     return std::unique_ptr<axis::bbs::RandomFile>(f.release());
+}
+
+std::unique_ptr<axis::bbs::WriteFile> SdFileLibrary::create(const std::string& areaId, const std::string& name) {
+    if (!storageHasSd() || !safeName(areaId) || !safeName(name)) return nullptr;
+    std::unique_ptr<SdWrite> w(new SdWrite);
+    w->final = folderOf(areaId) + "/" + name;
+    w->temp = folderOf(areaId) + "/.upload.tmp";
+    ::unlink(w->temp.c_str());  // a leftover from a dropped call
+    w->fd = ::open(w->temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (w->fd < 0) return nullptr;
+    return std::unique_ptr<axis::bbs::WriteFile>(w.release());
+}
+
+bool SdFileLibrary::describe(const std::string& areaId, const std::string& name, const std::string& desc) {
+    if (!storageHasSd() || !safeName(areaId) || !safeName(name)) return false;
+    int fd = ::open((folderOf(areaId) + "/FILES.BBS").c_str(), O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (fd < 0) return false;
+    std::string line = name;
+    line += std::string(name.size() < 13 ? 13 - name.size() : 1, ' ') + desc + "\r\n";
+    bool ok = ::write(fd, line.data(), line.size()) == (int)line.size();
+    ::close(fd);
+    return ok;
 }
 
 bool SdFileLibrary::read(const std::string& areaId, const std::string& name, std::string& out, size_t max) {

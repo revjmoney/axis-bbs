@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "bbs/theme.h"
+
 namespace axis::bbs {
 
 namespace {
@@ -102,12 +104,9 @@ void FileBrowser::showPage() {
 
 void FileBrowser::listPrompt() {
     out_ += "\r\n   ";
-    for (const char* item : {"[N]", "ext", "[P]", "rev", "[V]", "iew a text file", "[Q]", "uit"}) {
-        out_ += item[0] == '[' ? CYAN : DIM;
-        out_ += item;
-        if (item[0] != '[') out_ += "  ";
-    }
-    out_ += HI;
+    out_ += theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("D", "ownload  ") +
+            theme::key("U", "pload  ") + theme::key("Q", "uit");
+    out_ += theme::WHITE;
     out_ += ": ";
 }
 
@@ -124,7 +123,7 @@ void FileBrowser::view(const std::string& name) {
     }
     if (!isTextFile(f->name)) {
         out_ += AMBER;
-        out_ += "   " + f->name + " isn't a text file. ZMODEM downloads are coming in the next build.\r\n";
+        out_ += "   " + f->name + " isn't a text file: [D]ownload it instead.\r\n";
         st_ = St::List;
         listPrompt();
         return;
@@ -170,6 +169,51 @@ void FileBrowser::showMoreText() {
     shown_ = text_.size() + 1;  // the next key goes back to the list
 }
 
+void FileBrowser::askProtocol() {
+    st_ = St::Proto;
+    out_ += "\r\n   ";
+    out_ += theme::key("Z", "MODEM  ") + theme::key("X", "MODEM  ") + theme::key("K", " XMODEM-1K  ") + theme::key("Q", "uit");
+    out_ += theme::WHITE;
+    out_ += ": ";
+}
+
+void FileBrowser::startTransfer() {
+    const char* proto = req_.proto == 'Z' ? "ZMODEM" : req_.proto == 'K' ? "XMODEM-1K" : "XMODEM";
+    out_ += theme::CLS;
+    out_ += "\r\n";
+    if (req_.upload) {
+        out_ += theme::window("UPLOAD", {{"area", areas_[area_].name}, {"file", req_.name.empty() ? "(your program names it)" : req_.name},
+                                         {"about", req_.desc}, {"protocol", proto}});
+        out_ += "\r\n  " + theme::fade("Start the upload in your terminal now.") + "  " + theme::key("Ctrl-X", " x5 cancels") + "\r\n";
+    } else {
+        uint32_t size = 0;
+        for (auto& f : files_)
+            if (f.name == req_.name) size = f.size;
+        char est[48];
+        std::snprintf(est, sizeof est, "about %u s at 24 KB/s", (unsigned)(size / 24576 + 1));
+        out_ += theme::window("DOWNLOAD", {{"file", req_.name}, {"size", fileSizeText(size) + "  (" + std::to_string(size) + " bytes)"},
+                                           {"protocol", proto}, {"time", est}});
+        out_ += "\r\n  " + theme::fade("Start your terminal's download now.") + "  " + theme::key("Ctrl-X", " x5 cancels") + "\r\n";
+    }
+    out_ += theme::RESET;
+    st_ = St::Transfer;
+}
+
+void FileBrowser::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t) {
+    char speed[48];
+    std::snprintf(speed, sizeof speed, "%u.%u s, %u bytes/s", (unsigned)(ms / 1000), (unsigned)(ms % 1000 / 100),
+                  (unsigned)(ms ? (uint64_t)bytes * 1000 / ms : 0));
+    std::vector<std::pair<std::string, std::string>> rows = {{"file", req_.upload ? (note.empty() ? req_.name : req_.name) : req_.name},
+                                                             {"moved", fileSizeText(bytes) + "  (" + std::to_string(bytes) + " bytes)"},
+                                                             {"time", speed}};
+    if (!ok) rows.push_back({"why", note.empty() ? "stopped" : note});
+    out_ += "\r\n\r\n";
+    out_ += theme::window(ok ? (req_.upload ? "UPLOAD COMPLETE" : "DOWNLOAD COMPLETE") : "TRANSFER FAILED", rows);
+    files_ = lib_.list(areas_[area_].id);  // an upload is in the list now
+    st_ = St::List;
+    listPrompt();
+}
+
 bool FileBrowser::key(char c) {
     switch (st_) {
         case St::Areas:
@@ -191,6 +235,25 @@ bool FileBrowser::key(char c) {
                 case 'p':
                     page_--;
                     showPage();
+                    break;
+                case 'd':
+                    out_ += "d\r\n   ";
+                    out_ += DIM;
+                    out_ += "File name: ";
+                    out_ += HI;
+                    line_.clear();
+                    req_ = TransferRequest();
+                    st_ = St::DownName;
+                    break;
+                case 'u':
+                    out_ += "u\r\n   ";
+                    out_ += DIM;
+                    out_ += "Describe it in one line (Enter to cancel): ";
+                    out_ += HI;
+                    line_.clear();
+                    req_ = TransferRequest();
+                    req_.upload = true;
+                    st_ = St::UpDesc;
                     break;
                 case 'v':
                     out_ += "v\r\n   ";
@@ -218,6 +281,74 @@ bool FileBrowser::key(char c) {
                 view(name);
             }
             return true;
+        case St::DownName: {
+            if (!lineKey(c, 40)) return true;
+            std::string want = line_;
+            line_.clear();
+            const FileEntry* f = nullptr;
+            for (const FileEntry& e : files_)
+                if (sameName(e.name, want)) f = &e;
+            if (!f) {
+                if (!want.empty()) {
+                    out_ += AMBER;
+                    out_ += "   No file by that name in this area.\r\n";
+                }
+                st_ = St::List;
+                listPrompt();
+                return true;
+            }
+            req_.area = areas_[area_].id;
+            req_.name = f->name;
+            askProtocol();
+            return true;
+        }
+        case St::UpDesc:
+            if (!lineKey(c, 60)) return true;
+            if (line_.empty()) {
+                st_ = St::List;
+                listPrompt();
+                return true;
+            }
+            req_.area = areas_[area_].id;
+            req_.desc = line_;
+            line_.clear();
+            askProtocol();
+            return true;
+        case St::Proto: {
+            char p = (char)(c | 0x20);
+            if (p == 'q' || c == '\r') {
+                out_ += "\r\n";
+                st_ = St::List;
+                listPrompt();
+            } else if (p == 'z' || p == 'x' || p == 'k') {
+                out_ += (char)(p - 32);
+                req_.proto = (char)(p - 32);
+                if (req_.upload && req_.proto != 'Z') {  // XMODEM sends no name: ask for one
+                    out_ += "\r\n   ";
+                    out_ += DIM;
+                    out_ += "Name to save it as: ";
+                    out_ += HI;
+                    line_.clear();
+                    st_ = St::UpName;
+                } else {
+                    startTransfer();
+                }
+            }
+            return true;
+        }
+        case St::UpName:
+            if (!lineKey(c, 40)) return true;
+            if (line_.empty()) {
+                st_ = St::List;
+                listPrompt();
+                return true;
+            }
+            req_.name = line_;
+            line_.clear();
+            startTransfer();
+            return true;
+        case St::Transfer:
+            return true;  // the host owns the line until transferDone
         case St::Viewing:
             if ((c | 0x20) == 'q' || shown_ > text_.size()) {
                 st_ = St::List;

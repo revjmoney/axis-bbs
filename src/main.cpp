@@ -18,6 +18,7 @@
 #include "bbs/config.h"
 #include "bbs/eventlog.h"
 #include "bbs/sysop_menu.h"
+#include "bbs/transferjob.h"
 #include "door/session.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
@@ -54,6 +55,8 @@ static std::unique_ptr<FlashImageSource>        doorImage;
 static std::unique_ptr<axis::door::DoorSession> door;
 static axis::door::LockTable                    doorLocks;
 static std::unique_ptr<axis::bbs::AnsiViewer>   viewer;  // a door built into the firmware, when running
+static std::unique_ptr<axis::bbs::TransferJob>  job;     // a download or upload, when one is running
+static uint32_t                                 jobStartMs = 0, jobDrawnMs = 0;
 static uint32_t                                 doorHeapBefore = 0, doorStartMs = 0;
 static uint8_t*                                 doorIram = nullptr;  // instruction RAM lent to the door
 static std::unique_ptr<axis::bbs::Node>         node;
@@ -230,8 +233,50 @@ static void drawSysop() {
     scr.setFont(&fonts::Font0);
 }
 
+// The sysop panel while a caller downloads or uploads: a drippy window with a live progress bar.
+static void drawTransfer() {
+    static BigText t;
+    const auto&    r = job->request();
+    uint32_t       done = job->bytes(), size = job->size(), secs = (millis() - jobStartMs) / 1000;
+    char           b[48];
+    t.clear(0x07);
+    const uint8_t O = 0x06, G = 0x08, W = 0x0F, L = 0x07;  // orange, dark grey, white, light grey
+    t.fill(0, 0, 40, 0xDC, O);
+    t.text(1, 0, "\xdb", O);
+    t.text(1, 39, "\xdb", O);
+    t.text(1, 2, r.upload ? "U P L O A D" : "D O W N L O A D", W);
+    t.text(1, 30, r.proto == 'Z' ? "ZMODEM" : r.proto == 'K' ? "XMODEM-1K" : "XMODEM", G);
+    t.fill(2, 0, 40, 0xDB, O);
+    static const char drips[] = "# ## # ### ## # #### # ## ### # ## ## #";
+    for (int c = 0; c < 39; c++)
+        if (drips[c] == '#') t.text(3, c, (c * 7 % 3) ? "\xdb" : "\xdf", c % 7 == 3 ? G : O);
+    for (int c = 0; c < 39; c++)
+        if (drips[c] == '#' && c % 3 == 0) t.text(4, c, "\xdf", O);
+    std::string name = (r.upload ? job->savedName() : r.name);
+    t.text(6, 1, "file", L);
+    t.text(6, 10, (name.empty() ? std::string("(waiting)") : name).substr(0, 29).c_str(), W);
+    t.text(7, 1, "caller", L);
+    t.text(7, 10, node ? node->handle().substr(0, 29).c_str() : "", W);
+    snprintf(b, sizeof b, "%lu of %lu bytes", (unsigned long)done, (unsigned long)size);
+    t.text(8, 1, "moved", L);
+    t.text(8, 10, size ? b : (std::to_string(done) + " bytes").c_str(), W);
+    snprintf(b, sizeof b, "%lus  %lu bytes/s", (unsigned long)secs, (unsigned long)(secs ? done / secs : 0));
+    t.text(9, 1, "time", L);
+    t.text(9, 10, b, W);
+    int fill = size ? (int)((uint64_t)done * 38 / size) : (int)(secs % 38);
+    t.fill(11, 1, 38, 0xB0, G);
+    t.fill(11, 1, fill, 0xDB, O);
+    t.render(scr, 0, 15);
+    screenPush();
+}
+
 static void drawScreen() {
     if (!screenReady()) return;  // a door is running
+    if (job) {
+        drawTransfer();
+        screenDirty = false;
+        return;
+    }
     if (mode == Mode::SetupChoice) {
         title("first-boot setup");
         scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
@@ -652,6 +697,29 @@ void loop() {
         return;
     }
     if (server.hasClient()) answer(server.available());
+    if (job) {  // a download or upload owns the line
+        bool running = job->step(millis());
+        if (line) line->flush();
+        if (millis() - jobDrawnMs > 500) {
+            jobDrawnMs = millis();
+            drawTransfer();
+        }
+        if (!running) {
+            const auto& r = job->request();
+            logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
+                     (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
+            if (line && line->carrier()) {
+                node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
+                job.reset();
+                sendApp(node->takeOutput());
+            } else {
+                job.reset();
+                hangUp();
+            }
+            screenDirty = true;
+        }
+        return;
+    }
     if (viewer) {  // a built-in door owns the line
         bool running = viewer->step();
         if (line) line->flush();
@@ -672,6 +740,12 @@ void loop() {
             node->poll(millis());
             if (node->state() == axis::bbs::Node::State::InDoor) {
                 startDoor();
+                return;
+            }
+            if (node->state() == axis::bbs::Node::State::Transfer && !job) {
+                sendApp(node->takeOutput());  // the transfer window, before the protocol starts
+                jobStartMs = jobDrawnMs = millis();
+                job.reset(new axis::bbs::TransferJob(sdFiles, node->transfer(), *line));
                 return;
             }
             sendApp(node->takeOutput());

@@ -28,7 +28,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Login, Menu, Doors, InDoor, Files, Done };
+    enum class State { Login, Menu, Doors, InDoor, Files, Transfer, Done };
     enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError };
     static constexpr size_t   kMaxHandle = 30;
 
@@ -45,6 +45,9 @@ public:
     std::string      doorRequested() const { return state_ == State::InDoor ? cfg_.doors[door_].id : ""; }
     const DoorEntry& door() const { return cfg_.doors[door_]; }
     void             resumeAfterDoor(DoorEnd how, uint32_t nowMs);
+    // a download or upload from the Files menu (State::Transfer): the host runs it, then reports back
+    const TransferRequest& transfer() const { return browser_->transfer(); }
+    void transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t nowMs);
 
 private:
     void key(char c);

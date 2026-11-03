@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include <map>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,8 @@ FakeLibrary library() {
     l.text["text/LIST0.TXT"] = longText;
     return l;
 }
+
+std::string plain(const std::string& s) { return std::regex_replace(s, std::regex("\x1b\\[[0-9;]*m"), ""); }
 
 void type(Node& n, const std::string& s) { n.input((const uint8_t*)s.data(), s.size(), 1000); }
 
@@ -145,7 +148,7 @@ TEST_CASE("viewing a binary file explains downloads") {
     type(n, "f1\r");
     n.takeOutput();
     type(n, "vAXISFLSH.ZIP\r");
-    CHECK(n.takeOutput().find("download") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find("ownload") != std::string::npos);
 }
 
 TEST_CASE("Q leaves the list and Enter leaves the areas") {
@@ -166,4 +169,63 @@ TEST_CASE("files without a library say the areas are offline") {
     type(n, "f");
     CHECK(n.takeOutput().find("offline") != std::string::npos);
     CHECK(n.state() == Node::State::Menu);
+}
+
+TEST_CASE("D asks for a file and a protocol, then shows the download window and requests it") {
+    FakeLibrary lib = library();
+    Node        n = inFiles(lib);
+    type(n, "f1\r");
+    n.takeOutput();
+    type(n, "dAXISFLSH.ZIP\r");
+    CHECK(plain(n.takeOutput()).find("[Z]MODEM") != std::string::npos);  // the protocol menu
+    type(n, "z");
+    std::string out = plain(n.takeOutput());
+    CHECK(out.find("D O W N L O A D") != std::string::npos);
+    CHECK(n.state() == Node::State::Transfer);
+    CHECK_FALSE(n.transfer().upload);
+    CHECK(n.transfer().name == "AXISFLSH.ZIP");
+    CHECK(n.transfer().area == "axis");
+    CHECK(n.transfer().proto == 'Z');
+}
+
+TEST_CASE("U asks for a description and a protocol, then requests the upload") {
+    FakeLibrary lib = library();
+    Node        n = inFiles(lib);
+    type(n, "f2\r");
+    n.takeOutput();
+    type(n, "uA list of boards\rz");
+    CHECK(n.state() == Node::State::Transfer);
+    CHECK(n.transfer().upload);
+    CHECK(n.transfer().desc == "A list of boards");
+    CHECK(n.transfer().area == "text");
+}
+
+TEST_CASE("an XMODEM upload also asks for the file name") {
+    FakeLibrary lib = library();
+    Node        n = inFiles(lib);
+    type(n, "f2\r");
+    type(n, "unotes\rknotes.txt\r");
+    CHECK(n.state() == Node::State::Transfer);
+    CHECK(n.transfer().proto == 'K');
+    CHECK(n.transfer().name == "notes.txt");
+}
+
+TEST_CASE("after a transfer the caller sees how it went and is back at the list") {
+    FakeLibrary lib = library();
+    Node        n = inFiles(lib);
+    type(n, "f1\rdREADME.TXT\rz");
+    n.takeOutput();
+    n.transferDone(true, 1200, 2000, "", 0);
+    std::string out = plain(n.takeOutput());
+    CHECK(out.find("C O M P L E T E") != std::string::npos);
+    CHECK(n.state() == Node::State::Files);
+    CHECK(out.find("ownload") != std::string::npos);  // the list prompt is back
+}
+
+TEST_CASE("a download of a missing file is refused before any protocol starts") {
+    FakeLibrary lib = library();
+    Node        n = inFiles(lib);
+    type(n, "f1\rdNOPE.ZIP\r");
+    CHECK(n.state() == Node::State::Files);
+    CHECK(n.takeOutput().find("No file by that name") != std::string::npos);
 }

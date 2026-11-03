@@ -16,6 +16,7 @@ namespace pc {
 class TcpStream : public door::ByteStream {
 public:
     explicit TcpStream(intptr_t sock);
+    static std::unique_ptr<TcpStream> dial(const char* host, uint16_t port);  // a client connection (tools, tests)
     ~TcpStream() override;
     int  available() override;
     int  read() override;
