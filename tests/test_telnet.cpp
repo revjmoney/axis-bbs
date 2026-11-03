@@ -83,3 +83,21 @@ TEST_CASE("telnet an endless subnegotiation is capped and the stream recovers") 
     feed(t, bytes({255, 240}) + "k", app, reply);
     CHECK(app == "k");
 }
+
+TEST_CASE("telnet passes CR NUL and CR LF untouched once the caller agreed to binary") {
+    TelnetFilter t;
+    std::string  app, reply;
+    feed(t, bytes({255, 251, 0}), app, reply);  // IAC WILL BINARY: the caller sends 8-bit clean data
+    CHECK(t.callerBinary());
+    feed(t, "x\r" + bytes({0}) + "y\r\nz", app, reply);
+    CHECK(app == "x\r" + bytes({0}) + "y\r\nz");  // XMODEM blocks hold any byte
+}
+
+TEST_CASE("telnet goes back to CR handling if the caller leaves binary") {
+    TelnetFilter t;
+    std::string  app, reply;
+    feed(t, bytes({255, 251, 0, 255, 252, 0}), app, reply);  // WILL BINARY then WONT BINARY
+    CHECK_FALSE(t.callerBinary());
+    feed(t, "a\r\nb", app, reply);
+    CHECK(app == "a\rb");
+}

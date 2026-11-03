@@ -24,7 +24,7 @@ void TelnetFilter::fromNet(const uint8_t* p, size_t n, std::string& toApp, std::
             case St::Data:
                 if (c == IAC) {
                     st_ = St::Iac;
-                } else if (lastCr_ && (c == 0 || c == '\n')) {
+                } else if (lastCr_ && !callerBinary_ && (c == 0 || c == '\n')) {
                     lastCr_ = false;  // second half of CR NUL / CR LF
                 } else {
                     lastCr_ = c == '\r';
@@ -48,6 +48,8 @@ void TelnetFilter::fromNet(const uint8_t* p, size_t n, std::string& toApp, std::
                 break;
             case St::Opt: {
                 // Options we offered or asked for need no answer; refuse everything else.
+                if (c == BINARY && cmd_ == WILL) callerBinary_ = true;  // our DO BINARY was accepted
+                if (c == BINARY && cmd_ == WONT) callerBinary_ = false;
                 bool ours = c == ECHO || c == SGA || c == BINARY || c == NAWS;
                 if (!ours) {
                     if (cmd_ == DO) replyToNet += cmd(WONT, c);

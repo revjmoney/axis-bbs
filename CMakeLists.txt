@@ -10,6 +10,9 @@ add_compile_options(-O2 -Wall -Wextra)
 add_library(axiscore STATIC
     src/net/telnet.cpp
     src/net/telnetstream.cpp
+    src/net/crc.cpp
+    src/net/xmodem.cpp
+    src/net/zmodem.cpp
     src/bbs/node.cpp
     src/bbs/sysop_menu.cpp
     src/bbs/filelib.cpp
@@ -63,7 +66,8 @@ add_executable(axis_tests
     tests/test_sysop_menu.cpp
     tests/test_files.cpp
     tests/test_zip.cpp
-    tests/test_ansiview.cpp)
+    tests/test_ansiview.cpp
+    tests/test_transfer.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)

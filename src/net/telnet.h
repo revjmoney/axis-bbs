@@ -19,13 +19,14 @@ public:
     std::string toNet(const uint8_t* p, size_t n) const;
     size_t pendingSubnegotiation() const { return sb_.size(); }
     int width() const { return width_; }
+    bool callerBinary() const { return callerBinary_; }  // caller said WILL BINARY: input is 8-bit clean
     int height() const { return height_; }
 
 private:
     enum class St { Data, Iac, Opt, Sb, SbIac } st_ = St::Data;
     uint8_t     cmd_ = 0;      // WILL/WONT/DO/DONT waiting for its option byte
     std::string sb_;           // subnegotiation payload
-    bool        lastCr_ = false;
+    bool        lastCr_ = false, callerBinary_ = false;
     int         width_ = 80, height_ = 25;
 };
 
