@@ -4,6 +4,7 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <map>
 
 namespace axis::bbs {
 
@@ -34,7 +35,8 @@ const std::vector<std::string>& tzNames() {
 }
 
 std::vector<FileArea> defaultFileAreas() {
-    return {{"rotatocam-pro", "RotatoCAM: Pro"},
+    return {{"axis", "Axis Micro BBS Firmware"},  // this firmware, the BBS, our door code
+            {"rotatocam-pro", "RotatoCAM: Pro"},
             {"rotatocam-free", "RotatoCAM: Free"},
             {"cnc-free", "CNC Software: Freeware"},
             {"cnc-share", "CNC Software: Shareware/Trials"},
@@ -56,7 +58,7 @@ std::vector<FileArea> defaultFileAreas() {
 BbsConfig parseConfig(const std::string& ini) {
     BbsConfig              c;
     std::vector<DoorEntry> listed;
-    std::vector<FileArea>  areas;
+    std::map<int, FileArea> areas;  // by number: sorted, and a repeated number replaces
     size_t pos = 0;
     while (pos < ini.size()) {
         size_t end = ini.find('\n', pos);
@@ -97,17 +99,20 @@ BbsConfig parseConfig(const std::string& ini) {
             }
         } else if (k.rfind("area", 0) == 0 && k.size() > 4 && std::isdigit((unsigned char)k[4])) {
             size_t bar = v.find('|');
-            if (bar != std::string::npos && bar > 0) areas.push_back({v.substr(0, bar), v.substr(bar + 1)});
+            if (bar != std::string::npos && bar > 0) areas[std::atoi(k.c_str() + 4)] = {v.substr(0, bar), v.substr(bar + 1)};
         } else c.unknown.emplace_back(k, v);
     }
     if (listed.empty()) listed = c.doors;  // none in the file: keep the default list
     c.doors = listed;
-    if (!areas.empty()) c.areas = areas;
+    if (!areas.empty()) {
+        c.areas.clear();
+        for (auto& a : areas) c.areas.push_back(a.second);
+    }
     return c;
 }
 
 std::string formatConfig(const BbsConfig& c) {
-    std::string s = "# AXIS UNDERGROUND CNC settings (written by the board; safe to edit)\n";
+    std::string s = "# Axis Micro BBS Firmware settings (written by the board; safe to edit)\n";
     auto kv = [&](const char* k, const std::string& v) { s += std::string(k) + "=" + v + "\n"; };
     kv("bbs_name", c.bbsName);
     kv("sysop_handle", c.sysopHandle);

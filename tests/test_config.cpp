@@ -96,7 +96,8 @@ TEST_CASE("config has the default file areas, music and CAD/CAM included") {
             if (a.name == name) return true;
         return false;
     };
-    CHECK(c.areas.size() == 17);
+    CHECK(c.areas.size() == 18);
+    CHECK(c.areas[0].name == "Axis Micro BBS Firmware");  // our own area comes first
     CHECK(has("RotatoCAM: Pro"));
     CHECK(has("Abandonware"));
     CHECK(has("CAD/CAM Software"));
@@ -113,4 +114,12 @@ TEST_CASE("config file areas round trip and replace the defaults") {
     auto d = parseConfig(formatConfig(c));
     REQUIRE(d.areas.size() == 2);
     CHECK(d.areas[0].name == "G-code and Toolpaths");
+}
+
+TEST_CASE("file areas sort by number and a repeated number replaces the earlier one") {
+    auto c = parseConfig("area2=gcode|G-code\narea1=text|Text\narea2=models|3D Models\narea0=axis|Axis Micro BBS Firmware\n");
+    REQUIRE(c.areas.size() == 3);
+    CHECK(c.areas[0].id == "axis");
+    CHECK(c.areas[1].id == "text");
+    CHECK(c.areas[2].id == "models");
 }

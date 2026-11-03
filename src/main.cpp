@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// AXIS UNDERGROUND CNC firmware entry: board, storage, settings, WiFi, the telnet listener
+// Axis Micro BBS Firmware entry: board, storage, settings, WiFi, the telnet listener
 // and the sysop screen. On first boot it runs setup (tap: on this screen or over telnet).
 // One node per board for now; callers beyond that hear "busy".
 #include <Arduino.h>
@@ -577,7 +577,8 @@ void setup() {
     delay(200);
     const char* panel = boardInit(1, 40000000);
     if (!screenInit()) Serial.println("axis: no memory for the screen copy");
-    Serial.printf("\naxis: AXIS UNDERGROUND CNC booting, panel %s, heap %u\n", panel, ESP.getFreeHeap());
+    Serial.printf("\naxis: Axis Micro BBS Firmware %s booting, panel %s, heap %u\n", axis::bbs::kAxisVersion, panel,
+                  ESP.getFreeHeap());
     title("starting...");
     screenPush();
     storageInit();

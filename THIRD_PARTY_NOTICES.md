@@ -1,6 +1,6 @@
 # Third-party notices
 
-AXIS UNDERGROUND CNC includes these third-party components, each under its own license.
+Axis Micro BBS Firmware includes these third-party components, each under its own license.
 
 | Component | Where | License | Source |
 |---|---|---|---|

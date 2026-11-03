@@ -151,7 +151,7 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
             for (auto& l : d.log.lines()) all.push_back(l.size() > (size_t)kLineChars ? l.substr(0, kLineChars) : l);
             break;
         case Screen::System:
-            all.push_back(row("software", std::string("AXIS UNDERGROUND CNC ") + kAxisVersion));
+            all.push_back(row("software", std::string(kAxisSoftware) + " " + kAxisVersion));
             all.push_back(row("hardware", d.info.hardware));
             all.push_back(row("storage", d.info.storage));
             all.push_back(row("free RAM", std::to_string(d.info.freeHeap) + " bytes"));

@@ -1,4 +1,4 @@
-# AXIS UNDERGROUND CNC partition table (same on every board; see the v1 design, section 5.2)
+# Axis Micro BBS Firmware partition table (same on every board; see the v1 design, section 5.2)
 # Name,   Type, SubType, Offset,   Size
 nvs,      data, nvs,     0x9000,   0x5000
 otadata,  data, ota,     0xe000,   0x2000

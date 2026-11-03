@@ -1,4 +1,4 @@
-# AXIS UNDERGROUND CNC: features and settings log
+# Axis Micro BBS Firmware (AXIS UNDERGROUND CNC): features and settings log
 
 Living record of every feature and setting, updated as the project goes. Status: **planned**, **in progress**, **working** (tested end to end), **dropped**. Design: [v1 design](superpowers/specs/2026-11-02-axis-underground-bbs-v1-design.md).
 
@@ -32,7 +32,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Storage check at boot | working | SD card if it answers, else internal flash; shown in Info and on the sysop screen |
 | Nightly maintenance | planned | 4:00 AM: door maintenance, toss/scan, purge, log rotation |
 | AXIS ANSI screens | planned | Original art by Claude from TheDraw fonts + CNC motifs; Rev edits later |
-| Credits / about screen | working (basic) | "AXIS UNDERGROUND CNC by Rev. J. Money", rotatocam.com, jmscnc.com, license and third-party credits; required by the license |
+| Credits / about screen | working (basic) | "Axis Micro BBS Firmware by Rev. J. Money", rotatocam.com, jmscnc.com, license and third-party credits; required by the license |
 | SD swap for door memory | planned (v2) | Waiting on a good SD card from Rev's stash |
 | Internet access | planned (later) | Needs login throttling, bot filtering, non-default port |
 

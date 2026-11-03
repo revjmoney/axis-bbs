@@ -27,7 +27,7 @@ TEST_CASE("node greets with the AXIS welcome and asks for a handle") {
     Node n(1, info);
     n.begin(0);
     std::string out = n.takeOutput();
-    CHECK(out.find("AXIS UNDERGROUND CNC") != std::string::npos);
+    CHECK(out.find("Axis Micro BBS Firmware") != std::string::npos);
     CHECK(out.find("Handle:") != std::string::npos);
     CHECK(n.state() == Node::State::Login);
 }
@@ -81,6 +81,7 @@ TEST_CASE("credits name Rev J Money, rotatocam.com and jmscnc.com") {
     CHECK(out.find("rotatocam.com") != std::string::npos);
     CHECK(out.find("jmscnc.com") != std::string::npos);
     CHECK(out.find("GPL") != std::string::npos);
+    CHECK(out.find("Axis Micro BBS Firmware") != std::string::npos);
 }
 
 TEST_CASE("info shows the node's address and uptime") {

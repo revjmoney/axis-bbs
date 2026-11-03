@@ -1,6 +1,6 @@
-# AXIS UNDERGROUND CNC
+# Axis Micro BBS Firmware
 
-A real, old-school telnet BBS for the CYD (ESP32-2432S028R "Cheap Yellow Display"): ANSI menus, message bases with FidoNet-compatible storage, file areas, a sysop console, real DOS door games (starting with Legend of the Red Dragon) running on the board itself, and multi-board clustering where each CYD is one node.
+The software behind **AXIS UNDERGROUND CNC**. A real, old-school telnet BBS for the CYD (ESP32-2432S028R "Cheap Yellow Display"): ANSI menus, message bases with FidoNet-compatible storage, file areas, a sysop console, real DOS door games (starting with Legend of the Red Dragon) running on the board itself, and multi-board clustering where each CYD is one node.
 
 Status: design approved, implementation starting.
 
@@ -10,7 +10,7 @@ Status: design approved, implementation starting.
 
 ## Credits
 
-AXIS UNDERGROUND CNC is created by **Rev. J. Money**: [rotatocam.com](https://rotatocam.com) and [jmscnc.com](https://jmscnc.com).
+Axis Micro BBS Firmware and the AXIS UNDERGROUND CNC board are created by **Rev. J. Money**: [rotatocam.com](https://rotatocam.com) and [jmscnc.com](https://jmscnc.com).
 
 ## License
 

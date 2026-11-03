@@ -4,6 +4,8 @@
 
 namespace axis::bbs {
 
+// The software's name and version (the board's own name, e.g. AXIS UNDERGROUND CNC, is a setting).
+constexpr const char* kAxisSoftware = "Axis Micro BBS Firmware";
 constexpr const char* kAxisVersion = "0.3";  // shown on the login screen and in Info
 
 }  // namespace axis::bbs

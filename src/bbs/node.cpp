@@ -61,7 +61,7 @@ std::string welcome(int node, const SysInfo& s, const BbsConfig& cfg) {
         who += "[" + std::to_string(i + 1) + "] " + ((int)i + 1 == node ? "you" : s.nodes[i].empty() ? "waiting" : s.nodes[i]) + " ";
     std::string dial = s.host + "  " + s.ip;
     w += boxEdge(true);
-    w += boxLine("BBS", cfg.bbsName, "software", std::string("AXIS UNDERGROUND CNC ") + kAxisVersion);
+    w += boxLine("BBS", cfg.bbsName, "software", std::string(kAxisSoftware) + " " + kAxisVersion);
     w += boxLine("sysop", cfg.sysopHandle.empty() ? "the sysop" : cfg.sysopHandle, "license", "GPL-3.0+ by Rev. J. Money");
     w += boxLine("from", cfg.location.empty() ? "the underground" : cfg.location, "hardware", s.hardware);
     w += boxLine("dial", dial, "storage", s.storage);
@@ -226,7 +226,7 @@ void Node::key(char c) {
         case 'c':
             out_ += "\r\n\r\n   ";
             out_ += RED;
-            out_ += "AXIS UNDERGROUND CNC";
+            out_ += kAxisSoftware;
             out_ += DIM;
             out_ += " by ";
             out_ += HI;

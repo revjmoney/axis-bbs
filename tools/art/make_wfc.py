@@ -84,7 +84,7 @@ def main(out):
     text(28, 0, [0xC8] + [0xCD] * 78 + [0xBC], 0x08)
     text(16, 3, [0xB5] + [ord(ch) for ch in " WAITING FOR CALLER "] + [0xC6], 0x0B)
     text(16, 60, [0xB5] + [ord(ch) for ch in " node 1 "] + [0xC6], 0x08)
-    text(29, 2, "AXIS UNDERGROUND CNC by Rev. J. Money  \xfa  rotatocam.com  \xfa  jmscnc.com".encode('latin1'), 0x08)
+    text(29, 2, "Axis Micro BBS Firmware by Rev. J. Money  \xfa  rotatocam.com  \xfa  jmscnc.com".encode('latin1'), 0x08)
 
     # write ANSI: clear, then each row with SGR changes only where the colour changes
     cga = [0, 4, 2, 6, 1, 5, 3, 7]  # CGA index -> ANSI colour number
