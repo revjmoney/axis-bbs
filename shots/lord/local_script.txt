@@ -1,0 +1,14 @@
+# doorhost --script: regex<TAB>keys<TAB>screenshot name (LORD 4.07 local mode in the AXIS runtime)
+Name or handle	\r	01-logon
+more	\r	02-title
+choice, warrior	E	03-main-menu
+join this place	Y	04-join
+Name:	Axis\r	05-alias
+Axis\? \[Y\]	Y
+gender	M
+Pick one	K	06-class
+Daily Happenings	\r	07-daily-news
+Your command	F	08-town
+The Forest	L	09-forest
+Attack	A	10-fight
+Attack	A	11-fight-round-2

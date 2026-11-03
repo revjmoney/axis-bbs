@@ -107,6 +107,25 @@ Source layout: `src/bbs/` (BBS core) and `src/door/` (door runtime). The door ru
 - File areas as folders on SD, with a description list per area (FILES.BBS style) and a small index for fast listing.
 - Listing, searching, viewing descriptions, and **ZMODEM download over telnet** (SyncTERM and NetRunner support it). Uploads (ZMODEM) are v1.1 unless they come cheaply with the same code.
 
+**Default file areas (Rev's list, created by setup; the sysop can rename, add or remove them):**
+
+| # | Area | What goes there |
+|---|---|---|
+| 1 | RotatoCAM: Pro | RotatoCAM pro versions, updates, licenses info |
+| 2 | RotatoCAM: Free | free RotatoCAM versions and demos |
+| 3 | CNC Software: Freeware | free CAM, CAD, G-code senders, post processors |
+| 4 | CNC Software: Shareware and Trials | try-before-you-buy and time-limited CNC programs |
+| 5 | CNC Software: Pro Demos | free versions and demos of pro CNC software |
+| 6 | G-code and Toolpaths | ready-to-run programs, toolpath libraries |
+| 7 | 3D Models | STL, STEP, OBJ, DXF and other model files |
+| 8 | Text Files | text files, guides, how-tos, machinist references, scene text |
+| 9 | Freeware | general free software |
+| 10 | Shareware and Free Trials | general shareware, demos and trials |
+| 11 | Abandonware | old software whose makers no longer sell or support it |
+| 12 | BBS Doors | door game distribution archives (for example the unmodified lord407.zip) |
+
+Abandonware is still copyrighted in most cases; the area exists, but AXIS ships no files in it and the sysop decides what to post. Areas 3, 4, 5, 9 and 10 hold only files whose licenses allow redistribution.
+
 ### 5.8 Door runtime
 The core of v1. Components:
 1. **8086 CPU core** with the 80186/286 real-mode additions doors use; no protected mode, no FPU. Start from the MIT-licensed FabGL i8086 core (derived from 8086tiny) or write a fresh one; every memory access goes through the page-table accessor. Written in C++ first, then the dispatch loop, flag logic and memory accessor are hand-optimized in Xtensa assembly against a benchmark on the board.
@@ -121,9 +140,11 @@ The core of v1. Components:
 
 ### 5.9 Sysop console
 - **On the CYD screen** (the mirror turns off while a door runs to free memory; the status line stays): a waiting-for-caller screen (AXIS art, uptime, last caller, calls today, free heap, SD space, WiFi signal); when a caller is on, a live mirror of what the caller sees (existing 4x8 ANSI renderer, 80x25) with a status bar (handle, security, time left, area or door). Touch actions: chat request, give or take time, kick, toggle the mirror.
+- **BBS config menu (Rev's request), reachable two ways:** (1) **from the WFC screen** by tapping the CYD (sysop password or the setup PIN first), and (2) **from a local sysop login** (the sysop logs in on the board itself or over telnet with the sysop account). It edits every BBS setting the first-boot wizard set (names, location, address, port, timezone, FTN address, new-user defaults, idle and daily limits), plus doors, file areas, message areas, WiFi networks and the SD card tools, and saves immediately.
 - **Over telnet**, for sysop-level users: user editor, security levels, message area and FTN configuration, file area configuration, door configuration, logs and errors, system status (heap, arenas, uptime, SD usage, WiFi), node status, nightly event control, and reboot.
 - Configuration lives in files on SD (my call: simple INI-style text files, editable on a PC too), with WiFi and boot flags in NVS as today. Every sysop change is written immediately.
 - Logs: a rolling system log and caller log on SD.
+- **SD card tools (Rev's request):** a sysop screen showing what the card reports (answers or not, type, size, FAT type, free space) and a **Format SD card** action that writes a fresh FAT32 filesystem (FatFs `f_mkfs`), optionally after a full erase (SD erase commands) for a true wipe. Destructive, so it needs the sysop password plus typing `FORMAT`, shows exactly what will be lost, and refuses while a door or caller is using the card. A card that does not answer at all cannot be formatted by anything; the screen says so and suggests a PC formatter or a new card.
 
 ### 5.10 Nightly maintenance
 A daily event (default 4:00 AM, matching the existing clock resync) that, with no caller online: runs door maintenance (LORD), tosses and scans FTN packets, packs and purges message bases per limits, and rotates logs.
@@ -155,6 +176,23 @@ Rev's decision: work on both, **real DOS LORD first**; then a rewrite that works
 - **Save compatibility:** the native door uses LORD 4.07's own player and data file formats, so a sysop can switch between real and native LORD without losing players.
 - **Runs as a native door:** same door menu, drop file and node handling as DOS doors; very small RAM; shares the cluster's storage and lock manager directly.
 - **Licensing:** the port of LORD.js is GPL (GPL-2.0-or-later code used under GPL-3.0-or-later). LORD's name, text and game design belong to Metropolis Gameport and no permission from them is known; the engine-only approach keeps their content out of our repo. Rev accepts that position.
+
+### 5.13 First-boot setup (Rev's request)
+On the first boot of the firmware (no saved setup), the board walks the new sysop through setting up their BBS.
+
+1. **WiFi on the touchscreen (always):** if no saved network is in range, the CYD shows a scan list (strongest first, open/locked, signal bars, a HIDDEN... entry for typing a name) and a touch keyboard for the password, then tests the join before saving. Reuses the CYD Demoscene touch keyboard (`wifikbd.cpp`, same author), including its lessons: open networks need a confirm, gadget hotspots are listed last, the password is never logged.
+2. **The board asks with a tap how to finish:** two big buttons, **SET UP ON THIS SCREEN** and **SET UP OVER TELNET**.
+   - **Over telnet:** the screen shows `telnet axis.local` (and the IP) and a 6-digit **setup PIN**. The first caller who enters the PIN gets the setup wizard in their terminal; anyone without the PIN gets a "this BBS is being set up" screen.
+   - **On this screen:** the same wizard as touch screens, with the touch keyboard for text and pickers for choices.
+3. **The wizard asks for** (each with a sensible default, all editable later from the sysop menu):
+   - Sysop handle and password (this creates the sysop account), sysop real name.
+   - BBS name (default "Axis Underground CNC"), location (city, state).
+   - Address callers use: the board name (default `axis`, so `axis.local`) and an optional public hostname, telnet port (default 23).
+   - Timezone (default US Eastern).
+   - FidoNet address (default `99:1/0`, private test zone).
+   - New-user defaults: security level, daily time limit, idle timeout (default 5 minutes).
+4. **Saving:** settings go to the config file in storage (SD or LittleFS), the WiFi networks to NVS as today, and a "setup done" flag. The sysop menu can rerun the wizard. Until setup is done the BBS answers callers with the "being set up" screen only.
+5. Boards that already have saved WiFi (like Rev's CYDs from the demoscene firmware) skip step 1 and go straight to step 2.
 
 ## 6. Staged roadmap with exit tests
 

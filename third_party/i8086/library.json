@@ -1,0 +1,8 @@
+{
+  "name": "fabgl-i8086-axis",
+  "version": "1.0.0",
+  "description": "FabGL i8086 core (MIT) refactored for AXIS: guest memory through a MemoryBus",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": { "srcFilter": "+<i8086.cpp>", "includeDir": "." }
+}
