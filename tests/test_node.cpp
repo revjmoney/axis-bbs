@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rev. J. Money
+#include "doctest.h"
+#include "bbs/node.h"
+
+using axis::bbs::Node;
+using axis::bbs::SysInfo;
+
+static SysInfo info() {
+    SysInfo s;
+    s.ip = "192.168.1.77";
+    s.host = "axis.local";
+    s.wifi = "TestNet";
+    s.rssi = -40;
+    s.uptimeSec = 3725;
+    s.freeHeap = 150000;
+    s.timeText = "2026-11-02 22:30";
+    return s;
+}
+static void type(Node& n, const std::string& s, uint32_t now = 1000) {
+    n.input((const uint8_t*)s.data(), s.size(), now);
+}
+
+TEST_CASE("node greets with the AXIS welcome and asks for a handle") {
+    Node n(1, info);
+    n.begin(0);
+    std::string out = n.takeOutput();
+    CHECK(out.find("AXIS UNDERGROUND CNC") != std::string::npos);
+    CHECK(out.find("Handle:") != std::string::npos);
+    CHECK(n.state() == Node::State::Login);
+}
+
+TEST_CASE("node echoes the handle, supports backspace, then shows the menu") {
+    Node n(1, info);
+    n.begin(0);
+    n.takeOutput();
+    type(n, "Rew");
+    CHECK(n.takeOutput() == "Rew");
+    type(n, "\b");
+    CHECK(n.takeOutput() == "\b \b");
+    type(n, "v\r");
+    std::string out = n.takeOutput();
+    CHECK(n.handle() == "Rev");
+    CHECK(n.state() == Node::State::Menu);
+    CHECK(out.find("Rev") != std::string::npos);
+    CHECK(out.find("[C]") != std::string::npos);
+    CHECK(out.find("[G]") != std::string::npos);
+}
+
+TEST_CASE("node asks again for an empty handle") {
+    Node n(1, info);
+    n.begin(0);
+    n.takeOutput();
+    type(n, "   \r");
+    CHECK(n.state() == Node::State::Login);
+    CHECK(n.takeOutput().find("Handle:") != std::string::npos);
+}
+
+TEST_CASE("node caps the handle length at 30 characters") {
+    Node n(1, info);
+    n.begin(0);
+    type(n, std::string(40, 'x') + "\r");
+    CHECK(n.handle().size() == 30);
+}
+
+static Node loggedIn() {
+    Node n(1, info);
+    n.begin(0);
+    type(n, "Rev\r");
+    n.takeOutput();
+    return n;
+}
+
+TEST_CASE("credits name Rev J Money, rotatocam.com and jmscnc.com") {
+    Node n = loggedIn();
+    type(n, "c");
+    std::string out = n.takeOutput();
+    CHECK(out.find("Rev. J. Money") != std::string::npos);
+    CHECK(out.find("rotatocam.com") != std::string::npos);
+    CHECK(out.find("jmscnc.com") != std::string::npos);
+    CHECK(out.find("GPL") != std::string::npos);
+}
+
+TEST_CASE("info shows the node's address and uptime") {
+    Node n = loggedIn();
+    type(n, "I");
+    std::string out = n.takeOutput();
+    CHECK(out.find("192.168.1.77") != std::string::npos);
+    CHECK(out.find("axis.local") != std::string::npos);
+    CHECK(out.find("1h 2m") != std::string::npos);
+}
+
+TEST_CASE("goodbye logs off and asks to hang up") {
+    Node n = loggedIn();
+    CHECK_FALSE(n.wantsHangup());
+    type(n, "g");
+    CHECK(n.takeOutput().find("Goodbye") != std::string::npos);
+    CHECK(n.wantsHangup());
+    CHECK(n.state() == Node::State::Done);
+}
+
+TEST_CASE("idle callers are logged off after 5 minutes") {
+    Node n = loggedIn();
+    n.poll(1000 + 299000);
+    CHECK_FALSE(n.wantsHangup());
+    n.poll(1000 + 300001);
+    CHECK(n.wantsHangup());
+    CHECK(n.takeOutput().find("idle") != std::string::npos);
+}
+
+TEST_CASE("unknown menu keys redraw the menu prompt") {
+    Node n = loggedIn();
+    type(n, "z");
+    CHECK(n.takeOutput().find("Command") != std::string::npos);
+}
+
+TEST_CASE("busy screen tells the caller the node is busy") {
+    CHECK(axis::bbs::busyScreen().find("busy") != std::string::npos);
+}

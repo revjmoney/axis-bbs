@@ -8,7 +8,8 @@ Living record of every feature and setting, updated as the project goes. Status:
 |---|---|---|
 | Standalone BBS firmware for the CYD (ESP32-2432S028R) | planned | No demos or built-in games; the only games are installed DOS doors |
 | Works with no SD card (minimal board) | planned | Everything in internal flash (LittleFS), LORD included; SD only adds space; file areas off without SD |
-| One telnet node per board | planned | Port 23, LAN only in v1; a second caller gets a "node busy" screen |
+| Preliminary BBS firmware | working | Boots, joins the saved WiFi, listens on port 23 as `axis.local`, welcome + handle + menu (Info, Credits, Goodbye), busy screen for a second caller, 5 min idle logoff, sysop waiting-for-caller screen; tested with a live call 2026-11-02 |
+| One telnet node per board | in progress | Port 23, LAN only in v1; a second caller gets a "node busy" screen |
 | Multi-board cluster | planned | Boards on the LAN join as node 2, 3, 4...; one BBS with shared data |
 | One caller address | planned | Callers dial `axis.local`; the main answers with a free board's IP so each caller connects directly (no relay), so a failing board never drops other boards' callers |
 | Main-board failover | planned | Lowest surviving node becomes main within ~5 s; callers stay connected; full replica on every board (SD, or LittleFS if it fits) |
@@ -25,7 +26,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Sysop console | planned | CYD screen: waiting-for-caller and live caller mirror (off during doors); telnet sysop screens |
 | Nightly maintenance | planned | 4:00 AM: door maintenance, toss/scan, purge, log rotation |
 | AXIS ANSI screens | planned | Original art by Claude from TheDraw fonts + CNC motifs; Rev edits later |
-| Credits / about screen | planned | "AXIS UNDERGROUND CNC by Rev. J. Money", rotatocam.com, jmscnc.com, license and third-party credits; required by the license |
+| Credits / about screen | working (basic) | "AXIS UNDERGROUND CNC by Rev. J. Money", rotatocam.com, jmscnc.com, license and third-party credits; required by the license |
 | SD swap for door memory | planned (v2) | Waiting on a good SD card from Rev's stash |
 | Internet access | planned (later) | Needs login throttling, bot filtering, non-default port |
 
@@ -43,7 +44,8 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Caller address | axis.local (mDNS, 2 s TTL) | config file | Sysop screens also show each board's IP |
 | Cluster discovery | mDNS `_axisbbs._tcp` + UDP broadcast | fixed | |
 | Cluster heartbeat / failover | 1 s / 5 s | config file | |
-| WiFi networks | none | NVS | Never in code or the repo |
+| WiFi networks | none | NVS `net` s0..s4 / p0..p4 | Same format as the CYD Demoscene firmware, so a board that ran it joins automatically; never in code or the repo |
+| Idle logoff | 5 minutes | fixed (for now) | |
 | Partition table | app 1.5 MB, door 768 KB, LittleFS ~1.7 MB | firmware | Same on every board |
 | Data store | SD if present, else LittleFS | automatic | |
 
@@ -53,3 +55,4 @@ Living record of every feature and setting, updated as the project goes. Status:
 - **2026-11-02:** Added the faithful native LORD rewrite (after real LORD works), ported from Synchronet's GPL LORD.js, engine only, verified against real LORD by diffing screens.
 - **2026-11-02:** Callers: one address (`axis.local`), never dropped by another board failing; the main answers the name with a free board's IP (direct connections, relay only as a race fallback).
 - **2026-11-02:** License: GPL-3.0-or-later plus a GPLv3 7(b) attribution term (keep the copyright notices and the Rev. J. Money / rotatocam.com / jmscnc.com credit in the README and on the credits screen).
+- **2026-11-02:** First firmware: boots, joins the saved WiFi, answers telnet calls on `axis.local:23` with a placeholder welcome, handle prompt and Info / Credits / Goodbye menu. Telnet filter and session logic have PC tests (17 passing). Flashed to the newer CYD (MAC 8c:94:df:4f:1c:4c, COM18): 911 KB of 1.5 MB flash, 230 KB RAM free while serving.
