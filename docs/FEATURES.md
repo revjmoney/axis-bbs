@@ -13,6 +13,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Main-board failover | planned | Lowest surviving node becomes main within ~5 s; callers stay connected; full replica on every board (SD, or LittleFS if it fits) |
 | Real DOS doors on the board | planned | 8086 runtime, high-level DOS, FOSSIL on INT 14h to telnet, door code served from flash |
 | LORD 4.07 | planned (first door) | Profiled on the PC: 92 KB written, 184 KB read-only in a short session |
+| Native LORD rewrite | planned (after real LORD) | C++ port of Synchronet's LORD.js; same screens and play as the original, verified side by side; reads content from the installed LORD files; same save files |
 | Door installer | planned | Downloads the unmodified lord407.zip hosted in this repo, unpacks to SD or LittleFS, copies code to the `door` partition |
 | Drop files | planned | DOOR.SYS and DORINFO1.DEF first; others table-driven later |
 | Users and security | planned | Handles, salted SHA-256 passwords, security levels, daily time limits |
@@ -46,3 +47,4 @@ Living record of every feature and setting, updated as the project goes. Status:
 ## Change log
 
 - **2026-11-02:** Project started. Design approved (single node per board, real DOS doors, LORD first, no SD swap in v1, LAN only, separate firmware, reuse proven MIT/GPL-3/public-domain code first). Multi-board cluster with main-board failover (option B) and a no-SD minimal board added the same day. LORD 4.07 profiled on the i5 with a patched emu2; profiling tools are in `tools/profiling/`.
+- **2026-11-02:** Added the faithful native LORD rewrite (after real LORD works), ported from Synchronet's GPL LORD.js, engine only, verified against real LORD by diffing screens.

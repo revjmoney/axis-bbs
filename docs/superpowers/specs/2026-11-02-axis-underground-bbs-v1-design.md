@@ -17,6 +17,7 @@ Rev's priorities, in his order: native implementation, working DOS doors, FidoNe
 - **One telnet node**, with a complete caller experience: ANSI welcome, login and new-user signup, Renegade-style menus, message areas, file areas, door menu, logoff.
 - **Real DOS doors running on the CYD**, starting with LORD 4.07, in a purpose-built 8086 door runtime. A door counts as supported only after it has been launched, played over telnet, and returned the caller to the BBS correctly.
 - **Message storage that is genuinely FidoNet-compatible** (FTN addressing, MSGID/REPLY, origin lines, echomail and netmail areas), not a local board with a FidoNet label.
+- **A faithful native LORD (after real LORD works):** a native C++ LORD that plays and looks the same as the original, byte for byte where possible, so it runs without the 8086 runtime and shares naturally across the cluster (section 5.12). Not a knock-off: it is only done when side-by-side tests against real LORD match. (Rev's decision.)
 - **A sysop console**: a live view of the caller on the CYD screen plus full sysop screens over telnet.
 - **Multi-board cluster:** a CYD that boots and finds an AXIS board already on the LAN joins it as node 2, 3, 4 and so on; together they are one BBS. If the main board goes offline, the next node takes over as main and callers carry on (section 5.11). (Rev's decision.)
 - **Persistent configuration** on SD and NVS; nothing important lives only in RAM.
@@ -140,6 +141,16 @@ Rev's decisions: a board that finds an AXIS board already on the network joins i
 - **Built in from the first BBS stage:** all BBS and door data access goes through one storage interface with a local implementation (single board) and a cluster implementation (follower to main); the single-board case is just a cluster of one.
 - **Callers:** how callers reach nodes 2+ is an open question (section 10).
 
+### 5.12 Native LORD rewrite (after real LORD)
+Rev's decision: work on both, **real DOS LORD first**; then a rewrite that works and looks the same as the original, not a knock-off.
+
+- **Starting point:** port LORD 5.02 JS (Synchronet `xtrn/lord/lord.js` by Deuce, GPL-2.0-or-later, about 17,900 lines, closely follows LORD 4.0x) to C++, keeping its structure where it is right and fixing it where it differs from the original. LORD.ts (GPL-3.0) is a second reference, notably for the LDY event scripts.
+- **Content comes from the sysop's own LORD install, not from our repo:** the native door reads the game text, events, enemies and items from the original files of the installed shareware zip (LORDTXT.DAT, EVENTS.DAT, LENEMY.DAT, the .LDY scripts and so on), converted at install time if needed. The repo ships the engine only. (My call, to avoid redistributing Metropolis content.)
+- **Fidelity is measured, not eyeballed:** with the same player file, inputs and random seed, the real LORD (in the 8086 runtime or the patched emu2 reference on the i5) and the native LORD must produce the same screens. A test harness drives both with the session driver and diffs their ANSI output. Differences are bugs unless documented as deliberate.
+- **Save compatibility:** the native door uses LORD 4.07's own player and data file formats, so a sysop can switch between real and native LORD without losing players.
+- **Runs as a native door:** same door menu, drop file and node handling as DOS doors; very small RAM; shares the cluster's storage and lock manager directly.
+- **Licensing:** the port of LORD.js is GPL (GPL-2.0-or-later code used under GPL-3.0-or-later). LORD's name, text and game design belong to Metropolis Gameport and no permission from them is known; the engine-only approach keeps their content out of our repo. Rev accepts that position.
+
 ## 6. Staged roadmap with exit tests
 
 Door work comes first because it is the riskiest part and Rev's top priority.
@@ -157,6 +168,7 @@ Door work comes first because it is the riskiest part and Rev's top priority.
 | 8 | Sysop console (CYD screen + telnet sysop screens) and nightly maintenance | all sysop screens reachable; config changes persist; nightly event runs LORD maintenance and toss/scan |
 | 9 | AXIS art pass and polish | every screen has AXIS art; Rev signs off on the look |
 | 10 | Multi-board cluster: discovery, node numbering, shared-data access through the main, lock manager, replication, failover | two boards: node 2 joins automatically; a post on node 2 appears on node 1; two callers share one LORD world; unplugging node 1 makes node 2 main within ~5 s with callers still connected and no lost data; node 1 rejoins as a follower and catches up |
+| 11 | Native LORD rewrite (after stage 3 proves real LORD) | the side-by-side harness shows identical screens for a scripted session (logon, new character, forest fights, town, inn, bank, quit); real and native LORD share the same player files |
 
 ## 7. Testing approach
 - The door runtime is tested first on the PC build against real doors, with the same source compiled for the board.
@@ -197,6 +209,7 @@ Door work comes first because it is the riskiest part and Rev's top priority.
 - **ANSI screens:** Claude makes them, legible on a terminal and on the CYD mirror; Rev edits later. (Rev)
 - **Hosting LORD:** the repo hosts the unmodified lord407.zip for the installer (section 8). (Rev)
 - **Multi-board:** boards on the LAN cluster into one BBS, one node per board; the next node takes over if the main goes offline (option B, full replicas on every board). (Rev)
+- **LORD both ways:** real DOS LORD first; then a faithful native rewrite (from LORD.js) that looks and plays the same, verified side by side. (Rev)
 - **Reuse first:** proven MIT, GPL-3 or public-domain code wherever possible; refactor it or rewrite hot paths in assembly when that measurably improves it (section 8). (Rev)
 
 ### Still open
