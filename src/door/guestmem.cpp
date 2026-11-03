@@ -60,6 +60,7 @@ uint8_t* GuestMemory::writable(int page) {
     if (p.kind == Unmapped) return nullptr;
     uint8_t* r = pool_.alloc();
     if (!r) {
+        if (!oom_ && onOom_) onOom_();
         oom_ = true;
         return nullptr;
     }

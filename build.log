@@ -1,3 +1,13 @@
-[1/3] Building CXX object CMakeFiles/axiscore.dir/src/door/bios.cpp.obj
-[2/3] Linking CXX static library libaxiscore.a
-[3/3] Linking CXX executable axis_tests.exe
+[1/13] Building CXX object CMakeFiles/axiscore.dir/src/door/dosmem.cpp.obj
+[2/13] Building CXX object CMakeFiles/axiscore.dir/src/door/guestmem.cpp.obj
+[3/13] Building CXX object CMakeFiles/axiscore.dir/src/door/mz.cpp.obj
+[4/13] Building CXX object CMakeFiles/axiscore.dir/src/door/bios.cpp.obj
+[5/13] Building CXX object CMakeFiles/axis_tests.dir/tests/test_guestmem.cpp.obj
+[6/13] Building CXX object CMakeFiles/axiscore.dir/src/door/dos.cpp.obj
+[7/13] Building CXX object CMakeFiles/axis_tests.dir/tests/test_bios.cpp.obj
+[8/13] Building CXX object CMakeFiles/axiscore.dir/src/door/session.cpp.obj
+[9/13] Building CXX object CMakeFiles/axis_tests.dir/tests/test_mz.cpp.obj
+[10/13] Linking CXX static library libaxiscore.a
+[11/13] Building CXX object CMakeFiles/axis_tests.dir/tests/test_dos.cpp.obj
+[12/13] Building CXX object CMakeFiles/axis_tests.dir/tests/test_session.cpp.obj
+[13/13] Linking CXX executable axis_tests.exe

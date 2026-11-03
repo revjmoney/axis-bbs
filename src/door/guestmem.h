@@ -7,6 +7,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "door/membus.h"
@@ -41,6 +42,7 @@ public:
     void readBlock(uint32_t addr, void* dst, size_t n);
     void writeBlock(uint32_t addr, const void* src, size_t n);
     bool outOfMemory() const { return oom_; }
+    void onOutOfMemory(std::function<void()> f) { onOom_ = std::move(f); }  // e.g. stop the CPU at once
 
     struct Stats {
         int ramPages, roPages, peakRamPages;
@@ -64,6 +66,7 @@ private:
     Page      pages_[kPageCount];
     int       peak_ = 0;
     bool      oom_ = false;
+    std::function<void()> onOom_;
 };
 
 }  // namespace door

@@ -36,6 +36,7 @@ public:
     bool waitingForKey() const { return waiting_; }
     bool isStub(int vector) const;           // the vector still points at our stub
     std::array<std::string, 25> screenText() const;
+    void ttyOut(uint8_t ch) { teletype(ch); }  // DOS console output on the local screen
 
 private:
     uint8_t  curRow() const;
