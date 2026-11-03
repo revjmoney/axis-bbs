@@ -7,6 +7,7 @@
 
 #include "doctest.h"
 #include "door/bytestream.h"
+#include "door/mz.h"
 #include "door/session.h"
 #include "platform/pc/stdhostfs.h"
 
@@ -49,7 +50,7 @@ TEST_CASE("session program exits with code 3") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     DoorSession s(cfg, fs, locks, caller, 1);
     CHECK(s.run() == DoorResult::Exited);
@@ -63,7 +64,7 @@ TEST_CASE("session busy loop still times out") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     cfg.timeLimitSec = 1;
     DoorSession s(cfg, fs, locks, caller, 1);
@@ -83,7 +84,7 @@ TEST_CASE("session tiny budget ends cleanly with OutOfMemory") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     cfg.ramBudget = 16 * 1024;  // low memory + text page + a little
     DoorSession s(cfg, fs, locks, caller, 1);
@@ -96,7 +97,7 @@ TEST_CASE("session missing program is a load error") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "NOPE.EXE";
     DoorSession s(cfg, fs, locks, caller, 1);
     CHECK(s.run() == DoorResult::LoadError);
@@ -114,7 +115,7 @@ TEST_CASE("session local mode: DOS output shows on the screen and keys reach the
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     DoorSession s(cfg, fs, locks, caller, 1);
     for (int i = 0; i < 20 && s.step(20); i++) {
@@ -139,7 +140,7 @@ TEST_CASE("session exit stops the CPU at once") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     DoorSession s(cfg, fs, locks, caller, 1);
     CHECK(s.run() == DoorResult::Exited);
@@ -156,7 +157,7 @@ TEST_CASE("session remote mode: FOSSIL talks to the caller and DOOR.SYS is writt
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     cfg.localMode = false;
     cfg.dropFile = DropFile::DoorSys;
@@ -182,7 +183,7 @@ TEST_CASE("session remote mode: the caller hanging up ends the door") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     cfg.localMode = false;
     cfg.carrierGraceMs = 300;
@@ -201,7 +202,7 @@ TEST_CASE("session HLT waits for the timer instead of freezing") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     cfg.timeLimitSec = 5;
     DoorSession s(cfg, fs, locks, caller, 1);
@@ -216,7 +217,7 @@ TEST_CASE("session a door waiting for a key does not spin the CPU") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     DoorSession s(cfg, fs, locks, caller, 1);
     s.step(200);
@@ -240,7 +241,7 @@ TEST_CASE("session after a hang-up the door gets a grace period to save and exit
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     cfg.localMode = false;
     DoorSession s(cfg, fs, locks, caller, 1);
@@ -259,9 +260,39 @@ TEST_CASE("session terminate with AH=00h ends the program") {
     LockTable           locks;
     ScriptStream        caller;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "T.EXE";
     cfg.timeLimitSec = 2;
     DoorSession s(cfg, fs, locks, caller, 1);
     CHECK(s.run() == DoorResult::Exited);
+}
+
+namespace {
+// hands the session a ready-made image, as the board's flash cache will
+struct TestImageSource : ImageSource {
+    std::vector<uint8_t> img;
+    int                  calls = 0;
+    const uint8_t* image(const std::vector<uint8_t>& exe, const MzInfo& mz, uint16_t loadSeg, size_t& len) override {
+        calls++;
+        img = relocate(exe.data(), exe.size(), mz, loadSeg);
+        len = img.size();
+        return img.data();
+    }
+};
+}  // namespace
+
+TEST_CASE("session runs a program from an injected image source") {
+    fs::path d = tmpDir("imgsrc");
+    writeExe(d / "T.EXE", {0xB8, 0x03, 0x4C, 0xCD, 0x21});
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    TestImageSource     src;
+    DoorConfig          cfg;
+    cfg.exe = "T.EXE";
+    cfg.imageSource = &src;
+    DoorSession s(cfg, fs, locks, caller, 1);
+    CHECK(s.run() == DoorResult::Exited);
+    CHECK(s.exitCode() == 3);
+    CHECK(src.calls == 1);
 }

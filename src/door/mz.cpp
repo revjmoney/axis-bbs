@@ -44,13 +44,13 @@ std::vector<uint8_t> relocate(const uint8_t* f, size_t, const MzInfo& mz, uint16
     return img;
 }
 
-bool loadProgram(GuestMemory& mem, DosMemory*& dm, const std::vector<uint8_t>& image, const MzInfo& mz,
+bool loadProgram(GuestMemory& mem, DosMemory*& dm, const uint8_t* image, size_t imageLen, const MzInfo& mz,
                  const std::string& cmdTail, const std::string& progPath, LoadedProgram& out) {
     uint32_t loadAt = kLoadSeg * 16u;
     // low memory (IVT, BIOS data, DOS data, environment, MCB, PSP) is plain RAM
     mem.mapRam(0, loadAt);
-    mem.mapReadOnly(loadAt, image.data(), (uint32_t)image.size());
-    mem.mapZero(loadAt + (uint32_t)image.size(), kTopSeg * 16u - loadAt - (uint32_t)image.size());
+    mem.mapReadOnly(loadAt, image, (uint32_t)imageLen);
+    mem.mapZero(loadAt + (uint32_t)imageLen, kTopSeg * 16u - loadAt - (uint32_t)imageLen);
 
     // the program's block takes everything from the PSP up, as DOS gives it the largest block
     delete dm;

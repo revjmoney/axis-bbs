@@ -24,6 +24,7 @@ add_library(axiscore STATIC
     src/door/session.cpp
     src/door/fossil.cpp
     src/door/dropfile.cpp
+    src/door/pathresolve.cpp
     src/platform/pc/stdhostfs.cpp
     src/platform/pc/consolestream.cpp
     src/platform/pc/tcpstream.cpp
@@ -47,7 +48,8 @@ add_executable(axis_tests
     tests/test_lord_local.cpp
     tests/test_fossil.cpp
     tests/test_dropfile.cpp
-    tests/test_lord_telnet.cpp)
+    tests/test_lord_telnet.cpp
+    tests/test_pathresolve.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)

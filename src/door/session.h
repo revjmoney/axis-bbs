@@ -6,7 +6,6 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -21,6 +20,7 @@
 #include "door/fossil.h"
 #include "door/guestmem.h"
 #include "door/hostfs.h"
+#include "door/imagesource.h"
 
 namespace axis {
 namespace door {
@@ -29,7 +29,7 @@ enum class DoorResult { Running, Exited, OutOfMemory, CarrierLost, TimeLimit, Lo
 enum class DropFile { None, DoorSys, Dorinfo };
 
 struct DoorConfig {
-    std::filesystem::path dir;            // the door's folder (drive C: inside the door)
+    std::string           dir;            // the door's folder (informational; drive C: is the HostFs root)
     std::string           exe;            // e.g. "LORD.EXE"
     std::string           args;           // command tail, e.g. "0 NOEMS /DREW"
     size_t                ramBudget = 128 * 1024;
@@ -37,6 +37,7 @@ struct DoorConfig {
     bool                  localMode = true;  // keys and screen on the caller stream (sysop at the console)
     std::FILE*            trace = nullptr;
     uint32_t              carrierGraceMs = 15000;  // after a hang-up the door may save and exit; then it is stopped
+    ImageSource*          imageSource = nullptr;  // nullptr: relocate into RAM (the PC)
     DropFile              dropFile = DropFile::None;  // written into the door folder before start
     CallerInfo            caller;
     std::function<uint64_t()> clockMs;     // default: steady clock

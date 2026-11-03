@@ -60,7 +60,7 @@ fs::path freshLord(const char* src) {
     LockTable           locks;
     ScriptStream        keys;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "LORDCFG.EXE";
     DoorSession cfgRun(cfg, fsys, locks, keys, 1);
     if (waitFor(cfgRun, "Create a NEW LORD.DAT")) keys.push("A");
@@ -80,7 +80,7 @@ TEST_CASE("LORD 4.07 plays locally in our runtime") {
     LockTable           locks;
     ScriptStream        keys;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "LORD.EXE";
     cfg.args = "0 NOEMS /DREW";
     DoorSession s(cfg, fsys, locks, keys, 1);

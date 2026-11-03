@@ -55,7 +55,7 @@ fs::path lordForTelnet(const char* src, const char* name) {
     LockTable           locks;
     ScriptStream        keys;
     DoorConfig          cfg;
-    cfg.dir = d;
+    cfg.dir = d.string();
     cfg.exe = "LORDCFG.EXE";
     DoorSession cfgRun(cfg, fsys, locks, keys, 1);
     std::string t;
@@ -122,7 +122,7 @@ TEST_CASE("LORD 4.07 plays over telnet with FOSSIL and DOOR.SYS") {
         axis::pc::StdHostFs fsys(d);
         LockTable           locks;
         DoorConfig          cfg;
-        cfg.dir = d;
+        cfg.dir = d.string();
         cfg.exe = "LORD.EXE";
         cfg.args = "1 /DREW";
         cfg.localMode = false;
@@ -179,7 +179,7 @@ TEST_CASE("hanging up in the middle of LORD ends the door and keeps its files") 
         axis::pc::StdHostFs fsys(d);
         LockTable           locks;
         DoorConfig          cfg;
-        cfg.dir = d;
+        cfg.dir = d.string();
         cfg.exe = "LORD.EXE";
         cfg.args = "1 /DREW";
         cfg.localMode = false;

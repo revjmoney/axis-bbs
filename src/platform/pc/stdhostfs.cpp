@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "platform/pc/stdhostfs.h"
 
+#include "door/pathresolve.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -59,43 +61,16 @@ StdHostFs::~StdHostFs() {
     for (auto& o : open_) std::fclose(o.second.f);
 }
 
-// "C:\LORD\X.DAT" or "X.DAT" (relative to cwd) -> host path; each part matched case-insensitively
+// "C:\LORD\X.DAT" or "X.DAT" (relative to cwd) -> host path inside the door folder, matching
+// existing names in any case (the shared resolver, the same one the board uses)
 fs::path StdHostFs::resolve(const std::string& dosPath) const {
-    std::string p = dosPath;
-    if (p.size() >= 2 && p[1] == ':') p = p.substr(2);
-    std::replace(p.begin(), p.end(), '/', '\\');
-    bool absolute = !p.empty() && p[0] == '\\';
-    std::vector<std::string> parts;
-    auto add = [&](const std::string& s) {
-        size_t start = 0;
-        while (start <= s.size()) {
-            size_t end = s.find('\\', start);
-            std::string part = s.substr(start, end == std::string::npos ? std::string::npos : end - start);
-            if (part == "..") {
-                if (!parts.empty()) parts.pop_back();
-            } else if (!part.empty() && part != ".") {
-                parts.push_back(part);
-            }
-            if (end == std::string::npos) break;
-            start = end + 1;
-        }
-    };
-    if (!absolute) add(cwd_);
-    add(p);
-    fs::path cur = root_;
-    for (auto& part : parts) {
-        fs::path        next = cur / part;
-        std::error_code ec;
-        if (!fs::exists(next, ec) && fs::is_directory(cur, ec)) {
-            for (auto& e : fs::directory_iterator(cur, ec))
-                if (lower(e.path().filename().string()) == lower(part)) {
-                    next = e.path();
-                    break;
-                }
-        }
-        cur = next;
-    }
-    return cur;
+    std::string rel = door::resolveDosPath(cwd_, dosPath, [this](const std::string& dir) {
+        std::vector<std::string> names;
+        std::error_code          ec;
+        for (auto& e : fs::directory_iterator(dir.empty() ? root_ : root_ / dir, ec)) names.push_back(e.path().filename().string());
+        return names;
+    });
+    return rel.empty() ? root_ : root_ / rel;
 }
 
 int StdHostFs::open(const std::string& dosPath, int access, bool create, bool truncate, bool exclusive) {

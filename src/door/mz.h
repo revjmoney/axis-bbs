@@ -33,8 +33,12 @@ struct LoadedProgram {
 // Maps the image read-only at kLoadSeg, the rest of conventional memory zero-on-write, builds the
 // PSP and environment, and creates the DOS memory chain (returned in `dm`, owned by the caller).
 // `image` must outlive the guest memory. False if the program doesn't fit.
-bool loadProgram(GuestMemory& mem, DosMemory*& dm, const std::vector<uint8_t>& image, const MzInfo& mz,
+bool loadProgram(GuestMemory& mem, DosMemory*& dm, const uint8_t* image, size_t imageLen, const MzInfo& mz,
                  const std::string& cmdTail, const std::string& progPath, LoadedProgram& out);
+inline bool loadProgram(GuestMemory& mem, DosMemory*& dm, const std::vector<uint8_t>& image, const MzInfo& mz,
+                        const std::string& cmdTail, const std::string& progPath, LoadedProgram& out) {
+    return loadProgram(mem, dm, image.data(), image.size(), mz, cmdTail, progPath, out);
+}
 
 }  // namespace door
 }  // namespace axis
