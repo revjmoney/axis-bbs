@@ -26,6 +26,7 @@
 #include "platform/cyd/config_store.h"
 #include "platform/cyd/flashimage.h"
 #include "platform/cyd/screen.h"
+#include "platform/cyd/sdfiles.h"
 #include "platform/cyd/serialfiles.h"
 #include "platform/cyd/storage.h"
 #include <SD.h>
@@ -45,6 +46,7 @@ static WiFiServer           server;
 static std::unique_ptr<WifiStream>              line;  // the caller, when one is online
 static axis::bbs::SysopMenu                     sysop;   // the touchscreen sysop menu (a tap on the WFC)
 static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
+static SdFileLibrary                            sdFiles;  // the file areas on the SD card, for callers
 // the door the caller is in, if any (the screen copy is freed meanwhile)
 static std::unique_ptr<axis::PosixHostFs>       doorFs;
 static std::unique_ptr<FlashImageSource>        doorImage;
@@ -313,7 +315,7 @@ static void answer(WiFiClient incoming) {
     line->start();
     if (cfg.setupDone && mode == Mode::Normal) {
         callsToday++;
-        node.reset(new axis::bbs::Node(kNodeNumber, sysInfo, cfg));
+        node.reset(new axis::bbs::Node(kNodeNumber, sysInfo, cfg, &sdFiles));
         node->begin(millis());
         sendApp(node->takeOutput());
     } else {

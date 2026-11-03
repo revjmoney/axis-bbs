@@ -81,8 +81,8 @@ std::string uptime(uint32_t sec) {
 }
 }  // namespace
 
-Node::Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg)
-    : node_(nodeNumber), info_(std::move(info)), cfg_(std::move(cfg)) {}
+Node::Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg, FileLibrary* files)
+    : node_(nodeNumber), info_(std::move(info)), cfg_(std::move(cfg)), files_(files) {}
 
 void Node::begin(uint32_t nowMs) {
     lastInput_ = nowMs;
@@ -144,7 +144,7 @@ void Node::showMenu() {
     out_ += "\r\n\r\n";
     out_ += DIM;
     out_ += "   ";
-    for (const char* item : {"[D]", "Doors", "[I]", "Info", "[C]", "Credits", "[G]", "Goodbye"}) {
+    for (const char* item : {"[F]", "Files", "[D]", "Doors", "[I]", "Info", "[C]", "Credits", "[G]", "Goodbye"}) {
         bool isKey = item[0] == '[';
         out_ += isKey ? CYAN : DIM;
         out_ += item;
@@ -205,8 +205,29 @@ void Node::key(char c) {
         }
         return;
     }
+    if (state_ == State::Files) {
+        if (!browser_->key(c)) {
+            browser_.reset();
+            state_ = State::Menu;
+            out_ += "\x1b[0m\x1b[2J\x1b[H";
+            showMenu();
+        }
+        return;
+    }
     if (state_ != State::Menu) return;
     switch (c | 0x20) {  // either case
+        case 'f':
+            if (!files_) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += "The file areas are offline right now (no SD card).";
+                showMenu();
+                break;
+            }
+            state_ = State::Files;
+            browser_.reset(new FileBrowser(cfg_.areas, *files_, out_));
+            browser_->begin();
+            break;
         case 'd':
             showDoors();
             break;

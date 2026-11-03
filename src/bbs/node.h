@@ -6,10 +6,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "bbs/config.h"
+#include "bbs/filebrowser.h"
+#include "bbs/filelib.h"
 #include "bbs/version.h"
 
 namespace axis::bbs {
@@ -25,11 +28,12 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Login, Menu, Doors, InDoor, Done };
+    enum class State { Login, Menu, Doors, InDoor, Files, Done };
     enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError };
     static constexpr size_t   kMaxHandle = 30;
 
-    Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {});
+    // files: the file areas' store (nullptr: the Files menu says the areas are offline)
+    Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {}, FileLibrary* files = nullptr);
     void        begin(uint32_t nowMs);
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);
@@ -54,6 +58,8 @@ private:
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
     size_t                    door_ = 0;
+    FileLibrary*              files_;
+    std::unique_ptr<FileBrowser> browser_;
 };
 
 // Sent to a caller who connects while the node is in use.

@@ -12,6 +12,8 @@ add_library(axiscore STATIC
     src/net/telnetstream.cpp
     src/bbs/node.cpp
     src/bbs/sysop_menu.cpp
+    src/bbs/filelib.cpp
+    src/bbs/filebrowser.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp
@@ -55,7 +57,8 @@ add_executable(axis_tests
     tests/test_pathresolve.cpp
     tests/test_imagekey.cpp
     tests/test_telnetstream.cpp
-    tests/test_sysop_menu.cpp)
+    tests/test_sysop_menu.cpp
+    tests/test_files.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)
