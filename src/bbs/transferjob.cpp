@@ -3,6 +3,9 @@
 #include "bbs/transferjob.h"
 
 #include <cctype>
+#include <cstdio>
+
+#include "bbs/theme.h"
 
 #include "net/xmodem.h"
 #include "net/zmodem.h"
@@ -25,8 +28,8 @@ std::string cleanUploadName(const std::string& in) {
     return out;
 }
 
-TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line)
-    : lib_(lib), req_(std::move(req)), line_(line) {
+TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info)
+    : lib_(lib), req_(std::move(req)), line_(line), info_(std::move(info)) {
     if (!req_.upload) {
         src_ = lib_.open(req_.area, req_.name);
         if (!src_) {
@@ -108,21 +111,86 @@ void TransferJob::endFile(bool complete) {
     bool kept = complete && dst_->finish(true);
     if (!complete) dst_->finish(false);
     dst_.reset();
-    if (kept) {
-        lib_.describe(req_.area, saved_, req_.desc.empty() ? "(uploaded, no description)" : req_.desc);
-        ok_ = true;
+    kept_ = kept;  // listed in finish(), once a ZIP has passed its check
+}
+
+void TransferJob::finish() {
+    done_ = true;
+    if (!req_.upload || !kept_) return;
+    if (proc_ && proc_->result() == UploadProcessor::Result::Rejected) {
+        ok_ = false;
+        note_ = proc_->note();
+        return;
     }
+    lib_.describe(req_.area, saved_, req_.desc.empty() ? "(uploaded, no description)" : req_.desc);
+    ok_ = true;
+    if (proc_) note_ = proc_->note();
+}
+
+void TransferJob::beginProcessing(uint8_t* workspace, size_t size) {
+    wantWorkspace_ = false;
+    proc_.reset(new UploadProcessor(lib_, req_.area, saved_, info_, workspace, size));
+    std::string s = "\r\n\r\n";
+    s += theme::window("PROCESSING UPLOAD", {{"file", saved_},
+                                             {"step 1", "unzip, test every file's CRC"},
+                                             {"step 2", std::string("add ") + UploadProcessor::kInfoName},
+                                             {"step 3", "rezip as a standard ZIP"}});
+    s += "\r\n";
+    line_.write((const uint8_t*)s.data(), s.size());
+    statusLine();
+}
+
+void TransferJob::statusLine() {  // one line, redrawn in place
+    const char* what = !proc_ ? "" : proc_->stage() == UploadProcessor::Stage::Check ? "testing "
+                                 : proc_->stage() == UploadProcessor::Stage::Write ? "rezipping "
+                                 : proc_->stage() == UploadProcessor::Stage::Info  ? "adding "
+                                                                                    : "finishing ";
+    char pct[16];
+    std::snprintf(pct, sizeof pct, " %3d%%  ", (int)(processProgress() * 100 + 0.5));
+    std::string name = proc_ ? proc_->current() : "";
+    if (name.size() > 24) name = name.substr(name.size() - 24);
+    std::string s = "\r\x1b[K  " + theme::bar(processProgress(), 30) + theme::WHITE + pct + theme::TEXT + what + name;
+    line_.write((const uint8_t*)s.data(), s.size());
 }
 
 bool TransferJob::step(uint32_t now) {
-    if (done_ || !xfer_) return false;
+    if (done_) return false;
+    if (proc_) {
+        bool running = true;
+        for (int i = 0; i < 4 && running; i++) running = proc_->step();
+        if (running) {
+            if (now - lastDraw_ > 150) {
+                lastDraw_ = now;
+                statusLine();
+            }
+            return true;
+        }
+        statusLine();
+        finish();
+        return false;
+    }
+    if (wantWorkspace_) return true;  // the host lends memory, then calls beginProcessing
+    if (!xfer_) return false;
     if (xfer_->step(now)) return true;
-    done_ = true;
     bool good = xfer_->result() == net::Transfer::Result::Ok;
-    if (!req_.upload) ok_ = good;
-    else if (req_.proto != 'Z') endFile(good);  // XMODEM has no end-of-file frame of its own
+    if (req_.upload && req_.proto != 'Z') endFile(good);  // XMODEM has no end-of-file frame of its own
     if (!good && note_.empty()) note_ = xfer_->error();
-    if (req_.upload && good && !ok_ && note_.empty()) note_ = "nothing was saved";
+    if (!req_.upload) {
+        ok_ = good;
+        done_ = true;
+        return false;
+    }
+    if (kept_) {
+        size_t dot = saved_.rfind('.');
+        std::string ext = dot == std::string::npos ? "" : saved_.substr(dot);
+        for (char& c : ext) c = (char)std::toupper((unsigned char)c);
+        if (ext == ".ZIP") {
+            wantWorkspace_ = true;
+            return true;
+        }
+    }
+    finish();
+    if (!ok_ && note_.empty()) note_ = "nothing was saved";
     return false;
 }
 

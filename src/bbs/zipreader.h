@@ -16,7 +16,8 @@ namespace axis::bbs {
 struct ZipEntry {
     std::string name;
     uint16_t    method = 0;  // 0 stored, 8 deflate
-    uint32_t    csize = 0, usize = 0, local = 0;
+    uint16_t    flags = 0, time = 0, date = 0;
+    uint32_t    crc = 0, csize = 0, usize = 0, local = 0;
 };
 
 class ZipReader {

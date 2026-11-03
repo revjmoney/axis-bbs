@@ -48,7 +48,11 @@ bool ZipReader::open() {
         if (!read_(at, h, 46) || u32(h) != 0x02014b50) return false;
         uint16_t nameLen = u16(h + 28), extra = u16(h + 30), comment = u16(h + 32);
         ZipEntry e;
+        e.flags = u16(h + 8);
         e.method = u16(h + 10);
+        e.time = u16(h + 12);
+        e.date = u16(h + 14);
+        e.crc = u32(h + 16);
         e.csize = u32(h + 20);
         e.usize = u32(h + 24);
         e.local = u32(h + 42);

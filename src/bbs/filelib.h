@@ -43,6 +43,8 @@ public:
     // uploads: nullptr / false where the store is read-only
     virtual std::unique_ptr<WriteFile> create(const std::string&, const std::string&) { return nullptr; }
     virtual bool describe(const std::string&, const std::string&, const std::string&) { return false; }  // add to FILES.BBS
+    virtual bool remove(const std::string&, const std::string&) { return false; }
+    virtual bool rename(const std::string&, const std::string& /*from*/, const std::string& /*to: must not exist*/) { return false; }
     virtual ~FileLibrary() = default;
 };
 

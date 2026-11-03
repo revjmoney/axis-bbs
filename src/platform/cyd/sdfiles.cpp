@@ -117,6 +117,19 @@ bool SdFileLibrary::describe(const std::string& areaId, const std::string& name,
     return ok;
 }
 
+bool SdFileLibrary::remove(const std::string& areaId, const std::string& name) {
+    if (!storageHasSd() || !safeName(areaId) || !safeName(name)) return false;
+    return ::unlink((folderOf(areaId) + "/" + name).c_str()) == 0;
+}
+
+bool SdFileLibrary::rename(const std::string& areaId, const std::string& from, const std::string& to) {
+    if (!storageHasSd() || !safeName(areaId) || !safeName(from) || !safeName(to)) return false;
+    struct stat st;
+    std::string a = folderOf(areaId) + "/" + from, b = folderOf(areaId) + "/" + to;
+    if (::stat(b.c_str(), &st) == 0) return false;  // never over an existing file
+    return ::rename(a.c_str(), b.c_str()) == 0;
+}
+
 bool SdFileLibrary::read(const std::string& areaId, const std::string& name, std::string& out, size_t max) {
     out.clear();
     if (!storageHasSd() || !safeName(areaId) || !safeName(name)) return false;

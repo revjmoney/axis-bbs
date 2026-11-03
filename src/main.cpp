@@ -57,6 +57,7 @@ static axis::door::LockTable                    doorLocks;
 static std::unique_ptr<axis::bbs::AnsiViewer>   viewer;  // a door built into the firmware, when running
 static std::unique_ptr<axis::bbs::TransferJob>  job;     // a download or upload, when one is running
 static uint32_t                                 jobStartMs = 0, jobDrawnMs = 0;
+static bool                                     jobLent = false;  // the screen copy is the upload checker's workspace
 static uint32_t                                 doorHeapBefore = 0, doorStartMs = 0;
 static uint8_t*                                 doorIram = nullptr;  // instruction RAM lent to the door
 static std::unique_ptr<axis::bbs::Node>         node;
@@ -235,6 +236,7 @@ static void drawSysop() {
 
 // The sysop panel while a caller downloads or uploads: a drippy window with a live progress bar.
 static void drawTransfer() {
+    if (!screenReady()) return;  // lent to the upload checker
     static BigText t;
     const auto&    r = job->request();
     uint32_t       done = job->bytes(), size = job->size(), secs = (millis() - jobStartMs) / 1000;
@@ -698,6 +700,13 @@ void loop() {
     }
     if (server.hasClient()) answer(server.available());
     if (job) {  // a download or upload owns the line
+        if (job->needsWorkspace()) {  // a ZIP upload arrived: lend the screen copy to check and rezip it
+            drawTransfer();
+            size_t   n = 0;
+            uint8_t* ws = screenLend(n);
+            jobLent = true;
+            job->beginProcessing(ws, n);
+        }
         bool running = job->step(millis());
         if (line) line->flush();
         if (millis() - jobDrawnMs > 500) {
@@ -705,6 +714,10 @@ void loop() {
             drawTransfer();
         }
         if (!running) {
+            if (jobLent) {
+                screenReturn();
+                jobLent = false;
+            }
             const auto& r = job->request();
             logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
                      (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
@@ -745,7 +758,9 @@ void loop() {
             if (node->state() == axis::bbs::Node::State::Transfer && !job) {
                 sendApp(node->takeOutput());  // the transfer window, before the protocol starts
                 jobStartMs = jobDrawnMs = millis();
-                job.reset(new axis::bbs::TransferJob(sdFiles, node->transfer(), *line));
+                axis::bbs::UploadInfo info{cfg.bbsName, dialName().c_str(), cfg.location,
+                                           std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion};
+                job.reset(new axis::bbs::TransferJob(sdFiles, node->transfer(), *line, info));
                 return;
             }
             sendApp(node->takeOutput());

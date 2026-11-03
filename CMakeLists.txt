@@ -21,6 +21,7 @@ add_library(axiscore STATIC
     src/bbs/ansiviewer.cpp
     src/bbs/theme.cpp
     src/bbs/transferjob.cpp
+    src/bbs/uploadproc.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp
@@ -71,7 +72,8 @@ add_executable(axis_tests
     tests/test_ansiview.cpp
     tests/test_transfer.cpp
     tests/test_theme.cpp
-    tests/test_transferjob.cpp)
+    tests/test_transferjob.cpp
+    tests/test_uploadproc.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)

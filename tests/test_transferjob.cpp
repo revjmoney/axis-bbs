@@ -8,6 +8,9 @@
 #include "doctest.h"
 #include "bbs/node.h"
 #include "bbs/transferjob.h"
+#include "bbs/zipreader.h"
+#include <fstream>
+#include <iterator>
 #include "net/xmodem.h"
 #include "net/zmodem.h"
 
@@ -49,6 +52,14 @@ struct MemLibrary : FileLibrary {
         w->key = area + "/" + name;
         return std::unique_ptr<WriteFile>(w.release());
     }
+    bool remove(const std::string& area, const std::string& name) override { return files.erase(area + "/" + name) > 0; }
+    bool rename(const std::string& area, const std::string& from, const std::string& to) override {
+        auto it = files.find(area + "/" + from);
+        if (it == files.end() || files.count(area + "/" + to)) return false;
+        files[area + "/" + to] = it->second;
+        files.erase(it);
+        return true;
+    }
     bool describe(const std::string& area, const std::string& name, const std::string& desc) override {
         files[area + "/FILES.BBS"] += name + " " + desc + "\r\n";
         return true;
@@ -86,10 +97,13 @@ std::string sample(size_t n) {
     return s;
 }
 
+std::vector<uint8_t> workspace(ZipReader::kWorkspace);
+
 void run(TransferJob& job, Transfer& other) {
     uint32_t now = 0;
     bool     a = true, b = true;
     for (int i = 0; i < 20000 && (a || b); i++, now += 10) {
+        if (a && job.needsWorkspace()) job.beginProcessing(workspace.data(), workspace.size());  // as the host does
         if (a) a = job.step(now);
         if (b) b = other.step(now);
     }
@@ -124,12 +138,12 @@ TEST_CASE("a ZMODEM upload lands in the area with its description") {
             file.copy((char*)buf, n, off);
             return true;
         },
-        (uint32_t)file.size(), "MYTOOL.ZIP");
+        (uint32_t)file.size(), "MYTOOL.BIN");
     run(job, caller);
     CHECK(job.ok());
-    CHECK(job.savedName() == "MYTOOL.ZIP");
-    CHECK(lib.files["freeware/MYTOOL.ZIP"] == file);
-    CHECK(lib.files["freeware/FILES.BBS"].find("MYTOOL.ZIP A tool I wrote") != std::string::npos);
+    CHECK(job.savedName() == "MYTOOL.BIN");
+    CHECK(lib.files["freeware/MYTOOL.BIN"] == file);
+    CHECK(lib.files["freeware/FILES.BBS"].find("MYTOOL.BIN A tool I wrote") != std::string::npos);
 }
 
 TEST_CASE("an XMODEM upload uses the typed name and loses the 1Ah padding") {
@@ -152,7 +166,7 @@ TEST_CASE("an XMODEM upload uses the typed name and loses the 1Ah padding") {
 
 TEST_CASE("an upload never overwrites a file that is already there") {
     MemLibrary lib;
-    lib.files["freeware/MYTOOL.ZIP"] = "old";
+    lib.files["freeware/MYTOOL.BIN"] = "old";
     std::string     file = sample(500);
     Line            l;
     TransferRequest req{true, "freeware", "", "newer", 'Z'};
@@ -163,10 +177,10 @@ TEST_CASE("an upload never overwrites a file that is already there") {
             file.copy((char*)buf, n, off);
             return true;
         },
-        (uint32_t)file.size(), "mytool.zip");
+        (uint32_t)file.size(), "mytool.bin");
     run(job, caller);
-    CHECK(lib.files["freeware/MYTOOL.ZIP"] == "old");
-    CHECK(job.savedName() != "MYTOOL.ZIP");
+    CHECK(lib.files["freeware/MYTOOL.BIN"] == "old");
+    CHECK(job.savedName() != "MYTOOL.BIN");
     CHECK(lib.files["freeware/" + job.savedName()] == file);
 }
 
@@ -175,4 +189,54 @@ TEST_CASE("upload names are cleaned up") {
     CHECK(cleanUploadName("../../evil.exe") == "EVIL.EXE");
     CHECK(cleanUploadName("FILES.BBS") == "FILES_.BBS");  // the area's list is not a file
     CHECK(cleanUploadName("").empty());
+}
+
+namespace {
+std::string packZip() {
+    std::ifstream in(std::string(AXIS_TEST_DATA) + "/pack.zip", std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), {});
+}
+}  // namespace
+
+TEST_CASE("an uploaded zip is checked and gets AXISBBS.NFO before it is listed") {
+    MemLibrary      lib;
+    std::string     file = packZip();
+    Line            l;
+    TransferRequest req{true, "ansi", "", "Test pack", 'Z'};
+    TransferJob     job(lib, req, l.board);
+    ZmodemSender    caller(
+        l.caller,
+        [&](uint32_t off, uint8_t* buf, size_t n) {
+            file.copy((char*)buf, n, off);
+            return true;
+        },
+        (uint32_t)file.size(), "PACK.ZIP");
+    run(job, caller);
+    CHECK(job.ok());
+    CHECK(lib.files["ansi/PACK.ZIP"].find("AXISBBS.NFO") != std::string::npos);
+    CHECK(lib.files["ansi/FILES.BBS"].find("PACK.ZIP Test pack") != std::string::npos);
+    CHECK(job.note().find("AXISBBS.NFO") != std::string::npos);
+    std::string seen(l.ab.begin(), l.ab.end());  // whatever is left for the caller to read
+    (void)seen;
+}
+
+TEST_CASE("a damaged zip upload is rejected and not listed") {
+    MemLibrary      lib;
+    std::string     file = packZip();
+    file[60] ^= 0x55;
+    Line            l;
+    TransferRequest req{true, "ansi", "", "Broken", 'Z'};
+    TransferJob     job(lib, req, l.board);
+    ZmodemSender    caller(
+        l.caller,
+        [&](uint32_t off, uint8_t* buf, size_t n) {
+            file.copy((char*)buf, n, off);
+            return true;
+        },
+        (uint32_t)file.size(), "BROKEN.ZIP");
+    run(job, caller);
+    CHECK_FALSE(job.ok());
+    CHECK(lib.files.count("ansi/BROKEN.ZIP") == 0);
+    CHECK(lib.files["ansi/FILES.BBS"].find("BROKEN") == std::string::npos);
+    CHECK(job.note().find("damaged") != std::string::npos);
 }
