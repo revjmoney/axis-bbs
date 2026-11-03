@@ -17,6 +17,8 @@
 #include "door/cpu.h"
 #include "door/dos.h"
 #include "door/dosmem.h"
+#include "door/dropfile.h"
+#include "door/fossil.h"
 #include "door/guestmem.h"
 #include "door/hostfs.h"
 
@@ -24,6 +26,7 @@ namespace axis {
 namespace door {
 
 enum class DoorResult { Running, Exited, OutOfMemory, CarrierLost, TimeLimit, LoadError };
+enum class DropFile { None, DoorSys, Dorinfo };
 
 struct DoorConfig {
     std::filesystem::path dir;            // the door's folder (drive C: inside the door)
@@ -33,6 +36,8 @@ struct DoorConfig {
     uint32_t              timeLimitSec = 3600;
     bool                  localMode = true;  // keys and screen on the caller stream (sysop at the console)
     std::FILE*            trace = nullptr;
+    DropFile              dropFile = DropFile::None;  // written into the door folder before start
+    CallerInfo            caller;
     std::function<uint64_t()> clockMs;     // default: steady clock
     std::function<void(uint32_t)> sleepMs; // default: this thread sleeps
 };
@@ -67,6 +72,7 @@ private:
     std::unique_ptr<Cpu>        cpu_;
     std::unique_ptr<Bios>       bios_;
     std::unique_ptr<Dos>        dos_;
+    std::unique_ptr<Fossil>     fossil_;
     DosMemory*                  dm_ = nullptr;
     std::unique_ptr<ByteStream> console_;
     std::function<bool(int)>    extra_;

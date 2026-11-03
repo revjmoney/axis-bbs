@@ -12,6 +12,10 @@ constexpr uint32_t kBda = 0x400, kText = 0xB8000;
 constexpr int      kCols = 80, kRows = 25;
 constexpr uint32_t kTicksPerDay = 0x1800B0;
 uint8_t            bcd(int v) { return (uint8_t)((v / 10) << 4 | (v % 10)); }
+// INT 14h gets an X00-style stub away from the others: a short jump over the FOSSIL
+// signature 1954h at +6 and the highest function number at +8, which doors check
+constexpr uint16_t kFossilStub = 0x800;
+uint16_t           stubOffset(int v) { return v == 0x14 ? kFossilStub : (uint16_t)(v * 8); }
 }  // namespace
 
 Bios::Bios(Cpu& cpu, GuestMemory& mem) : cpu_(cpu), mem_(mem), rom_(kPageSize, 0) {}
@@ -30,9 +34,11 @@ void Bios::install() {
         }
         s[n++] = 0xCF;
     }
+    const uint8_t fossil[] = {0xEB, 0x07, 0x90, 0x90, 0x90, 0x90, 0x54, 0x19, 0x1B, 0xCD, kChainVector, 0x14, 0xCF};
+    for (size_t i = 0; i < sizeof fossil; i++) rom_[kFossilStub + i] = fossil[i];
     mem_.mapReadOnly(kStubSeg * 16u, rom_.data(), kPageSize);
     for (int v = 0; v < 256; v++) {
-        mem_.write16(v * 4u, (uint16_t)(v * 8));
+        mem_.write16(v * 4u, stubOffset(v));
         mem_.write16(v * 4u + 2, kStubSeg);
     }
     // BIOS data area
@@ -54,7 +60,7 @@ void Bios::install() {
 
 bool Bios::isStub(int v) const {
     return const_cast<GuestMemory&>(mem_).read16(v * 4u + 2) == kStubSeg &&
-           const_cast<GuestMemory&>(mem_).read16(v * 4u) == (uint16_t)(v * 8);
+           const_cast<GuestMemory&>(mem_).read16(v * 4u) == stubOffset(v);
 }
 
 bool Bios::service(int v) {

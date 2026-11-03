@@ -145,3 +145,50 @@ TEST_CASE("session exit stops the CPU at once") {
     CHECK(s.run() == DoorResult::Exited);
     CHECK_FALSE(fs::exists(d / "BAD.DAT"));
 }
+
+TEST_CASE("session remote mode: FOSSIL talks to the caller and DOOR.SYS is written") {
+    fs::path d = tmpDir("remote");
+    // mov ah,4 ; xor dx,dx ; int 14h ; mov ax,0158h ; int 14h ; mov ah,2 ; int 14h ; mov ah,1 ; int 14h ; mov ax,4C00h ; int 21h
+    // (init, send 'X', wait for a byte, echo it back, exit)
+    writeExe(d / "T.EXE", {0xB4, 0x04, 0x31, 0xD2, 0xCD, 0x14, 0xB8, 0x58, 0x01, 0xCD, 0x14, 0xB4, 0x02, 0xCD,
+                           0x14, 0xB4, 0x01, 0xCD, 0x14, 0xB8, 0x00, 0x4C, 0xCD, 0x21});
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d;
+    cfg.exe = "T.EXE";
+    cfg.localMode = false;
+    cfg.dropFile = DropFile::DoorSys;
+    cfg.caller.alias = "Revman";
+    DoorSession s(cfg, fs, locks, caller, 1);
+    for (int i = 0; i < 10 && s.step(20); i++) {
+    }
+    CHECK(caller.output() == "X");
+    caller.push("k");
+    while (s.step(20)) {
+    }
+    CHECK(s.result() == DoorResult::Exited);
+    CHECK(caller.output() == "Xk");
+    std::ifstream in(d / "DOOR.SYS");
+    std::string   all((std::istreambuf_iterator<char>(in)), {});
+    CHECK(all.find("Revman") != std::string::npos);
+}
+
+TEST_CASE("session remote mode: the caller hanging up ends the door") {
+    fs::path d = tmpDir("hangup");
+    writeExe(d / "T.EXE", {0xB4, 0x02, 0xCD, 0x14, 0xEB, 0xFA});  // loop: wait for a byte forever
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d;
+    cfg.exe = "T.EXE";
+    cfg.localMode = false;
+    DoorSession s(cfg, fs, locks, caller, 1);
+    for (int i = 0; i < 5; i++) s.step(20);
+    caller.hangUp();
+    while (s.step(20)) {
+    }
+    CHECK(s.result() == DoorResult::CarrierLost);
+}

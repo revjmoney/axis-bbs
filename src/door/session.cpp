@@ -43,6 +43,7 @@ DoorSession::DoorSession(DoorConfig cfg, HostFs& fs, LockTable& locks, ByteStrea
 }
 
 DoorSession::~DoorSession() {
+    fossil_.reset();
     dos_.reset();  // closes the door's files and drops its locks
     bios_.reset();
     cpu_.reset();
@@ -52,6 +53,16 @@ DoorSession::~DoorSession() {
 }
 
 bool DoorSession::load() {
+    // the drop file first: the door reads it as it starts
+    if (cfg_.dropFile != DropFile::None) {
+        bool        sys = cfg_.dropFile == DropFile::DoorSys;
+        std::string body = sys ? makeDoorSys(cfg_.caller) : makeDorinfo(cfg_.caller);
+        int         dh = fs_.open(sys ? "DOOR.SYS" : "DORINFO1.DEF", 2, true, true);
+        if (dh >= 0) {
+            fs_.write(dh, body.data(), (int)body.size());
+            fs_.close(dh);
+        }
+    }
     // read the program through the door's file system (SD, flash or PC alike)
     int h = fs_.open(cfg_.exe, 0, false, false);
     if (h < 0) return false;
@@ -85,10 +96,12 @@ bool DoorSession::load() {
         bios_->setKeyboard(&caller_);
     } else {
         dos_->setConsole(&caller_);  // remote: plain DOS output goes to the caller; FOSSIL does the rest
+        fossil_.reset(new Fossil(*cpu_, *mem_, caller_));
     }
     bios_->setServices([this](int v) {
         if (v == 0x21) return dos_->int21();
         if (v == 0x20) return dos_->int20();
+        if (v == 0x14 && fossil_) return fossil_->int14();
         return extra_ ? extra_(v) : false;
     });
     cpu_->setIntHandler([this](int n) {
@@ -125,7 +138,8 @@ bool DoorSession::step(uint32_t maxMs) {
         else if (!cfg_.localMode && !caller_.carrier()) result_ = DoorResult::CarrierLost;
         else if (now - startMs_ >= cfg_.timeLimitSec * 1000ull) result_ = DoorResult::TimeLimit;
         if (result_ != DoorResult::Running) return false;
-        bool idle = bios_->consumeIdleHint() || dos_->waitingForKey() || bios_->waitingForKey();
+        bool idle = bios_->consumeIdleHint() || dos_->waitingForKey() || bios_->waitingForKey() ||
+                    (fossil_ && fossil_->waitingForInput());
         if (idle || cpu_->halted()) cfg_.sleepMs(2);  // the door is waiting: let the board breathe
         if (cfg_.clockMs() - sliceStart >= maxMs) return true;
     }

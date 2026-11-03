@@ -22,6 +22,8 @@ add_library(axiscore STATIC
     src/door/dos.cpp
     src/door/bios.cpp
     src/door/session.cpp
+    src/door/fossil.cpp
+    src/door/dropfile.cpp
     src/platform/pc/stdhostfs.cpp
     src/platform/pc/consolestream.cpp
     third_party/i8086/i8086.cpp)
@@ -41,7 +43,9 @@ add_executable(axis_tests
     tests/test_dos.cpp
     tests/test_bios.cpp
     tests/test_session.cpp
-    tests/test_lord_local.cpp)
+    tests/test_lord_local.cpp
+    tests/test_fossil.cpp
+    tests/test_dropfile.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 
