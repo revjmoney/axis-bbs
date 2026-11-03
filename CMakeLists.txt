@@ -24,6 +24,8 @@ add_library(axiscore STATIC
     src/bbs/uploadproc.cpp
     src/bbs/users.cpp
     src/bbs/newuser.cpp
+    src/bbs/touchkeyboard.cpp
+    src/bbs/wifipicker.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp
@@ -78,7 +80,8 @@ add_executable(axis_tests
     tests/test_uploadproc.cpp
     tests/test_palette.cpp
     tests/test_users.cpp
-    tests/test_accounts.cpp)
+    tests/test_accounts.cpp
+    tests/test_wifipicker.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)

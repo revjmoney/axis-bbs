@@ -20,6 +20,7 @@
 #include "bbs/sysop_menu.h"
 #include "bbs/transferjob.h"
 #include "bbs/users.h"
+#include "bbs/wifipicker.h"
 #include "door/session.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
@@ -40,7 +41,7 @@
 
 static constexpr int kNodeNumber = 1;
 
-enum class Mode { Normal, SetupChoice, SetupTelnet, SetupTouch };
+enum class Mode { Normal, SetupChoice, SetupTelnet, SetupTouch, WifiPick };
 
 static axis::bbs::BbsConfig cfg;
 static Mode                 mode = Mode::Normal;
@@ -51,6 +52,8 @@ static axis::bbs::SysopMenu                     sysop;   // the touchscreen syso
 static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
 static SdFileLibrary                            sdFiles;  // the file areas on the SD card, for callers
 static axis::bbs::UserStore                     users;    // callers' accounts, internal flash /users.dat
+static axis::bbs::WifiPicker                    picker;   // the touch WiFi picker (no saved network, or @WIFIPICK)
+static Mode                                     afterPick = Mode::Normal;
 static size_t                                   pendingSeen = 0;
 // the door the caller is in, if any (the screen copy is freed meanwhile)
 static std::unique_ptr<axis::PosixHostFs>       doorFs;
@@ -298,8 +301,55 @@ static void drawTransfer() {
     screenPush();
 }
 
+// The WiFi picker: networks in range, or the on-screen keyboard. Rev's scheme: orange, grey, white.
+static void drawPicker() {
+    scr.fillScreen(TFT_BLACK);
+    scr.setFont(&fonts::Font2);
+    scr.setTextDatum(textdatum_t::top_left);
+    auto button = [](int x, int y, int w, int h, const char* label, bool lit) {
+        uint16_t fill = lit ? 0xFC00 : 0x2104;
+        scr.fillRoundRect(x, y, w, h, 5, fill);
+        scr.drawRoundRect(x, y, w, h, 5, lit ? TFT_WHITE : 0xFC00);
+        scr.setTextColor(lit ? TFT_BLACK : TFT_WHITE, fill);
+        scr.setTextDatum(textdatum_t::middle_center);
+        scr.drawString(label, x + w / 2, y + h / 2);
+        scr.setTextDatum(textdatum_t::top_left);
+    };
+    if (picker.screen() == axis::bbs::WifiPicker::Screen::List) {
+        scr.setTextColor(0xFC00, TFT_BLACK);
+        scr.drawString("W I F I", 8, 4);
+        scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        scr.drawString("tap your network", 90, 4);
+        scr.drawString(picker.message().substr(0, 40).c_str(), 8, 20);
+        auto rows = picker.rows();
+        for (size_t i = 0; i < rows.size(); i++) {
+            int y = axis::bbs::WifiPicker::kRowTop + (int)i * axis::bbs::WifiPicker::kRowH;
+            scr.drawRect(4, y, 312, axis::bbs::WifiPicker::kRowH - 3, 0x4208);
+            scr.setTextColor(TFT_WHITE, TFT_BLACK);
+            scr.drawString(rows[i].c_str(), 10, y + 6);
+        }
+        if (rows.empty()) scr.drawString("no networks found: RESCAN", 10, 60);
+        for (auto& b : picker.buttons()) button(b.x, b.y, b.w, b.h, b.label.c_str(), false);
+    } else {
+        auto& kb = picker.keyboard();
+        scr.setTextColor(0xFC00, TFT_BLACK);
+        scr.drawString(kb.title().substr(0, 26).c_str(), 70, 4);
+        scr.drawRect(4, 28, 312, 30, 0xFC00);
+        scr.setTextColor(TFT_WHITE, TFT_BLACK);
+        scr.drawString((kb.shown() + "_").c_str(), 10, 35);
+        for (auto& k : kb.keys()) button(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
+    }
+    scr.setFont(&fonts::Font0);
+}
+
 static void drawScreen() {
     if (!screenReady()) return;  // a door is running
+    if (mode == Mode::WifiPick) {
+        drawPicker();
+        screenPush();
+        screenDirty = false;
+        return;
+    }
     if (job) {
         drawTransfer();
         screenDirty = false;
@@ -594,8 +644,22 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
     }
 }
 
+static void startPicker(Mode after) {
+    afterPick = after;
+    mode = Mode::WifiPick;
+    picker = axis::bbs::WifiPicker();
+    picker.setNetworks(wifiScan());
+    picker.setCanLeave(WiFi.status() == WL_CONNECTED);
+    screenDirty = true;
+}
+
 static void handleTap(int x, int y) {
     if (!screenReady()) return;  // a door has the screen's memory
+    if (mode == Mode::WifiPick) {
+        picker.tap(x, y);
+        screenDirty = true;
+        return;
+    }
     if (mode == Mode::Normal) {  // any tap on the WFC opens the sysop menu
         if (!sysop.isOpen()) sysop.open();
         else sysopAction(sysop.tap(x, y));
@@ -673,6 +737,8 @@ static void handleSerial() {
             bool ok = configSave(cfg);
             logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
             screenDirty = true;
+        } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
+            startPicker(mode == Mode::WifiPick ? afterPick : mode);
         } else if (serialFileCommand(cmd)) {  // @PUT @LS @RM @MKDIR @BAUD (tools/sdput.py)
         } else if (cmd == "@RESETSETUP") {
             configErase();
@@ -706,12 +772,10 @@ void setup() {
     }
     Serial.printf("axis: settings %s\n", cfg.setupDone ? "loaded" : "not set up yet, first-boot setup");
     if (!wifiJoinSaved()) {
-        Serial.println("axis: no saved WiFi network in range");
-        title("no WiFi");
-        scr.setTextColor(TFT_ORANGE, TFT_BLACK);
-        scr.drawString("No saved WiFi network in range.", 8, 110);
-        screenPush();
-        return;  // the touch WiFi picker comes with the next build
+        Serial.println("axis: no saved WiFi network in range: touch picker");
+        startPicker(mode);
+        drawScreen();
+        return;
     }
     Serial.printf("axis: wifi %s ip %s\n", wifiSsid(), WiFi.localIP().toString().c_str());
     applyNetwork();
@@ -729,6 +793,36 @@ void loop() {
     if (tapX >= 0) {
         handleTap(tapX, tapY);
         tapX = tapY = -1;
+    }
+    if (mode == Mode::WifiPick) {  // the touch WiFi picker owns the screen
+        if (picker.wantsLeave()) {
+            mode = afterPick;
+            screenDirty = true;
+            return;
+        }
+        if (picker.wantsRescan()) {
+            picker.rescanStarted();
+            picker.setNetworks(wifiScan());
+            screenDirty = true;
+        }
+        if (picker.wantsJoin()) {
+            picker.joining();
+            drawScreen();  // "joining ..."
+            String ssid = picker.ssid().c_str(), pass = picker.password().c_str();
+            if (wifiJoin(ssid, pass)) {
+                wifiRemember(ssid, pass);  // saved only once it works
+                logEvent("wifi: joined " + ssid);
+                mode = afterPick;
+                applyNetwork();
+            } else {
+                picker.joinFailed();
+                if (afterPick == Mode::Normal || cfg.setupDone) wifiJoinSaved();  // never strand a working board
+            }
+            screenDirty = true;
+        }
+        if (screenDirty) drawScreen();
+        delay(10);
+        return;
     }
     if (WiFi.status() != WL_CONNECTED) {
         if (screenDirty) drawScreen();

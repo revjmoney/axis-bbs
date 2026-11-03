@@ -8,3 +8,11 @@
 bool        wifiJoinSaved();   // true once connected; skips gadget hotspots, strongest first
 bool        wifiHasTime();
 const char* wifiSsid();        // network joined, "" if none
+
+// The touch WiFi picker's side: what's in range, joining one network, and remembering it (only
+// after a join works; it goes first in the saved list).
+#include <vector>
+#include "bbs/wifipicker.h"
+std::vector<axis::bbs::WifiPicker::Network> wifiScan();
+bool wifiJoin(const String& ssid, const String& pass);
+void wifiRemember(const String& ssid, const String& pass);

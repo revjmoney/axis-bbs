@@ -71,3 +71,57 @@ bool wifiJoinSaved() {
     WiFi.scanDelete();
     return false;
 }
+
+std::vector<axis::bbs::WifiPicker::Network> wifiScan() {
+    WiFi.mode(WIFI_STA);
+    std::vector<axis::bbs::WifiPicker::Network> v;
+    int found = WiFi.scanNetworks();
+    for (int i = 0; i < found; i++) v.push_back({WiFi.SSID(i).c_str(), (int)WiFi.RSSI(i), WiFi.encryptionType(i) != WIFI_AUTH_OPEN});
+    WiFi.scanDelete();
+    return v;
+}
+
+bool wifiJoin(const String& ssid, const String& pass) {
+    WiFi.mode(WIFI_STA);
+    int found = WiFi.scanNetworks(), idx = -1;
+    for (int i = 0; i < found; i++)
+        if (WiFi.SSID(i) == ssid) idx = i;
+    bool ok;
+    if (idx >= 0) {
+        ok = connect(idx, ssid, pass);
+    } else {  // a hidden network: no scan entry to aim at
+        WiFi.disconnect();
+        delay(100);
+        WiFi.begin(ssid.c_str(), pass.length() ? pass.c_str() : nullptr);
+        for (int i = 0; i < 100 && WiFi.status() != WL_CONNECTED; i++) delay(100);
+        ok = WiFi.status() == WL_CONNECTED;
+    }
+    WiFi.scanDelete();
+    if (!ok) return false;
+    joined = ssid;
+    configTzTime("EST5EDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.google.com", "216.239.35.0");
+    for (int i = 0; i < 80 && !wifiHasTime(); i++) delay(100);
+    return true;
+}
+
+void wifiRemember(const String& ssid, const String& pass) {
+    Preferences prefs;
+    prefs.begin("net", false);
+    String s[5], p[5];
+    for (int i = 0; i < 5; i++) {
+        s[i] = prefs.getString(("s" + String(i)).c_str(), "");
+        p[i] = prefs.getString(("p" + String(i)).c_str(), "");
+    }
+    String ns[5] = {ssid}, np[5] = {pass};  // the new one first, the others after it (minus a copy of it)
+    int    n = 1;
+    for (int i = 0; i < 5 && n < 5; i++)
+        if (s[i].length() && s[i] != ssid) {
+            ns[n] = s[i];
+            np[n++] = p[i];
+        }
+    for (int i = 0; i < 5; i++) {
+        prefs.putString(("s" + String(i)).c_str(), ns[i]);
+        prefs.putString(("p" + String(i)).c_str(), np[i]);
+    }
+    prefs.end();
+}
