@@ -17,7 +17,9 @@
 #include "platform/cyd/ansi_screen.h"
 #include "platform/cyd/board.h"
 #include "platform/cyd/config_store.h"
+#include "platform/cyd/flashimage.h"
 #include "platform/cyd/screen.h"
+#include "platform/cyd/serialfiles.h"
 #include "platform/cyd/storage.h"
 #include <SD.h>
 #include "platform/cyd/wfc_art.h"
@@ -297,7 +299,7 @@ static void handleSerial() {
     while (Serial.available()) {
         char c = Serial.read();
         if (c != '\n' && c != '\r') {
-            if (cmd.length() < 80) cmd += c;
+            if (cmd.length() < 160) cmd += c;
             continue;
         }
         if (cmd.startsWith("@TAP ")) {
@@ -327,6 +329,25 @@ static void handleSerial() {
             Serial.printf("axis: %s: %u entries\n", dir.c_str(), (unsigned)st.matches.size());
             for (auto& f : st.matches)
                 Serial.printf("axis:   %-12s %8u%s\n", f.name83.c_str(), (unsigned)f.size, f.attr & 0x10 ? " <DIR>" : "");
+        } else if (cmd.startsWith("@DOORCHECK ")) {  // "@DOORCHECK lord [force]": cache LORD.EXE in flash
+            String id = cmd.substring(11);
+            bool   force = id.endsWith(" force");
+            if (force) id = id.substring(0, id.length() - 6);
+            String exe = id + ".EXE";
+            exe.toUpperCase();
+            axis::PosixHostFs fs(std::string(storageRoot()) + "/doors/" + id.c_str());
+            FlashImageSource  src(id.c_str(), force);
+            axis::door::MzInfo mz;
+            size_t             len = 0;
+            uint32_t           t0 = millis();
+            const uint8_t*     img = src.image(fs, exe.c_str(), axis::door::kLoadSeg, mz, len);
+            if (img)
+                Serial.printf("axis: door %s ok: %u bytes %s in %lu ms, key %08lx, heap %u\n", id.c_str(), (unsigned)len,
+                              src.rewrote() ? "written" : "already cached", (unsigned long)(millis() - t0),
+                              (unsigned long)src.key(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+            else
+                Serial.printf("axis: door %s FAILED: %s\n", id.c_str(), src.error());
+        } else if (serialFileCommand(cmd)) {  // @PUT @LS @RM @MKDIR @BAUD (tools/sdput.py)
         } else if (cmd == "@RESETSETUP") {
             configErase();
             Serial.println("axis: settings erased, restarting into setup");

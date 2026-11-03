@@ -3,6 +3,7 @@
 #include "platform/posix/posixhostfs.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -11,6 +12,10 @@
 #include <ctime>
 
 #include "door/pathresolve.h"
+
+#ifndef O_BINARY
+#define O_BINARY 0  // only Windows has text-mode files
+#endif
 
 namespace axis {
 
@@ -84,7 +89,7 @@ std::vector<std::string> listDir(const std::string& dir) {
 PosixHostFs::PosixHostFs(std::string root) : root_(std::move(root)) {}
 
 PosixHostFs::~PosixHostFs() {
-    for (auto& o : open_) std::fclose(o.second.f);
+    for (auto& o : open_) ::close(o.second.fd);
 }
 
 // "C:\LORD\X.DAT" or "X.DAT" (relative to cwd) -> host path inside the door folder, matching
@@ -103,58 +108,51 @@ int PosixHostFs::open(const std::string& dosPath, int access, bool create, bool 
     if (exclusive && here) return -80;  // file exists
     if (!here && !create) return dirExists(parentOf(p)) ? -2 : -3;
     if (create && !dirExists(parentOf(p))) return -3;
-    const char* mode = (create && (truncate || !here)) ? "w+b" : access == 0 ? "rb" : "r+b";
-    std::FILE*  f = std::fopen(p.c_str(), mode);
-    if (!f) return access == 0 ? -2 : -5;
+    // plain descriptors, no stdio: reads and writes go straight to the file system (newlib's
+    // stdio buffer is 128 bytes, and unbuffered it reads a byte at a time), and other nodes
+    // see every write at once
+    int flags = O_BINARY | (access == 0 && !create ? O_RDONLY : O_RDWR);
+    if (create && (truncate || !here)) flags |= O_CREAT | O_TRUNC;
+    int fd = ::open(p.c_str(), flags, 0666);
+    if (fd < 0) return access == 0 ? -2 : -5;
     int h = next_++;
-    open_[h] = {f, p};
+    open_[h] = {fd, p};
     return h;
 }
 
 int PosixHostFs::read(int h, void* buf, int n) {
     auto it = open_.find(h);
     if (it == open_.end()) return -6;
-    if (it->second.writing) {  // switching from writing to reading needs a seek (never fflush a read stream)
-        std::fseek(it->second.f, 0, SEEK_CUR);
-        it->second.writing = false;
+    int got = 0;
+    while (got < n) {
+        int r = (int)::read(it->second.fd, (char*)buf + got, (unsigned)(n - got));
+        if (r <= 0) break;
+        got += r;
     }
-    return (int)std::fread(buf, 1, n, it->second.f);
+    return got;
 }
 
 int PosixHostFs::write(int h, const void* buf, int n) {
     auto it = open_.find(h);
     if (it == open_.end()) return -6;
-    std::FILE* f = it->second.f;
-    if (n == 0) {  // DOS: a zero-length write sets the file size to the current position
-        long pos = std::ftell(f);
-        std::fflush(f);
-        int r = ftruncate(fileno(f), pos);
-        std::fseek(f, pos, SEEK_SET);
-        it->second.writing = false;
-        return r == 0 ? 0 : -5;
-    }
-    if (!it->second.writing) {
-        std::fseek(f, 0, SEEK_CUR);  // switching from reading to writing needs a seek
-        it->second.writing = true;
-    }
-    int w = (int)std::fwrite(buf, 1, n, f);
-    std::fflush(f);  // other nodes read the same files: keep the disk current
-    return w;
+    int fd = it->second.fd;
+    if (n == 0)  // DOS: a zero-length write sets the file size to the current position
+        return ftruncate(fd, ::lseek(fd, 0, SEEK_CUR)) == 0 ? 0 : -5;
+    int r = (int)::write(fd, buf, (unsigned)n);
+    return r < 0 ? -5 : r;
 }
 
 int64_t PosixHostFs::seek(int h, int64_t off, int whence) {
     auto it = open_.find(h);
     if (it == open_.end()) return -6;
-    std::FILE* f = it->second.f;
-    it->second.writing = false;
-    if (std::fseek(f, (long)off, whence == 0 ? SEEK_SET : whence == 1 ? SEEK_CUR : SEEK_END) != 0) return -25;
-    return std::ftell(f);
+    long r = ::lseek(it->second.fd, (long)off, whence == 0 ? SEEK_SET : whence == 1 ? SEEK_CUR : SEEK_END);
+    return r < 0 ? -25 : r;
 }
 
 int PosixHostFs::close(int h) {
     auto it = open_.find(h);
     if (it == open_.end()) return -6;
-    std::fclose(it->second.f);
+    ::close(it->second.fd);
     open_.erase(it);
     return 0;
 }
@@ -242,7 +240,7 @@ bool PosixHostFs::fileTime(int h, uint16_t& dosDate, uint16_t& dosTime) {
     auto it = open_.find(h);
     if (it == open_.end()) return false;
     struct stat st;
-    if (fstat(fileno(it->second.f), &st) != 0) return false;
+    if (fstat(it->second.fd, &st) != 0) return false;
     dosStamp(st.st_mtime, dosDate, dosTime);
     return true;
 }

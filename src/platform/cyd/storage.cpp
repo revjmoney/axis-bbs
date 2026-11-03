@@ -18,13 +18,14 @@ const char* storageRoot() { return haveSd ? "/sd" : "/littlefs"; }
 
 void storageInit() {
     sdSpi.begin(18, 19, 23, 5);
-    // a slow first try wakes cards that dislike a fast start, then the normal speed
-    for (uint32_t hz : {400000u, 20000000u}) {
-        if (SD.begin(5, sdSpi, hz, "/sd", 10)) {
-            haveSd = true;
-            break;
-        }
+    // a slow first try wakes cards that dislike a fast start, then mount at the normal speed (a card
+    // left at 400 kHz reads about 50 KB/s); stay slow only if the fast mount fails
+    SD.begin(5, sdSpi, 400000, "/sd", 10);
+    SD.end();
+    haveSd = SD.begin(5, sdSpi, 20000000, "/sd", 10);
+    if (!haveSd) {
         SD.end();
+        haveSd = SD.begin(5, sdSpi, 400000, "/sd", 10);
     }
     uint8_t type = SD.cardType();
     if (haveSd) {

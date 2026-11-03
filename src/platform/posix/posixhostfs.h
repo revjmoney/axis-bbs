@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// HostFs over a folder, using only stdio, dirent and ftruncate, so the same code runs on the PC
+// HostFs over a folder, using only POSIX file descriptors and dirent, so the same code runs on the PC
 // (MinGW) and on the CYD (ESP-IDF VFS: the SD card at /sd or LittleFS at /littlefs). Drive C: is
 // the folder; names match in any case through the shared resolver.
 #pragma once
-#include <cstdio>
 #include <map>
 #include <string>
 #include <vector>
@@ -39,9 +38,8 @@ public:
 
 private:
     struct Open {
-        std::FILE*  f;
+        int         fd;
         std::string path;
-        bool        writing = false;  // last operation was a write (C needs a seek to switch)
     };
     std::string              root_, cwd_;
     std::map<int, Open>      open_;

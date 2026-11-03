@@ -141,10 +141,15 @@ static std::vector<uint8_t> chunked(const std::vector<uint8_t>& f, const MzInfo&
     std::vector<uint32_t> relocs = relocTargets(f.data() + mz.relocTable, mz.relocCount, len);
     std::vector<uint8_t>  out;
     auto byteAt = [&](uint32_t at) -> uint8_t { return at < mz.imageSize ? f[mz.headerSize + at] : 0; };
+    const uint32_t window = 16384;  // as the board's flash writer: only relocations touching this window
     for (uint32_t base = 0; base < len; base += chunk) {
+        uint32_t              wbase = base / window * window;
+        std::vector<uint32_t> near;
+        for (uint32_t at : relocs)
+            if (at + 1 >= wbase && at < wbase + window) near.push_back(at);
         std::vector<uint8_t> c(chunk, 0);
         for (uint32_t i = 0; i < chunk && base + i < mz.imageSize; i++) c[i] = f[mz.headerSize + base + i];
-        relocateChunk(c.data(), base, chunk, relocs, seg, byteAt);
+        relocateChunk(c.data(), base, chunk, near, seg, byteAt);
         out.insert(out.end(), c.begin(), c.end());
     }
     return out;

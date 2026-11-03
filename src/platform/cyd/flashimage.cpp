@@ -12,7 +12,8 @@
 using namespace axis::door;
 
 namespace {
-constexpr size_t kChunk = 4096;  // flash erase sector
+constexpr size_t kChunk = 4096;    // flash erase sector
+constexpr size_t kWindow = 16384;  // image bytes relocated per pass over the table (LORD: 22 passes)
 
 const esp_partition_t* doorPartition() {
     return esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t)0x41, "door");
@@ -76,39 +77,45 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
         prefs.begin("door", false);
         prefs.remove(("k_" + id_).c_str());  // invalid until the new image is complete
         prefs.end();
-        std::vector<uint32_t> relocs;  // image offsets to patch, read in chunk-sized pieces
-        relocs.reserve(mz.relocCount);
-        for (uint32_t i = 0; i < mz.relocCount;) {
-            uint32_t n = mz.relocCount - i < kChunk / 4 ? mz.relocCount - i : kChunk / 4;
-            if (!readAt(fs, h, mz.relocTable + i * 4u, buf.get(), n * 4)) {
-                fs.close(h);
-                error_ = "can't read the relocation table";
-                return nullptr;
-            }
-            std::vector<uint32_t> piece = relocTargets(buf.get(), n, len);
-            relocs.insert(relocs.end(), piece.begin(), piece.end());
-            i += n;
-        }
+        // 16 KB of image at a time: one pass over the relocation table collects just that window's
+        // targets, so RAM stays small even for LORD's 14,988 relocations
         std::unique_ptr<uint8_t[]> check(new uint8_t[kChunk]);
-        for (uint32_t base = 0; base < len; base += kChunk) {
-            memset(buf.get(), 0, kChunk);
-            uint32_t have = base < mz.imageSize ? (mz.imageSize - base < kChunk ? mz.imageSize - base : kChunk) : 0;
-            if (have && !readAt(fs, h, mz.headerSize + base, buf.get(), have)) {
-                fs.close(h);
-                error_ = "read error";
-                return nullptr;
+        for (uint32_t wbase = 0; wbase < len; wbase += kWindow) {
+            uint32_t              wend = wbase + kWindow;
+            std::vector<uint32_t> relocs;
+            for (uint32_t i = 0; i < mz.relocCount;) {
+                uint32_t n = mz.relocCount - i < kChunk / 4 ? mz.relocCount - i : kChunk / 4;
+                if (!readAt(fs, h, mz.relocTable + i * 4u, check.get(), n * 4)) {
+                    fs.close(h);
+                    error_ = "can't read the relocation table";
+                    return nullptr;
+                }
+                for (uint32_t at : relocTargets(check.get(), n, len))
+                    if (at + 1 >= wbase && at < wend) relocs.push_back(at);  // a word touching this window
+                i += n;
             }
-            relocateChunk(buf.get(), base, kChunk, relocs, loadSeg, [&](uint32_t at) {
-                uint8_t b = 0;  // the other half of a word split across chunks, unrelocated
-                if (at < mz.imageSize && !readAt(fs, h, mz.headerSize + at, &b, 1)) b = 0;
-                return b;
-            });
-            if (esp_partition_erase_range(part, base, kChunk) != ESP_OK ||
-                esp_partition_write(part, base, buf.get(), kChunk) != ESP_OK ||
-                esp_partition_read(part, base, check.get(), kChunk) != ESP_OK || memcmp(buf.get(), check.get(), kChunk) != 0) {
-                fs.close(h);
-                error_ = "flash write failed";
-                return nullptr;
+            for (uint32_t base = wbase; base < wend && base < len; base += kChunk) {
+                vTaskDelay(1);  // let WiFi and the idle task run
+                memset(buf.get(), 0, kChunk);
+                uint32_t have = base < mz.imageSize ? (mz.imageSize - base < kChunk ? mz.imageSize - base : kChunk) : 0;
+                if (have && !readAt(fs, h, mz.headerSize + base, buf.get(), have)) {
+                    fs.close(h);
+                    error_ = "read error";
+                    return nullptr;
+                }
+                relocateChunk(buf.get(), base, kChunk, relocs, loadSeg, [&](uint32_t at) {
+                    uint8_t b = 0;  // the other half of a word split across chunks, unrelocated
+                    if (at < mz.imageSize && !readAt(fs, h, mz.headerSize + at, &b, 1)) b = 0;
+                    return b;
+                });
+                if (esp_partition_erase_range(part, base, kChunk) != ESP_OK ||
+                    esp_partition_write(part, base, buf.get(), kChunk) != ESP_OK ||
+                    esp_partition_read(part, base, check.get(), kChunk) != ESP_OK ||
+                    memcmp(buf.get(), check.get(), kChunk) != 0) {
+                    fs.close(h);
+                    error_ = "flash write failed";
+                    return nullptr;
+                }
             }
         }
         prefs.begin("door", false);
