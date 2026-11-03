@@ -36,6 +36,7 @@ public:
     bool waitingForKey() const { return waiting_; }
     bool isStub(int vector) const;           // the vector still points at our stub
     std::array<std::string, 25> screenText() const;
+    std::vector<uint8_t> textPage() const;  // the 80x25 page as char,attribute pairs (4000 bytes)
     void ttyOut(uint8_t ch) { teletype(ch); }  // DOS console output on the local screen
     uint8_t portIn(int port);                    // the bits of PC hardware doors poll directly
     void    portOut(int port, uint8_t value);

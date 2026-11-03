@@ -5,8 +5,12 @@
 //   doorhost --dir F:\doors\lord --exe LORD.EXE --args "0 NOEMS /DREW" --local
 //       play it at the keyboard (the door's text screen is drawn in this console)
 //   doorhost --dir ... --exe ... --args ... --run 5000 --keys "\r" --trace dos.log
+//   doorhost --dir ... --exe ... --args ... --script steps.txt --shots DIR
+//       each line "regex<TAB>keys<TAB>shot": wait for the regex on screen, save DIR/shot.b800, type the keys
 //       headless: type the keys (\r, \e, \xNN escapes; '|' waits 1 s), run, print the screen and stats
 #include <chrono>
+#include <fstream>
+#include <regex>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -41,7 +45,7 @@ int main(int argc, char** argv) {
     DoorConfig  cfg;
     bool        local = false;
     int         runMs = 0;
-    std::string keys, tracePath;
+    std::string keys, tracePath, scriptPath, shotsDir;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto        next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -52,6 +56,8 @@ int main(int argc, char** argv) {
         else if (a == "--run") runMs = std::stoi(next());
         else if (a == "--keys") keys = unescape(next());
         else if (a == "--trace") tracePath = next();
+        else if (a == "--script") scriptPath = next();
+        else if (a == "--shots") shotsDir = next();
         else if (a == "--budget") cfg.ramBudget = (size_t)std::stoi(next()) * 1024;
         else {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
@@ -73,6 +79,42 @@ int main(int argc, char** argv) {
         while (s.step(30)) con.draw(s.screen());
         con.draw(s.screen());
         std::printf("\n[door finished: result %d, exit code %d]\n", (int)s.result(), s.exitCode());
+        return 0;
+    }
+
+    if (!scriptPath.empty()) {
+        ScriptStream keysIn;
+        DoorSession  s(cfg, fs, locks, keysIn, 1);
+        std::ifstream in(scriptPath);
+        std::string   line;
+        auto text = [&]() {
+            std::string t;
+            for (auto& l : s.screen()) t += l + "\n";
+            return t;
+        };
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            size_t t1 = line.find('\t'), t2 = t1 == std::string::npos ? t1 : line.find('\t', t1 + 1);
+            std::string pat = line.substr(0, t1);
+            std::string k = t1 == std::string::npos ? "" : unescape(line.substr(t1 + 1, t2 == std::string::npos ? std::string::npos : t2 - t1 - 1));
+            std::string shot = t2 == std::string::npos ? "" : line.substr(t2 + 1);
+            std::regex re(pat, std::regex::icase);
+            bool found = false;
+            for (int ms = 0; ms < 15000 && !found; ms += 50) {
+                found = std::regex_search(text(), re);
+                if (!found && !s.step(50)) break;
+            }
+            for (int ms = 0; ms < 300; ms += 50) s.step(50);  // let the screen settle
+            std::printf("%s %s\n", found ? "ok  " : "MISS", pat.c_str());
+            if (!shot.empty() && !shotsDir.empty()) {
+                auto page = s.textPage();
+                std::ofstream((shotsDir + "/" + shot + ".b800").c_str(), std::ios::binary).write((const char*)page.data(), page.size());
+            }
+            keysIn.push(k);
+        }
+        while (s.step(100)) {
+        }
+        std::printf("[result %d, exit %d, peak RAM %d KB]\n", (int)s.result(), s.exitCode(), s.memStats().peakRamPages * 4);
         return 0;
     }
 

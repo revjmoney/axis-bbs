@@ -140,6 +140,7 @@ The core of v1. Components:
 
 ### 5.9 Sysop console
 - **On the CYD screen** (the mirror turns off while a door runs to free memory; the status line stays): a waiting-for-caller screen (AXIS art, uptime, last caller, calls today, free heap, SD space, WiFi signal); when a caller is on, a live mirror of what the caller sees (existing 4x8 ANSI renderer, 80x25) with a status bar (handle, security, time left, area or door). Touch actions: chat request, give or take time, kick, toggle the mirror.
+- **BBS config menu (Rev's request), reachable two ways:** (1) **from the WFC screen** by tapping the CYD (sysop password or the setup PIN first), and (2) **from a local sysop login** (the sysop logs in on the board itself or over telnet with the sysop account). It edits every BBS setting the first-boot wizard set (names, location, address, port, timezone, FTN address, new-user defaults, idle and daily limits), plus doors, file areas, message areas, WiFi networks and the SD card tools, and saves immediately.
 - **Over telnet**, for sysop-level users: user editor, security levels, message area and FTN configuration, file area configuration, door configuration, logs and errors, system status (heap, arenas, uptime, SD usage, WiFi), node status, nightly event control, and reboot.
 - Configuration lives in files on SD (my call: simple INI-style text files, editable on a PC too), with WiFi and boot flags in NVS as today. Every sysop change is written immediately.
 - Logs: a rolling system log and caller log on SD.

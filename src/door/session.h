@@ -47,6 +47,7 @@ public:
     int        exitCode() const;
     GuestMemory::Stats memStats() const;
     std::array<std::string, 25> screen() const;
+    std::vector<uint8_t> textPage() const { return bios_ ? bios_->textPage() : std::vector<uint8_t>(); }
     uint32_t   instructions() const { return instructions_; }
     std::string debugState() const;  // registers and the bytes at CS:IP, for tracing
 

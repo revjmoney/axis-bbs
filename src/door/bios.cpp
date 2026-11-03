@@ -342,6 +342,12 @@ bool Bios::consumeIdleHint() {
     return i;
 }
 
+std::vector<uint8_t> Bios::textPage() const {
+    std::vector<uint8_t> v(kCols * kRows * 2);
+    const_cast<GuestMemory&>(mem_).readBlock(kText, v.data(), v.size());
+    return v;
+}
+
 std::array<std::string, 25> Bios::screenText() const {
     std::array<std::string, 25> s;
     for (int r = 0; r < kRows; r++) {

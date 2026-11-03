@@ -1,2 +1,9 @@
-[1/2] Building CXX object CMakeFiles/axis_tests.dir/tests/test_lord_local.cpp.obj
-[2/2] Linking CXX executable axis_tests.exe
+[1/9] Building CXX object CMakeFiles/axiscore.dir/src/door/bios.cpp.obj
+[2/9] Building CXX object CMakeFiles/axis_tests.dir/tests/test_bios.cpp.obj
+[3/9] Building CXX object CMakeFiles/axiscore.dir/src/door/session.cpp.obj
+[4/9] Linking CXX static library libaxiscore.a
+[5/9] Building CXX object CMakeFiles/axis_tests.dir/tests/test_session.cpp.obj
+[6/9] Building CXX object CMakeFiles/doorhost.dir/tools/doorhost/main.cpp.obj
+[7/9] Linking CXX executable doorhost.exe
+[8/9] Building CXX object CMakeFiles/axis_tests.dir/tests/test_lord_local.cpp.obj
+[9/9] Linking CXX executable axis_tests.exe
