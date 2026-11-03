@@ -14,7 +14,6 @@
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
 #include "bbs/setup_wizard.h"
-#include "net/telnet.h"
 #include "platform/cyd/ansi_screen.h"
 #include "platform/cyd/board.h"
 #include "platform/cyd/config_store.h"
@@ -23,6 +22,8 @@
 #include <SD.h>
 #include "platform/cyd/wfc_art.h"
 #include "platform/cyd/wifi.h"
+#include "platform/cyd/wifistream.h"
+#include "platform/posix/posixhostfs.h"
 
 static constexpr int kNodeNumber = 1;
 
@@ -32,8 +33,7 @@ static axis::bbs::BbsConfig cfg;
 static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
-static WiFiClient           caller;
-static std::unique_ptr<axis::net::TelnetFilter> telnet;
+static std::unique_ptr<WifiStream>              line;  // the caller, when one is online
 static std::unique_ptr<axis::bbs::Node>         node;
 static std::unique_ptr<axis::bbs::SetupGate>    gate;
 static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
@@ -192,40 +192,32 @@ static void applyNetwork() {
     Serial.printf("axis: listening on %s:%d, heap %u\n", dialName().c_str(), cfg.telnetPort, ESP.getFreeHeap());
 }
 
-static void sendRaw(const std::string& s) {
-    if (!s.empty() && caller.connected()) caller.write((const uint8_t*)s.data(), s.size());
-}
 static void sendApp(const std::string& s) {
-    if (!s.empty() && telnet) sendRaw(telnet->toNet((const uint8_t*)s.data(), s.size()));
+    if (!s.empty() && line) line->write((const uint8_t*)s.data(), s.size());
 }
 
 static void hangUp() {
-    caller.flush();
-    delay(100);
-    caller.stop();
+    line.reset();  // closes the connection
     Serial.printf("axis: hang up after %lus\n", (unsigned long)((millis() - callStartMs) / 1000));
     if (node && !node->handle().empty()) lastCaller = node->handle().c_str();
     node.reset();
     gate.reset();
     wizard.reset();
-    telnet.reset();
     screenDirty = true;
 }
 
 static void answer(WiFiClient incoming) {
-    if (telnet) {  // one node per board for now
+    if (line) {  // one node per board for now
         std::string busy = axis::bbs::busyScreen();
         incoming.write((const uint8_t*)busy.data(), busy.size());
         incoming.stop();
         Serial.println("axis: busy, turned a caller away");
         return;
     }
-    caller = incoming;
-    caller.setNoDelay(true);
-    telnet.reset(new axis::net::TelnetFilter());
+    line.reset(new WifiStream(incoming));
     callStartMs = millis();
-    Serial.printf("axis: call from %s\n", caller.remoteIP().toString().c_str());
-    sendRaw(telnet->initialNegotiation());
+    Serial.printf("axis: call from %s\n", line->remoteIP().toString().c_str());
+    line->start();
     if (cfg.setupDone) {
         callsToday++;
         node.reset(new axis::bbs::Node(kNodeNumber, sysInfo, cfg));
@@ -301,25 +293,25 @@ static void handleTap(int x, int y) {
 }
 
 static void handleSerial() {
-    static String line;
+    static String cmd;
     while (Serial.available()) {
         char c = Serial.read();
         if (c != '\n' && c != '\r') {
-            if (line.length() < 80) line += c;
+            if (cmd.length() < 80) cmd += c;
             continue;
         }
-        if (line.startsWith("@TAP ")) {
-            int sp = line.indexOf(' ', 5);
-            tapX = line.substring(5, sp).toInt();
-            tapY = line.substring(sp + 1).toInt();
-        } else if (line == "@SHOT") {
+        if (cmd.startsWith("@TAP ")) {
+            int sp = cmd.indexOf(' ', 5);
+            tapX = cmd.substring(5, sp).toInt();
+            tapY = cmd.substring(sp + 1).toInt();
+        } else if (cmd == "@SHOT") {
             screenShot();
-        } else if (line == "@SDCHECK") {  // look for the card again (cards swapped while running)
+        } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
             SD.end();
             storageInit();
             screenDirty = true;
-        } else if (line == "@SDFORMAT FORMAT") {  // bench trigger for the sysop SD tool
-            if (telnet) {
+        } else if (cmd == "@SDFORMAT FORMAT") {  // bench trigger for the sysop SD tool
+            if (line) {
                 Serial.println("axis: sd format refused, a caller is online");
             } else {
                 String result;
@@ -327,13 +319,21 @@ static void handleSerial() {
                 Serial.printf("axis: sd format %s: %s\n", ok ? "ok" : "FAILED", result.c_str());
                 screenDirty = true;
             }
-        } else if (line == "@RESETSETUP") {
+        } else if (cmd.startsWith("@DOORLS ")) {  // list a door's folder the way the door sees it
+            std::string           dir = std::string(storageRoot()) + "/doors/" + cmd.substring(8).c_str();
+            axis::PosixHostFs     fs(dir);
+            axis::door::FindState st;
+            fs.find("*.*", 0x10, st);
+            Serial.printf("axis: %s: %u entries\n", dir.c_str(), (unsigned)st.matches.size());
+            for (auto& f : st.matches)
+                Serial.printf("axis:   %-12s %8u%s\n", f.name83.c_str(), (unsigned)f.size, f.attr & 0x10 ? " <DIR>" : "");
+        } else if (cmd == "@RESETSETUP") {
             configErase();
             Serial.println("axis: settings erased, restarting into setup");
             delay(100);
             ESP.restart();
         }
-        line = "";
+        cmd = "";
     }
 }
 
@@ -387,22 +387,15 @@ void loop() {
         return;
     }
     if (server.hasClient()) answer(server.available());
-    if (telnet) {
-        uint8_t buf[128];
-        while (telnet && caller.connected() && caller.available()) {
-            int n = caller.read(buf, sizeof buf);
-            if (n <= 0) break;
-            std::string app, reply;
-            telnet->fromNet(buf, n, app, reply);
-            sendRaw(reply);
-            callerInput(app);
-        }
-        if (node) {
+    if (line) {
+        std::string app = line->takeInput();
+        if (!app.empty()) callerInput(app);
+        if (line && node) {
             node->poll(millis());
             sendApp(node->takeOutput());
             if (node->wantsHangup()) hangUp();
         }
-        if (telnet && !caller.connected()) hangUp();
+        if (line && !line->carrier()) hangUp();
     }
     static uint32_t lastTick = 0;  // keep the clock and the time-online count moving
     if (millis() - lastTick > (node ? 1000u : 15000u)) {

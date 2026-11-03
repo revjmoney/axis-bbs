@@ -14,12 +14,13 @@ static String   summary = "internal flash (no SD card)";
 
 bool        storageHasSd() { return haveSd; }
 const char* storageSummary() { return summary.c_str(); }
+const char* storageRoot() { return haveSd ? "/sd" : "/littlefs"; }
 
 void storageInit() {
     sdSpi.begin(18, 19, 23, 5);
     // a slow first try wakes cards that dislike a fast start, then the normal speed
     for (uint32_t hz : {400000u, 20000000u}) {
-        if (SD.begin(5, sdSpi, hz, "/sd", 4)) {
+        if (SD.begin(5, sdSpi, hz, "/sd", 10)) {
             haveSd = true;
             break;
         }

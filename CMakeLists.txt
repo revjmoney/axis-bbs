@@ -9,6 +9,7 @@ add_compile_options(-O2 -Wall -Wextra)
 
 add_library(axiscore STATIC
     src/net/telnet.cpp
+    src/net/telnetstream.cpp
     src/bbs/node.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
@@ -26,7 +27,7 @@ add_library(axiscore STATIC
     src/door/dropfile.cpp
     src/door/pathresolve.cpp
     src/door/imagekey.cpp
-    src/platform/pc/stdhostfs.cpp
+    src/platform/posix/posixhostfs.cpp
     src/platform/pc/consolestream.cpp
     src/platform/pc/tcpstream.cpp
     third_party/i8086/i8086.cpp)
@@ -51,7 +52,8 @@ add_executable(axis_tests
     tests/test_dropfile.cpp
     tests/test_lord_telnet.cpp
     tests/test_pathresolve.cpp
-    tests/test_imagekey.cpp)
+    tests/test_imagekey.cpp
+    tests/test_telnetstream.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)
