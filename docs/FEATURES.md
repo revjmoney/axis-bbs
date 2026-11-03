@@ -10,6 +10,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Works with no SD card (minimal board) | planned | Everything in internal flash (LittleFS), LORD included; SD only adds space; file areas off without SD |
 | One telnet node per board | planned | Port 23, LAN only in v1; a second caller gets a "node busy" screen |
 | Multi-board cluster | planned | Boards on the LAN join as node 2, 3, 4...; one BBS with shared data |
+| One caller address | planned | Callers dial `axis.local`; the main answers with a free board's IP so each caller connects directly (no relay), so a failing board never drops other boards' callers |
 | Main-board failover | planned | Lowest surviving node becomes main within ~5 s; callers stay connected; full replica on every board (SD, or LittleFS if it fits) |
 | Real DOS doors on the board | planned | 8086 runtime, high-level DOS, FOSSIL on INT 14h to telnet, door code served from flash |
 | LORD 4.07 | planned (first door) | Profiled on the PC: 92 KB written, 184 KB read-only in a short session |
@@ -38,6 +39,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Door RAM pool | 128 KB target | config file | Final value set by measurement on the board |
 | Screen mirror during doors | off | fixed | Frees RAM for the door |
 | Nightly maintenance time | 04:00 | config file | |
+| Caller address | axis.local (mDNS, 2 s TTL) | config file | Sysop screens also show each board's IP |
 | Cluster discovery | mDNS `_axisbbs._tcp` + UDP broadcast | fixed | |
 | Cluster heartbeat / failover | 1 s / 5 s | config file | |
 | WiFi networks | none | NVS | Never in code or the repo |
@@ -48,3 +50,4 @@ Living record of every feature and setting, updated as the project goes. Status:
 
 - **2026-11-02:** Project started. Design approved (single node per board, real DOS doors, LORD first, no SD swap in v1, LAN only, separate firmware, reuse proven MIT/GPL-3/public-domain code first). Multi-board cluster with main-board failover (option B) and a no-SD minimal board added the same day. LORD 4.07 profiled on the i5 with a patched emu2; profiling tools are in `tools/profiling/`.
 - **2026-11-02:** Added the faithful native LORD rewrite (after real LORD works), ported from Synchronet's GPL LORD.js, engine only, verified against real LORD by diffing screens.
+- **2026-11-02:** Callers: one address (`axis.local`), never dropped by another board failing; the main answers the name with a free board's IP (direct connections, relay only as a race fallback).

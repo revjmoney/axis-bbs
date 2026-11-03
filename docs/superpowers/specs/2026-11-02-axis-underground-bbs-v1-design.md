@@ -139,7 +139,12 @@ Rev's decisions: a board that finds an AXIS board already on the network joins i
 - **Split-brain guard:** every change and heartbeat carries the epoch. A board that comes back with an older epoch (the old main after a reboot or network glitch) must join as a follower and resync; it never acts as main again until it is elected. If two mains ever see each other, the higher epoch wins and the other demotes and resyncs from it; changes the loser made after the split are kept in a quarantine log for the sysop to review instead of being merged silently.
 - **Doors across boards:** door file I/O for shared door folders and INT 21h record locks go through the main's lock manager, so two players on different boards share one LORD world, as multi-node LORD did on 1990s systems. Per-node files (drop files, node temp folders) stay local.
 - **Built in from the first BBS stage:** all BBS and door data access goes through one storage interface with a local implementation (single board) and a cluster implementation (follower to main); the single-board case is just a cluster of one.
-- **Callers:** how callers reach nodes 2+ is an open question (section 10).
+- **Callers: one address, never dropped (Rev's decisions).** Callers dial one name, `axis.local` (configurable). No board relays another board's caller, because a relay would drop every relayed caller if the relaying board died.
+  - The **main board answers name lookups for `axis.local` with the IP of a free board** (itself only when no follower is free), over mDNS with a short TTL (my call: 2 s). The caller's terminal then connects **directly** to that board, so each caller's connection lives only on the board that serves them.
+  - When the main fails, the new main takes over answering for `axis.local`; callers on the surviving boards stay connected and keep playing. The only caller who can be dropped is one whose own board loses power or crashes, since that board holds their session; no design can keep a TCP connection alive when its endpoint dies.
+  - Races (a cached lookup sends two callers to the same board): the busy board **hands the caller to a free board by relaying** as a fallback and shows "node busy, try again" if none is free. Relays happen only in this rare case.
+  - Callers who dial a board's IP directly are served by that board if free, otherwise handled the same way.
+  - The sysop screens show every board's IP for terminals that cannot resolve `.local` names.
 
 ### 5.12 Native LORD rewrite (after real LORD)
 Rev's decision: work on both, **real DOS LORD first**; then a rewrite that works and looks the same as the original, not a knock-off.
@@ -167,7 +172,7 @@ Door work comes first because it is the riskiest part and Rev's top priority.
 | 7 | File areas + ZMODEM download | download a file with SyncTERM, CRC matches |
 | 8 | Sysop console (CYD screen + telnet sysop screens) and nightly maintenance | all sysop screens reachable; config changes persist; nightly event runs LORD maintenance and toss/scan |
 | 9 | AXIS art pass and polish | every screen has AXIS art; Rev signs off on the look |
-| 10 | Multi-board cluster: discovery, node numbering, shared-data access through the main, lock manager, replication, failover | two boards: node 2 joins automatically; a post on node 2 appears on node 1; two callers share one LORD world; unplugging node 1 makes node 2 main within ~5 s with callers still connected and no lost data; node 1 rejoins as a follower and catches up |
+| 10 | Multi-board cluster: discovery, node numbering, shared-data access through the main, lock manager, replication, failover | two boards: node 2 joins automatically; a post on node 2 appears on node 1; callers dialing `axis.local` land on free boards directly; two callers share one LORD world; unplugging node 1 makes node 2 main within ~5 s while callers on node 2 and 3 stay connected and lose nothing, and new calls to `axis.local` reach the new main; node 1 rejoins as a follower and catches up |
 | 11 | Native LORD rewrite (after stage 3 proves real LORD) | the side-by-side harness shows identical screens for a scripted session (logon, new character, forest fights, town, inn, bank, quit); real and native LORD share the same player files |
 
 ## 7. Testing approach
@@ -209,11 +214,9 @@ Door work comes first because it is the riskiest part and Rev's top priority.
 - **ANSI screens:** Claude makes them, legible on a terminal and on the CYD mirror; Rev edits later. (Rev)
 - **Hosting LORD:** the repo hosts the unmodified lord407.zip for the installer (section 8). (Rev)
 - **Multi-board:** boards on the LAN cluster into one BBS, one node per board; the next node takes over if the main goes offline (option B, full replicas on every board). (Rev)
+- **Callers:** one address (`axis.local`), and no caller is ever dropped because another board failed: the main answers the name with a free board's IP so every caller connects directly to the board serving them. (Rev)
 - **LORD both ways:** real DOS LORD first; then a faithful native rewrite (from LORD.js) that looks and plays the same, verified side by side. (Rev)
 - **Reuse first:** proven MIT, GPL-3 or public-domain code wherever possible; refactor it or rewrite hot paths in assembly when that measurably improves it (section 8). (Rev)
-
-### Still open
-- How callers reach nodes 2 and up: one address that hands callers to a free board, or each board on its own address.
 
 ### Calls Claude made (check these)
 - JAM as the message base format; INI-style text config files on SD.
@@ -223,6 +226,7 @@ Door work comes first because it is the riskiest part and Rev's top priority.
 - Door RAM pool target 128 KB, set finally by measurement.
 - Telnet port 23, a second caller gets a "node busy" screen.
 - Nightly maintenance at 4:00 AM.
+- Caller name `axis.local` answered by the main over mDNS with a 2 s TTL; relay only as a race fallback.
 - Cluster: mDNS `_axisbbs._tcp` + UDP broadcast discovery, 1 s heartbeat, 5 s failover, lowest surviving node becomes main, epoch numbers, quarantine log instead of silent merges after a split.
 - The cluster is stage 10 of v1, after the single-board BBS works, but its storage interface is used from stage 5 on.
 - Door work (stages 1 to 4) comes before the BBS core (stage 5), because it is the riskiest part.
