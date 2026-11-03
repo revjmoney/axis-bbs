@@ -14,6 +14,8 @@ add_library(axiscore STATIC
     src/bbs/sysop_menu.cpp
     src/bbs/filelib.cpp
     src/bbs/filebrowser.cpp
+    src/bbs/zipreader.cpp
+    src/bbs/ansiviewer.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp
@@ -33,8 +35,9 @@ add_library(axiscore STATIC
     src/platform/posix/posixhostfs.cpp
     src/platform/pc/consolestream.cpp
     src/platform/pc/tcpstream.cpp
-    third_party/i8086/i8086.cpp)
-target_include_directories(axiscore PUBLIC src third_party/i8086 PRIVATE third_party/sha256)
+    third_party/i8086/i8086.cpp
+    third_party/miniz/miniz_tinfl.c)
+target_include_directories(axiscore PUBLIC src third_party/i8086 PRIVATE third_party/sha256 third_party/miniz)
 
 add_executable(axis_tests
     tests/test_main.cpp
@@ -58,7 +61,9 @@ add_executable(axis_tests
     tests/test_imagekey.cpp
     tests/test_telnetstream.cpp
     tests/test_sysop_menu.cpp
-    tests/test_files.cpp)
+    tests/test_files.cpp
+    tests/test_zip.cpp
+    tests/test_ansiview.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)
@@ -67,3 +72,5 @@ endif()
 
 add_executable(doorhost tools/doorhost/main.cpp)
 target_link_libraries(doorhost PRIVATE axiscore)
+
+target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data")

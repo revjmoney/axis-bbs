@@ -44,6 +44,7 @@ std::vector<FileArea> defaultFileAreas() {
             {"gcode", "G-code and Toolpaths"},
             {"models", "3D Models"},
             {"text", "Text Files"},
+            {"ansi", "ANSI Packs"},
             {"freeware", "Freeware"},
             {"shareware", "Shareware and Free Trials"},
             {"abandonware", "Abandonware"},

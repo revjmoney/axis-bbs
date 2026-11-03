@@ -15,6 +15,25 @@ using axis::bbs::FileEntry;
 namespace {
 std::string folderOf(const std::string& areaId) { return "/sd/files/" + areaId; }
 
+struct SdFile : axis::bbs::RandomFile {
+    int      fd = -1;
+    uint32_t bytes = 0;
+    ~SdFile() override {
+        if (fd >= 0) ::close(fd);
+    }
+    uint32_t size() const override { return bytes; }
+    bool     readAt(uint32_t off, uint8_t* buf, size_t n) override {
+        if (::lseek(fd, off, SEEK_SET) != (off_t)off) return false;
+        size_t got = 0;
+        while (got < n) {
+            int r = ::read(fd, buf + got, n - got);
+            if (r <= 0) return false;
+            got += (size_t)r;
+        }
+        return true;
+    }
+};
+
 bool safeName(const std::string& n) {  // one name inside the area, never a path out of it
     return !n.empty() && n.find('/') == std::string::npos && n.find('\\') == std::string::npos && n != "." && n != "..";
 }
@@ -36,6 +55,18 @@ std::vector<FileEntry> SdFileLibrary::list(const std::string& areaId) {
     std::string bbs;
     read(areaId, "FILES.BBS", bbs, 16 * 1024);
     return axis::bbs::mergeFilesBbs(bbs, folder);
+}
+
+std::unique_ptr<axis::bbs::RandomFile> SdFileLibrary::open(const std::string& areaId, const std::string& name) {
+    if (!storageHasSd() || !safeName(areaId) || !safeName(name)) return nullptr;
+    std::unique_ptr<SdFile> f(new SdFile);
+    std::string             path = folderOf(areaId) + "/" + name;
+    struct stat             st;
+    if (::stat(path.c_str(), &st) != 0) return nullptr;
+    f->fd = ::open(path.c_str(), O_RDONLY);
+    if (f->fd < 0) return nullptr;
+    f->bytes = (uint32_t)st.st_size;
+    return std::unique_ptr<axis::bbs::RandomFile>(f.release());
 }
 
 bool SdFileLibrary::read(const std::string& areaId, const std::string& name, std::string& out, size_t max) {

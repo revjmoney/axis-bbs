@@ -74,8 +74,9 @@ TEST_CASE("timezone rules") {
 
 TEST_CASE("config has LORD as the default door") {
     auto c = axis::bbs::parseConfig("");
-    REQUIRE(c.doors.size() == 1);
+    REQUIRE(c.doors.size() == 2);
     CHECK(c.doors[0].id == "lord");
+    CHECK(c.doors[1].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
     CHECK(c.doors[0].args == "1 /DREW");
 }
 
@@ -96,7 +97,8 @@ TEST_CASE("config has the default file areas, music and CAD/CAM included") {
             if (a.name == name) return true;
         return false;
     };
-    CHECK(c.areas.size() == 18);
+    CHECK(c.areas.size() == 19);
+    CHECK(has("ANSI Packs"));
     CHECK(c.areas[0].name == "Axis Micro BBS Firmware");  // our own area comes first
     CHECK(has("RotatoCAM: Pro"));
     CHECK(has("Abandonware"));

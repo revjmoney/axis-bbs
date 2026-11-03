@@ -4,6 +4,7 @@
 // The board reads its SD card (/sd/files/<id>/); tests use a pretend store.
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,11 +17,21 @@ struct FileEntry {
     std::string desc;  // from the area's FILES.BBS
 };
 
+// A file opened for reading anywhere in it (a ZIP's directory sits at its end).
+class RandomFile {
+public:
+    virtual uint32_t size() const = 0;
+    virtual bool     readAt(uint32_t offset, uint8_t* buf, size_t n) = 0;
+    virtual ~RandomFile() = default;
+};
+
 class FileLibrary {
 public:
     virtual std::vector<FileEntry> list(const std::string& areaId) = 0;
     // up to `max` bytes of a file; false if it isn't there
     virtual bool read(const std::string& areaId, const std::string& name, std::string& out, size_t max) = 0;
+    // nullptr if it isn't there. The default reads the whole file into memory (fine for tests).
+    virtual std::unique_ptr<RandomFile> open(const std::string& areaId, const std::string& name);
     virtual ~FileLibrary() = default;
 };
 

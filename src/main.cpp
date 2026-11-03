@@ -14,6 +14,7 @@
 
 #include <memory>
 
+#include "bbs/ansiviewer.h"
 #include "bbs/config.h"
 #include "bbs/eventlog.h"
 #include "bbs/sysop_menu.h"
@@ -52,6 +53,7 @@ static std::unique_ptr<axis::PosixHostFs>       doorFs;
 static std::unique_ptr<FlashImageSource>        doorImage;
 static std::unique_ptr<axis::door::DoorSession> door;
 static axis::door::LockTable                    doorLocks;
+static std::unique_ptr<axis::bbs::AnsiViewer>   viewer;  // a door built into the firmware, when running
 static uint32_t                                 doorHeapBefore = 0, doorStartMs = 0;
 static uint8_t*                                 doorIram = nullptr;  // instruction RAM lent to the door
 static std::unique_ptr<axis::bbs::Node>         node;
@@ -337,6 +339,12 @@ static void doorStatusLine() {  // straight to the panel: there is no screen cop
     tft.drawString(node->handle().substr(0, 26).c_str(), 6, 124);
 }
 
+static std::string areaName(const std::string& id) {
+    for (auto& a : cfg.areas)
+        if (a.id == id) return a.name;
+    return id;
+}
+
 static void startDoor() {
     const axis::bbs::DoorEntry& d = node->door();
     sendApp(node->takeOutput());
@@ -344,6 +352,14 @@ static void startDoor() {
     size_t   lentBytes = 0;
     uint8_t* lentRam = screenLend(lentBytes);
     doorStatusLine();
+    doorStartMs = millis();
+    if (!d.exe.empty() && d.exe[0] == '*') {  // built in: the screen copy is its unzip workspace
+        logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
+        viewer.reset(new axis::bbs::AnsiViewer(sdFiles, d.args, areaName(d.args), lentRam, lentBytes, *line));
+        viewer->begin();
+        line->flush();
+        return;
+    }
     std::string dir = std::string(storageRoot()) + "/doors/" + d.id;
     doorFs.reset(new axis::PosixHostFs(dir));
     doorImage.reset(new FlashImageSource(d.id.c_str()));
@@ -377,6 +393,19 @@ static void startDoor() {
                   node->handle().c_str(), heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)lentBytes, (unsigned)iramBytes);
     logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
     door.reset(new axis::door::DoorSession(c, *doorFs, doorLocks, *line, kNodeNumber));
+}
+
+static void finishViewer() {
+    viewer.reset();
+    screenReturn();
+    screenDirty = true;
+    logEvent(String("door ") + node->door().id.c_str() + " ended after " + String((millis() - doorStartMs) / 1000) + "s");
+    if (!line || !line->carrier()) {
+        hangUp();
+        return;
+    }
+    node->resumeAfterDoor(axis::bbs::Node::DoorEnd::Normal, millis());
+    sendApp(node->takeOutput());
 }
 
 static void finishDoor() {
@@ -623,6 +652,13 @@ void loop() {
         return;
     }
     if (server.hasClient()) answer(server.available());
+    if (viewer) {  // a built-in door owns the line
+        bool running = viewer->step();
+        if (line) line->flush();
+        if (!running) finishViewer();
+        delay(5);
+        return;
+    }
     if (door) {  // the door owns the caller's line; the BBS waits
         bool running = door->step(30);
         if (line) line->flush();  // whatever the door drew this slice

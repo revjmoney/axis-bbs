@@ -8,11 +8,27 @@
 namespace axis::bbs {
 
 namespace {
+struct MemoryFile : RandomFile {
+    std::string data;
+    uint32_t    size() const override { return (uint32_t)data.size(); }
+    bool        readAt(uint32_t off, uint8_t* buf, size_t n) override {
+        if ((size_t)off + n > data.size()) return false;
+        data.copy((char*)buf, n, off);
+        return true;
+    }
+};
+
 std::string upper(std::string s) {
     for (char& c : s) c = (char)std::toupper((unsigned char)c);
     return s;
 }
 }  // namespace
+
+std::unique_ptr<RandomFile> FileLibrary::open(const std::string& areaId, const std::string& name) {
+    std::unique_ptr<MemoryFile> f(new MemoryFile);
+    if (!read(areaId, name, f->data, 64u * 1024 * 1024)) return nullptr;
+    return std::unique_ptr<RandomFile>(f.release());
+}
 
 std::vector<FileEntry> mergeFilesBbs(const std::string& filesBbs,
                                      const std::vector<std::pair<std::string, uint32_t>>& folder) {
