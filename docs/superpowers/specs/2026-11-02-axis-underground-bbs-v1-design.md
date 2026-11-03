@@ -107,6 +107,25 @@ Source layout: `src/bbs/` (BBS core) and `src/door/` (door runtime). The door ru
 - File areas as folders on SD, with a description list per area (FILES.BBS style) and a small index for fast listing.
 - Listing, searching, viewing descriptions, and **ZMODEM download over telnet** (SyncTERM and NetRunner support it). Uploads (ZMODEM) are v1.1 unless they come cheaply with the same code.
 
+**Default file areas (Rev's list, created by setup; the sysop can rename, add or remove them):**
+
+| # | Area | What goes there |
+|---|---|---|
+| 1 | RotatoCAM: Pro | RotatoCAM pro versions, updates, licenses info |
+| 2 | RotatoCAM: Free | free RotatoCAM versions and demos |
+| 3 | CNC Software: Freeware | free CAM, CAD, G-code senders, post processors |
+| 4 | CNC Software: Shareware and Trials | try-before-you-buy and time-limited CNC programs |
+| 5 | CNC Software: Pro Demos | free versions and demos of pro CNC software |
+| 6 | G-code and Toolpaths | ready-to-run programs, toolpath libraries |
+| 7 | 3D Models | STL, STEP, OBJ, DXF and other model files |
+| 8 | Text Files | text files, guides, how-tos, machinist references, scene text |
+| 9 | Freeware | general free software |
+| 10 | Shareware and Free Trials | general shareware, demos and trials |
+| 11 | Abandonware | old software whose makers no longer sell or support it |
+| 12 | BBS Doors | door game distribution archives (for example the unmodified lord407.zip) |
+
+Abandonware is still copyrighted in most cases; the area exists, but AXIS ships no files in it and the sysop decides what to post. Areas 3, 4, 5, 9 and 10 hold only files whose licenses allow redistribution.
+
 ### 5.8 Door runtime
 The core of v1. Components:
 1. **8086 CPU core** with the 80186/286 real-mode additions doors use; no protected mode, no FPU. Start from the MIT-licensed FabGL i8086 core (derived from 8086tiny) or write a fresh one; every memory access goes through the page-table accessor. Written in C++ first, then the dispatch loop, flag logic and memory accessor are hand-optimized in Xtensa assembly against a benchmark on the board.

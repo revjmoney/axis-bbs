@@ -23,7 +23,8 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Renegade-style menus | planned | Menus as data files in storage, ANSI display files with MCI codes |
 | Message bases | planned | JAM format, FTN fields (MSGID/REPLY, origin, SEEN-BY/PATH), local/echo/netmail |
 | FidoNet packets | planned | Type-2+ PKT import/export via inbound/outbound folders; BinkP mailer in v2 |
-| File areas | planned | FILES.BBS-style lists, ZMODEM download; uploads in v1.1 |
+| File areas | planned | Default areas: RotatoCAM Pro, RotatoCAM Free, CNC Freeware, CNC Shareware/Trials, CNC Pro Demos, G-code and Toolpaths, 3D Models, Text Files, Freeware, Shareware/Free Trials, Abandonware, BBS Doors. |
+| File areas (old note) | planned | FILES.BBS-style lists, ZMODEM download; uploads in v1.1 |
 | Sysop console | planned | CYD screen: waiting-for-caller and live caller mirror (off during doors); telnet sysop screens |
 | SD card tools | in progress | FAT32 format works (bench command `@SDFORMAT FORMAT`, card re-check `@SDCHECK`); sysop menu entry comes with the sysop menu | Sysop screen: card info and Format SD card (FAT32, optional full erase), with password + typed confirmation |
 | Storage check at boot | working | SD card if it answers, else internal flash; shown in Info and on the sysop screen |
