@@ -25,6 +25,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | FidoNet packets | planned | Type-2+ PKT import/export via inbound/outbound folders; BinkP mailer in v2 |
 | File areas | planned | Default areas: RotatoCAM Pro, RotatoCAM Free, CNC Freeware, CNC Shareware/Trials, CNC Pro Demos, G-code and Toolpaths, 3D Models, Text Files, Freeware, Shareware/Free Trials, Abandonware, BBS Doors. |
 | File areas (old note) | planned | FILES.BBS-style lists, ZMODEM download; uploads in v1.1 |
+| WFC screen (CYD) | working | Original drippy ANSI AXIS logo (art/wfc.ans, editable in PabloDraw/Moebius, rebuilt with tools/art/ans2header.py) in 4x8 CP437 cells, live panel in full-size 8x16 text: dial, ip, wifi, storage, calls, uptime + free RAM, sysop + time, caller online |
 | Sysop console | planned | CYD screen: waiting-for-caller and live caller mirror (off during doors); telnet sysop screens |
 | SD card tools | in progress | FAT32 format works (bench command `@SDFORMAT FORMAT`, card re-check `@SDCHECK`); sysop menu entry comes with the sysop menu | Sysop screen: card info and Format SD card (FAT32, optional full erase), with password + typed confirmation |
 | Storage check at boot | working | SD card if it answers, else internal flash; shown in Info and on the sysop screen |
@@ -61,3 +62,4 @@ Living record of every feature and setting, updated as the project goes. Status:
 - **2026-11-02:** License: GPL-3.0-or-later plus a GPLv3 7(b) attribution term (keep the copyright notices and the Rev. J. Money / rotatocam.com / jmscnc.com credit in the README and on the credits screen).
 - **2026-11-02:** First firmware: boots, joins the saved WiFi, answers telnet calls on `axis.local:23` with a placeholder welcome, handle prompt and Info / Credits / Goodbye menu. Telnet filter and session logic have PC tests (17 passing). Flashed to the newer CYD (MAC 8c:94:df:4f:1c:4c, COM18): 911 KB of 1.5 MB flash, 230 KB RAM free while serving.
 - **2026-11-02:** First-boot setup over telnet working (choice screen, setup PIN, wizard, settings saved to internal flash `/axis.ini`, BBS name and idle time used by the node). CYD screen screenshots via `@SHOT` + `tools/screenshots/cyd_shot.py`. SD format tool wiped Rev's 15 GB card to fresh FAT32. Third SD card works; first two were dead.
+- **2026-11-02:** Drippy ANSI WFC on the CYD: original block-letter AXIS with paint drips (no TheDraw font needed; Font37DripR wasn't on this PC), status panel in big readable text, red frame. Default file areas added to the design.

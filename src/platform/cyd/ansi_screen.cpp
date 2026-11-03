@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rev. J. Money
+#include "platform/cyd/ansi_screen.h"
+
+#include <string.h>
+
+#include "../../../third_party/vga_font/font8x16.h"  // IBM VGA 8x16 by VileR, CC BY-SA 4.0
+
+namespace {
+const uint8_t kCga[16][3] = {{0, 0, 0},     {0, 0, 170},    {0, 170, 0},    {0, 170, 170},
+                             {170, 0, 0},   {170, 0, 170},  {170, 85, 0},   {170, 170, 170},
+                             {85, 85, 85},  {85, 85, 255},  {85, 255, 85},  {85, 255, 255},
+                             {255, 85, 85}, {255, 85, 255}, {255, 255, 85}, {255, 255, 255}};
+
+uint8_t glyph[256][32];  // 4x8 coverage levels 0..4 per character
+uint8_t lut[256][5];     // per attribute: RGB332 colour for each coverage level
+bool    ready = false;
+
+uint8_t rgb332(int r, int g, int b) { return (r * 7 / 255) << 5 | (g * 7 / 255) << 2 | (b * 3 / 255); }
+
+void build() {
+    for (int ch = 0; ch < 256; ch++)
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 4; x++) {
+                const uint8_t* g = &vga_font8x16[ch * 16 + y * 2];
+                int            n = 0;
+                for (int dy = 0; dy < 2; dy++)
+                    for (int dx = 0; dx < 2; dx++) n += (g[dy] >> (7 - (x * 2 + dx))) & 1;
+                glyph[ch][y * 4 + x] = n;
+            }
+    for (int a = 0; a < 256; a++) {
+        const uint8_t* f = kCga[a & 15];
+        const uint8_t* b = kCga[(a >> 4) & 7];  // bit 7 is blink, not bright background
+        for (int l = 0; l <= 4; l++)
+            lut[a][l] = rgb332((b[0] * (4 - l) + f[0] * l) / 4, (b[1] * (4 - l) + f[1] * l) / 4,
+                               (b[2] * (4 - l) + f[2] * l) / 4);
+    }
+    ready = true;
+}
+}  // namespace
+
+void AnsiScreen::load(const uint8_t art[kRows][kCols][2]) { memcpy(cells, art, sizeof cells); }
+
+void AnsiScreen::text(int row, int col, const char* s, uint8_t attr) {
+    if (row < 0 || row >= kRows) return;
+    for (; *s && col < kCols; s++, col++)
+        if (col >= 0) cells[row][col] = {(uint8_t)*s, attr};
+}
+
+void AnsiScreen::fill(int row, int col, int len, uint8_t ch, uint8_t attr) {
+    for (int i = 0; i < len; i++)
+        if (row >= 0 && row < kRows && col + i >= 0 && col + i < kCols) cells[row][col + i] = {ch, attr};
+}
+
+void AnsiScreen::render(LGFX_Sprite& dst, int rows) const {
+    if (!ready) build();
+    uint8_t* fb = (uint8_t*)dst.getBuffer();
+    if (!fb) return;
+    for (int r = 0; r < rows && r < kRows; r++)
+        for (int y = 0; y < 8; y++) {
+            uint8_t* out = fb + (r * 8 + y) * 320;
+            for (int c = 0; c < kCols; c++) {
+                const uint8_t* g = &glyph[cells[r][c].ch][y * 4];
+                const uint8_t* l = lut[cells[r][c].attr];
+                out[0] = l[g[0]];
+                out[1] = l[g[1]];
+                out[2] = l[g[2]];
+                out[3] = l[g[3]];
+                out += 4;
+            }
+        }
+}
+
+void BigText::clear(uint8_t attr) {
+    for (auto& row : cells)
+        for (auto& c : row) c = {' ', attr};
+}
+
+void BigText::text(int row, int col, const char* s, uint8_t attr) {
+    if (row < 0 || row >= kRows) return;
+    for (; *s && col < kCols; s++, col++)
+        if (col >= 0) cells[row][col] = {(uint8_t)*s, attr};
+}
+
+void BigText::fill(int row, int col, int len, uint8_t ch, uint8_t attr) {
+    for (int i = 0; i < len; i++)
+        if (row >= 0 && row < kRows && col + i >= 0 && col + i < kCols) cells[row][col + i] = {ch, attr};
+}
+
+void BigText::render(LGFX_Sprite& dst, int y0, int rows) const {
+    if (!ready) build();
+    uint8_t* fb = (uint8_t*)dst.getBuffer();
+    if (!fb) return;
+    for (int r = 0; r < rows && r < kRows; r++)
+        for (int y = 0; y < 16; y++) {
+            int py = y0 + r * 16 + y;
+            if (py < 0 || py >= 240) continue;
+            uint8_t* out = fb + py * 320;
+            for (int c = 0; c < kCols; c++, out += 8) {
+                uint8_t        bits = vga_font8x16[cells[r][c].ch * 16 + y];
+                const uint8_t* l    = lut[cells[r][c].attr];
+                for (int b = 0; b < 8; b++) out[b] = (bits & (0x80 >> b)) ? l[4] : l[0];
+            }
+        }
+}

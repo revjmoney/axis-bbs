@@ -15,11 +15,13 @@
 #include "bbs/setup_gate.h"
 #include "bbs/setup_wizard.h"
 #include "net/telnet.h"
+#include "platform/cyd/ansi_screen.h"
 #include "platform/cyd/board.h"
 #include "platform/cyd/config_store.h"
 #include "platform/cyd/screen.h"
 #include "platform/cyd/storage.h"
 #include <SD.h>
+#include "platform/cyd/wfc_art.h"
 #include "platform/cyd/wifi.h"
 
 static constexpr int kNodeNumber = 1;
@@ -89,6 +91,54 @@ static void bigButton(int y, const char* label, uint16_t color) {
     scr.setTextSize(1);
 }
 
+// Waiting-for-caller screen: the drippy ANSI from art/wfc.ans with live status in its panel.
+static AnsiScreen wfc;
+static BigText    panel;
+static void drawWfc() {
+    wfc.load(kWfcArt);
+    wfc.render(scr, 12);  // the drippy logo and name in small cells: the top 96 pixels
+    // the live panel in full-size 8x16 text: 9 rows fill the bottom 144 pixels
+    const uint8_t F = 0x04, K = 0x07, V = 0x0F;  // frame in the drips' red
+    const int     last = BigText::kRows - 1;
+    char          b[48];
+    panel.clear(K);
+    panel.fill(0, 0, 40, 0xCD, F);
+    panel.fill(last, 0, 40, 0xCD, F);
+    panel.text(0, 0, "\xc9", F);
+    panel.text(0, 39, "\xbb", F);
+    panel.text(last, 0, "\xc8", F);
+    panel.text(last, 39, "\xbc", F);
+    for (int r = 1; r < last; r++) {
+        panel.text(r, 0, "\xba", F);
+        panel.text(r, 39, "\xba", F);
+    }
+    if (node) panel.text(0, 2, "\xb5 CALLER ONLINE \xc6", 0x0A);
+    else panel.text(0, 2, "\xb5 WAITING FOR CALLER \xc6", 0x0B);
+    panel.text(0, 30, "\xb5 node 1 \xc6", F);
+    auto line = [&](int r, const char* label, const String& value) {
+        panel.text(r, 2, label, K);
+        panel.text(r, 9, value.substring(0, 29).c_str(), V);
+    };
+    uint32_t up = millis() / 1000;
+    snprintf(b, sizeof b, "%lud %luh %lum", (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24),
+             (unsigned long)(up / 60 % 60));
+    line(1, "dial", dialName() + ":" + String(cfg.telnetPort));
+    line(2, "ip", WiFi.localIP().toString());
+    line(3, "wifi", String(wifiSsid()) + " " + String(WiFi.RSSI()) + " dBm");
+    line(4, "store", storageHasSd() ? "SD card" : "internal flash");
+    line(5, "calls", String(callsToday) + "  last " + lastCaller);
+    line(6, "up", String(b) + "  " + String(ESP.getFreeHeap() / 1024) + " KB free");
+    if (node) {
+        snprintf(b, sizeof b, "%s  %lus", node->handle().empty() ? "(logging in)" : node->handle().c_str(),
+                 (unsigned long)((millis() - callStartMs) / 1000));
+        panel.text(7, 2, "online", K);
+        panel.text(7, 9, b, 0x0E);
+    } else {
+        line(7, "sysop", String(cfg.sysopHandle.c_str()) + "   " + timeText().substring(11));
+    }
+    panel.render(scr, 96, BigText::kRows);
+}
+
 static void drawScreen() {
     if (mode == Mode::SetupChoice) {
         title("first-boot setup");
@@ -124,25 +174,7 @@ static void drawScreen() {
         scr.drawString("On-screen setup is coming in the next build.", 8, 70);
         bigButton(156, "BACK", 0x2945);
     } else {
-        title("telnet BBS  -  node 1");
-        scr.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-        scr.drawString(("ip     " + WiFi.localIP().toString() + ":" + String(cfg.telnetPort)).c_str(), 8, 52);
-        scr.drawString(("name   " + dialName()).c_str(), 8, 66);
-        scr.drawString(("wifi   " + String(wifiSsid())).c_str(), 8, 80);
-        scr.drawString((String("store  ") + (storageHasSd() ? "SD card" : "internal flash")).c_str(), 8, 94);
-        scr.drawString(("calls  " + String(callsToday) + "    last: " + lastCaller).c_str(), 8, 108);
-        scr.drawString(("sysop  " + String(cfg.sysopHandle.c_str())).c_str(), 8, 122);
-        scr.setTextSize(2);
-        if (node) {
-            scr.setTextColor(TFT_GREEN, TFT_BLACK);
-            scr.drawString("CALLER ONLINE", 8, 150);
-            scr.setTextColor(TFT_WHITE, TFT_BLACK);
-            scr.drawString(node->handle().empty() ? "(logging in)" : node->handle().c_str(), 8, 174);
-        } else {
-            scr.setTextColor(TFT_CYAN, TFT_BLACK);
-            scr.drawString("WAITING FOR CALLER", 8, 150);
-        }
-        scr.setTextSize(1);
+        drawWfc();
     }
     screenPush();
     screenDirty = false;
@@ -371,6 +403,11 @@ void loop() {
             if (node->wantsHangup()) hangUp();
         }
         if (telnet && !caller.connected()) hangUp();
+    }
+    static uint32_t lastTick = 0;  // keep the clock and the time-online count moving
+    if (millis() - lastTick > (node ? 1000u : 15000u)) {
+        lastTick = millis();
+        if (mode == Mode::Normal) screenDirty = true;
     }
     if (screenDirty) drawScreen();
     delay(5);
