@@ -40,6 +40,7 @@ bool Fossil::int14() {
             return true;
         case 0x01:  // transmit with wait
             line_.write(&al, 1);
+            sent_ = true;
             cpu_.setAx(status());
             return true;
         case 0x02:  // receive with wait
@@ -83,6 +84,7 @@ bool Fossil::int14() {
             return true;
         case 0x0B:  // transmit without wait
             line_.write(&al, 1);
+            sent_ = true;
             cpu_.setAx(1);
             return true;
         case 0x0C:  // peek
@@ -133,6 +135,7 @@ bool Fossil::int14() {
                 uint16_t n = cx - done < sizeof chunk ? cx - done : (uint16_t)sizeof chunk;
                 mem_.readBlock((buf + done) & 0xFFFFF, chunk, n);
                 line_.write(chunk, n);
+                sent_ = true;
                 done += n;
             }
             cpu_.setAx(done);

@@ -74,9 +74,10 @@ TEST_CASE("timezone rules") {
 
 TEST_CASE("config has LORD as the default door") {
     auto c = axis::bbs::parseConfig("");
-    REQUIRE(c.doors.size() == 2);
+    REQUIRE(c.doors.size() == 3);
     CHECK(c.doors[0].id == "lord");
-    CHECK(c.doors[1].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
+    CHECK(c.doors[1].id == "blackjack");
+    CHECK(c.doors[2].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
     CHECK(c.doors[0].args == "1 /DREW");
 }
 

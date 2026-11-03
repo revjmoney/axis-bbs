@@ -30,6 +30,27 @@ private:
     ByteStream& keys_;
     Bios&       bios_;
 };
+
+// Remote mode: plain DOS output goes to the caller until the door writes through FOSSIL; from then
+// on it is the door's local echo for the sysop and stays on the local screen (doors such as
+// BBS Black Jack write every character both ways).
+class RemoteConsole : public ByteStream {
+public:
+    RemoteConsole(ByteStream& caller, Bios& bios, const Fossil& fossil) : caller_(caller), bios_(bios), fossil_(fossil) {}
+    int  available() override { return caller_.available(); }
+    int  read() override { return caller_.read(); }
+    int  peek() override { return caller_.peek(); }
+    void write(const uint8_t* p, size_t n) override {
+        for (size_t i = 0; i < n; i++) bios_.ttyOut(p[i]);
+        if (!fossil_.sentOutput()) caller_.write(p, n);
+    }
+    bool carrier() override { return caller_.carrier(); }
+
+private:
+    ByteStream&   caller_;
+    Bios&         bios_;
+    const Fossil& fossil_;
+};
 }  // namespace
 
 DoorSession::DoorSession(DoorConfig cfg, HostFs& fs, LockTable& locks, ByteStream& caller, int owner)
@@ -106,8 +127,9 @@ bool DoorSession::load() {
         dos_->setConsole(console_.get());
         bios_->setKeyboard(&caller_);
     } else {
-        dos_->setConsole(&caller_);  // remote: plain DOS output goes to the caller; FOSSIL does the rest
         fossil_.reset(new Fossil(*cpu_, *mem_, caller_));
+        console_.reset(new RemoteConsole(caller_, *bios_, *fossil_));
+        dos_->setConsole(console_.get());
     }
     bios_->setServices([this](int v) {
         if (v == 0x21) return dos_->int21();

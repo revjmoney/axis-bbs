@@ -22,6 +22,7 @@ public:
     Fossil(Cpu& cpu, GuestMemory& mem, ByteStream& line);
     bool int14();
     bool waitingForInput() const { return waiting_; }
+    bool sentOutput() const { return sent_; }  // the door has written to the caller through FOSSIL
 
 private:
     void     fill();  // pull what the caller has sent into our input buffer
@@ -30,7 +31,7 @@ private:
     GuestMemory&        mem_;
     ByteStream&         line_;
     std::deque<uint8_t> in_;
-    bool                waiting_ = false;
+    bool                waiting_ = false, sent_ = false;
 };
 
 }  // namespace door

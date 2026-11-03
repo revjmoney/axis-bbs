@@ -31,6 +31,7 @@ struct BbsConfig {
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)
     std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "LORD.EXE", "1 /DREW", "doorsys"},
+                                 {"blackjack", "BBS Black Jack", "BLKJK.EXE", "BJ.CFG", "doorsys"},
                                  {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"}};
     std::vector<FileArea>  areas = defaultFileAreas();  // "areaN=id|name"; the defaults unless listed
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save

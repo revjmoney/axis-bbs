@@ -302,3 +302,23 @@ TEST_CASE("session runs a program from an injected image source") {
     CHECK(s.exitCode() == 3);
     CHECK(src.calls == 1);
 }
+
+TEST_CASE("session remote mode: once a door uses FOSSIL, its DOS output stays on the local screen") {
+    fs::path d = tmpDir("fossil-echo");
+    // mov ah,2 ; mov dl,'A' ; int 21h ; mov ax,0158h ; xor dx,dx ; int 14h ; mov ah,2 ; mov dl,'B' ; int 21h ; exit
+    // (doors like BBS Black Jack write each character both ways: the caller must see it once)
+    writeExe(d / "T.EXE", {0xB4, 0x02, 0xB2, 0x41, 0xCD, 0x21, 0xB8, 0x58, 0x01, 0x31, 0xD2, 0xCD, 0x14, 0xB4, 0x02,
+                           0xB2, 0x42, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21});
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d.string();
+    cfg.exe = "T.EXE";
+    cfg.localMode = false;
+    DoorSession s(cfg, fs, locks, caller, 1);
+    while (s.step(20)) {
+    }
+    CHECK(caller.output() == "AX");
+    CHECK(s.screen()[0].find('B') != std::string::npos);  // still drawn for the sysop
+}
