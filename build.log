@@ -1,3 +1,3 @@
-[1/3] Building CXX object CMakeFiles/axiscore.dir/src/bbs/node.cpp.obj
+[1/3] Building CXX object CMakeFiles/axiscore.dir/src/bbs/password.cpp.obj
 [2/3] Linking CXX static library libaxiscore.a
 [3/3] Linking CXX executable axis_tests.exe
