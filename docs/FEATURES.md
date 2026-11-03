@@ -24,6 +24,8 @@ Living record of every feature and setting, updated as the project goes. Status:
 | FidoNet packets | planned | Type-2+ PKT import/export via inbound/outbound folders; BinkP mailer in v2 |
 | File areas | planned | FILES.BBS-style lists, ZMODEM download; uploads in v1.1 |
 | Sysop console | planned | CYD screen: waiting-for-caller and live caller mirror (off during doors); telnet sysop screens |
+| SD card tools | planned | Sysop screen: card info and Format SD card (FAT32, optional full erase), with password + typed confirmation |
+| Storage check at boot | working | SD card if it answers, else internal flash; shown in Info and on the sysop screen |
 | Nightly maintenance | planned | 4:00 AM: door maintenance, toss/scan, purge, log rotation |
 | AXIS ANSI screens | planned | Original art by Claude from TheDraw fonts + CNC motifs; Rev edits later |
 | Credits / about screen | working (basic) | "AXIS UNDERGROUND CNC by Rev. J. Money", rotatocam.com, jmscnc.com, license and third-party credits; required by the license |

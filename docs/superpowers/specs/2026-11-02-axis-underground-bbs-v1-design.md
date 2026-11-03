@@ -124,6 +124,7 @@ The core of v1. Components:
 - **Over telnet**, for sysop-level users: user editor, security levels, message area and FTN configuration, file area configuration, door configuration, logs and errors, system status (heap, arenas, uptime, SD usage, WiFi), node status, nightly event control, and reboot.
 - Configuration lives in files on SD (my call: simple INI-style text files, editable on a PC too), with WiFi and boot flags in NVS as today. Every sysop change is written immediately.
 - Logs: a rolling system log and caller log on SD.
+- **SD card tools (Rev's request):** a sysop screen showing what the card reports (answers or not, type, size, FAT type, free space) and a **Format SD card** action that writes a fresh FAT32 filesystem (FatFs `f_mkfs`), optionally after a full erase (SD erase commands) for a true wipe. Destructive, so it needs the sysop password plus typing `FORMAT`, shows exactly what will be lost, and refuses while a door or caller is using the card. A card that does not answer at all cannot be formatted by anything; the screen says so and suggests a PC formatter or a new card.
 
 ### 5.10 Nightly maintenance
 A daily event (default 4:00 AM, matching the existing clock resync) that, with no caller online: runs door maintenance (LORD), tosses and scans FTN packets, packs and purges message bases per limits, and rotates logs.
