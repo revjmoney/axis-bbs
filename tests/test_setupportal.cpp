@@ -6,9 +6,9 @@
 using namespace axis::bbs;
 
 TEST_CASE("the hotspot page lists the networks it found and asks for a password without showing it") {
-    std::string page = portalPage({"FBIVAN2", "Neighbor 5G"}, "");
+    std::string page = portalPage({"ShopWiFi", "Neighbor 5G"}, "");
     CHECK(page.find("AXIS-SETUP") != std::string::npos);
-    CHECK(page.find("FBIVAN2") != std::string::npos);
+    CHECK(page.find("ShopWiFi") != std::string::npos);
     CHECK(page.find("Neighbor 5G") != std::string::npos);
     CHECK(page.find("type=\"password\"") != std::string::npos);
     CHECK(page.find("action=\"/join\"") != std::string::npos);

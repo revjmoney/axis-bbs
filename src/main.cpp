@@ -1877,6 +1877,17 @@ static void handleSerial() {
             cfg.dosHash = pw.length() ? axis::bbs::hashPassword(cfg.dosSalt, pw.c_str()) : std::string();
             bool ok = configSave(cfg);
             logEvent(String("sysop: DOS prompt password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
+        } else if (cmd.startsWith("@SYSOPPASS ")) {  // "@SYSOPPASS secret" sets the sysop account's password (6+ characters)
+            String pw = cmd.substring(11);
+            if (pw.length() < 6) {
+                Serial.println("axis: @SYSOPPASS needs 6 or more characters");
+            } else {
+                cfg.sysopSalt = axis::bbs::makeSalt(hwRandom);
+                cfg.sysopHash = axis::bbs::hashPassword(cfg.sysopSalt, pw.c_str());
+                bool ok = configSave(cfg);
+                if (cluster) cluster->shareSettings();  // every board takes the same sysop login
+                logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
+            }
         } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
             startPicker(mode == Mode::WifiPick ? afterPick : mode);
         } else if (serialFileCommand(cmd)) {  // @PUT @LS @RM @MKDIR @BAUD (tools/sdput.py)
