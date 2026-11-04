@@ -23,33 +23,43 @@ bool sameName(const std::string& a, const std::string& b) {
 bool usable(const PoolCard& c) { return c.alive && c.files; }
 }  // namespace
 
-std::vector<PooledFileLibrary::Placed> PooledFileLibrary::locate(const std::string& areaId, const std::vector<PoolCard>& cards) {
-    std::vector<Placed>   out;
-    std::vector<uint32_t> hashes;  // one per entry in out: a cheap first test before comparing names
-    for (const PoolCard& c : cards) {
+std::vector<bbs::FileEntry> PooledFileLibrary::locate(const std::string& areaId, const std::vector<PoolCard>& cards,
+                                                    std::vector<Spot>& spots) {
+    std::vector<bbs::FileEntry> out;
+    spots.clear();
+    for (size_t ci = 0; ci < cards.size() && ci < 32; ci++) {
+        const PoolCard& c = cards[ci];
         if (!usable(c)) continue;
-        for (bbs::FileEntry& e : c.files->list(areaId)) {
+        std::vector<bbs::FileEntry> got = c.files->list(areaId);
+        if (out.empty()) {  // the first card's listing as it is (no second copy of the list in memory)
+            out = std::move(got);
+            spots.reserve(out.size());
+            for (const bbs::FileEntry& e : out) spots.push_back({hashName(e.name), 1u << ci, (uint8_t)ci});
+            continue;
+        }
+        out.reserve(out.size() + got.size());
+        for (bbs::FileEntry& e : got) {
             uint32_t h = hashName(e.name);
             size_t   at = out.size();
-            for (size_t i = 0; i < hashes.size(); i++)
-                if (hashes[i] == h && sameName(out[i].entry.name, e.name)) {
+            for (size_t i = 0; i < spots.size(); i++)
+                if (spots[i].hash == h && sameName(out[i].name, e.name)) {
                     at = i;
                     break;
                 }
             if (at == out.size()) {  // new to the list: it goes after everything the earlier cards had
-                hashes.push_back(h);
-                out.push_back({std::move(e), {c.id}});
+                spots.push_back({h, 1u << ci, (uint8_t)ci});
+                out.push_back(std::move(e));
                 continue;
             }
-            Placed& p = out[at];
-            if (e.size > p.entry.size) {  // a bigger copy: that one is listed
-                std::string desc = std::move(p.entry.desc);
-                p.entry = std::move(e);
-                if (p.entry.desc.empty()) p.entry.desc = std::move(desc);
-                p.holders.insert(p.holders.begin(), c.id);
-            } else {
-                if (p.entry.desc.empty()) p.entry.desc = e.desc;
-                p.holders.push_back(c.id);
+            spots[at].holders |= 1u << ci;
+            bbs::FileEntry& p = out[at];
+            if (e.size > p.size) {  // a bigger copy: that one is listed
+                std::string desc = std::move(p.desc);
+                p = std::move(e);
+                if (p.desc.empty()) p.desc = std::move(desc);
+                spots[at].first = (uint8_t)ci;
+            } else if (p.desc.empty()) {
+                p.desc = std::move(e.desc);
             }
         }
     }
@@ -58,27 +68,10 @@ std::vector<PooledFileLibrary::Placed> PooledFileLibrary::locate(const std::stri
 
 std::vector<bbs::FileEntry> PooledFileLibrary::list(const std::string& areaId) {
     std::vector<PoolCard> cs = cards();
-    std::vector<Placed>   placed = locate(areaId, cs);
     knownArea_ = areaId;
     knownIds_.clear();
-    known_.clear();
-    for (const PoolCard& c : cs)
-        if (usable(c) && knownIds_.size() < 32) knownIds_.push_back(c.id);
-    known_.reserve(placed.size());
-    std::vector<bbs::FileEntry> out;
-    out.reserve(placed.size());
-    for (Placed& p : placed) {
-        Known k{hashName(p.entry.name), 0, 0xFF};
-        for (const std::string& h : p.holders)
-            for (size_t i = 0; i < knownIds_.size(); i++)
-                if (knownIds_[i] == h) {
-                    k.holders |= 1u << i;
-                    if (k.first == 0xFF) k.first = (uint8_t)i;
-                }
-        known_.push_back(k);
-        out.push_back(std::move(p.entry));
-    }
-    return out;
+    for (const PoolCard& c : cs) knownIds_.push_back(c.id);
+    return locate(areaId, cs, known_);
 }
 
 // The cards to try for one file, best first: where it was just put, then the card whose copy was
@@ -90,10 +83,10 @@ std::vector<PoolCard*> PooledFileLibrary::order(std::vector<PoolCard>& cs, const
             recent = w.card;
             break;
         }
-    const Known* k = nullptr;
+    const Spot* k = nullptr;
     if (areaId == knownArea_) {
         uint32_t h = hashName(name);
-        for (const Known& x : known_)
+        for (const Spot& x : known_)
             if (x.hash == h) {
                 k = &x;
                 break;
@@ -102,7 +95,7 @@ std::vector<PoolCard*> PooledFileLibrary::order(std::vector<PoolCard>& cs, const
     auto rank = [&](const PoolCard& c) {
         if (!recent.empty() && c.id == recent) return 0;
         if (!k) return 3;
-        for (size_t i = 0; i < knownIds_.size(); i++)
+        for (size_t i = 0; i < knownIds_.size() && i < 32; i++)
             if (knownIds_[i] == c.id) return i == k->first ? 1 : (k->holders >> i & 1) ? 2 : 3;
         return 3;
     };

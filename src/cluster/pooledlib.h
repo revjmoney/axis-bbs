@@ -38,30 +38,27 @@ public:
     bool remove(const std::string& areaId, const std::string& name) override;
     bool rename(const std::string& areaId, const std::string& from, const std::string& to) override;
 
-    // An area's files across the given cards, each with the ids of the cards holding it (the copy
-    // listed first: the largest; same size counts as the same file and the earlier card wins).
-    struct Placed {
-        bbs::FileEntry           entry;
-        std::vector<std::string> holders;
+    // An area's files across the given cards, merged, and for each one where it is (bit i of
+    // holders: cards[i] has a copy; first: the card whose copy is listed, the largest; the same size
+    // counts as the same file and the earlier card wins). A few bytes a file: the main's heap is small.
+    struct Spot {
+        uint32_t hash;     // of the name, in capitals
+        uint32_t holders;
+        uint8_t  first;
     };
-    static std::vector<Placed> locate(const std::string& areaId, const std::vector<PoolCard>& cards);
-    std::vector<PoolCard>      cards() { return cards_ ? cards_() : std::vector<PoolCard>(); }
+    static std::vector<bbs::FileEntry> locate(const std::string& areaId, const std::vector<PoolCard>& cards, std::vector<Spot>& spots);
+    std::vector<PoolCard>              cards() { return cards_ ? cards_() : std::vector<PoolCard>(); }
 
 private:
     std::vector<PoolCard*> order(std::vector<PoolCard>& cards, const std::string& areaId, const std::string& name);
     void                   placed(const std::string& areaId, const std::string& name, const std::string& card);
 
     Cards cards_;
-    // the last area listed: per file (by a hash of its name) which cards hold it, so a download
-    // goes to the copy that was listed. Small on purpose: a few bytes a file.
-    struct Known {
-        uint32_t hash;
-        uint32_t holders;  // bit i: the i-th card id in knownIds_
-        uint8_t  first;    // the card whose copy was listed
-    };
+    // the last area listed: where each file is (by its name's hash), so a download goes to the copy
+    // that was listed
     std::string              knownArea_;
-    std::vector<std::string> knownIds_;
-    std::vector<Known>       known_;
+    std::vector<std::string> knownIds_;  // the card ids the bits refer to
+    std::vector<Spot>        known_;
     // the last few files created, renamed or removed: where each now lives (an upload's
     // description goes to its card, even after the upload processor rezips it under a temp name)
     struct Where {

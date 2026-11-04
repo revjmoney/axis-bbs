@@ -63,13 +63,15 @@ void MirrorJob::scanOne() {
         areaAt_ = passAreas_.size();
         return;
     }
-    for (PooledFileLibrary::Placed& p : PooledFileLibrary::locate(area, cs)) {
-        if (p.holders.size() != 1) continue;
+    std::vector<PooledFileLibrary::Spot> spots;
+    std::vector<bbs::FileEntry>          files = PooledFileLibrary::locate(area, cs, spots);
+    for (size_t i = 0; i < files.size(); i++) {
+        if (spots[i].holders & (spots[i].holders - 1)) continue;  // two or more cards have it
         if (todo_.size() >= kTodoMax) {  // the rest next pass, which comes sooner
             more_ = true;
             break;
         }
-        todo_.push_back({area, p.entry.name, p.entry.desc, p.holders[0]});
+        todo_.push_back({area, files[i].name, files[i].desc, cs[spots[i].first].id});
     }
 }
 

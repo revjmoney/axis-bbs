@@ -137,11 +137,13 @@ TEST_CASE("pool: an area lists every card's files once, this board's order first
     CHECK(v[0].desc == "the local copy's description");  // from whichever card describes it
     CHECK(v[1].name == "C.TXT");
     CHECK(v[2].name == "B.ZIP");
-    auto placed = PooledFileLibrary::locate("cnc", p.lib.cards());
+    std::vector<PooledFileLibrary::Spot> spots;
+    auto                                 placed = PooledFileLibrary::locate("cnc", p.lib.cards(), spots);
     REQUIRE(placed.size() == 3);
-    REQUIRE(placed[0].holders.size() == 2);
-    CHECK(placed[0].holders[0] == "board-b");  // the listed copy first
-    CHECK(placed[0].holders[1] == "board-a");
+    REQUIRE(spots.size() == 3);
+    CHECK(spots[0].holders == 3);  // board-a (card 0) and board-b (card 1)
+    CHECK(spots[0].first == 1);    // the listed copy: board-b's
+    CHECK(spots[2].holders == 2);
 }
 
 TEST_CASE("pool: a download reads from the card that has the file, this board first when both do") {
