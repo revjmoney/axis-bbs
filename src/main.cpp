@@ -279,6 +279,7 @@ static std::vector<axis::cluster::PoolCard> poolCards() {
     }
     return v;
 }
+#if AXIS_SD_POOL
 static axis::cluster::PooledFileLibrary pooledFiles(poolCards);
 static axis::cluster::MirrorJob         mirrorJob(pooledFiles, [] {
     std::vector<std::string> v;
@@ -286,6 +287,7 @@ static axis::cluster::MirrorJob         mirrorJob(pooledFiles, [] {
         if (a.mirror) v.push_back(a.id);
     return v;
 });
+#endif
 static Mode                                     afterPick = Mode::Normal;
 static size_t                                   pendingSeen = 0;
 // the door the caller is in, if any (the screen copy is freed meanwhile)
@@ -433,7 +435,9 @@ static axis::bbs::MessageStore& callerMessages() {
 // own card with its card followers'; a board on its own has just its card.
 static axis::bbs::FileLibrary& callerFiles() {
     if (asFollower()) return remoteFiles;
+#if AXIS_SD_POOL
     if (cluster && cluster->role() == axis::cluster::Role::Main && !cluster->cardBoards().empty()) return pooledFiles;
+#endif
     return sdFiles;
 }
 
@@ -1487,7 +1491,9 @@ static void startCluster() {
     if (cluster) return;
     clusterNet.begin();
     cluster.reset(new axis::cluster::Cluster(clusterNet, WiFi.macAddress().c_str()));
+#if AXIS_SD_POOL
     mirrorJob.onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };  // "mirror: copied X to node 2"
+#endif
     cluster->onEvent = [](const std::string& e) {
         logEvent(String("cluster: ") + e.c_str() + heapText());
         if (e.rfind("MAIN NODE LOST", 0) == 0) mainLostAtMs = millis();
@@ -1620,7 +1626,11 @@ static void startCluster() {
             return ds->handle(req);
         }
         auto& srv = fileServers[nodeNum];
+#if AXIS_SD_POOL
         if (!srv) srv.reset(new axis::cluster::FileServer(pooledFiles));  // (just this card when it is the only one)
+#else
+        if (!srv) srv.reset(new axis::cluster::FileServer(sdFiles));
+#endif
         return srv->handle(req);
     };
     cluster->onMainRequest = [](const std::string& req) {  // a follower with a card: the main asks for its files
@@ -1842,8 +1852,12 @@ static void handleSerial() {
             for (auto& a : cfg.areas)
                 if (a.mirror) areas += (areas.empty() ? "" : " ") + a.id;
             Serial.printf("axis: mirrored areas: %s\n", areas.empty() ? "none (add |m to an areaN line)" : areas.c_str());
+#if AXIS_SD_POOL
             if (!cluster || cluster->role() != axis::cluster::Role::Main) Serial.println("axis: only the main runs the mirror");
             else Serial.printf("axis: mirror %s\n", mirrorJob.state().c_str());
+#else
+            Serial.println("axis: pool and mirror are not in this build (AXIS_SD_POOL)");
+#endif
         } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
             axis::bbs::User* u = users.find(cmd.substring(7).c_str());
             if (!u) Serial.println("axis: no user by that handle");
@@ -2300,9 +2314,11 @@ void loop() {
             lastFree = millis();
             cluster->setFreeBytes(storageFreeBytes());
         }
+#if AXIS_SD_POOL
         bool uploading = false;  // a follower's caller mid-upload: the mirror waits (an upload may be rezipped)
         for (auto& f : fileServers) uploading = uploading || (f.second && f.second->openUploads());
         if (cluster->role() == axis::cluster::Role::Main && busySlot < 0 && !uploading) mirrorJob.step(millis());
+#endif
     }
     ledUpdate();
     if (server.hasClient()) answer(server.available());

@@ -141,3 +141,5 @@ target_link_libraries(xfertest PRIVATE axiscore)
 if(WIN32)
   target_link_libraries(xfertest PRIVATE ws2_32)
 endif()
+
+target_compile_definitions(axiscore PUBLIC AXIS_SD_POOL=1)  # the PC build and tests cover the pool build too

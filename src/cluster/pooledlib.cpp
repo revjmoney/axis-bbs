@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
+#if AXIS_SD_POOL  // pool and mirror: a build option (the disc changer is the default)
 #include "cluster/pooledlib.h"
 
 #include <cctype>
@@ -176,3 +177,5 @@ bool PooledFileLibrary::rename(const std::string& areaId, const std::string& fro
 }
 
 }  // namespace axis::cluster
+
+#endif
