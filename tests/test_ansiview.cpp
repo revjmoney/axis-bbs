@@ -194,3 +194,19 @@ TEST_CASE("a movie can be stopped, and the speed changed while it plays") {
     std::string out = r.run("q");
     CHECK(out.find("TIE.ANS") != std::string::npos);  // back at the list of pieces
 }
+
+TEST_CASE("pieces that all share a long name prefix are listed without it, in wider columns") {
+    Rig r;
+    r.lib.files.clear();
+    r.lib.files["SW.ZIP"] = storedZip({{"ANSI_Star_Wars_KM-FALC_.ANS", "falcon"},
+                                       {"ANSI_Star_Wars_Luciano-From_Anakin_to_Vader_.ans", "vader"},
+                                       {"ANSI_Star_Wars_goo-episode_01.ans", "goo"},
+                                       {"__BLOCKTRONICS_Detention_Block_NFO.ans", "the pack's info"}});  // one doesn't share it
+    r.lib.files["FILES.BBS"] = "SW.ZIP Star Wars\r\n";
+    r.v.begin();
+    std::string out = r.run("1\r");
+    CHECK(out.find("KM-FALC_.ANS") != std::string::npos);
+    CHECK(out.find("Luciano-From_Anakin_to_Vad") != std::string::npos);  // long names get room
+    CHECK(out.find("ANSI_Star_Wars_K") == std::string::npos);
+    CHECK(out.find("__BLOCKTRONICS") != std::string::npos);  // the odd one out keeps its name
+}

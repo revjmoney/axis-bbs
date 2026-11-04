@@ -33,8 +33,8 @@ def listing(s, remote):
         if line == "@END":
             return have
         name, _, size = line.rpartition(" ")
-        if name and not size.endswith("/"):
-            have[name] = int(size)
+        if name and not size.endswith("/") and size.isdigit() and not line.startswith("axis:"):
+            have[name] = int(size)  # (log lines from the board can land in the middle of a listing)
 
 
 def answer_any(s, timeout=10):

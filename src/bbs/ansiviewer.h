@@ -34,6 +34,10 @@ private:
     void showPacks();
     bool openPack(size_t i);
     void showPieces();
+    std::string shownName(size_t i) const;  // a piece's name in the list (the pack's common prefix left off)
+    std::string                  prefix_;   // the prefix most of the pack's pieces share ("ANSI_Star_Wars_"), or ""
+    int         columns() const;            // 3 narrow columns, or 2 wide ones for long names
+    int         perPage() const { return columns() * 18; }
     void showPiece(size_t i);
     void pump();                                  // send the next part of the piece playing
     void finishPiece(ZipReader::Result result);  // its footer, and on to [Enter] next ...

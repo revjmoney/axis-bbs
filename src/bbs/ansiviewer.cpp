@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <map>
 
 #include "bbs/theme.h"
 
@@ -101,14 +102,37 @@ bool AnsiViewer::openPack(size_t i) {
     for (size_t k = 0; k < zip_->entries().size(); k++)
         if (isAnsiPiece(zip_->entries()[k].name)) pieces_.push_back(k);
     page_ = 0;
+    // the name prefix at least half the pieces share, cut at a word boundary: left off in the list
+    prefix_.clear();
+    std::map<std::string, int> counts;
+    for (size_t k : pieces_) {
+        std::string n = baseName(zip_->entries()[k].name);
+        for (size_t m = 4; m < n.size(); m++)
+            if (n[m - 1] == '_' || n[m - 1] == '-' || n[m - 1] == ' ') counts[n.substr(0, m)]++;
+    }
+    for (auto& c : counts)
+        if (c.second * 2 >= (int)pieces_.size() && c.second > 1 && c.first.size() > prefix_.size()) prefix_ = c.first;
     showPieces();
     return true;
+}
+
+std::string AnsiViewer::shownName(size_t i) const {
+    std::string n = baseName(zip_->entries()[pieces_[i]].name);
+    if (!prefix_.empty() && n.size() > prefix_.size() && n.compare(0, prefix_.size(), prefix_) == 0) n = n.substr(prefix_.size());
+    return n;
+}
+
+int AnsiViewer::columns() const {
+    for (size_t i = 0; i < pieces_.size(); i++)
+        if (shownName(i).size() > 17) return 2;
+    return 3;
 }
 
 void AnsiViewer::showPieces() {
     st_ = St::Pieces;
     typed_.clear();
-    int pages = ((int)pieces_.size() + kPerPage - 1) / kPerPage;
+    int per = perPage(), cols = columns(), width = cols == 3 ? 17 : 32;
+    int pages = ((int)pieces_.size() + per - 1) / per;
     if (pages < 1) pages = 1;
     page_ = (page_ % pages + pages) % pages;
     char b[160];
@@ -118,14 +142,14 @@ void AnsiViewer::showPieces() {
     s += b;
     s += MAG;
     s += "   " + std::string(70, '\xc4') + "\r\n";
-    int first = page_ * kPerPage, rows = 18;
+    int first = page_ * per, rows = 18;
     for (int r = 0; r < rows; r++) {
         std::string row = "   ";
-        for (int c = 0; c < 3; c++) {
+        for (int c = 0; c < cols; c++) {
             int i = first + c * rows + r;
             if (i >= (int)pieces_.size()) continue;
-            std::string n = baseName(zip_->entries()[pieces_[i]].name).substr(0, 16);
-            std::snprintf(b, sizeof b, "%s[%3d]%s %-17s", CYAN, i + 1, HI, n.c_str());
+            std::string n = shownName((size_t)i).substr(0, (size_t)width - 1);
+            std::snprintf(b, sizeof b, "%s[%3d]%s %-*s", CYAN, i + 1, HI, width, n.c_str());
             row += b;
         }
         if (row.size() > 3) s += row + "\r\n";
@@ -294,7 +318,7 @@ bool AnsiViewer::key(char c) {
                     showPiece(piece_ > 0 ? piece_ - 1 : 0);
                     break;
                 case 'l':
-                    page_ = (int)piece_ / kPerPage;
+                    page_ = (int)piece_ / perPage();
                     showPieces();
                     break;
                 case 'q':
