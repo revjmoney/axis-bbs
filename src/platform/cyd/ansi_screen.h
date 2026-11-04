@@ -22,6 +22,8 @@ public:
     void render(LGFX_Sprite& dst, int rows = kRows) const;      // top `rows` rows, onto the 4-bit sprite
     // easy to read: 40 columns from firstCol in full 8x8 cells (each pixel row merges two font rows)
     void renderZoom(LGFX_Sprite& dst, int rows, int firstCol) const;
+    // all 80 columns in 4x8 cells, crisp: each pixel is lit if 2 or more of its 4 font pixels are (no blending)
+    void renderSharp(LGFX_Sprite& dst, int rows) const;
     // art straight from flash (rows x 80 x {ch, attr}): no copy in RAM
     static void renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int rows);
 };

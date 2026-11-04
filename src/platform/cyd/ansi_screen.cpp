@@ -116,6 +116,27 @@ void AnsiScreen::renderZoom(LGFX_Sprite& dst, int rows, int firstCol) const {
         }
 }
 
+void AnsiScreen::renderSharp(LGFX_Sprite& dst, int rows) const {
+    if (!ready) build();
+    uint8_t* fb = (uint8_t*)dst.getBuffer();
+    if (!fb) return;
+    for (int r = 0; r < rows && r < kRows; r++)
+        for (int y = 0; y < 8; y++) {
+            int py = r * 8 + y;
+            if (py >= 240) return;
+            uint8_t* out = fb + py * 160;
+            for (int c = 0; c < kCols; c++, out += 2) {
+                const AnsiCell& cell = cells[r][c];
+                const uint8_t*  g = &vga_font8x16[cell.ch * 16 + y * 2];
+                const uint8_t*  l = lut[cell.attr];
+                uint8_t         px[4];
+                for (int x = 0; x < 4; x++) px[x] = cover(g[0], g[1], x) >= 2 ? l[4] : l[0];
+                out[0] = (uint8_t)(px[0] << 4 | px[1]);
+                out[1] = (uint8_t)(px[2] << 4 | px[3]);
+            }
+        }
+}
+
 void BigText::render(LGFX_Sprite& dst, int y0, int rows) const {
     if (!ready) build();
     uint8_t* fb = (uint8_t*)dst.getBuffer();

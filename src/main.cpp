@@ -532,7 +532,7 @@ static void drawLocal() {
             else if (localTerm->col() < localPan) localPan = 0;
             localScreen->renderZoom(scr, axis::bbs::AnsiTerm::kRows, localPan);  // 200 pixels, 40 columns
         } else {
-            localScreen->render(scr, axis::bbs::AnsiTerm::kRows);  // 200 pixels of the BBS, 80 columns
+            localScreen->renderSharp(scr, axis::bbs::AnsiTerm::kRows);  // 200 pixels of the BBS, all 80 columns, crisp
         }
         button(4, 206, 58, 30, "KEYS", false);
         button(66, 206, 58, 30, "ENTER", false);
@@ -1693,7 +1693,7 @@ static void handleTap(int x, int y) {
             localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
             localNode->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
             localPan = 0;
-            localZoom = true;  // start readable
+            localZoom = false;  // start with the whole screen (crisp); ZOOM for big letters
             localNode->setChat(
                 [](const std::string& text, bool page) {
                     if (!localNode) return;
