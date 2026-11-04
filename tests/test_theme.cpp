@@ -74,3 +74,17 @@ TEST_CASE("a line that fits stays put; a long one scrolls through, pausing at ea
     CHECK(sawEnd);
     CHECK(sawMiddle);
 }
+
+TEST_CASE("a drip banner is big block letters with drips hanging off, the same every time, inside 80 columns") {
+    using axis::bbs::theme::drip;
+    std::string b = drip("MAIN MENU");
+    CHECK(b == drip("MAIN MENU"));
+    CHECK(b.find('\xdb') != std::string::npos);  // full blocks
+    int rows = 0;
+    for (size_t p = 0; (p = b.find("\r\n", p)) != std::string::npos; p += 2) rows++;
+    CHECK(rows >= 3);  // five letter rows and the drips, two to a text row (half blocks)
+    std::string plainRows = std::regex_replace(b, std::regex("\x1b\[[0-9;]*m"), "");
+    size_t start = 0;
+    for (size_t p; (p = plainRows.find("\r\n", start)) != std::string::npos; start = p + 2) CHECK(p - start < 80);
+    CHECK(drip("MESSAGE AREAS") != drip("FILE AREAS"));
+}

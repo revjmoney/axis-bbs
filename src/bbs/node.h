@@ -37,7 +37,7 @@ public:
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
     };
-    enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError, Busy };  // Busy: another caller here has the slot
+    enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError, Busy, NotHere };  // NotHere: asked for at the board's own screen (no terminal for a door)  // Busy: another caller here has the slot
     static constexpr size_t   kMaxHandle = 30;
 
     // files: the file areas' store (nullptr: the Files menu says the areas are offline)
@@ -64,6 +64,7 @@ public:
     // from flash, instead of through takeOutput(): a copy of them needs more heap than a busy board has.
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
     void        begin(uint32_t nowMs);
+    void        beginLocal(uint32_t nowMs);  // the sysop at the board itself: logged in as sysop, no splash
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);
     std::string takeOutput();
@@ -82,6 +83,7 @@ public:
 private:
     void key(char c);
     void showMenu();
+    void showMainMenu();  // the full-screen menu: the drippy MENU banner and every command
     void showDoors();
     void loggedIn();
     void showPending();

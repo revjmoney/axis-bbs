@@ -418,3 +418,25 @@ TEST_CASE("activity text follows the caller from login to a door and chat") {
     type(n, "d1\r");
     CHECK(n.activityText().rfind("in Legend of the Red Dragon", 0) == 0);
 }
+
+TEST_CASE("a local sysop login starts at the menu as sysop, no handle or password asked") {
+    axis::bbs::BbsConfig c;
+    c.sysopHandle = "Rev";
+    c.loginSplash = true;  // (not for the local console)
+    Node n(1, info, c);
+    n.beginLocal(0);
+    CHECK(n.isSysop());
+    CHECK(n.handle() == "Rev");
+    CHECK(n.state() == Node::State::Menu);
+    CHECK(plain(n.takeOutput()).find("Handle:") == std::string::npos);
+}
+
+TEST_CASE("a door asked for at the board's own screen says to call in for doors") {
+    Node n = loggedIn();
+    type(n, "d1\r");
+    REQUIRE(n.state() == Node::State::InDoor);
+    n.takeOutput();
+    n.resumeAfterDoor(Node::DoorEnd::NotHere, 2000);
+    CHECK(n.state() == Node::State::Menu);
+    CHECK(plain(n.takeOutput()).find("telnet") != std::string::npos);
+}

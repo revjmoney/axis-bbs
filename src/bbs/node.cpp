@@ -111,12 +111,13 @@ void Node::loggedIn() {
 
 void Node::menuOrLiners() {
     if (!linersGet_) {
-        state_ = State::Menu;
-        showMenu();
+        showMainMenu();
         return;
     }
     std::vector<std::string> wall = linersGet_();
-    out_ += "\r\n\r\n   ";
+    out_ += theme::CLS;
+    out_ += "\r\n" + theme::drip("ONELINERS");
+    out_ += "   ";
     out_ += theme::fade("ONELINERS");
     out_ += std::string("\r\n   ") + theme::DGREY + std::string(60, '\xc4') + "\r\n";
     size_t from = wall.size() > 10 ? wall.size() - 10 : 0;  // the newest ten
@@ -166,6 +167,13 @@ void Node::begin(uint32_t nowMs) {
     showWelcome();
 }
 
+void Node::beginLocal(uint32_t nowMs) {
+    lastInput_ = nowMs;
+    handle_ = cfg_.sysopHandle.empty() ? "Sysop" : cfg_.sysopHandle;
+    sysop_ = true;
+    loggedIn();
+}
+
 void Node::showWelcome() {
     state_ = State::Login;
     if (direct_) {  // the art from flash, straight out; only the boxes are built here
@@ -195,15 +203,11 @@ void Node::prompt() {
 }
 
 void Node::showDoors() {
-    out_ += "\r\n\r\n   ";
-    out_ += HI;
-    out_ += "Doors";
-    out_ += "\r\n";
-    for (size_t i = 0; i < cfg_.doors.size() && i < 9; i++) {
-        char b[96];
-        std::snprintf(b, sizeof b, "   %s[%u]%s %s\r\n", CYAN, (unsigned)(i + 1), DIM, cfg_.doors[i].name.c_str());
-        out_ += b;
-    }
+    out_ += theme::CLS;
+    out_ += "\r\n" + theme::drip("DOORS");
+    std::vector<std::pair<std::string, std::string>> rows;
+    for (size_t i = 0; i < cfg_.doors.size() && i < 9; i++) rows.push_back({"[" + std::to_string(i + 1) + "]", cfg_.doors[i].name});
+    out_ += theme::window("Doors", rows);
     state_ = State::Doors;
     prompt();
 }
@@ -212,6 +216,13 @@ void Node::resumeAfterDoor(DoorEnd how, uint32_t nowMs) {
     if (state_ != State::InDoor) return;
     lastInput_ = nowMs;
     state_ = State::Menu;
+    if (how == DoorEnd::NotHere) {  // the board's own screen has no terminal for a door
+        out_ += "\r\n\r\n   ";
+        out_ += AMBER;
+        out_ += "Doors and downloads need a real terminal: call in over telnet for those.";
+        showMenu();
+        return;
+    }
     if (how == DoorEnd::Busy) {  // one door at a time per board: they never went in
         out_ += "\r\n\r\n   ";
         out_ += AMBER;
@@ -234,6 +245,21 @@ void Node::resumeAfterDoor(DoorEnd how, uint32_t nowMs) {
         out_ += why;
     }
     showMenu();
+}
+
+void Node::showMainMenu() {
+    state_ = State::Menu;
+    out_ += theme::CLS;
+    out_ += "\r\n" + theme::drip("MENU");
+    out_ += theme::window("COMMANDS", {{"[F]", "file areas: browse, info, download, upload"},
+                                       {"[M]", "message areas: read, post, reply"},
+                                       {"[D]", "doors"},
+                                       {"[T]", "teleconference with every node"},
+                                       {"[W]", "who's online"},
+                                       {"[P]", "page the sysop"},
+                                       {"[I] [C]", "system info, credits"},
+                                       {"[G]", "goodbye"}});
+    prompt();
 }
 
 void Node::showMenu() {
@@ -452,9 +478,7 @@ void Node::key(char c) {
         if (stay && browser_->wantsTransfer()) state_ = State::Transfer;
         if (!stay) {
             browser_.reset();
-            state_ = State::Menu;
-            out_ += "\x1b[0m\x1b[2J\x1b[H";
-            showMenu();
+            showMainMenu();
         }
         return;
     }
@@ -467,9 +491,7 @@ void Node::key(char c) {
         msgs_.reset();
         if (User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr)  // where they got to, kept with the account
             if (saveUsers_) saveUsers_();
-        state_ = State::Menu;
-        out_ += "\x1b[0m\x1b[2J\x1b[H";
-        showMenu();
+        showMainMenu();
         return;
     }
     if (state_ == State::OneLinerAsk) {
@@ -478,8 +500,7 @@ void Node::key(char c) {
             line_.clear();
             state_ = State::OneLiner;
         } else {
-            state_ = State::Menu;
-            showMenu();
+            showMainMenu();
         }
         return;
     }
@@ -487,9 +508,7 @@ void Node::key(char c) {
         if (c == '\r') {
             if (!line_.empty() && linersAdd_) linersAdd_(handle_ + ": " + line_);
             line_.clear();
-            state_ = State::Menu;
-            out_ += "\r\n";
-            showMenu();
+            showMainMenu();
         } else if (c == 8 || c == 127) {
             if (!line_.empty()) {
                 line_.pop_back();
@@ -513,7 +532,12 @@ void Node::key(char c) {
                 break;
             }
             line_.clear();
-            out_ += "\r\n\r\n   ";
+            if ((c | 0x20) == 't') {
+                out_ += theme::CLS;
+                out_ += "\r\n" + theme::drip("CHAT") + "   ";
+            } else {
+                out_ += "\r\n\r\n   ";
+            }
             if ((c | 0x20) == 't') {
                 state_ = State::Chat;
                 out_ += theme::fade("TELECONFERENCE");
@@ -525,7 +549,8 @@ void Node::key(char c) {
             }
             break;
         case 'w': {
-            out_ += "\r\n\r\n   ";
+            out_ += theme::CLS;
+            out_ += "\r\n" + theme::drip("WHO") + "   ";
             out_ += theme::fade("WHO'S ONLINE");
             out_ += "\r\n";
             std::vector<WhoLine> all = who_ ? who_() : std::vector<WhoLine>{{node_, handle_, "Menu"}};
@@ -643,8 +668,7 @@ void Node::lineKey(char c) {
             }
             showMenu();
         } else if (text == "/q" || text == "/Q") {
-            state_ = State::Menu;
-            showMenu();
+            showMainMenu();
         } else {
             if (!text.empty()) say_(text, false);  // it shows, with a fresh prompt, when it comes back from the main
             else out_ += std::string(theme::ORANGE) + "> " + theme::WHITE;

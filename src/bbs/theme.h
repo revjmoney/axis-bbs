@@ -22,6 +22,8 @@ constexpr const char* ORANGE = "\x1b[0;33m";  // drips, keys, highlights
 constexpr const char* HOT = "\x1b[1;33m";     // bright orange-yellow: sparks, the odd glint
 constexpr const char* KEY = "\x1b[0;33m";     // menu hotkeys like [F]
 
+// a menu title as big drippy block letters (several lines, centred in 80 columns)
+std::string drip(const std::string& text);
 // the part of `text` to show in `width` columns at time `ms`: as is if it fits, else scrolling
 // through a step every 300 ms with a 1.5 s pause at each end
 std::string marquee(const std::string& text, size_t width, uint32_t ms);

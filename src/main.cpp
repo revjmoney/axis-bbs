@@ -20,6 +20,7 @@
 
 #include "bbs/ansiviewer.h"
 #include "bbs/dosshell.h"
+#include "bbs/ansiterm.h"
 #include "bbs/ledsignal.h"
 #include "bbs/msgbase.h"
 #include "bbs/password.h"
@@ -346,6 +347,70 @@ static void drawBattery() {  // top right: a battery outline; "?" until a sensor
     scr.setTextDatum(textdatum_t::top_left);
     scr.setTextColor(pal::DARKGREY, pal::BLACK);
     scr.drawString("?", x + 10, y + 2);
+    // the local sysop login, under the battery
+    scr.fillRoundRect(272, 18, 46, 18, 4, pal::DIM);
+    scr.drawRoundRect(272, 18, 46, 18, 4, pal::ORANGE);
+    scr.setTextColor(pal::WHITE, pal::DIM);
+    scr.setTextDatum(textdatum_t::middle_center);
+    scr.drawString("LOCAL", 295, 27);
+    scr.setTextDatum(textdatum_t::top_left);
+}
+
+// The local sysop login: the BBS on the board's own screen, the sysop logged in, an 80x25
+// terminal in 4x8 cells, a touch keyboard for typing (a line at a time, sent with Enter).
+static std::unique_ptr<axis::bbs::Node> localNode;
+static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~9 KB)
+static std::unique_ptr<AnsiScreen>          localScreen;
+static bool                              localKeys = false;  // the keyboard is up
+static axis::bbs::TouchKeyboard          localKb("type, then OK", false, 70);
+static void localFeed() {
+    if (!localNode) return;
+    std::string out = localNode->takeOutput();
+    if (!out.empty()) {
+        localTerm->feed(out);
+        screenDirty = true;
+    }
+}
+static void endLocal() {
+    localNode.reset();
+    localTerm.reset();
+    localScreen.reset();
+    localKeys = false;
+    logEvent("local sysop logged off");
+    screenDirty = true;
+}
+static void drawLocal() {
+    scr.fillScreen(pal::BLACK);
+    scr.setFont(&fonts::Font2);
+    auto button = [](int x, int y, int w, int h, const char* label, bool lit) {
+        uint16_t fill = lit ? pal::ORANGE : pal::DIM;
+        scr.fillRoundRect(x, y, w, h, 5, fill);
+        scr.drawRoundRect(x, y, w, h, 5, lit ? pal::WHITE : pal::ORANGE);
+        scr.setTextColor(lit ? pal::BLACK : pal::WHITE, fill);
+        scr.setTextDatum(textdatum_t::middle_center);
+        scr.drawString(label, x + w / 2, y + h / 2);
+        scr.setTextDatum(textdatum_t::top_left);
+    };
+    if (localKeys) {  // typing: what's typed on top, the keys below
+        scr.setTextColor(pal::ORANGE, pal::BLACK);
+        scr.drawString("LOCAL: type, then OK", 8, 4);
+        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
+        scr.setTextColor(pal::WHITE, pal::BLACK);
+        scr.drawString((localKb.shown() + "_").c_str(), 10, 35);
+        for (auto& k : localKb.keys()) button(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
+    } else {
+        for (int r = 0; r < axis::bbs::AnsiTerm::kRows; r++)
+            for (int c = 0; c < axis::bbs::AnsiTerm::kCols; c++) {
+                const auto& cell = localTerm->cell(r, c);
+                localScreen->cells[r][c] = {cell.ch, cell.attr};
+            }
+        localScreen->render(scr, axis::bbs::AnsiTerm::kRows);  // 200 pixels of the BBS, 80 columns
+        button(8, 206, 90, 30, "KEYS", false);
+        button(114, 206, 90, 30, "ENTER", false);
+        button(222, 206, 90, 30, "EXIT", true);
+    }
+    scr.setFont(&fonts::Font0);
+    localTerm->clean();
 }
 
 static void drawWfc() {
@@ -656,6 +721,8 @@ static void drawScreen() {
         scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
         scr.drawString("On-screen setup is coming in the next build.", 8, 70);
         bigButton(156, "BACK", pal::DIM);
+    } else if (localNode) {
+        drawLocal();
     } else if (sysop.isOpen()) {
         drawSysop();
     } else if (detailSession >= 0) {
@@ -1180,6 +1247,10 @@ static void startCluster() {
             logEvent("PAGE from " + String(l.handle.c_str()) + " on node " + String(l.node) + ": " + l.text.c_str());
             screenDirty = true;
         }
+        if (localNode) {
+            localNode->chatIn(l.node, l.handle, l.text, l.page);
+            localFeed();
+        }
         for (size_t i = 0; i < sessions.size(); i++)
             if (sessionNode(i) && sessionLine(i)) {
                 sessionNode(i)->chatIn(l.node, l.handle, l.text, l.page);
@@ -1334,8 +1405,53 @@ static void handleTap(int x, int y) {
     }
     if (mode == Mode::Normal) {
         screenDirty = true;
+        if (localNode) {  // the local console: the keyboard, or KEYS / ENTER / EXIT
+            if (localKeys) {
+                localKb.tap(x, y);
+                if (localKb.done()) {
+                    std::string line = localKb.text() + "\r";
+                    localNode->input((const uint8_t*)line.data(), line.size(), millis());
+                    localKb.reset("type, then OK", false);
+                    localKeys = false;
+                } else if (localKb.cancelled()) {
+                    localKb.reset("type, then OK", false);
+                    localKeys = false;
+                }
+            } else if (y >= 206 && x < 98) {
+                localKeys = true;
+            } else if (y >= 206 && x >= 114 && x < 204) {
+                localNode->input((const uint8_t*)"\r", 1, millis());
+            } else if (y >= 206 && x >= 222) {
+                endLocal();
+            }
+            return;
+        }
         if (sysop.isOpen()) {
             sysopAction(sysop.tap(x, y));
+            return;
+        }
+        if (detailSession < 0 && x >= 272 && y >= 16 && y < 38) {  // LOCAL: the sysop logs in at the board
+            localTerm.reset(new axis::bbs::AnsiTerm());
+            localScreen.reset(new AnsiScreen());
+            localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,
+                                                &callerFiles()));
+            localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
+            localNode->setMessages(&callerMessages());
+            localNode->setChat(
+                [](const std::string& text, bool page) {
+                    if (!localNode) return;
+                    if (cluster) page ? cluster->page(localNode->handle(), text) : cluster->chat(localNode->handle(), text);
+                    else localNode->chatIn(1, localNode->handle(), text, page);
+                },
+                [] {
+                    std::vector<axis::bbs::Node::WhoLine> v;
+                    if (cluster)
+                        for (auto& n : cluster->nodes()) v.push_back({n.number, n.handle, n.activity});
+                    return v;
+                });
+            localNode->beginLocal(millis());
+            logEvent(String("local sysop login: ") + localNode->handle().c_str());
+            localFeed();
             return;
         }
         if (detailSession >= 0) {  // the node detail screen: BACK, or KICK the caller
@@ -1756,6 +1872,15 @@ void loop() {
         return;
     }
     if (cluster) cluster->tick(millis());
+    if (localNode) {  // the sysop at the board's own screen
+        localNode->poll(millis());
+        using S = axis::bbs::Node::State;
+        if (localNode->state() == S::InDoor) localNode->resumeAfterDoor(axis::bbs::Node::DoorEnd::NotHere, millis());
+        if (localNode->state() == S::Transfer)
+            localNode->transferDone(false, 0, 0, "downloads need a terminal: call in over telnet", millis());
+        localFeed();
+        if (localNode->wantsHangup()) endLocal();
+    }
     pumpPassing();  // callers passed to other nodes, every turn (doors and transfers included)
     ledUpdate();
     if (server.hasClient()) answer(server.available());

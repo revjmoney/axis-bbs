@@ -18,9 +18,11 @@ add_library(axiscore STATIC
     src/bbs/filelib.cpp
     src/bbs/filebrowser.cpp
     src/bbs/zipreader.cpp
+    src/bbs/ansiterm.cpp
     src/bbs/ansiviewer.cpp
     src/bbs/rotatelog.cpp
     src/bbs/dosshell.cpp
+    src/bbs/dripfont.cpp
     src/bbs/ledsignal.cpp
     src/bbs/msgbase.cpp
     src/bbs/msgreader.cpp
@@ -85,6 +87,7 @@ add_executable(axis_tests
     tests/test_sysop_menu.cpp
     tests/test_files.cpp
     tests/test_zip.cpp
+    tests/test_ansiterm.cpp
     tests/test_ansiview.cpp
     tests/test_rotatelog.cpp
     tests/test_dosshell.cpp

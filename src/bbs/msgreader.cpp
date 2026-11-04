@@ -36,7 +36,7 @@ void MessageReader::begin() { showAreas(); }
 
 void MessageReader::showAreas() {
     s_ = St::Areas;
-    out_ += "\x1b[0m\x1b[2J\x1b[H\r\n   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
+    out_ += "\x1b[0m\x1b[2J\x1b[H\r\n" + drip("MSGS") + "   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
     for (size_t i = 0; i < areas_.size(); i++) {
         auto h = st_.headers(areas_[i].id);
         int  last = lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, fresh = 0;
