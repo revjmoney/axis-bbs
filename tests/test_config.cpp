@@ -199,3 +199,25 @@ TEST_CASE("an area can need a security level: id|name|level, kept when saved") {
     CHECK(back.areas[1].name == "Zero Day");
     CHECK(back.msgAreas[1].minSecurity == 100);
 }
+
+TEST_CASE("an area can be mirrored onto two SD cards: id|name|level|m, kept when saved") {
+    BbsConfig c = parseConfig("area1=axis|Axis||m\narea2=zero|Zero Day|150|m\narea3=gcode|G-code|20\narea4=text|Text\n");
+    REQUIRE(c.areas.size() == 4);
+    CHECK(c.areas[0].mirror);
+    CHECK(c.areas[0].minSecurity == 0);
+    CHECK(c.areas[1].mirror);
+    CHECK(c.areas[1].minSecurity == 150);
+    CHECK(c.areas[1].name == "Zero Day");
+    CHECK_FALSE(c.areas[2].mirror);
+    CHECK(c.areas[2].minSecurity == 20);
+    CHECK_FALSE(c.areas[3].mirror);
+    CHECK(areaText(c.areas[0]) == "axis|Axis|0|m");
+    CHECK(areaText(c.areas[1]) == "zero|Zero Day|150|m");
+    CHECK(areaText(c.areas[2]) == "gcode|G-code|20");  // unmirrored areas save as before
+    CHECK(areaText(c.areas[3]) == "text|Text");
+    BbsConfig back = parseConfig(formatConfig(c));
+    CHECK(back.areas[0].mirror);
+    CHECK(back.areas[1].mirror);
+    CHECK(back.areas[1].minSecurity == 150);
+    CHECK_FALSE(back.areas[2].mirror);
+}

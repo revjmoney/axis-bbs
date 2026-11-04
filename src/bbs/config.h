@@ -15,11 +15,12 @@ struct DoorEntry {
 
 // A file area. Its files live in /files/<id>/ on the SD card.
 struct FileArea;
-std::string areaText(const FileArea& a);  // "id|name" or "id|name|level", as the settings keep it
+std::string areaText(const FileArea& a);  // "id|name", "id|name|level" or "id|name|level|m", as the settings keep it
 
 struct FileArea {
     std::string id, name;
     int         minSecurity = 0;  // callers below this level don't see the area ("areaN=id|name|level")
+    bool        mirror = false;   // "areaN=id|name|level|m": every file kept on two SD cards (cluster/mirrorjob.h)
 };
 
 std::vector<FileArea> defaultFileAreas();  // Rev's list (design spec, file areas table)

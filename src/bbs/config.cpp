@@ -135,18 +135,23 @@ BbsConfig parseConfig(const std::string& ini) {
 }
 
 namespace {
-bool areaFrom(const std::string& v, FileArea& a) {  // "id|name" or "id|name|level"
+bool areaFrom(const std::string& v, FileArea& a) {  // "id|name", "id|name|level" or "id|name|level|m"
     size_t bar = v.find('|');
     if (bar == std::string::npos || bar == 0) return false;
     size_t bar2 = v.find('|', bar + 1);
+    size_t bar3 = bar2 == std::string::npos ? std::string::npos : v.find('|', bar2 + 1);
     a.id = v.substr(0, bar);
     a.name = v.substr(bar + 1, bar2 == std::string::npos ? std::string::npos : bar2 - bar - 1);
     a.minSecurity = bar2 == std::string::npos ? 0 : std::atoi(v.c_str() + bar2 + 1);
+    a.mirror = bar3 != std::string::npos && (v[bar3 + 1] == 'm' || v[bar3 + 1] == 'M');
     return true;
 }
 }  // namespace
 
-std::string areaText(const FileArea& a) { return a.id + "|" + a.name + (a.minSecurity ? "|" + std::to_string(a.minSecurity) : ""); }
+std::string areaText(const FileArea& a) {
+    if (a.mirror) return a.id + "|" + a.name + "|" + std::to_string(a.minSecurity) + "|m";
+    return a.id + "|" + a.name + (a.minSecurity ? "|" + std::to_string(a.minSecurity) : "");
+}
 
 BbsConfig mergeSettings(const BbsConfig& mine, const std::string& mainIni) {
     BbsConfig c = parseConfig(mainIni);
