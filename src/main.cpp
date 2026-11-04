@@ -1889,7 +1889,9 @@ static void runCommand(const String& cmd, Print& out);
 static void panelTap(WifiStream* s, const uint8_t* p, size_t n) {
     if (!panelSession || !panelSession->authed() || !panelClient.connected()) return;
     if (!panelWall && s->tapNode != panelConNode) return;
-    if (panelClient.availableForWrite() < (int)(n * 4 / 3 + 32)) return;  // the PC is behind: the tile skips ahead
+    static uint32_t second = 0, sent = 0;  // at most 32 KB a second to the PC: a slow PC skips frames, callers never wait
+    if (millis() - second > 1000) second = millis(), sent = 0;
+    if ((sent += n) > 32768) return;
     panelClient.print("SCR " + String(s->tapNode) + " " + base64::encode(p, n) + "\n");
 }
 void (*WifiStream::tap)(WifiStream*, const uint8_t*, size_t) = panelTap;
@@ -1963,10 +1965,11 @@ static std::string panelExtra(const std::string& in) {
 static void pumpPanel() {
     if (panelServer.hasClient()) {
         WiFiClient c = panelServer.available();
-        if (panelClient.connected()) {  // one panel at a time
-            c.print("BUSY\n");
-            c.stop();
-        } else {
+        {  // one panel at a time: a new one replaces the old (a restarted app's socket can look alive for minutes)
+            if (panelClient.connected()) {
+                if (panelConNode) panelExtra("CON OFF");
+                panelClient.stop();
+            }
             panelClient = c;
             char nonce[17];
             snprintf(nonce, sizeof nonce, "%08lx%08lx", (unsigned long)hwRandom(), (unsigned long)hwRandom());
@@ -2002,6 +2005,12 @@ static void pumpPanel() {
             if (panelLine.length() < 400) panelLine += ch;
             continue;
         }
+        if (panelSession->authed() && panelLine.startsWith("CMD ")) {  // straight to the socket: no copy of a long
+            runCommand(panelLine.substring(4), panelClient);           // reply in the main's small heap
+            panelClient.print("END\n");
+            panelLine = "";
+            continue;
+        }
         std::string reply = panelSession->line(panelLine.c_str());
         panelLine = "";
         if (!reply.empty()) panelClient.write((const uint8_t*)reply.data(), reply.size());
@@ -2013,9 +2022,8 @@ static void pumpPanel() {
     }
     if (panelSession->authed() && millis() - panelStatMs > 5000) {
         panelStatMs = millis();
-        std::string s = panelSession->run("@STATUS");
-        if (!s.empty() && s.back() == '\n') s.pop_back();
-        panelClient.print(("STAT " + s + "\n").c_str());
+        panelClient.print("STAT ");
+        runCommand("@STATUS", panelClient);  // (one line, ends with its own newline)
     }
 }
 

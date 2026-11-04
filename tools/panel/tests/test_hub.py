@@ -97,9 +97,10 @@ def test_settings_go_to_whichever_board_is_main_now():
         await hub.login('Rev', 'sysop1')
         await asyncio.sleep(0.1)
         await hub.command('@SET theme=oblivion')
-        assert b.commands == ['@SET theme=oblivion'] and a.commands == []
+        own = lambda fb: [c for c in fb.commands if c != '@NODES']  # (the app reads each node list to find boards)
+        assert own(b) == ['@SET theme=oblivion'] and own(a) == []
         await hub.command('@KICK 3', board='A')
-        assert a.commands == ['@KICK 3']
+        assert own(a) == ['@KICK 3']
     asyncio.run(go())
 
 

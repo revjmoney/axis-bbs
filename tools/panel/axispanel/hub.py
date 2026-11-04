@@ -1,5 +1,6 @@
 """Every board the panel knows: links, who is main, and where each command goes."""
 import asyncio
+import re
 
 from .board import BoardLink
 
@@ -26,6 +27,10 @@ class Hub:
     async def login(self, handle, password):
         """The sysop's login, tried on every known board; True if any board took it."""
         self.handle, self.password = handle, password
+        for _ in range(16):  # just started: give the main a few announcements to be heard
+            if self.links:
+                break
+            await asyncio.sleep(0.5)
         results = [await self.connect(ip) for ip in list(self.links)]
         return any(results)
 
@@ -41,10 +46,22 @@ class Hub:
         self.links[ip] = link
         if ok:
             asyncio.ensure_future(self._watch(ip, link))
+            asyncio.ensure_future(self._learn(link))
             if self.wall:
                 await link.ask('WALL ON')
         self._changed()
         return ok
+
+    async def _learn(self, link):
+        """Only the main announces itself: the other boards are found in its node list."""
+        try:
+            lines = await link.command('@NODES')
+        except Exception:
+            return
+        for line in lines:
+            m = re.search(r' ip (\d+\.\d+\.\d+\.\d+) ', line)
+            if m and m.group(1) not in self.links:
+                await self.connect(m.group(1))
 
     async def _watch(self, ip, link):
         while link.writer is not None:
