@@ -105,7 +105,9 @@ std::unique_ptr<axis::bbs::WriteFile> SdFileLibrary::create(const std::string& a
     if (!storageHasSd() || !safeName(areaId) || !safeName(name)) return nullptr;
     std::unique_ptr<SdWrite> w(new SdWrite);
     w->final = folderOf(areaId) + "/" + name;
-    w->temp = folderOf(areaId) + "/.upload.tmp";
+    // its own temp name: a mirror copy (cluster/mirrorjob.h) can land in an area while a caller uploads to it
+    static uint32_t serial = 0;
+    w->temp = folderOf(areaId) + "/.upload" + std::to_string(++serial % 100) + ".tmp";
     ::unlink(w->temp.c_str());  // a leftover from a dropped call
     w->fd = ::open(w->temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (w->fd < 0) return nullptr;
