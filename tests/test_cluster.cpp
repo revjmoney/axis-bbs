@@ -476,3 +476,32 @@ TEST_CASE("two mains without SD cards that tie on everything: the lower address 
     CHECK(a.c->role() == Role::Main);
     CHECK(b.c->role() == Role::Follower);
 }
+
+TEST_CASE("a chat line that arrives while a request waits is held until after it, so nothing nests") {
+    TwoBoards t;
+    bool once = true;
+    t.a.c->onRequest = [&](int, const std::string&) {
+        if (once) t.a.c->chat("Rev", "this arrives mid-request");  // reaches b before the reply does
+        once = false;
+        return std::string("1answer");
+    };
+    t.b.c->clockMs = [&] { return t.now; };
+    t.b.c->sleepMs = [&](uint32_t ms) {
+        t.now += ms;
+        t.a.c->tick(t.now);
+    };
+    int  heard = 0;
+    bool nested = true;
+    t.b.c->onChat = [&](const ChatLine&) {
+        heard++;
+        std::string r;
+        nested = t.b.c->request("again", r, 200);  // the BBS asking again from inside: must not nest
+    };
+    std::string reply;
+    CHECK(t.b.c->request("q", reply, 2000));
+    CHECK(reply == "1answer");
+    CHECK(heard == 0);  // held during the request
+    run({&t.a, &t.b}, t.now, 300);
+    CHECK(heard == 1);  // delivered after it
+    CHECK(nested);      // and by then a fresh request is fine
+}

@@ -126,6 +126,8 @@ private:
     uint32_t              wantReq_ = 0;      // request() is waiting for this reply
     std::string*          replyTo_ = nullptr;
     bool                  replied_ = false;
+    bool                  inRequest_ = false;  // request() is waiting: other frames are held, never handled inside it
+    std::vector<std::pair<Frame, std::string>> held_;  // what arrived meanwhile, for the next tick
     std::vector<NodeInfo> nodes_;
     std::vector<Link>     links_;  // main: one per follower; follower: one, to the main
 };

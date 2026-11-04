@@ -209,6 +209,10 @@ void Cluster::handleDatagram(const std::string& d, uint32_t from, uint32_t now) 
 }
 
 void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t now) {
+    if (inRequest_ && t != Frame::FileResp && role_ == Role::Follower) {  // the BBS is mid-request: deliver this after it
+        held_.emplace_back(t, body);
+        return;
+    }
     std::vector<std::string> f = fields(body);
     if (role_ == Role::Main) {
         if (t == Frame::Hello && f.size() >= 2) {
@@ -340,12 +344,13 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
 }
 
 bool Cluster::request(const std::string& req, std::string& reply, uint32_t timeoutMs) {
-    if (role_ != Role::Follower || links_.empty() || !clockMs || !sleepMs) return false;
+    if (role_ != Role::Follower || links_.empty() || !clockMs || !sleepMs || inRequest_) return false;  // (never nested)
     uint32_t id = nextReq_++, start = clockMs();
     if (!net_.send(links_[0].id, frame(Frame::FileReq, {num(id), req}))) return false;
     wantReq_ = id;
     replyTo_ = &reply;
     replied_ = false;
+    inRequest_ = true;
     while (!replied_ && clockMs() - start < timeoutMs) {
         std::string bytes;
         int         n = net_.recv(links_[0].id, bytes);
@@ -358,6 +363,7 @@ bool Cluster::request(const std::string& req, std::string& reply, uint32_t timeo
     }
     wantReq_ = 0;
     replyTo_ = nullptr;
+    inRequest_ = false;
     return replied_;
 }
 
@@ -377,6 +383,13 @@ void Cluster::sendUser(const std::string& record) {
 
 void Cluster::tick(uint32_t now) {
     if (role_ == Role::Off) return;
+    if (!held_.empty() && !links_.empty()) {  // frames that came in while a request waited
+        std::vector<std::pair<Frame, std::string>> h;
+        h.swap(held_);
+        for (auto& f : h) handleFrame(links_[0], f.first, f.second, now);
+    } else if (links_.empty()) {
+        held_.clear();
+    }
     std::string d;
     uint32_t    from;
     while (net_.recvDatagram(d, from)) handleDatagram(d, from, now);
