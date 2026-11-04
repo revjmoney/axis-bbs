@@ -1,7 +1,9 @@
 # Axis Micro BBS Firmware partition table (same on every board; see the v1 design, section 5.2)
+# 2026-11-04: app 1.5 MB -> 1.69 MB, door 768 KB -> 576 KB (LORD's image is about 400 KB).
+# LittleFS (spiffs) keeps its offset and size, so users, settings and logs survive the change.
 # Name,   Type, SubType, Offset,   Size
 nvs,      data, nvs,     0x9000,   0x5000
 otadata,  data, ota,     0xe000,   0x2000
-app0,     app,  ota_0,   0x10000,  0x180000
-door,     data, 0x41,    0x190000, 0xC0000
+app0,     app,  ota_0,   0x10000,  0x1B0000
+door,     data, 0x41,    0x1C0000, 0x90000
 spiffs,   data, spiffs,  0x250000, 0x1B0000

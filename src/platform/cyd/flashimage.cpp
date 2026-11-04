@@ -71,6 +71,7 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
     prefs.begin("door", true);
     uint32_t storedKey = prefs.getUInt(("k_" + id_).c_str(), 0), storedLen = prefs.getUInt(("l_" + id_).c_str(), 0);
     if (prefs.getString("cur", "") != id_.c_str()) storedKey = 0;  // the partition holds another door's image
+    if (prefs.getUInt("at", 0) != part->address) storedKey = 0;    // the partition table changed: the image isn't there
     prefs.end();
 
     if (force_ || storedKey != key_ || storedLen != len) {
@@ -124,6 +125,7 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
         prefs.begin("door", false);
         prefs.putUInt(("l_" + id_).c_str(), (uint32_t)len);
         prefs.putString("cur", id_.c_str());  // which door the one partition holds
+        prefs.putUInt("at", part->address);   // and where that partition was
         prefs.putUInt(("k_" + id_).c_str(), key_);  // last: the image is complete and verified
         prefs.end();
     }
