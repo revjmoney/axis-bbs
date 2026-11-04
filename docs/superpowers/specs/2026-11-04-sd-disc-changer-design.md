@@ -126,7 +126,7 @@ code as a build option.
 - **While the main's card is out:**
   - The main reads and writes the message bases and doors through the backup board, over the cluster
     link.
-  - Uploads are refused with a short "the upload area is offline, the system disc is out" notice.
+  - Uploads keep working: they go to the fixed upload area on the backup card (Rev).
   - The main's own disc areas disappear (disc out toast) like any other disc.
   - If there is no backup (no other card board), messages and doors are offline until a card returns,
     and callers get a clear notice instead of errors. The board must not crash.
