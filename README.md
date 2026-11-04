@@ -12,7 +12,7 @@ The software behind **AXIS UNDERGROUND CNC**. Made by Rev. J. Money, the maker o
 
 <a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/"><img src="site/media/axisbbs-cyd.jpg" alt="The AXIS BBS board, ready to plug in" width="480"></a>
 
-**[Ready to plug in: $79.00 + $9.00 shipping (US)](https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/)**. The board in a clear acrylic case with the firmware installed and tested, a touch stylus and a USB cable. You supply USB power and 2.4 GHz WiFi; a microSD card (FAT32) turns on the file areas.
+**[Ready to plug in: $79.00 + $9.00 shipping (US)](https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/)**. The board in a clear acrylic case with the firmware installed and tested, a touch stylus and a USB cable. You supply USB power and 2.4 GHz WiFi. **microSD card not included:** add your own (FAT32) to turn on the file areas.
 
 **Our test board, AXIS UNDERGROUND CNC, is up and running.** Request access for private testing: [email Rev](mailto:therealrevjmoney@gmail.com?subject=AXIS%20UNDERGROUND%20CNC%20private%20test%20access&body=Hi%20Rev%2C%20I%27d%20like%20to%20call%20the%20AXIS%20UNDERGROUND%20CNC%20test%20board.%0A%0AHandle%20I%27d%20like%3A%0AWhat%20I%27ll%20call%20in%20with%20(SyncTERM%2C%20NetRunner%20...)%3A%0A) (therealrevjmoney@gmail.com, subject "AXIS private test access") or ask on [Discord](https://discord.gg/23KqHWM6vd).
 
