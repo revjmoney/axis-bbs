@@ -41,6 +41,7 @@ add_library(axiscore STATIC
     src/bbs/wifipicker.cpp
     src/cluster/protocol.cpp
     src/cluster/remotefiles.cpp
+    src/cluster/pooledlib.cpp
     src/cluster/relay.cpp
     src/cluster/doorfs.cpp
     src/cluster/cluster.cpp
@@ -118,6 +119,7 @@ add_executable(axis_tests
     tests/test_wifipicker.cpp
     tests/test_cluster.cpp
     tests/test_remotefiles.cpp
+    tests/test_pooledlib.cpp
     tests/test_relay.cpp
     tests/test_doorfs.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
