@@ -1,0 +1,153 @@
+measure twice, cut once, scrap it anyway, blame the endmill
+the first part off a new program is always a paperweight
+close enough for government work. the government disagrees.
+there's no place like G28 X0 Y0 Z0
+a machinist is an engineer who can find the parts bin
+the spoilboard has more cuts in it than the project ever will
+someone zeroed Z on the clamp again. the clamp lost.
+rumor: the sysop's 4th axis has never once crashed. lies.
+feeds and speeds tables are suggestions, like speed limits
+chips or it didn't happen
+your tool isn't dull, it's experienced
+the shop vac has eaten more endmills than the machine has broken
+it's not a mistake, it's a prototype
+the second part is perfect. the customer wanted forty.
+"it'll only take five minutes" was said 9 hours ago
+every collet nut in the shop is the wrong size but one
+dead nuts on the first try means you measured wrong
+the coolant has achieved sentience and it smells like it
+nobody has ever found the 1/8 inch collet when they needed it
+a tenth is a tenth until it's the last tenth
+the e-stop is the most used button on the machine
+somewhere a 1/32 endmill just snapped and nobody heard it
+your toolpath looked great in the simulator. so did mine.
+the gantry is square. the gantry has never been square.
+real machinists sweep the floor with the part they just scrapped
+the longest job always runs out of filament at 98 percent
+air cutting: the safest machining there is
+climb vs conventional: the forums are still arguing
+the cat sat on the jog pendant. the cat now owns the shop.
+G0 Z-1. we don't talk about what happened next.
+one more pass. it's always one more pass.
+rumor has it the sysop names every endmill. RIP Kevin.
+a dial indicator never lies. the guy reading it might.
+the work offset was right. the program was in inches.
+metric vs imperial: the only war with no survivors
+step over 40 percent? bold. we respect it.
+the deburring is where the fingers go to bleed
+the machine isn't loud. you're just not wearing ear muffs.
+probe first, crash later
+rumor: the AXIS board was milled on a router made of other routers
+the fixture took 3 days. the part took 4 minutes.
+blue tape and superglue: the original workholding
+you can never have too many clamps. you can have too few.
+a sharp tool cuts. a dull tool rubs. a cheap tool screams.
+the chip load calculator says one thing, the noise says another
+it was square when it left here
+the drawing says plus or minus nothing. the drawing lies.
+the tolerances are tight but the budget is loose
+the boss said make it to the print. the print is a napkin.
+"can you just add a little radius there?" said every designer ever
+measure with a micrometer, mark with chalk, cut with an axe
+the spindle warm up is the most relaxing three minutes of the day
+dust collection: moving the mess from the floor to the air
+somebody touched the zero button. we will find them.
+rumor: RotatoCAM toolpaths are rendered by tiny shop gnomes
+a 4th axis is just a lathe that went to college
+your CAM software crashed? that's the CAM's way of saying no.
+the post processor is held together by hope and semicolons
+when in doubt, slow the feed down. when in more doubt, go home.
+the wrong stock size is the right stock size if you believe
+this job is a quick one. famous last words, part 4,293.
+rumor: the sysop's shop has never once been clean
+a dull V-bit will still sign your name. badly.
+endmills are consumables. the wallet is too.
+the machine knows when the customer is watching
+running in the dark? the lights went out to save the chips.
+there are two kinds of operators: crashed, and about to crash
+the vise jaws have more history than the history channel
+it cut perfect yesterday. it's the same file. it's not perfect.
+rumor: a 9600 baud modem once ran a CNC. it's still on the first line.
+tool length offset: the number you forget exactly once a week
+facing cut first, questions later
+aluminum: gummy, shiny, chips in your socks for a month
+MDF dust: the glitter of the woodshop
+acrylic melts if you look at it wrong. or right.
+hardwood: the router's favorite kind of loud
+brass cuts like butter. butter made of money.
+titanium: the material that makes your tools cry
+stainless: work hardens just to spite you
+foam: the only material that cuts itself
+the coffee is cold. the spindle is hot. the deadline was yesterday.
+rumor: the sysop's toolchanger is a coffee can and a prayer
+an apprentice asked for the left-handed endmill. still looking.
+go fetch the board stretcher and a metric crescent wrench
+the tap broke in the last hole. it always breaks in the last hole.
+a tap extractor is just a second tap you haven't broken yet
+the drill bit that walks is the drill bit that talks
+chatter is the machine trying to tell you something
+the machine stopped. that's either good or very bad.
+pause the job to check. it was fine. the pause ruined it.
+a happy machine sings. a sad machine sings louder.
+the dust shoe was off. the shop is now a snow globe.
+rumor: the LORD door was coded on a lathe
+your cabinet needs a 4th axis. trust me.
+nobody reads the manual until the smoke comes out
+the limit switch works. you found out the fun way.
+homing sequence: the machine's morning stretch
+backlash: when the machine has opinions about direction
+the belt is loose. the belt has always been loose.
+lead screw or ball screw, the debate continues on node 3
+steppers lose steps like I lose socks
+servos: steppers that went to therapy
+the controller firmware update fixed one bug and made two pets
+grbl, Mach3, LinuxCNC: pick your religion
+a G-code file is just a very bossy text file
+semicolon comments are the operator's diary
+M3 S12000: the sound of a paycheck starting
+M5: the sweetest command in the language
+M30: the job is done, go take a picture
+somebody ran the file twice. now we have a pair.
+the wasteboard is technically also a project
+rumor: there's a secret Z offset that makes everything perfect
+the part fits. the other part doesn't. they were cut together.
+a good fit is a press fit you didn't need a hammer for
+"just tap it in" ended with the big hammer
+the sacrificial layer has sacrificed enough
+double sided tape: holding the shop together since forever
+the hold down clamps are in the way of every single toolpath
+a tabbed part is a part with trust issues
+the last tab always breaks first
+rumor: the ring board LEDs blink faster when someone crashes a router
+3D printer people and CNC people: subtractive vs additive gang wars
+the laser cutter just smelled like burnt maple. it's art now.
+engrave it in reverse? no. engrave it in reverse.
+the slowest feed rate is the one the customer chose
+the job was quoted in hours. the job lives in days.
+rumor: chips found in the BBS server. the BBS server is the CNC.
+the tool library has 400 tools and you use 3
+quarter inch upcut: the duct tape of endmills
+ball nose for 3D, flat for life
+V-bit for signs, and for the occasional regret
+compression bit: two endmills that agreed to disagree
+a downcut leaves a clean top and a packed slot
+the bit is spinning backwards. the bit is fine. you aren't.
+sharpen your tools, sharpen your mind, sharpen your excuses
+safety glasses: the only tool that never gets used enough
+keep your fingers out of the work envelope. they don't grow back.
+rumor: a sysop once called in to the BBS from inside the enclosure
+the enclosure is soundproof. the neighbors disagree.
+running the spindle at night is how you meet the neighbors
+the shop light flickers when the spindle spins up. totally normal.
+your extension cord is not rated for that. it knows.
+the shop radio only plays one station, and it's static
+rumor: AXIS UNDERGROUND CNC runs on a $15 board and pure spite
+the CYD is small but the BBS is mighty
+two boards, seven nodes, zero sleep
+there's no crying in machining. there's just coolant in your eyes.
+when the job finishes at 3am, you will be there to see it
+the best tool is the one you didn't break today
+it's not hoarding if it's offcuts. offcuts are future parts.
+that scrap bin is load bearing
+the offcut you threw away was the exact size you needed
+rumor: the sysop keeps every broken endmill in a jar. the jar is full.

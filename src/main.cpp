@@ -180,7 +180,7 @@ static void listAddLocal(const std::string& n, const std::string& line) {
     if (!listName(n)) return;
     std::vector<std::string> v = listLoad(n);
     v.push_back(line.substr(0, 120));
-    while (v.size() > (n == "ballots" ? 500u : 50u)) v.erase(v.begin());
+    while (v.size() > (n == "ballots" ? 500u : n == "rumors" ? 300u : 50u)) v.erase(v.begin());
     std::string text;
     for (auto& l : v) text += l + "\n";
     flashWrite(("/list_" + n + ".txt").c_str(), text);
@@ -1877,6 +1877,9 @@ static void handleSerial() {
             cfg.dosHash = pw.length() ? axis::bbs::hashPassword(cfg.dosSalt, pw.c_str()) : std::string();
             bool ok = configSave(cfg);
             logEvent(String("sysop: DOS prompt password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
+        } else if (cmd.startsWith("@RUMOR ")) {  // "@RUMOR text": add a rumor to the board's list (the main keeps them)
+            sharedListAdd("rumors", cmd.substring(7).c_str());
+            Serial.println("axis: rumor added");
         } else if (cmd.startsWith("@SYSOPPASS ")) {  // "@SYSOPPASS secret" sets the sysop account's password (6+ characters)
             String pw = cmd.substring(11);
             if (pw.length() < 6) {
