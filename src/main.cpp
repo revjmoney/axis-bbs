@@ -30,6 +30,7 @@
 #include "bbs/theme.h"
 #include "bbs/setupportal.h"
 #include "cluster/doorfs.h"
+#include "door/screenmirror.h"
 #include "cluster/mirrorjob.h"
 #include "cluster/pooledlib.h"
 #include "cluster/relay.h"
@@ -292,6 +293,7 @@ static std::unique_ptr<axis::door::HostFs>      doorFs;     // the door's folder
 static std::unique_ptr<axis::door::LockTable>   doorRemoteLocks;  // a follower's door locks the main's records
 static std::unique_ptr<FlashImageSource>        doorImage;
 static std::unique_ptr<axis::door::DoorSession> door;
+static std::unique_ptr<axis::door::ScreenMirror> doorMirror;  // a door that draws on the PC screen (LORDCFG): sent as ANSI
 static axis::door::LockTable                    doorLocks;
 static std::unique_ptr<axis::bbs::AnsiViewer>   viewer;  // a door built into the firmware, when running
 static std::unique_ptr<axis::bbs::DosShell>     dosShell;  // the DOS Prompt door, when running
@@ -1236,12 +1238,13 @@ static void startDoor() {
     } else {
         doorFs.reset(new axis::PosixHostFs(dir));
     }
+    bool setup = d.drop == "local";  // a setup program (LORDCFG): the PC screen and keyboard, mirrored to the caller
     doorImage.reset(new FlashImageSource(d.id.c_str()));
     axis::door::DoorConfig c;
     c.dir = dir;
     c.exe = d.exe;
     c.args = axis::cluster::doorArgs(d.args, me);
-    if (d.args.find("%N") != std::string::npos && me != 1) {  // a multinode door (LORD): this node's own drop folder
+    if (!setup && d.args.find("%N") != std::string::npos && me != 1) {  // a multinode door (LORD): this node's own drop folder
         c.dropDir = "NODE" + std::to_string(me);
         axis::door::FileInfo fi;
         std::string          nodeDat = "NODE" + std::to_string(me) + ".DAT";
@@ -1261,7 +1264,8 @@ static void startDoor() {
             }
         }
     }
-    c.localMode = false;
+    c.localMode = setup;
+    doorMirror.reset(setup ? new axis::door::ScreenMirror : nullptr);
     c.imageSource = doorImage.get();
     c.arenas.emplace_back(lentRam, lentBytes);  // the screen copy becomes the door's first pages
     // Spare instruction RAM: malloc never hands it out (it can't be read a byte at a time), but
@@ -1287,7 +1291,7 @@ static void startDoor() {
         while (held) heap_caps_free(aside[--held]);
     }
     if (doorIram) c.arenas.emplace_back(doorIram, iramBytes);
-    c.dropFile = d.drop == "dorinfo" ? axis::door::DropFile::Dorinfo : axis::door::DropFile::DoorSys;
+    c.dropFile = setup ? axis::door::DropFile::None : d.drop == "dorinfo" ? axis::door::DropFile::Dorinfo : axis::door::DropFile::DoorSys;
     c.caller.alias = c.caller.realName = node->handle();
     c.caller.node = sessionNumber(curSession);
     busySlot = curSession;
@@ -1342,6 +1346,8 @@ static void finishDoor() {
     R   r = door->result();
     int peakKb = (int)door->memStats().peakRamPages * 4;
     door.reset();
+    if (doorMirror && line) line->write((const uint8_t*)"[0m[2J", 8);  // out of the setup screen
+    doorMirror.reset();
     doorImage.reset();
     doorFs.reset();
     (doorRemoteLocks ? *doorRemoteLocks : doorLocks).releaseOwner(sessionNumber(curSession));
@@ -2165,6 +2171,10 @@ static void serviceSession(int i) {
     }
     if (door && busySlot == i) {  // the door owns the caller's line; the BBS waits
         bool running = door->step(millis() - lastServedMs < 100 ? 8 : 30);  // short slices while a follower's door is asking us
+        if (doorMirror && line) {  // a setup program: its screen, as ANSI
+            std::string a = doorMirror->update(door->textPage());
+            if (!a.empty()) line->write((const uint8_t*)a.data(), a.size());
+        }
         if (line) line->flush();  // whatever the door drew this slice
         if (!running) finishDoor();
         return;

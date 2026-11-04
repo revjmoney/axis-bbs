@@ -98,7 +98,10 @@ public:
     const std::string& handle() const { return handle_; }
     // the door the caller picked ("" unless InDoor); the host runs it, then calls resumeAfterDoor
     std::string      doorRequested() const { return state_ == State::InDoor ? cfg_.doors[door_].id : ""; }
-    const DoorEntry& door() const { return cfg_.doors[door_]; }
+    const DoorEntry& door() const { return door_ < doorList_.size() ? doorList_[door_] : cfg_.doors[door_]; }
+    // the doors this caller can pick: the configured ones, and for the sysop each LORD's setup program
+    // (LORDCFG, drawn straight to the screen: drop "local")
+    std::vector<DoorEntry> doorChoices() const;
     void             resumeAfterDoor(DoorEnd how, uint32_t nowMs);
     // a download or upload from the Files menu (State::Transfer): the host runs it, then reports back
     const TransferRequest& transfer() const { return browser_->transfer(); }
@@ -186,6 +189,7 @@ private:
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
     size_t                    door_ = 0;
+    std::vector<DoorEntry>    doorList_;  // what showDoors listed
     UserStore*                users_ = nullptr;
     std::function<void()>     saveUsers_;
     uint32_t (*rng_)() = nullptr;

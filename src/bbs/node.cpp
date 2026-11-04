@@ -406,12 +406,24 @@ void Node::prompt() {
     }
 }
 
+std::vector<DoorEntry> Node::doorChoices() const {
+    std::vector<DoorEntry> v = cfg_.doors;
+    if (!sysop_) return v;
+    for (const DoorEntry& d : cfg_.doors) {
+        std::string exe = d.exe;
+        for (char& ch : exe) ch = (char)std::toupper((unsigned char)ch);
+        if (exe == "LORD.EXE") v.push_back({d.id, d.name + " Setup (sysop)", "LORDCFG.EXE", "", "local"});
+    }
+    return v;
+}
+
 void Node::showDoors() {
     out_ += theme::CLS;
     out_ += "\r\n" + theme::drip("DOORS");
     std::vector<std::pair<std::string, std::string>> rows;
-    for (size_t i = 0; i < cfg_.doors.size() && i < 35; i++)  // 1 to 9, then A, B, C ...
-        rows.push_back({"[" + std::string(1, i < 9 ? (char)('1' + i) : (char)('A' + i - 9)) + "]", cfg_.doors[i].name});
+    doorList_ = doorChoices();
+    for (size_t i = 0; i < doorList_.size() && i < 35; i++)  // 1 to 9, then A, B, C ...
+        rows.push_back({"[" + std::string(1, i < 9 ? (char)('1' + i) : (char)('A' + i - 9)) + "]", doorList_[i].name});
     out_ += theme::window("Doors", rows);
     state_ = State::Doors;
     prompt();
@@ -737,8 +749,8 @@ void Node::key(char c) {
         return;
     }
     if (state_ == State::Doors) {
-        size_t pick = c >= '1' && c <= '9' ? (size_t)(c - '1') : (c | 0x20) >= 'a' && (c | 0x20) <= 'z' ? (size_t)(9 + (c | 0x20) - 'a') : cfg_.doors.size();
-        if (pick < cfg_.doors.size()) {
+        size_t pick = c >= '1' && c <= '9' ? (size_t)(c - '1') : (c | 0x20) >= 'a' && (c | 0x20) <= 'z' ? (size_t)(9 + (c | 0x20) - 'a') : doorList_.size();
+        if (pick < doorList_.size()) {
             door_ = pick;
             state_ = State::InDoor;
             out_ += c;
