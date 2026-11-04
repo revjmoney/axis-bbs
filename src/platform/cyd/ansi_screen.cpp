@@ -14,21 +14,19 @@ const uint8_t kCga[16][3] = {{0, 0, 0},     {0, 0, 170},    {0, 170, 0},    {0, 
                              {85, 85, 85},  {85, 85, 255},  {85, 255, 85},  {85, 255, 255},
                              {255, 85, 85}, {255, 85, 255}, {255, 255, 85}, {255, 255, 255}};
 
-uint8_t glyph[256][32];  // 4x8 coverage levels 0..4 per character
 uint8_t lut[256][5];     // per attribute: palette number for each coverage level (the nearest to the blend)
 bool    ready = false;
 
 
+// how much of a 2x2 block of font pixels is lit (0..4): two bits from each of two font rows
+const uint8_t kPairBits[4] = {0, 1, 1, 2};
+inline int cover(uint8_t top, uint8_t bottom, int x) { return kPairBits[(top >> (6 - 2 * x)) & 3] + kPairBits[(bottom >> (6 - 2 * x)) & 3]; }
+
+// cells(r, c) -> {ch, attr}: an AnsiScreen's cells, or art straight from flash
+template <typename Cells>
+void renderCells(LGFX_Sprite& dst, int rows, Cells cells);
+
 void build() {
-    for (int ch = 0; ch < 256; ch++)
-        for (int y = 0; y < 8; y++)
-            for (int x = 0; x < 4; x++) {
-                const uint8_t* g = &vga_font8x16[ch * 16 + y * 2];
-                int            n = 0;
-                for (int dy = 0; dy < 2; dy++)
-                    for (int dx = 0; dx < 2; dx++) n += (g[dy] >> (7 - (x * 2 + dx))) & 1;
-                glyph[ch][y * 4 + x] = n;
-            }
     for (int a = 0; a < 256; a++) {
         const uint8_t* f = kCga[a & 15];
         const uint8_t* b = kCga[(a >> 4) & 7];  // bit 7 is blink, not bright background
@@ -53,21 +51,33 @@ void AnsiScreen::fill(int row, int col, int len, uint8_t ch, uint8_t attr) {
         if (row >= 0 && row < kRows && col + i >= 0 && col + i < kCols) cells[row][col + i] = {ch, attr};
 }
 
-void AnsiScreen::render(LGFX_Sprite& dst, int rows) const {
+namespace {
+template <typename Cells>
+void renderCells(LGFX_Sprite& dst, int rows, Cells cells) {
     if (!ready) build();
     uint8_t* fb = (uint8_t*)dst.getBuffer();
     if (!fb) return;
-    for (int r = 0; r < rows && r < kRows; r++)
+    for (int r = 0; r < rows && r < AnsiScreen::kRows; r++)
         for (int y = 0; y < 8; y++) {
             uint8_t* out = fb + (r * 8 + y) * 160;
-            for (int c = 0; c < kCols; c++) {
-                const uint8_t* g = &glyph[cells[r][c].ch][y * 4];
-                const uint8_t* l = lut[cells[r][c].attr];
-                out[0] = (uint8_t)(l[g[0]] << 4 | l[g[1]]);
-                out[1] = (uint8_t)(l[g[2]] << 4 | l[g[3]]);
+            for (int c = 0; c < AnsiScreen::kCols; c++) {  // the coverage straight from the font (no 8 KB table)
+                AnsiCell       cell = cells(r, c);
+                const uint8_t* g = &vga_font8x16[cell.ch * 16 + y * 2];
+                const uint8_t* l = lut[cell.attr];
+                out[0] = (uint8_t)(l[cover(g[0], g[1], 0)] << 4 | l[cover(g[0], g[1], 1)]);
+                out[1] = (uint8_t)(l[cover(g[0], g[1], 2)] << 4 | l[cover(g[0], g[1], 3)]);
                 out += 2;
             }
         }
+}
+}  // namespace
+
+void AnsiScreen::render(LGFX_Sprite& dst, int rows) const {
+    renderCells(dst, rows, [this](int r, int c) { return cells[r][c]; });
+}
+
+void AnsiScreen::renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int rows) {
+    renderCells(dst, rows, [art](int r, int c) { return AnsiCell{art[r][c][0], art[r][c][1]}; });
 }
 
 void BigText::clear(uint8_t attr) {

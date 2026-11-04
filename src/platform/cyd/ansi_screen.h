@@ -19,7 +19,9 @@ public:
     void load(const uint8_t art[kRows][kCols][2]);
     void text(int row, int col, const char* s, uint8_t attr);  // clipped at the right edge
     void fill(int row, int col, int len, uint8_t ch, uint8_t attr);
-    void render(LGFX_Sprite& dst, int rows = kRows) const;      // top `rows` rows, 8-bit RGB332 sprite
+    void render(LGFX_Sprite& dst, int rows = kRows) const;      // top `rows` rows, onto the 4-bit sprite
+    // art straight from flash (rows x 80 x {ch, attr}): no copy in RAM
+    static void renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int rows);
 };
 
 // A 40-column grid of full-size 8x16 cells, for text that has to be easy to read (15 rows fill

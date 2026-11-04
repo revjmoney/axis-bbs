@@ -55,6 +55,10 @@
 #include "platform/cyd/wifistream.h"
 #include "platform/posix/posixhostfs.h"
 
+// Size over speed for this file's own functions (screens, menus, the loop). After the includes on
+// purpose: inline functions from the door headers keep -O2 (a pragma above them slowed the door CPU).
+#pragma GCC optimize("Os")
+
 static constexpr int kNodeNumber = 1;
 
 enum class Mode { Normal, SetupChoice, SetupTelnet, SetupTouch, WifiPick };
@@ -324,7 +328,6 @@ static void bigButton(int y, const char* label, uint16_t color) {
 }
 
 // Waiting-for-caller screen: the drippy ANSI from art/wfc.ans with live status in its panel.
-static AnsiScreen wfc;
 static BigText    panel;
 // The waiting-for-caller screen: the board's activity at a glance. Blinking status lights, one
 // line per node on this board (tap one for its details), the newest events, a battery spot.
@@ -414,8 +417,7 @@ static void drawLocal() {
 }
 
 static void drawWfc() {
-    wfc.load(kWfcArt);
-    wfc.render(scr, 8);  // the compact drippy logo in small cells: the top 64 pixels
+    AnsiScreen::renderArt(scr, kWfcArt, kWfcRows);  // the compact drippy logo in small cells, from flash: the top 64 pixels
     drawBattery();
     const uint8_t F = 0x06, K = 0x07, V = 0x0F, DIMC = 0x08;
     const int     rows = 11, last = rows - 1;
@@ -1352,6 +1354,7 @@ static void startCluster() {
 // No screen to pick WiFi on: a hotspot, AXIS-SETUP, with one web page (setupportal.h). The
 // password goes from the form straight to wifiJoin and the board's saved networks, never logged.
 #include <WebServer.h>
+
 static std::unique_ptr<WebServer> portal;
 static std::vector<std::string>   portalNets;
 static void portalShow(const char* message) {
