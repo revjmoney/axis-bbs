@@ -140,6 +140,9 @@ class Term:
                         self.scroll()
 
     def png(self, path, title):
+        self.image(title).save(path)
+
+    def image(self, title):  # the screen as a PIL image (for PNGs and animation frames)
         font = vga_font()
         top = 24
         img = Image.new('RGB', (COLS * 8, ROWS * 16 + top), (20, 20, 20))
@@ -156,7 +159,7 @@ class Term:
         d.text((6, 4), title, font=ImageFont.truetype('consola.ttf', 14), fill=(200, 200, 200))
         if 0 <= self.y < ROWS and self.x < COLS:  # cursor
             d.rectangle([self.x * 8, top + self.y * 16 + 13, self.x * 8 + 7, top + self.y * 16 + 15], fill=(200, 200, 200))
-        img.save(path)
+        return img
 
 
 _FONT = []

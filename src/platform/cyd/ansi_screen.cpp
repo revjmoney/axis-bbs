@@ -96,6 +96,26 @@ void BigText::fill(int row, int col, int len, uint8_t ch, uint8_t attr) {
         if (row >= 0 && row < kRows && col + i >= 0 && col + i < kCols) cells[row][col + i] = {ch, attr};
 }
 
+void AnsiScreen::renderZoom(LGFX_Sprite& dst, int rows, int firstCol) const {
+    if (!ready) build();
+    uint8_t* fb = (uint8_t*)dst.getBuffer();
+    if (!fb) return;
+    for (int r = 0; r < rows && r < kRows; r++)
+        for (int y = 0; y < 8; y++) {
+            int py = r * 8 + y;
+            if (py >= 240) return;
+            uint8_t* out = fb + py * 160;
+            for (int c = 0; c < 40; c++, out += 4) {
+                int            col = firstCol + c;
+                const AnsiCell cell = col >= 0 && col < kCols ? cells[r][col] : AnsiCell{' ', 0x07};
+                uint8_t        bits = vga_font8x16[cell.ch * 16 + y * 2] | vga_font8x16[cell.ch * 16 + y * 2 + 1];
+                const uint8_t* l = lut[cell.attr];
+                for (int b = 0; b < 8; b += 2)
+                    out[b / 2] = (uint8_t)(((bits & (0x80 >> b)) ? l[4] : l[0]) << 4 | ((bits & (0x40 >> b)) ? l[4] : l[0]));
+            }
+        }
+}
+
 void BigText::render(LGFX_Sprite& dst, int y0, int rows) const {
     if (!ready) build();
     uint8_t* fb = (uint8_t*)dst.getBuffer();

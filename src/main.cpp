@@ -221,6 +221,27 @@ static std::string themeArt(const std::string& name) {
     artCache[name] = art;
     return art;
 }
+// The shared lists for the local console (callers use the same over their own node setup).
+static std::vector<std::string> sharedList(const std::string& n) {
+    if (!asFollower()) return n == "callers" ? lastCallers : listLoad(n);
+    std::vector<std::string> v;
+    std::string              reply;
+    if (cluster->request(n == "callers" ? std::string("K") : std::string("Y\x1f") + n, reply, 3000) && !reply.empty() && reply[0] == '1')
+        for (size_t pos = 1; pos < reply.size();) {
+            size_t e = reply.find('\n', pos);
+            if (e == std::string::npos) e = reply.size();
+            if (e > pos) v.push_back(reply.substr(pos, e - pos));
+            pos = e + 1;
+        }
+    return v;
+}
+static void sharedListAdd(const std::string& n, const std::string& line) {
+    if (!asFollower()) listAddLocal(n, line);
+    else {
+        std::string reply;
+        cluster->request(std::string("Z\x1f") + n + "\x1f" + line, reply, 3000);
+    }
+}
 static uint32_t lastServedMs = 0;  // main: a follower's door files
 static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string& req, std::string& reply) {
     return cluster && cluster->request(req, reply);
@@ -462,6 +483,8 @@ static std::unique_ptr<axis::bbs::Node> localNode;
 static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~9 KB)
 static std::unique_ptr<AnsiScreen>          localScreen;
 static bool                              localKeys = false;  // the keyboard is up
+static bool                              localZoom = true;   // 40 columns in 8x8 cells (readable), or all 80 in 4x8
+static int                               localPan = 0;       // zoomed: which 40 columns (0 or 40)
 static axis::bbs::TouchKeyboard          localKb("type, then OK", false, 70);
 static void localFeed() {
     if (!localNode) return;
@@ -504,10 +527,18 @@ static void drawLocal() {
                 const auto& cell = localTerm->cell(r, c);
                 localScreen->cells[r][c] = {cell.ch, cell.attr};
             }
-        localScreen->render(scr, axis::bbs::AnsiTerm::kRows);  // 200 pixels of the BBS, 80 columns
-        button(8, 206, 90, 30, "KEYS", false);
-        button(114, 206, 90, 30, "ENTER", false);
-        button(222, 206, 90, 30, "EXIT", true);
+        if (localZoom) {  // follow the cursor across the two halves
+            if (localTerm->col() >= localPan + 40) localPan = 40;
+            else if (localTerm->col() < localPan) localPan = 0;
+            localScreen->renderZoom(scr, axis::bbs::AnsiTerm::kRows, localPan);  // 200 pixels, 40 columns
+        } else {
+            localScreen->render(scr, axis::bbs::AnsiTerm::kRows);  // 200 pixels of the BBS, 80 columns
+        }
+        button(4, 206, 58, 30, "KEYS", false);
+        button(66, 206, 58, 30, "ENTER", false);
+        button(128, 206, 58, 30, localZoom ? "FULL" : "ZOOM", false);
+        button(190, 206, 58, 30, localPan ? "<<" : ">>", false);
+        button(256, 206, 60, 30, "EXIT", true);
     }
     scr.setFont(&fonts::Font0);
     localTerm->clean();
@@ -1632,13 +1663,19 @@ static void handleTap(int x, int y) {
                     localKb.reset("type, then OK", false);
                     localKeys = false;
                 }
-            } else if (y >= 206 && x < 98) {
+            } else if (y >= 206 && x < 64) {
                 localKeys = true;
-            } else if (y >= 206 && x >= 114 && x < 204) {
+            } else if (y >= 206 && x < 126) {
                 localNode->input((const uint8_t*)"\r", 1, millis());
-            } else if (y >= 206 && x >= 222) {
+            } else if (y >= 206 && x < 188) {
+                localZoom = !localZoom;
+            } else if (y >= 206 && x < 250) {
+                localPan = localPan ? 0 : 40;
+                localZoom = true;
+            } else if (y >= 206) {
                 endLocal();
             }
+            screenDirty = true;
             return;
         }
         if (sysop.isOpen()) {
@@ -1652,6 +1689,11 @@ static void handleTap(int x, int y) {
                                                 &callerFiles()));
             localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
             localNode->setMessages(&callerMessages());
+            localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
+            localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
+            localNode->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
+            localPan = 0;
+            localZoom = true;  // start readable
             localNode->setChat(
                 [](const std::string& text, bool page) {
                     if (!localNode) return;
