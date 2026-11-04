@@ -159,7 +159,7 @@ void AnsiViewer::showPiece(size_t i) {
         if (k) line_.write(p, k);
         if (k < n) ended = true;
         return !ended && line_.carrier();
-    });
+    }, state_);
     std::string s = "\x1b[0m\r\n";
     if (res == ZipReader::Result::Unsupported) s += std::string(AMBER) + "   (packed with an old PKZIP method this viewer can't open)\r\n";
     else if (res != ZipReader::Result::Ok && res != ZipReader::Result::Stopped) s += std::string(AMBER) + "   (this piece is damaged)\r\n";

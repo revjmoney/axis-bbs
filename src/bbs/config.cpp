@@ -58,6 +58,7 @@ std::vector<FileArea> defaultFileAreas() {
 
 BbsConfig parseConfig(const std::string& ini) {
     BbsConfig              c;
+    c.loginSplash = true;  // on unless the settings say login_splash=0
     std::vector<DoorEntry> listed;
     std::map<int, FileArea> areas;  // by number: sorted, and a repeated number replaces
     size_t pos = 0;
@@ -75,6 +76,8 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "sysop_salt") c.sysopSalt = v;
         else if (k == "sysop_hash") c.sysopHash = v;
         else if (k == "sysop_real_name") c.sysopRealName = v;
+        else if (k == "dospass_salt") c.dosSalt = v;
+        else if (k == "dospass_hash") c.dosHash = v;
         else if (k == "bbs_name") c.bbsName = v;
         else if (k == "location") c.location = v;
         else if (k == "board_name") c.boardName = v;
@@ -85,6 +88,8 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "new_user_security") c.newUserSecurity = n;
         else if (k == "daily_minutes") c.dailyMinutes = n;
         else if (k == "idle_minutes") c.idleMinutes = n;
+        else if (k == "login_splash") c.loginSplash = n != 0;
+        else if (k == "sessions") c.sessions = n < 1 ? 1 : n > 4 ? 4 : n;
         else if (k == "setup_done") c.setupDone = n == 1;
         else if (k.rfind("door", 0) == 0 && k.size() > 4 && std::isdigit((unsigned char)k[4])) {
             std::vector<std::string> f;
@@ -104,11 +109,23 @@ BbsConfig parseConfig(const std::string& ini) {
         } else c.unknown.emplace_back(k, v);
     }
     if (listed.empty()) listed = c.doors;  // none in the file: keep the default list
+    bool dos = false;
+    for (auto& d : listed) dos = dos || d.exe == "*DOSSHELL";
+    if (!dos) listed.push_back({"dos", "DOS Prompt (password)", "*DOSSHELL", "dosbox", "none"});
     c.doors = listed;
     if (!areas.empty()) {
         c.areas.clear();
         for (auto& a : areas) c.areas.push_back(a.second);
     }
+    return c;
+}
+
+BbsConfig mergeSettings(const BbsConfig& mine, const std::string& mainIni) {
+    BbsConfig c = parseConfig(mainIni);
+    c.boardName = mine.boardName;
+    c.sessions = mine.sessions;
+    c.telnetPort = mine.telnetPort;
+    c.setupDone = true;
     return c;
 }
 
@@ -120,6 +137,8 @@ std::string formatConfig(const BbsConfig& c) {
     kv("sysop_salt", c.sysopSalt);
     kv("sysop_hash", c.sysopHash);
     kv("sysop_real_name", c.sysopRealName);
+    kv("dospass_salt", c.dosSalt);
+    kv("dospass_hash", c.dosHash);
     kv("location", c.location);
     kv("board_name", c.boardName);
     kv("public_host", c.publicHost);
@@ -129,6 +148,8 @@ std::string formatConfig(const BbsConfig& c) {
     kv("new_user_security", std::to_string(c.newUserSecurity));
     kv("daily_minutes", std::to_string(c.dailyMinutes));
     kv("idle_minutes", std::to_string(c.idleMinutes));
+    kv("sessions", std::to_string(c.sessions));
+    kv("login_splash", c.loginSplash ? "1" : "0");
     for (size_t i = 0; i < c.doors.size(); i++) {
         const DoorEntry& d = c.doors[i];
         kv(("door" + std::to_string(i + 1)).c_str(), d.id + "|" + d.name + "|" + d.exe + "|" + d.args + "|" + d.drop);

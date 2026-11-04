@@ -27,12 +27,13 @@ public:
     void transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t size);
 
 private:
-    enum class St { Areas, List, ViewName, Viewing, DownName, UpDesc, Proto, UpName, Transfer };
+    enum class St { Areas, List, ViewName, Viewing, DownName, UpDesc, Proto, UpName, Transfer, InfoName };
     void showAreas();
     void openArea(size_t i);
     void showPage();
     void listPrompt();
     void view(const std::string& name);
+    void info(const std::string& name);  // [I]: everything about a file, a ZIP's whole listing
     void showMoreText();
     void askProtocol();
     void startTransfer();

@@ -49,3 +49,57 @@ TEST_CASE("answers can't break the file apart") {
     REQUIRE(t.all()[0].answers.size() == 1);
     CHECK(t.all()[0].answers[0].second == "line one  line two");
 }
+
+TEST_CASE("one user travels as a record and lands by handle, keeping this board's own id") {
+    UserStore main, follower;
+    User      a;
+    a.handle = "Spindle Kid";
+    a.status = User::Status::Validated;
+    main.add(User{});  // the main already has someone, so ids differ between boards
+    main.all()[0].handle = "Rev";
+    User& onMain = main.add(a);
+    std::string rec = formatUser(onMain);
+    User        got;
+    REQUIRE(parseUser(rec, got));
+    CHECK(got.handle == "Spindle Kid");
+    User& placed = follower.upsert(got);
+    CHECK(placed.id == 1);  // new here: this board's next id
+    got.calls = 7;
+    User& again = follower.upsert(got);
+    CHECK(follower.all().size() == 1);
+    CHECK(again.id == 1);
+    CHECK(again.calls == 7);
+    CHECK(again.status == User::Status::Validated);
+}
+
+TEST_CASE("the user sync sends only the users that changed since last time") {
+    UserStore s;
+    User      a, b;
+    a.handle = "Rev";
+    b.handle = "Chip Breaker";
+    s.add(a);
+    s.add(b);
+    UserSync sync;
+    CHECK(sync.changed(s).size() == 2);  // first time: everyone
+    CHECK(sync.changed(s).empty());
+    s.find("chip breaker")->calls = 3;
+    auto c = sync.changed(s);
+    REQUIRE(c.size() == 1);
+    User got;
+    REQUIRE(parseUser(c[0], got));
+    CHECK(got.handle == "Chip Breaker");
+    CHECK(got.calls == 3);
+}
+
+TEST_CASE("a record received from elsewhere is not sent back out again") {
+    UserStore s;
+    UserSync  sync;
+    User      a;
+    a.handle = "Rev";
+    s.add(a);
+    sync.changed(s);
+    User in;
+    in.handle = "Lathe Lord";
+    sync.received(formatUser(s.upsert(in)));
+    CHECK(sync.changed(s).empty());
+}

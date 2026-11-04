@@ -22,23 +22,31 @@ std::vector<FileArea> defaultFileAreas();  // Rev's list (design spec, file area
 
 struct BbsConfig {
     std::string sysopHandle, sysopSalt, sysopHash, sysopRealName;
+    std::string dosSalt, dosHash;  // the DOS Prompt door password (set at the serial console: @DOSPASS)
     std::string bbsName = "Axis Underground CNC", location, boardName = "axis", publicHost;
     int         telnetPort = 23;
     std::string timezone = "EASTERN";
     std::string ftnAddress = "99:1/0";
     int         newUserSecurity = 10, dailyMinutes = 60, idleMinutes = 5;
+    int         sessions = 2;
+    bool        loginSplash = false;  // Rev's RotatoCAM ANSI splash before the login screen ("login_splash", on unless 0)  // callers this board takes at once (1 to 4); doors and transfers one at a time
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)
     std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "LORD.EXE", "1 /DREW", "doorsys"},
                                  {"blackjack", "BBS Black Jack", "BLKJK.EXE", "BJ.CFG", "doorsys"},
-                                 {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"}};
+                                 {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"},
+                                 {"dos", "DOS Prompt (password)", "*DOSSHELL", "dosbox", "none"}};
+    // "*DOSSHELL": args = its sandbox folder on the SD card; always listed (added if a saved list lacks it)
     std::vector<FileArea>  areas = defaultFileAreas();  // "areaN=id|name"; the defaults unless listed
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save
 };
 
 BbsConfig   parseConfig(const std::string& ini);
 std::string formatConfig(const BbsConfig& c);
+// A cluster follower's settings: the main's (one BBS), keeping this board's own name, session count
+// and telnet port; set up, since the main was.
+BbsConfig   mergeSettings(const BbsConfig& mine, const std::string& mainIni);
 const char* tzRule(const std::string& name);  // POSIX TZ rule, "" if unknown
 const std::vector<std::string>& tzNames();
 

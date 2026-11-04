@@ -5,11 +5,14 @@
 namespace axis::net {
 
 namespace {
-constexpr size_t kMaxQueued = 4096;  // stop reading the socket while this many keys wait
+constexpr size_t kMaxQueued = 1024;  // stop reading the socket while this many keys wait (a busy main has ~8 KB blocks)
 constexpr size_t kBatch = 1024;      // send once this much output is waiting
 }
 
-void TelnetStream::start() { writeRaw(telnet_.initialNegotiation()); }
+void TelnetStream::start() {
+    // (no reserve: on a busy main a call starts with little heap; buffers grow only as needed)
+    writeRaw(telnet_.initialNegotiation());
+}
 
 // Refill from the socket only once everything already read is used up: asking the socket for
 // every byte (and shifting the buffer by one) made uploads crawl at 3 KB/s.
@@ -84,9 +87,13 @@ void TelnetStream::flush() {
 }
 
 void TelnetStream::write(const uint8_t* p, size_t n) {
-    if (!n || !up_) return;
-    out_ += telnet_.toNet(p, n);
-    if (out_.size() >= kBatch) flush();
+    while (n && up_) {  // a piece at a time: a whole screen never needs one big buffer (the heap is fragmented)
+        size_t k = n < kBatch ? n : kBatch;
+        out_ += telnet_.toNet(p, k);
+        p += k;
+        n -= k;
+        if (out_.size() >= kBatch) flush();
+    }
 }
 
 bool TelnetStream::carrier() {

@@ -6,6 +6,7 @@
 #include "bbs/password.h"
 #include "bbs/theme.h"
 
+#include <cstring>
 #include <cctype>
 #include <cstdio>
 
@@ -53,10 +54,16 @@ std::string boxEdge(bool top) {
 }
 
 // The caller's first screen: the drippy logo (art/login.ans), then the board and the system.
+static std::string welcomeBoxes(int node, const SysInfo& s, const BbsConfig& cfg);
+
 std::string welcome(int node, const SysInfo& s, const BbsConfig& cfg) {
     std::string w = CLS;
     w += kLoginArt;  // 80-column rows: each one wraps to the next by itself
-    w += RST;
+    return w + welcomeBoxes(node, s, cfg);
+}
+
+static std::string welcomeBoxes(int node, const SysInfo& s, const BbsConfig& cfg) {
+    std::string w = RST;
     std::string who = std::to_string(s.nodesTotal ? s.nodes.size() : 1) + " of " + std::to_string(s.nodesTotal) + "  ";
     for (size_t i = 0; i < s.nodes.size(); i++)
         who += "[" + std::to_string(i + 1) + "] " + ((int)i + 1 == node ? "you" : s.nodes[i].empty() ? "waiting" : s.nodes[i]) + " ";
@@ -124,7 +131,26 @@ void Node::pendingMenu() {
 
 void Node::begin(uint32_t nowMs) {
     lastInput_ = nowMs;
-    out_ += welcome(node_, info_(), cfg_);
+    if (cfg_.loginSplash) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
+        state_ = State::Splash;
+        splash_.reset(new Splash(nowMs));
+        out_ += splash_->step(nowMs);
+        return;
+    }
+    showWelcome();
+}
+
+void Node::showWelcome() {
+    state_ = State::Login;
+    if (direct_) {  // the art from flash, straight out; only the boxes are built here
+        if (!out_.empty()) direct_(out_.data(), out_.size());
+        out_.clear();
+        direct_(CLS, std::strlen(CLS));
+        direct_(kLoginArt, sizeof kLoginArt - 1);
+        out_ += welcomeBoxes(node_, info_(), cfg_);
+    } else {
+        out_ += welcome(node_, info_(), cfg_);
+    }
     prompt();
 }
 
@@ -160,6 +186,14 @@ void Node::resumeAfterDoor(DoorEnd how, uint32_t nowMs) {
     if (state_ != State::InDoor) return;
     lastInput_ = nowMs;
     state_ = State::Menu;
+    if (how == DoorEnd::Busy) {  // one door at a time per board: they never went in
+        out_ += "\r\n\r\n   ";
+        out_ += AMBER;
+        out_ += "The door is busy: another caller on this board is playing one. Try again in a bit,";
+        out_ += "\r\n   or call back and you may land on a free node.";
+        showMenu();
+        return;
+    }
     out_ += RST;
     out_ += "\x1b[2J\x1b[H\r\n   ";
     out_ += DIM;
@@ -182,6 +216,8 @@ void Node::showMenu() {
     out_ += "   ";
     out_ += theme::key("F", "iles   ") + theme::key("D", "oors   ") + theme::key("I", "nfo   ") + theme::key("C", "redits   ") +
             theme::key("G", "oodbye");
+    out_ += "\r\n   ";
+    out_ += theme::key("T", "eleconference   ") + theme::key("W", "ho's online   ") + theme::key("P", "age the sysop");
     out_ += "\r\n";
     prompt();
 }
@@ -192,6 +228,10 @@ void Node::input(const uint8_t* p, size_t n, uint32_t nowMs) {
 }
 
 void Node::key(char c) {
+    if (state_ == State::Splash) {  // any key: on to the login screen (at the next poll)
+        splash_.reset();
+        return;
+    }
     if (state_ == State::Login) {
         if (c == '\r') {
             size_t a = line_.find_first_not_of(' '), b = line_.find_last_not_of(' ');
@@ -391,8 +431,48 @@ void Node::key(char c) {
         }
         return;
     }
+    if (state_ == State::Chat || state_ == State::Paging) {
+        lineKey(c);
+        return;
+    }
     if (state_ != State::Menu) return;
     switch (c | 0x20) {  // either case
+        case 't':
+        case 'p':
+            if (!say_) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += "Chat is offline right now.";
+                showMenu();
+                break;
+            }
+            line_.clear();
+            out_ += "\r\n\r\n   ";
+            if ((c | 0x20) == 't') {
+                state_ = State::Chat;
+                out_ += theme::fade("TELECONFERENCE");
+                out_ += std::string(theme::TEXT) + "  every node hears you. " + theme::ORANGE + "/Q" + theme::TEXT + " leaves.\r\n\r\n";
+                out_ += std::string(theme::ORANGE) + "> " + theme::WHITE;
+            } else {
+                state_ = State::Paging;
+                out_ += std::string(theme::TEXT) + "Message for the sysop (Enter alone to cancel):\r\n   " + theme::ORANGE + "> " + theme::WHITE;
+            }
+            break;
+        case 'w': {
+            out_ += "\r\n\r\n   ";
+            out_ += theme::fade("WHO'S ONLINE");
+            out_ += "\r\n";
+            std::vector<WhoLine> all = who_ ? who_() : std::vector<WhoLine>{{node_, handle_, "Menu"}};
+            for (const WhoLine& w : all) {
+                char b[160];
+                std::snprintf(b, sizeof b, "   %snode %-3d %s%-24s %s%s\r\n", theme::ORANGE, w.node, theme::WHITE,
+                              w.handle.empty() ? "" : w.handle.c_str(), theme::TEXT,
+                              w.handle.empty() ? "waiting for a caller" : w.activity.c_str());
+                out_ += b;
+            }
+            showMenu();
+            break;
+        }
         case 'f':
             if (!files_) {
                 out_ += "\r\n\r\n   ";
@@ -449,6 +529,46 @@ void Node::key(char c) {
     }
 }
 
+void Node::lineKey(char c) {
+    if (c == '\r') {
+        std::string text = line_;
+        line_.clear();
+        out_ += "\r\n";
+        if (state_ == State::Paging) {
+            state_ = State::Menu;
+            if (!text.empty()) {
+                say_(text, true);
+                out_ += std::string("   ") + theme::TEXT + "The sysop has been paged on every node's screen.";
+            }
+            showMenu();
+        } else if (text == "/q" || text == "/Q") {
+            state_ = State::Menu;
+            showMenu();
+        } else {
+            if (!text.empty()) say_(text, false);  // it shows, with a fresh prompt, when it comes back from the main
+            else out_ += std::string(theme::ORANGE) + "> " + theme::WHITE;
+        }
+    } else if (c == 8 || c == 127) {
+        if (!line_.empty()) {
+            line_.pop_back();
+            out_ += "\b \b";
+        }
+    } else if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && line_.size() < 70) {
+        line_ += c;
+        out_ += c;
+    }
+}
+
+void Node::chatIn(int node, const std::string& handle, const std::string& text, bool page) {
+    if (state_ != State::Chat || page) return;  // pages are for the sysop's screens; others wait their turn
+    out_ += "\r\x1b[K";  // over the half-typed line, then put it back below
+    char b[48];
+    std::snprintf(b, sizeof b, "%s[%d] ", theme::DGREY, node);
+    out_ += b;
+    out_ += std::string(theme::ORANGE) + handle + theme::DGREY + ": " + theme::WHITE + text + "\r\n";
+    out_ += std::string(theme::ORANGE) + "> " + theme::WHITE + line_;
+}
+
 void Node::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t nowMs) {
     if (state_ != State::Transfer) return;
     lastInput_ = nowMs;
@@ -457,6 +577,16 @@ void Node::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string&
 }
 
 void Node::poll(uint32_t nowMs) {  // the idle timer covers the application and the pending screen too
+    if (state_ == State::Splash) {
+        if (splash_ && !splash_->done(nowMs)) {
+            out_ += splash_->step(nowMs);
+            return;
+        }
+        splash_.reset();
+        lastInput_ = nowMs;
+        showWelcome();
+        return;
+    }
     if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";
         out_ += AMBER;

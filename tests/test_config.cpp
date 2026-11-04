@@ -74,20 +74,21 @@ TEST_CASE("timezone rules") {
 
 TEST_CASE("config has LORD as the default door") {
     auto c = axis::bbs::parseConfig("");
-    REQUIRE(c.doors.size() == 3);
+    REQUIRE(c.doors.size() == 4);
     CHECK(c.doors[0].id == "lord");
     CHECK(c.doors[1].id == "blackjack");
     CHECK(c.doors[2].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
+    CHECK(c.doors[3].exe == "*DOSSHELL");  // the built-in DOS Prompt
     CHECK(c.doors[0].args == "1 /DREW");
 }
 
 TEST_CASE("config doors round trip") {
     auto c = axis::bbs::parseConfig("door1=bre|Barren Realms Elite|BRE.EXE|/N1|dorinfo\n");
-    REQUIRE(c.doors.size() == 1);
+    REQUIRE(c.doors.size() == 2);  // plus the DOS Prompt, always listed
     CHECK(c.doors[0].name == "Barren Realms Elite");
     CHECK(c.doors[0].drop == "dorinfo");
     auto d = axis::bbs::parseConfig(axis::bbs::formatConfig(c));
-    REQUIRE(d.doors.size() == 1);
+    REQUIRE(d.doors.size() == 2);
     CHECK(d.doors[0].exe == "BRE.EXE");
 }
 
@@ -125,4 +126,56 @@ TEST_CASE("file areas sort by number and a repeated number replaces the earlier 
     CHECK(c.areas[0].id == "axis");
     CHECK(c.areas[1].id == "text");
     CHECK(c.areas[2].id == "models");
+}
+
+TEST_CASE("the DOS prompt password hash survives a save, and its door is always listed") {
+    BbsConfig c;
+    c.dosSalt = "00112233445566778899aabbccddeeff";
+    c.dosHash = "abc123";
+    c.doors = {{"lord", "Legend of the Red Dragon", "LORD.EXE", "1 /DREW", "doorsys"}};
+    BbsConfig back = parseConfig(formatConfig(c));
+    CHECK(back.dosSalt == c.dosSalt);
+    CHECK(back.dosHash == "abc123");
+    bool dos = false;
+    for (auto& d : back.doors) dos = dos || d.exe == "*DOSSHELL";
+    CHECK(dos);
+    CHECK(back.doors.size() == 2);
+    CHECK(parseConfig(formatConfig(back)).doors.size() == 2);  // listed once, not again on every save
+}
+
+TEST_CASE("a board takes two callers at once unless the settings say otherwise, and never more than four") {
+    CHECK(parseConfig("").sessions == 2);
+    CHECK(parseConfig("sessions=3\n").sessions == 3);
+    CHECK(parseConfig("sessions=9\n").sessions == 4);
+    CHECK(parseConfig("sessions=0\n").sessions == 1);
+    BbsConfig c;
+    c.sessions = 3;
+    CHECK(parseConfig(formatConfig(c)).sessions == 3);
+}
+
+TEST_CASE("a follower takes the main's settings but keeps its own name, session count and port") {
+    BbsConfig mine;
+    mine.boardName = "axis2";
+    mine.sessions = 3;
+    mine.telnetPort = 2323;
+    mine.location = "old place";
+    BbsConfig main;
+    main.boardName = "axis";
+    main.location = "Myrtle Beach, SC, USA";
+    main.sysopHandle = "Rev";
+    main.setupDone = true;
+    BbsConfig got = mergeSettings(mine, formatConfig(main));
+    CHECK(got.location == "Myrtle Beach, SC, USA");
+    CHECK(got.sysopHandle == "Rev");
+    CHECK(got.boardName == "axis2");
+    CHECK(got.sessions == 3);
+    CHECK(got.telnetPort == 2323);
+    CHECK(got.setupDone);
+}
+
+TEST_CASE("the login splash is on unless the settings turn it off") {
+    CHECK(parseConfig("").loginSplash);
+    CHECK_FALSE(parseConfig("login_splash=0\n").loginSplash);
+    BbsConfig c = parseConfig("login_splash=0\n");
+    CHECK_FALSE(parseConfig(formatConfig(c)).loginSplash);
 }

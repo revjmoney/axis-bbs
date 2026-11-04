@@ -19,6 +19,11 @@ add_library(axiscore STATIC
     src/bbs/filebrowser.cpp
     src/bbs/zipreader.cpp
     src/bbs/ansiviewer.cpp
+    src/bbs/rotatelog.cpp
+    src/bbs/dosshell.cpp
+    src/bbs/ledsignal.cpp
+    src/bbs/setupportal.cpp
+    src/bbs/splash.cpp
     src/bbs/theme.cpp
     src/bbs/transferjob.cpp
     src/bbs/uploadproc.cpp
@@ -26,6 +31,10 @@ add_library(axiscore STATIC
     src/bbs/newuser.cpp
     src/bbs/touchkeyboard.cpp
     src/bbs/wifipicker.cpp
+    src/cluster/protocol.cpp
+    src/cluster/remotefiles.cpp
+    src/cluster/relay.cpp
+    src/cluster/cluster.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp
@@ -74,6 +83,11 @@ add_executable(axis_tests
     tests/test_files.cpp
     tests/test_zip.cpp
     tests/test_ansiview.cpp
+    tests/test_rotatelog.cpp
+    tests/test_dosshell.cpp
+    tests/test_ledsignal.cpp
+    tests/test_setupportal.cpp
+    tests/test_splash.cpp
     tests/test_transfer.cpp
     tests/test_theme.cpp
     tests/test_transferjob.cpp
@@ -81,7 +95,10 @@ add_executable(axis_tests
     tests/test_palette.cpp
     tests/test_users.cpp
     tests/test_accounts.cpp
-    tests/test_wifipicker.cpp)
+    tests/test_wifipicker.cpp
+    tests/test_cluster.cpp
+    tests/test_remotefiles.cpp
+    tests/test_relay.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)

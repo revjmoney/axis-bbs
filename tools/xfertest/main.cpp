@@ -4,6 +4,7 @@
 //   xfertest HOST PORT download AREA# FILE OUT [z|x|k]      download FILE from area AREA# to OUT
 //   xfertest HOST PORT upload AREA# LOCALFILE "desc" [z|x|k] upload LOCALFILE into area AREA#
 // The PC side runs Axis's own ZMODEM/XMODEM; a real terminal (SyncTERM) is the other check.
+#include <cstdlib>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -71,7 +72,14 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!waitFor(*line, "Handle:")) return 1;
-    send(*line, "XferTest\r");
+    // an account to log in with (boards with accounts): AXIS_HANDLE and AXIS_PASSWORD, kept off the command line
+    const char* handle = std::getenv("AXIS_HANDLE");
+    const char* pass = std::getenv("AXIS_PASSWORD");
+    send(*line, std::string(handle ? handle : "XferTest") + "\r");
+    if (pass) {
+        if (!waitFor(*line, "assword")) return 1;
+        send(*line, std::string(pass) + "\r");
+    }
     if (!waitFor(*line, "Command:")) return 1;
     send(*line, "f");
     if (!waitFor(*line, "Area number")) return 1;

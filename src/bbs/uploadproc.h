@@ -28,6 +28,7 @@ public:
 
     UploadProcessor(FileLibrary& lib, std::string area, std::string name, UploadInfo info, uint8_t* workspace,
                     size_t workspaceSize);
+    void               setZipState(uint8_t* state) { state_ = state; }  // ZipReader::kStateBytes, when the workspace is only the 32 KB window
     bool               step();  // false once finished
     Result             result() const { return result_; }
     Stage              stage() const { return stage_; }
@@ -46,6 +47,7 @@ private:
     UploadInfo                  info_;
     uint8_t*                    ws_;
     size_t                      wsSize_;
+    uint8_t*                    state_ = nullptr;
     std::unique_ptr<RandomFile> in_;
     std::unique_ptr<ZipReader>  zip_;
     std::unique_ptr<WriteFile>  out_;

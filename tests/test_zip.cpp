@@ -109,3 +109,29 @@ TEST_CASE("zip reader reads every piece of a real artpack") {
         CHECK(total == e.usize);
     }
 }
+
+TEST_CASE("zip reader inflates with its 32 KB window and its state in two separate blocks") {
+    auto z = testZip();
+    auto r = readerOver(z);
+    REQUIRE(r.open());
+    std::string whole = extract(r, "REV-AXIS.ANS");
+    std::vector<uint8_t> window(38400), state(ZipReader::kStateBytes);  // the screen copy, and a bit of heap
+    std::string          out;
+    auto res = r.extract(r.entries()[0], window.data(), window.size(),
+                         [&](const uint8_t* p, size_t n) {
+                             out.append((const char*)p, n);
+                             return true;
+                         },
+                         state.data());
+    CHECK(res == ZipReader::Result::Ok);
+    CHECK(out == whole);
+}
+
+TEST_CASE("zip reader says it lacks memory, not that a good ZIP is damaged, when the workspace is short") {
+    auto z = testZip();
+    auto r = readerOver(z);
+    REQUIRE(r.open());
+    std::vector<uint8_t> small(38400);
+    auto res = r.extract(r.entries()[0], small.data(), small.size(), [](const uint8_t*, size_t) { return true; });
+    CHECK(res == ZipReader::Result::NoMemory);
+}

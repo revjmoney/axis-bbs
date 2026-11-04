@@ -7,6 +7,7 @@
 #include <cstdlib>
 
 #include "bbs/theme.h"
+#include "bbs/zipreader.h"
 
 namespace axis::bbs {
 
@@ -103,10 +104,72 @@ void FileBrowser::showPage() {
 
 void FileBrowser::listPrompt() {
     out_ += "\r\n   ";
-    out_ += theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("D", "ownload  ") +
-            theme::key("U", "pload  ") + theme::key("Q", "uit");
+    out_ += theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
+            theme::key("D", "ownload  ") + theme::key("U", "pload  ") + theme::key("Q", "uit");
     out_ += theme::WHITE;
     out_ += ": ";
+}
+
+void FileBrowser::info(const std::string& name) {
+    const FileEntry* f = nullptr;
+    for (const FileEntry& e : files_)
+        if (sameName(e.name, name)) f = &e;
+    if (!f) {
+        out_ += AMBER;
+        out_ += "   No file by that name in this area.\r\n";
+        st_ = St::List;
+        listPrompt();
+        return;
+    }
+    std::vector<std::pair<std::string, std::string>> rows = {
+        {"file", f->name}, {"size", fileSizeText(f->size) + "  (" + std::to_string(f->size) + " bytes)"}, {"area", areas_[area_].name}};
+    if (!f->desc.empty()) rows.push_back({"about", f->desc.substr(0, 60)});
+    std::string up = f->name;
+    for (char& ch : up) ch = (char)std::toupper((unsigned char)ch);
+    std::unique_ptr<RandomFile> file;
+    std::unique_ptr<ZipReader>  zip;
+    if (up.size() > 4 && up.compare(up.size() - 4, 4, ".ZIP") == 0 && (file = lib_.open(areas_[area_].id, f->name))) {
+        RandomFile* raw = file.get();
+        zip.reset(new ZipReader([raw](uint32_t off, uint8_t* buf, size_t n) { return raw->readAt(off, buf, n); }, raw->size()));
+        if (!zip->open()) rows.push_back({"archive", "not a readable ZIP (damaged, or an old method)"});
+    }
+    out_ += "\r\n";
+    out_ += theme::window("FILE INFO", rows);
+    if (zip && !zip->entries().empty()) {  // the central directory: every entry, no unpacking needed
+        uint64_t total = 0;
+        char     b[160];
+        out_ += std::string("\r\n   ") + theme::DGREY + "name             size    packed  method   date       crc\r\n";
+        size_t shown = 0;
+        for (const ZipEntry& e : zip->entries()) {
+            total += e.usize;
+            if (shown++ >= 40) continue;  // a long pack: the first 40, then the count
+            const char* how = e.method == 0 ? "stored" : e.method == 8 ? "deflate" : e.method == 6 ? "implode"
+                            : e.method == 1 ? "shrink" : "other";
+            std::snprintf(b, sizeof b, "   %s%-14.14s %s%7lu %9lu  %-7s  %04u-%02u-%02u  %08lx\r\n", theme::WHITE, e.name.c_str(), theme::TEXT,
+                          (unsigned long)e.usize, (unsigned long)e.csize, how, 1980u + (e.date >> 9), (e.date >> 5) & 15u,
+                          e.date & 31u, (unsigned long)e.crc);
+            out_ += b;
+        }
+        std::snprintf(b, sizeof b, "   %s%u files, %lu bytes unpacked%s\r\n", theme::ORANGE, (unsigned)zip->entries().size(),
+                      (unsigned long)total, shown > 40 ? " (first 40 listed)" : "");
+        out_ += b;
+        for (const ZipEntry& e : zip->entries()) {  // FILE_ID.DIZ, when it's stored as is (no workspace here to unpack)
+            std::string n = e.name;
+            for (char& ch : n) ch = (char)std::toupper((unsigned char)ch);
+            if (n != "FILE_ID.DIZ" || e.method != 0 || e.usize > 2048) continue;
+            std::string diz;
+            uint8_t     scratch[1];
+            zip->extract(e, scratch, 0, [&](const uint8_t* p, size_t k) {
+                diz.append((const char*)p, k);
+                return true;
+            });
+            out_ += std::string("\r\n   ") + theme::DGREY + "FILE_ID.DIZ" + theme::TEXT + "\r\n";
+            for (char ch : diz) out_ += ch == '\n' ? std::string("\r\n") : ch == '\r' ? std::string() : std::string(1, ch);
+            out_ += "\r\n";
+        }
+    }
+    st_ = St::List;
+    listPrompt();
 }
 
 void FileBrowser::view(const std::string& name) {
@@ -262,11 +325,30 @@ bool FileBrowser::key(char c) {
                     line_.clear();
                     st_ = St::ViewName;
                     break;
+                case 'i':
+                    out_ += "i\r\n   ";
+                    out_ += DIM;
+                    out_ += "File name: ";
+                    out_ += HI;
+                    line_.clear();
+                    st_ = St::InfoName;
+                    break;
                 case 'q':
                     showAreas();
                     break;
                 default:
                     break;
+            }
+            return true;
+        case St::InfoName:
+            if (!lineKey(c, 40)) return true;
+            if (line_.empty()) {
+                st_ = St::List;
+                listPrompt();
+            } else {
+                std::string name = line_;
+                line_.clear();
+                info(name);
             }
             return true;
         case St::ViewName:

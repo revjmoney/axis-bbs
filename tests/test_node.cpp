@@ -235,3 +235,133 @@ TEST_CASE("login screen fits a 25 line terminal") {
     for (size_t i = out.find("\x1b[2J"); i < out.size(); i++) lines += out[i] == '\n';
     CHECK(lines <= 24);
 }
+
+TEST_CASE("with a direct line the login art goes straight out, never copied into the node's output") {
+    Node        plainNode(1, info);
+    plainNode.begin(0);
+    std::string whole = plainNode.takeOutput();
+
+    Node        n(1, info);
+    std::string direct;
+    n.setDirect([&](const char* p, size_t len) { direct.append(p, len); });
+    n.begin(0);
+    std::string rest = n.takeOutput();
+    CHECK(direct + rest == whole);  // the same screen, in the same order
+    CHECK(direct.find(kLoginArt) != std::string::npos);
+    CHECK(rest.find(kLoginArt) == std::string::npos);
+    CHECK(rest.size() < 4096);  // what the node holds stays small
+}
+
+namespace {
+struct ChatRig {
+    Node                                    n = loggedIn();
+    std::vector<std::pair<std::string, bool>> said;
+    ChatRig() {
+        n.setChat([this](const std::string& text, bool page) { said.push_back({text, page}); },
+                  [] {
+                      return std::vector<Node::WhoLine>{{1, "Rev", "Chat"}, {2, "Spindle Kid", "Files"}, {3, "", ""}};
+                  });
+        n.takeOutput();
+    }
+};
+}  // namespace
+
+TEST_CASE("the menu offers the teleconference, who's online and a page for the sysop") {
+    Node n = loggedIn();
+    type(n, "c");  // credits, then the menu again
+    std::string out = plain(n.takeOutput());
+    CHECK(out.find("[T]") != std::string::npos);
+    CHECK(out.find("[W]") != std::string::npos);
+    CHECK(out.find("[P]") != std::string::npos);
+}
+
+TEST_CASE("in the teleconference a typed line goes to every node and lines from others show up") {
+    ChatRig r;
+    type(r.n, "t");
+    CHECK(r.n.state() == Node::State::Chat);
+    std::string out = plain(r.n.takeOutput());
+    CHECK(out.find("/Q") != std::string::npos);
+    type(r.n, "anyone cutting aluminum?\r");
+    REQUIRE(r.said.size() == 1);
+    CHECK(r.said[0].first == "anyone cutting aluminum?");
+    CHECK_FALSE(r.said[0].second);
+    r.n.takeOutput();
+    type(r.n, "half a li");  // typing when a line arrives: the line shows, then what was typed
+    r.n.takeOutput();
+    r.n.chatIn(2, "Spindle Kid", "yes, 6061 on a rotary", false);
+    out = plain(r.n.takeOutput());
+    CHECK(out.find("Spindle Kid") != std::string::npos);
+    CHECK(out.find("6061 on a rotary") != std::string::npos);
+    CHECK(out.rfind("half a li") > out.find("6061"));
+    type(r.n, "\b\b\b\b\b\b\b\b\b/q\r");
+    CHECK(r.n.state() == Node::State::Menu);
+    CHECK(r.said.size() == 1);  // /Q isn't said to anyone
+}
+
+TEST_CASE("lines arriving outside the teleconference don't interrupt the caller") {
+    ChatRig r;
+    r.n.chatIn(2, "Spindle Kid", "hello?", false);
+    CHECK(plain(r.n.takeOutput()).find("hello?") == std::string::npos);
+}
+
+TEST_CASE("who's online lists every node with its caller and what they're doing") {
+    ChatRig r;
+    type(r.n, "w");
+    std::string out = plain(r.n.takeOutput());
+    CHECK(out.find("Spindle Kid") != std::string::npos);
+    CHECK(out.find("Files") != std::string::npos);
+    CHECK(out.find("waiting") != std::string::npos);  // node 3 has nobody
+    CHECK(r.n.state() == Node::State::Menu);
+}
+
+TEST_CASE("a page asks for a message and sends it to the sysop") {
+    ChatRig r;
+    type(r.n, "p");
+    CHECK(r.n.state() == Node::State::Paging);
+    type(r.n, "need a file validated\r");
+    REQUIRE(r.said.size() == 1);
+    CHECK(r.said[0].first == "need a file validated");
+    CHECK(r.said[0].second);
+    CHECK(r.n.state() == Node::State::Menu);
+    CHECK(plain(r.n.takeOutput()).find("sysop") != std::string::npos);
+    type(r.n, "p\r");  // an empty page is no page
+    CHECK(r.said.size() == 1);
+}
+
+TEST_CASE("a door that's busy for another caller on this board sends the caller back politely") {
+    Node n = loggedIn();
+    type(n, "d1\r");
+    REQUIRE(n.state() == Node::State::InDoor);
+    n.takeOutput();
+    n.resumeAfterDoor(Node::DoorEnd::Busy, 2000);
+    std::string out = plain(n.takeOutput());
+    CHECK(n.state() == Node::State::Menu);
+    CHECK(out.find("another caller") != std::string::npos);
+    CHECK(out.find("Back from") == std::string::npos);  // they never went in
+}
+
+TEST_CASE("with the login splash on, the RotatoCAM splash plays before the welcome, and a key skips it") {
+    axis::bbs::BbsConfig c;
+    c.loginSplash = true;
+    Node n(1, info, c);
+    n.begin(0);
+    CHECK(n.state() == Node::State::Splash);
+    std::string out = n.takeOutput();
+    for (uint32_t t = 20; t < 1500; t += 20) n.poll(t);
+    out += n.takeOutput();
+    CHECK(out.find("Handle:") == std::string::npos);  // still playing
+    n.input((const uint8_t*)" ", 1, 1600);  // impatient caller
+    n.poll(1620);
+    CHECK(n.state() == Node::State::Login);
+    CHECK(plain(n.takeOutput()).find("Handle:") != std::string::npos);
+}
+
+TEST_CASE("the splash hands over to the welcome by itself when it's done") {
+    axis::bbs::BbsConfig c;
+    c.loginSplash = true;
+    Node n(1, info, c);
+    n.begin(0);
+    for (uint32_t t = 0; t < 9000; t += 50) n.poll(t);
+    CHECK(n.state() == Node::State::Login);
+    CHECK(plain(n.takeOutput()).find("Handle:") != std::string::npos);
+}

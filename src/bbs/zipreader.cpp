@@ -20,6 +20,7 @@ size_t           align8(size_t n) { return (n + 7) & ~(size_t)7; }
 }  // namespace
 
 const size_t ZipReader::kWorkspace = align8(sizeof(tinfl_decompressor)) + TINFL_LZ_DICT_SIZE + kInput;
+const size_t ZipReader::kStateBytes = align8(sizeof(tinfl_decompressor)) + kInput;
 
 bool ZipReader::open() {
     entries_.clear();
@@ -64,7 +65,7 @@ bool ZipReader::open() {
     return true;
 }
 
-ZipReader::Result ZipReader::extract(const ZipEntry& e, uint8_t* ws, size_t wsSize, const Sink& sink) {
+ZipReader::Result ZipReader::extract(const ZipEntry& e, uint8_t* ws, size_t wsSize, const Sink& sink, uint8_t* state) {
     if (e.method != 0 && e.method != 8) return Result::Unsupported;
     uint8_t lh[30];
     if (!read_(e.local, lh, 30)) return Result::ReadError;
@@ -80,10 +81,19 @@ ZipReader::Result ZipReader::extract(const ZipEntry& e, uint8_t* ws, size_t wsSi
         }
         return Result::Ok;
     }
-    if (wsSize < kWorkspace) return Result::Corrupt;
-    tinfl_decompressor* inf = (tinfl_decompressor*)ws;
-    uint8_t*            dict = ws + align8(sizeof(tinfl_decompressor));  // 32 KB ring: the output window
-    uint8_t*            in = dict + TINFL_LZ_DICT_SIZE;
+    tinfl_decompressor* inf;
+    uint8_t *           dict, *in;  // dict: the 32 KB ring, the output window
+    if (state && wsSize >= TINFL_LZ_DICT_SIZE) {
+        inf = (tinfl_decompressor*)state;
+        in = state + align8(sizeof(tinfl_decompressor));
+        dict = ws;
+    } else if (wsSize >= kWorkspace) {
+        inf = (tinfl_decompressor*)ws;
+        dict = ws + align8(sizeof(tinfl_decompressor));
+        in = dict + TINFL_LZ_DICT_SIZE;
+    } else {
+        return Result::NoMemory;
+    }
     tinfl_init(inf);
     uint32_t inPos = 0;            // compressed bytes read so far
     size_t   inAvail = 0, inOfs = 0, dictOfs = 0, produced = 0;

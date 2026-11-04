@@ -2,6 +2,10 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "platform/cyd/serialfiles.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -27,9 +31,9 @@ void put(const String& args) {
         return;
     }
     mkdirs(path.substring(0, path.lastIndexOf('/')));
-    FILE* f = fopen(path.c_str(), "wb");
-    if (!f) {
-        Serial.println("@ERR open");
+    int f = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);  // a descriptor, like every other file here
+    if (f < 0) {
+        Serial.printf("@ERR open %d [%s]\n", errno, path.c_str());
         return;
     }
     static uint8_t blk[512];
@@ -38,12 +42,12 @@ void put(const String& args) {
     while (done < size) {
         size_t want = min(size - done, sizeof blk);
         if (Serial.readBytes(blk, want) != want) break;
-        if (fwrite(blk, 1, want, f) != want) break;
+        if (::write(f, blk, want) != (ssize_t)want) break;
         for (size_t i = 0; i < want; i++) sum += blk[i];
         done += want;
         Serial.println("@K");  // the PC waits for this, so the 256 byte RX buffer never overflows
     }
-    fclose(f);
+    ::close(f);
     Serial.printf(done == size ? "@DONE %lu\n" : "@ERR short %lu\n", (unsigned long)(done == size ? sum : done));
 }
 }  // namespace

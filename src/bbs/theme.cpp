@@ -45,6 +45,7 @@ std::string key(const std::string& letter, const std::string& rest) {
 std::string window(const std::string& title, const std::vector<std::pair<std::string, std::string>>& rows, int width) {
     const int   inner = width - 2;  // between the side walls
     std::string s;
+    s.reserve((rows.size() + 4) * (size_t)(width + 64));  // one block, not doubling: a busy board has little heap
     // top: an orange lip of half blocks
     s += "  ";
     s += ORANGE;

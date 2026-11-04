@@ -29,7 +29,7 @@ public:
     bool               step(uint32_t nowMs);  // false once finished
     // a ZIP upload has arrived and wants checking: the host lends ZipReader::kWorkspace bytes
     bool needsWorkspace() const { return wantWorkspace_; }
-    void beginProcessing(uint8_t* workspace, size_t size);
+    void beginProcessing(uint8_t* workspace, size_t size, uint8_t* zipState = nullptr);  // zipState: see UploadProcessor
     bool processing() const { return proc_ != nullptr; }
     double processProgress() const { return proc_ ? proc_->progress() : 0; }
     bool               ok() const { return ok_; }

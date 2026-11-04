@@ -47,6 +47,7 @@ bool wifiJoinSaved() {
         prefs.end();
     }
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);  // modem sleep drops UDP broadcasts (cluster discovery) and slows every reply
     WiFi.setHostname("axis");
     int found = WiFi.scanNetworks();
     Serial.printf("axis: scan found %d networks\n", found);
@@ -74,6 +75,7 @@ bool wifiJoinSaved() {
 
 std::vector<axis::bbs::WifiPicker::Network> wifiScan() {
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);  // modem sleep drops UDP broadcasts (cluster discovery) and slows every reply
     std::vector<axis::bbs::WifiPicker::Network> v;
     int found = WiFi.scanNetworks();
     for (int i = 0; i < found; i++) v.push_back({WiFi.SSID(i).c_str(), (int)WiFi.RSSI(i), WiFi.encryptionType(i) != WIFI_AUTH_OPEN});
@@ -83,6 +85,7 @@ std::vector<axis::bbs::WifiPicker::Network> wifiScan() {
 
 bool wifiJoin(const String& ssid, const String& pass) {
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);  // modem sleep drops UDP broadcasts (cluster discovery) and slows every reply
     int found = WiFi.scanNetworks(), idx = -1;
     for (int i = 0; i < found; i++)
         if (WiFi.SSID(i) == ssid) idx = i;

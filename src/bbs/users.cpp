@@ -69,7 +69,13 @@ void UserStore::parse(const std::string& text) {
 
 std::string UserStore::format() const {
     std::string s = "# Axis Micro BBS Firmware users (written by the board)\n";
-    for (const User& u : users_) {
+    for (const User& u : users_) s += formatUser(u);
+    return s;
+}
+
+std::string formatUser(const User& u) {
+    std::string s;
+    {
         auto kv = [&](const char* k, const std::string& v) { s += std::string(k) + "=" + oneLine(v) + "\n"; };
         s += "[user]\n";
         kv("id", std::to_string(u.id));
@@ -94,6 +100,49 @@ std::string UserStore::format() const {
         }
     }
     return s;
+}
+
+bool parseUser(const std::string& record, User& out) {
+    UserStore one;
+    one.parse(record);
+    if (one.all().empty() || one.all()[0].handle.empty()) return false;
+    out = one.all()[0];
+    return true;
+}
+
+namespace {
+std::string lower(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+}  // namespace
+
+std::vector<std::string> UserSync::changed(const UserStore& s) {
+    std::vector<std::string> out;
+    for (const User& u : s.all()) {
+        std::string rec = formatUser(u), key = lower(u.handle);
+        auto        it = sent_.find(key);
+        if (it == sent_.end() || it->second != rec) {
+            sent_[key] = rec;
+            out.push_back(rec);
+        }
+    }
+    return out;
+}
+
+void UserSync::received(const std::string& record) {
+    User u;
+    if (parseUser(record, u)) sent_[lower(u.handle)] = record;
+}
+
+User& UserStore::upsert(const User& u) {
+    if (User* have = find(u.handle)) {
+        int id = have->id;
+        *have = u;
+        have->id = id;
+        return *have;
+    }
+    return add(u);
 }
 
 User* UserStore::find(const std::string& handle) {

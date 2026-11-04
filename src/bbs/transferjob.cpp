@@ -127,9 +127,10 @@ void TransferJob::finish() {
     if (proc_) note_ = proc_->note();
 }
 
-void TransferJob::beginProcessing(uint8_t* workspace, size_t size) {
+void TransferJob::beginProcessing(uint8_t* workspace, size_t size, uint8_t* zipState) {
     wantWorkspace_ = false;
     proc_.reset(new UploadProcessor(lib_, req_.area, saved_, info_, workspace, size));
+    proc_->setZipState(zipState);
     std::string s = "\r\n\r\n";
     s += theme::window("PROCESSING UPLOAD", {{"file", saved_},
                                              {"step 1", "unzip, test every file's CRC"},

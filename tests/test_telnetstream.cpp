@@ -129,3 +129,18 @@ TEST_CASE("telnet stream flushes a full buffer by itself") {
     l.flush();
     CHECK(l.toCaller == big);
 }
+
+TEST_CASE("telnet stream sends one big write in small pieces, so it never needs a big buffer") {
+    struct Biggest : FakeLine {
+        size_t most = 0;
+        int    rawWrite(const uint8_t* p, size_t n) override {
+            if (n > most) most = n;
+            return FakeLine::rawWrite(p, n);
+        }
+    } l;
+    std::string screen(20000, 'A');  // a whole login screen in one call
+    l.write((const uint8_t*)screen.data(), screen.size());
+    l.flush();
+    CHECK(l.toCaller == screen);
+    CHECK(l.most <= 2048);
+}

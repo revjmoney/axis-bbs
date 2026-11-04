@@ -139,7 +139,8 @@ bool UploadProcessor::step() {
                 crc = net::crc32Update(crc, p, n);
                 size += (uint32_t)n;
                 return true;
-            });
+            }, state_);
+            if (res == ZipReader::Result::NoMemory) return reject("the board was short of memory to check it: please try again");
             if (res != ZipReader::Result::Ok || ~crc != e.crc || size != e.usize)
                 return reject("it's damaged: " + e.name + " failed its CRC check");
             at_++;

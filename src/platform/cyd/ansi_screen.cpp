@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+#include "platform/cyd/screen.h"
+
 #include "../../../third_party/vga_font/font8x16.h"  // IBM VGA 8x16 by VileR, CC BY-SA 4.0
 
 namespace {
@@ -13,10 +15,9 @@ const uint8_t kCga[16][3] = {{0, 0, 0},     {0, 0, 170},    {0, 170, 0},    {0, 
                              {255, 85, 85}, {255, 85, 255}, {255, 255, 85}, {255, 255, 255}};
 
 uint8_t glyph[256][32];  // 4x8 coverage levels 0..4 per character
-uint8_t lut[256][5];     // per attribute: RGB332 colour for each coverage level
+uint8_t lut[256][5];     // per attribute: palette number for each coverage level (the nearest to the blend)
 bool    ready = false;
 
-uint8_t rgb332(int r, int g, int b) { return (r * 7 / 255) << 5 | (g * 7 / 255) << 2 | (b * 3 / 255); }
 
 void build() {
     for (int ch = 0; ch < 256; ch++)
@@ -32,7 +33,7 @@ void build() {
         const uint8_t* f = kCga[a & 15];
         const uint8_t* b = kCga[(a >> 4) & 7];  // bit 7 is blink, not bright background
         for (int l = 0; l <= 4; l++)
-            lut[a][l] = rgb332((b[0] * (4 - l) + f[0] * l) / 4, (b[1] * (4 - l) + f[1] * l) / 4,
+            lut[a][l] = palNearest((b[0] * (4 - l) + f[0] * l) / 4, (b[1] * (4 - l) + f[1] * l) / 4,
                                (b[2] * (4 - l) + f[2] * l) / 4);
     }
     ready = true;
@@ -58,15 +59,13 @@ void AnsiScreen::render(LGFX_Sprite& dst, int rows) const {
     if (!fb) return;
     for (int r = 0; r < rows && r < kRows; r++)
         for (int y = 0; y < 8; y++) {
-            uint8_t* out = fb + (r * 8 + y) * 320;
+            uint8_t* out = fb + (r * 8 + y) * 160;
             for (int c = 0; c < kCols; c++) {
                 const uint8_t* g = &glyph[cells[r][c].ch][y * 4];
                 const uint8_t* l = lut[cells[r][c].attr];
-                out[0] = l[g[0]];
-                out[1] = l[g[1]];
-                out[2] = l[g[2]];
-                out[3] = l[g[3]];
-                out += 4;
+                out[0] = (uint8_t)(l[g[0]] << 4 | l[g[1]]);
+                out[1] = (uint8_t)(l[g[2]] << 4 | l[g[3]]);
+                out += 2;
             }
         }
 }
@@ -95,11 +94,12 @@ void BigText::render(LGFX_Sprite& dst, int y0, int rows) const {
         for (int y = 0; y < 16; y++) {
             int py = y0 + r * 16 + y;
             if (py < 0 || py >= 240) continue;
-            uint8_t* out = fb + py * 320;
-            for (int c = 0; c < kCols; c++, out += 8) {
+            uint8_t* out = fb + py * 160;
+            for (int c = 0; c < kCols; c++, out += 4) {
                 uint8_t        bits = vga_font8x16[cells[r][c].ch * 16 + y];
                 const uint8_t* l    = lut[cells[r][c].attr];
-                for (int b = 0; b < 8; b++) out[b] = (bits & (0x80 >> b)) ? l[4] : l[0];
+                for (int b = 0; b < 8; b += 2)
+                    out[b / 2] = (uint8_t)(((bits & (0x80 >> b)) ? l[4] : l[0]) << 4 | ((bits & (0x40 >> b)) ? l[4] : l[0]));
             }
         }
 }

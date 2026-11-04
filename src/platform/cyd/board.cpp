@@ -27,6 +27,11 @@ static uint32_t read_panel_reg(lgfx::IBus* b, int32_t pin_cs, uint_fast16_t cmd)
 }
 
 const char* boardInit(uint8_t rotation, uint32_t spiHz) {
+#ifdef AXIS_HEADLESS
+    (void)rotation;
+    (void)spiHz;
+    return "none (headless node)";  // a plain ESP32: no panel, no touch
+#endif
     {
         auto cfg        = bus.config();
         cfg.spi_host    = HSPI_HOST;
@@ -96,6 +101,11 @@ const char* boardInit(uint8_t rotation, uint32_t spiHz) {
 // fixed for up/down only and left the game pad's left and right swapped).
 // Corrected here so every screen gets true coordinates.
 bool boardTouch(int& x, int& y) {
+#ifdef AXIS_HEADLESS
+    (void)x;
+    (void)y;
+    return false;
+#endif
     lgfx::touch_point_t tp;
     if (!tft.getTouch(&tp, 1)) return false;
     int w = tft.width(), h = tft.height();

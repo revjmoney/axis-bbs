@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <regex>
 #include <string>
@@ -228,4 +230,45 @@ TEST_CASE("a download of a missing file is refused before any protocol starts") 
     type(n, "f1\rdNOPE.ZIP\r");
     CHECK(n.state() == Node::State::Files);
     CHECK(n.takeOutput().find("No file by that name") != std::string::npos);
+}
+
+namespace {
+FakeLibrary withZip() {
+    FakeLibrary   l = library();
+    std::ifstream in(std::string(AXIS_TEST_DATA) + "/pack.zip", std::ios::binary);
+    std::string   zip((std::istreambuf_iterator<char>(in)), {});
+    l.areas["axis"].push_back({"PACK.ZIP", (uint32_t)zip.size(), "Test art pack"});
+    l.text["axis/PACK.ZIP"] = zip;
+    return l;
+}
+}  // namespace
+
+TEST_CASE("[I] shows a ZIP's full archive listing while browsing") {
+    FakeLibrary lib = withZip();
+    Node        n = inFiles(lib);
+    type(n, "f1\r");
+    std::string list = plain(n.takeOutput());
+    CHECK(list.find("[I]") != std::string::npos);
+    type(n, "ipack.zip\r");
+    std::string out = plain(n.takeOutput());
+    CHECK(out.find("PACK.ZIP") != std::string::npos);
+    CHECK(out.find("Test art pack") != std::string::npos);
+    CHECK(out.find("REV-AXIS.ANS") != std::string::npos);
+    CHECK(out.find("FILE_ID.DIZ") != std::string::npos);
+    CHECK(out.find("PROGRAM.EXE") != std::string::npos);
+    CHECK(out.find("3 files") != std::string::npos);
+    CHECK(out.find("3703") != std::string::npos);  // REV-AXIS.ANS unpacked size
+}
+
+TEST_CASE("[I] on a file that isn't an archive shows what is known about it") {
+    FakeLibrary lib = withZip();
+    Node        n = inFiles(lib);
+    type(n, "f1\r");
+    n.takeOutput();
+    type(n, "iREADME.TXT\r");
+    std::string out = plain(n.takeOutput());
+    CHECK(out.find("README.TXT") != std::string::npos);
+    CHECK(out.find("What it is") != std::string::npos);
+    type(n, "inope.zip\r");
+    CHECK(plain(n.takeOutput()).find("No file by that name") != std::string::npos);
 }

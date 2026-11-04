@@ -20,6 +20,7 @@ public:
 
     AnsiViewer(FileLibrary& lib, std::string areaId, std::string areaName, uint8_t* workspace, size_t workspaceSize,
                door::ByteStream& line);
+    void setZipState(uint8_t* state) { state_ = state; }  // ZipReader::kStateBytes, when the workspace is only the window
     void begin();  // show the packs
     bool step();   // handle waiting keys; false once the caller leaves (or hangs up)
 
@@ -37,6 +38,7 @@ private:
     std::string                  area_, areaName_;
     uint8_t*                     ws_;
     size_t                       wsSize_;
+    uint8_t*                     state_ = nullptr;
     door::ByteStream&            line_;
     St                           st_ = St::Packs;
     std::vector<FileEntry>       packs_;

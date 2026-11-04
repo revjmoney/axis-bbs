@@ -22,16 +22,18 @@ struct ZipEntry {
 
 class ZipReader {
 public:
-    enum class Result { Ok, Stopped, Unsupported, Corrupt, ReadError };
+    enum class Result { Ok, Stopped, Unsupported, Corrupt, ReadError, NoMemory };
     using ReadAt = std::function<bool(uint32_t offset, uint8_t* buf, size_t n)>;
     using Sink = std::function<bool(const uint8_t* p, size_t n)>;  // false stops the extraction
-    static const size_t kWorkspace;  // bytes extract() needs: the inflater, a 32 KB window, input
+    static const size_t kWorkspace;   // bytes extract() needs in one block: the inflater, a 32 KB window, input
+    static const size_t kStateBytes;  // the inflater and input alone, when the window is a block of its own
     static constexpr size_t kMaxEntries = 400;
 
     ZipReader(ReadAt read, uint32_t fileSize) : read_(std::move(read)), size_(fileSize) {}
     bool                          open();  // finds and reads the central directory
     const std::vector<ZipEntry>&  entries() const { return entries_; }
-    Result extract(const ZipEntry& e, uint8_t* workspace, size_t workspaceSize, const Sink& sink);
+    // workspace: one block of kWorkspace, or (state given, kStateBytes) just the 32 KB window
+    Result extract(const ZipEntry& e, uint8_t* workspace, size_t workspaceSize, const Sink& sink, uint8_t* state = nullptr);
 
 private:
     ReadAt                read_;

@@ -14,6 +14,7 @@
 #include "bbs/filebrowser.h"
 #include "bbs/filelib.h"
 #include "bbs/newuser.h"
+#include "bbs/splash.h"
 #include "bbs/users.h"
 #include "bbs/version.h"
 
@@ -30,8 +31,12 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Login, Password, ApplyAsk, Applying, Pending, Menu, Doors, InDoor, Files, Transfer, Done };
-    enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError };
+    enum class State { Splash, Login, Password, ApplyAsk, Applying, Pending, Menu, Doors, InDoor, Files, Transfer, Chat, Paging, Done };
+    struct WhoLine {
+        int         node = 0;
+        std::string handle, activity;  // handle "" = waiting for a caller
+    };
+    enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError, Busy };  // Busy: another caller here has the slot
     static constexpr size_t   kMaxHandle = 30;
 
     // files: the file areas' store (nullptr: the Files menu says the areas are offline)
@@ -39,6 +44,17 @@ public:
     // accounts: without them anyone is let in by handle (the first builds, tests)
     void setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow);
     bool isSysop() const { return sysop_; }
+    // Chat across the nodes: say(text, page) sends a teleconference line (or a page for the sysop);
+    // who() lists every node. Without them [T] [W] [P] say the chat is offline.
+    void setChat(std::function<void(const std::string&, bool)> say, std::function<std::vector<WhoLine>()> who) {
+        say_ = std::move(say);
+        who_ = std::move(who);
+    }
+    // a line said on any node (this one's own lines come back this way too, so all see one order)
+    void chatIn(int node, const std::string& handle, const std::string& text, bool page);
+    // Big fixed screens (the login art) go straight to the caller through this, a piece at a time
+    // from flash, instead of through takeOutput(): a copy of them needs more heap than a busy board has.
+    void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
     void        begin(uint32_t nowMs);
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);
@@ -62,10 +78,16 @@ private:
     void showPending();
     void pendingMenu();
     void prompt();
+    void showWelcome();
+    void lineKey(char c);
+    std::unique_ptr<Splash> splash_;  // the RotatoCAM splash, before the welcome  // line input for the teleconference and pages
     int                       node_;
+    std::function<void(const std::string&, bool)> say_;
+    std::function<std::vector<WhoLine>()>        who_;
     std::function<SysInfo()>  info_;
     BbsConfig                 cfg_;
     State                     state_ = State::Login;
+    std::function<void(const char*, size_t)> direct_;
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
     size_t                    door_ = 0;

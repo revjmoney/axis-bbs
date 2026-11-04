@@ -70,12 +70,15 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
     Preferences prefs;
     prefs.begin("door", true);
     uint32_t storedKey = prefs.getUInt(("k_" + id_).c_str(), 0), storedLen = prefs.getUInt(("l_" + id_).c_str(), 0);
+    if (prefs.getString("cur", "") != id_.c_str()) storedKey = 0;  // the partition holds another door's image
     prefs.end();
 
     if (force_ || storedKey != key_ || storedLen != len) {
         rewrote_ = true;
         prefs.begin("door", false);
-        prefs.remove(("k_" + id_).c_str());  // invalid until the new image is complete
+        // every door's key goes: there is one partition, so this image replaces whichever door was
+        // there (keeping the others' keys once let LORD run on top of BBS Black Jack's code)
+        prefs.clear();
         prefs.end();
         // 16 KB of image at a time: one pass over the relocation table collects just that window's
         // targets, so RAM stays small even for LORD's 14,988 relocations
@@ -120,6 +123,7 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
         }
         prefs.begin("door", false);
         prefs.putUInt(("l_" + id_).c_str(), (uint32_t)len);
+        prefs.putString("cur", id_.c_str());  // which door the one partition holds
         prefs.putUInt(("k_" + id_).c_str(), key_);  // last: the image is complete and verified
         prefs.end();
     }
