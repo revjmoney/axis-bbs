@@ -139,6 +139,25 @@ static void linersAddLocal(const std::string& line) {
     for (auto& l : oneLiners) text += l + "\n";
     flashWrite("/oneliners.txt", text);
 }
+// The last callers: the newest 20 logins ("handle|node|time|location"), kept like the oneliners.
+static std::vector<std::string> lastCallers;
+static void callersLoad() {
+    std::string text = flashRead("/callers.txt");
+    lastCallers.clear();
+    for (size_t pos = 0; pos < text.size();) {
+        size_t e = text.find('\n', pos);
+        if (e == std::string::npos) e = text.size();
+        if (e > pos) lastCallers.push_back(text.substr(pos, e - pos));
+        pos = e + 1;
+    }
+}
+static void callersAddLocal(const std::string& line) {
+    lastCallers.push_back(line.substr(0, 120));
+    while (lastCallers.size() > 20) lastCallers.erase(lastCallers.begin());
+    std::string text;
+    for (auto& l : lastCallers) text += l + "\n";
+    flashWrite("/callers.txt", text);
+}
 static bool asFollower();
 static uint32_t lastServedMs = 0;  // main: a follower's door files
 static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string& req, std::string& reply) {
@@ -963,6 +982,27 @@ static void answerIn(WiFiClient incoming) {
                     cluster->request(std::string("P\x1f") + line, reply, 3000);
                 }
             });
+        node->setLastCallers(
+            [] {
+                if (!asFollower()) return lastCallers;
+                std::vector<std::string> v;
+                std::string              reply;
+                if (cluster->request("K", reply, 3000) && !reply.empty() && reply[0] == '1')
+                    for (size_t pos = 1; pos < reply.size();) {
+                        size_t e = reply.find('\n', pos);
+                        if (e == std::string::npos) e = reply.size();
+                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
+                        pos = e + 1;
+                    }
+                return v;
+            },
+            [](const std::string& line) {
+                if (!asFollower()) callersAddLocal(line);
+                else {
+                    std::string reply;
+                    cluster->request(std::string("Q\x1f") + line, reply, 3000);
+                }
+            });
         node->setDirect([](const char* p, size_t n) {  // the login art, from flash in 1 KB pieces
             if (line) line->write((const uint8_t*)p, n);
         });
@@ -1370,6 +1410,15 @@ static void startCluster() {
             for (auto& l : oneLiners) out += l + "\n";
             return out;
         }
+        if (req == "K") {  // the last callers
+            std::string out = "1";
+            for (auto& l : lastCallers) out += l + "\n";
+            return out;
+        }
+        if (req.rfind("Q\x1f", 0) == 0) {
+            callersAddLocal(req.substr(2));
+            return std::string("1");
+        }
         if (req.rfind("P\x1f", 0) == 0) {
             linersAddLocal(req.substr(2));
             return std::string("1");
@@ -1687,6 +1736,7 @@ void setup() {
         }
     users.parse(flashRead("/users.dat"));
     linersLoad();
+    callersLoad();
     userSync.changed(users);  // what we have counts as sent: only new changes go over the link
     for (auto& l : eventFile.tail(40)) events.add(l);  // the Logs screen picks up where it left off
     eventFileReady = true;
