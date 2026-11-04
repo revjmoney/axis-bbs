@@ -64,7 +64,8 @@ std::string PanelSession::line(const std::string& raw) {
         if (!out.empty() && out.back() != '\n') out += '\n';
         return out + "END\n";
     }
-    return authed_ ? "?\n" : "NO\n";
+    if (!authed_) return "NO\n";
+    return extra ? extra(in) : "?\n";
 }
 
 }  // namespace axis::bbs

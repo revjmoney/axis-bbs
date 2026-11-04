@@ -26,3 +26,4 @@ PC unit tests run per task; board flashing and live checks wait for the end.
 - PC tests: firmware 501/501, panel app 8/8.
 - Flash: cyd 95.8%, headless 96.9%.
 - NOT flashed to the boards yet; nothing in part 1 tried live. Next: flash all three boards, then the live checks listed at the top, then docs (Task 8 Step 4).
+- Parts 2+3 firmware done: WifiStream tap + inject, PanelStream (panel-only sysop session, beginLocal), panel lines WALL ON/OFF, CON NEW, CON JOIN n, CON OFF, KEY <b64>; board sends SCR <node> <b64>. When the PC is behind, SCR pieces are dropped (no resync snapshot yet: a tile may look garbled until the screen redraws; Ctrl-L / redraw in the BBS fixes it). The panel disconnecting ends its console. cyd 95.9%, headless 97.1% (54 KB left: tight).

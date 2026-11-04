@@ -32,6 +32,8 @@
 #include "cluster/doorfs.h"
 #include "door/screenmirror.h"
 #include "bbs/panelproto.h"
+#include <base64.h>
+#include <mbedtls/base64.h>
 #include "cluster/mirrorjob.h"
 #include "cluster/pooledlib.h"
 #include "cluster/relay.h"
@@ -79,6 +81,9 @@ static WiFiClient           panelClient;
 static std::unique_ptr<axis::bbs::PanelSession> panelSession;
 static String               panelLine;
 static uint32_t             panelStatMs = 0;
+static bool                 panelWall = false;  // WALL ON: every node's output goes to the panel
+static int                  panelConNode = 0;   // the node the panel's console types into (0 = none)
+static bool                 panelConJoined = false;  // broke in on a caller (else its own session)
 static std::unique_ptr<WifiStream>              line;  // the caller, when one is online
 static axis::bbs::SysopMenu                     sysop;   // the touchscreen sysop menu (a tap on the WFC)
 static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
@@ -1083,10 +1088,13 @@ static int sessionNumber(int i) {  // the node number a session answers as
     return i + 1;
 }
 
+static bool panelConsoleNew = false;  // answerIn: the next session is the panel's own sysop console
 static void answerIn(WiFiClient incoming) {
-    line.reset(new WifiStream(incoming));
+    if (panelConsoleNew) line.reset(new PanelStream());
+    else line.reset(new WifiStream(incoming));
+    line->tapNode = sessionNumber(curSession);
     callStartMs = millis();
-    logEvent("call from " + line->remoteIP().toString() + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
+    logEvent((panelConsoleNew ? String("sysop console from the panel") : "call from " + line->remoteIP().toString()) + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
              " KB, largest " + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024) + " KB)");
     line->start();
     if (cfg.setupDone && mode == Mode::Normal) {
@@ -1198,7 +1206,8 @@ static void answerIn(WiFiClient incoming) {
         node->setDirect([](const char* p, size_t n) {  // the login art, from flash in 1 KB pieces
             if (line) line->write((const uint8_t*)p, n);
         });
-        node->begin(millis());
+        if (panelConsoleNew) node->beginLocal(millis());  // the sysop, from the panel: no password asked
+        else node->begin(millis());
         sendApp(node->takeOutput());
     } else {
         gate.reset(new axis::bbs::SetupGate(setupPin.c_str()));
@@ -1876,6 +1885,80 @@ static void handleTap(int x, int y) {
 // the same command always does the same thing). Replies go to `out`.
 static void runCommand(const String& cmd, Print& out);
 
+// Copies of what callers are sent, for the panel's screen wall and console ("SCR <node> <base64>").
+static void panelTap(WifiStream* s, const uint8_t* p, size_t n) {
+    if (!panelSession || !panelSession->authed() || !panelClient.connected()) return;
+    if (!panelWall && s->tapNode != panelConNode) return;
+    if (panelClient.availableForWrite() < (int)(n * 4 / 3 + 32)) return;  // the PC is behind: the tile skips ahead
+    panelClient.print("SCR " + String(s->tapNode) + " " + base64::encode(p, n) + "\n");
+}
+void (*WifiStream::tap)(WifiStream*, const uint8_t*, size_t) = panelTap;
+
+static int slotOfNode(int num) {
+    for (size_t i = 0; i < sessions.size(); i++)
+        if (sessionNumber((int)i) == num) return (int)i;
+    return -1;
+}
+
+static void panelSay(int slot, const std::string& text) {  // a line to a caller, from the BBS
+    WifiStream* l = (int)slot == curSession ? line.get() : sessions[(size_t)slot].line.get();
+    if (l) l->write((const uint8_t*)text.data(), text.size()), l->flush();
+}
+
+// WALL ON/OFF, CON NEW, CON JOIN <node>, CON OFF, KEY <base64>: the screen wall and console login
+static std::string panelExtra(const std::string& in) {
+    if (in == "WALL ON" || in == "WALL OFF") {
+        panelWall = in == "WALL ON";
+        return "WALL " + std::string(panelWall ? "ON" : "OFF") + "\n";
+    }
+    if (in == "CON OFF") {
+        int slot = slotOfNode(panelConNode);
+        if (slot >= 0 && panelConJoined) panelSay(slot, "\r\n\x1b[1;33m*** The sysop has left. ***\x1b[0m\r\n");
+        else if (slot >= 0) {  // its own session: hang it up
+            WifiStream* l = slot == curSession ? line.get() : sessions[(size_t)slot].line.get();
+            if (l) l->hangUp();
+        }
+        if (panelConNode) logEvent(String("panel console off node ") + panelConNode);
+        panelConNode = 0;
+        return "CON 0\n";
+    }
+    if (in.rfind("CON JOIN ", 0) == 0) {
+        int num = atoi(in.c_str() + 9), slot = slotOfNode(num);
+        if (slot < 0 || !sessionLine((size_t)slot)) return "CON NO nobody on that node here\n";
+        panelConNode = num, panelConJoined = true;
+        panelSay(slot, "\r\n\x1b[1;33m*** The sysop has broken in. ***\x1b[0m\r\n");
+        logEvent(String("panel: sysop broke in on node ") + num);
+        return "CON " + std::to_string(num) + "\n";
+    }
+    if (in == "CON NEW") {
+        int free = -1;
+        for (size_t i = 0; i < sessions.size() && free < 0; i++)
+            if (!sessionLine(i) && cfg.setupDone && mode == Mode::Normal) free = (int)i;
+        if (free < 0) return "CON NO every node on this board is busy\n";
+        if (curSession >= 0) unbindSession();
+        panelConNode = sessionNumber(free), panelConJoined = false;  // (before its first screen goes out)
+        panelConsoleNew = true;
+        bindSession(free);
+        answerIn(WiFiClient());
+        panelConsoleNew = false;
+        unbindSession();
+        panelConNode = sessionNumber(free), panelConJoined = false;
+        return "CON " + std::to_string(panelConNode) + "\n";
+    }
+    if (in.rfind("KEY ", 0) == 0 && panelConNode) {
+        int slot = slotOfNode(panelConNode);
+        WifiStream* l = slot < 0 ? nullptr : slot == curSession ? line.get() : sessions[(size_t)slot].line.get();
+        if (!l) return "CON 0\n";
+        String  b64 = String(in.c_str() + 4);
+        size_t  len = 0;
+        uint8_t buf[256];
+        if (mbedtls_base64_decode(buf, sizeof buf, &len, (const uint8_t*)b64.c_str(), b64.length()) == 0)
+            l->inject(std::string((const char*)buf, len));
+        return "";
+    }
+    return "?\n";
+}
+
 // The control panel's connection: login, commands through runCommand, STAT every 5 s.
 static void pumpPanel() {
     if (panelServer.hasClient()) {
@@ -1889,6 +1972,9 @@ static void pumpPanel() {
             snprintf(nonce, sizeof nonce, "%08lx%08lx", (unsigned long)hwRandom(), (unsigned long)hwRandom());
             panelSession.reset(new axis::bbs::PanelSession(cfg, users, nonce));
             panelSession->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
+            panelSession->extra = panelExtra;
+            panelWall = false;
+            panelConNode = 0;
             panelSession->run = [](const std::string& c) {
                 String out;
                 struct Sink : Print {
@@ -1905,6 +1991,7 @@ static void pumpPanel() {
     }
     if (!panelSession) return;
     if (!panelClient.connected()) {
+        if (panelConNode) panelExtra("CON OFF");  // the panel went away: its console goes too
         panelSession.reset();
         return;
     }
