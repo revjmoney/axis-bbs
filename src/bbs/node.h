@@ -33,7 +33,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -61,6 +61,14 @@ public:
     }
     // a line said on any node (this one's own lines come back this way too, so all see one order)
     void chatIn(int node, const std::string& handle, const std::string& text, bool page);
+    // Node to node (Oblivion/2's & commands): what this node sends (kind, target node or 0 for all,
+    // text) and what reaches it. Kinds above chat (0) and page (1):
+    static constexpr int kNodeNote = 2, kNodeBroadcast = 3, kNodeForce = 4, kSplitAsk = 5, kSplitYes = 6, kSplitNo = 7,
+                         kSplitKey = 8, kSplitEnd = 9;
+    void setNodeLink(std::function<void(int kind, int to, const std::string& text)> send) { send_ = std::move(send); }
+    void nodeIn(int kind, int from, const std::string& handle, const std::string& text);
+    bool available() const { return available_; }  // for chat and notes; off = do not disturb
+    int  number() const { return node_; }
     // Big fixed screens (the login art) go straight to the caller through this, a piece at a time
     // from flash, instead of through takeOutput(): a copy of them needs more heap than a busy board has.
     // the Oblivion look's screens from the card (MATRIX.ANS, MAIN.ANS): their text, or "" for the stock screen
@@ -111,6 +119,21 @@ private:
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
     std::function<std::string(const std::string&)> art_;
+    std::function<void(int, int, const std::string&)> send_;
+    bool                      available_ = true;
+    char                      mnAsk_ = 0;          // MultiNode: the command waiting for a node number / text
+    int                       mnTo_ = 0, splitWith_ = 0, splitAsk_ = 0;  // the node asked, in split chat with, asking us
+    int                       splitRow_[2] = {2, 14}, splitCol_[2] = {1, 1};  // split chat cursors: their half, mine
+    std::string               splitHandle_;        // who is asking us
+    std::vector<std::string>  notes_;              // notes that came while a door or transfer had the screen
+    void                      showMultiNode();
+    void                      multiKey(char c);
+    void                      splitKey(char c);
+    void                      splitPut(int half, char c);
+    void                      startSplit(int with, const std::string& them);
+    void                      showNotes();
+    int                       barAt_[4][2] = {};  // row, column of each matrix item from MATRIX.ANS's |0N marks (0 = stock layout)
+    bool                      o2Keys_ = false;   // a MAIN.ANS is up: keys follow stock Oblivion/2 letters
     int                       bar_ = 0, esc_ = 0;  // the matrix lightbar; an arrow key's ESC sequence so far
     bool                      o2() const;
     std::string               mci(const std::string& s) const;  // %UN %BN %SN %NN %DT %VN filled in, pipe colours to ANSI

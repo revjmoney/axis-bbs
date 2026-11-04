@@ -3,6 +3,7 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/node.h"
 
+#include "bbs/ansiterm.h"
 #include "bbs/login_art.h"
 #include "bbs/password.h"
 #include "bbs/theme.h"
@@ -213,6 +214,16 @@ constexpr int kMatrixItems = 4, kMatrixRow = 11, kMatrixCol = 30;
 
 void Node::drawBarItem(int i, bool lit) {
     char b[96];
+    if (barAt_[i][0]) {  // in the sysop's art, at its pulldown mark: short labels, six columns like the mark
+        static const char* const shortName[] = {"login", "apply", "who", "bye"};
+        std::snprintf(b, sizeof b, "\x1b[%d;%dH", barAt_[i][0], barAt_[i][1]);
+        out_ += b;
+        if (lit) std::snprintf(b, sizeof b, "\x1b[0;1;37;44m%-6s", shortName[i]);
+        else std::snprintf(b, sizeof b, "%s%c%s%-5s", theme::KEY, shortName[i][0], theme::TEXT, shortName[i] + 1);
+        out_ += b;
+        out_ += theme::RESET;
+        return;
+    }
     std::snprintf(b, sizeof b, "\x1b[%d;%dH", kMatrixRow + i, kMatrixCol);
     out_ += b;
     if (lit) std::snprintf(b, sizeof b, "\x1b[0;1;37;44m  %c  %-16s", kMatrix[i].key, kMatrix[i].label);
@@ -228,6 +239,22 @@ void Node::showMatrix() {
     esc_ = 0;
     out_ += theme::CLS;
     std::string art = art_ ? art_("MATRIX.ANS") : "";
+    for (auto& at : barAt_) at[0] = at[1] = 0;
+    if (art.find("|01%01") != std::string::npos) {  // O/2 pulldown marks: find each on the drawn screen, then blank it
+        std::unique_ptr<AnsiTerm> t(new AnsiTerm());
+        t->feed(art);
+        for (int r = 0; r < AnsiTerm::kRows; r++)
+            for (int c = 0; c + 2 < AnsiTerm::kCols; c++) {
+                char k = (char)t->cell(r, c + 2).ch;
+                if (t->cell(r, c).ch == '|' && t->cell(r, c + 1).ch == '0' && k >= '1' && k <= '4') barAt_[k - '1'][0] = r + 1, barAt_[k - '1'][1] = c + 1;
+            }
+        for (char k = '1'; k <= '9'; k++) {
+            std::string mark = std::string("|0") + k + "%0" + k;
+            for (size_t at; (at = art.find(mark)) != std::string::npos;) art.replace(at, mark.size(), std::string(mark.size(), ' '));
+        }
+        if (!barAt_[3][0])
+            for (auto& at : barAt_) at[0] = at[1] = 0;  // not all four marks: the stock layout after all
+    }
     if (!art.empty()) {
         out_ += mci(art);
     } else {
@@ -239,6 +266,10 @@ void Node::showMatrix() {
     }
     for (int i = 0; i < kMatrixItems; i++) drawBarItem(i, i == bar_);
     char b[64];
+    if (barAt_[0][0]) {
+        out_ += "\x1b[24;1H";
+        return;
+    }
     std::snprintf(b, sizeof b, "\x1b[%d;%dH", kMatrixRow + kMatrixItems + 2, kMatrixCol - 6);
     out_ += b;
     out_ += std::string(theme::DGREY) + "arrows move, " + theme::HOT + "Enter" + theme::DGREY + " picks, or press the letter" + theme::RESET;
@@ -266,7 +297,7 @@ void Node::matrixKey(char c) {
             bar_ = to;
             drawBarItem(bar_, true);
             char b[24];
-            std::snprintf(b, sizeof b, "\x1b[%d;1H", kMatrixRow + kMatrixItems + 4);
+            std::snprintf(b, sizeof b, "\x1b[%d;1H", barAt_[0][0] ? 24 : kMatrixRow + kMatrixItems + 4);
             out_ += b;
         }
         return;
@@ -341,6 +372,7 @@ void Node::prompt() {
     } else if (state_ == State::Password) {
         out_ += "\r\n   " + theme::fade("Password") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Menu) {
+        showNotes();
         if (o2()) o2Prompt("Main Menu");
         else out_ += "\r\n   " + theme::fade("Command") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Doors) {
@@ -400,12 +432,13 @@ void Node::showMainMenu() {
     out_ += theme::CLS;
     if (o2()) {  // MAIN.ANS from the card, or the stock look: a title bar and a boxed two-column list
         std::string art = art_ ? art_("MAIN.ANS") : "";
+        o2Keys_ = !art.empty();
         if (!art.empty()) {
             out_ += mci(art);
         } else {
             static const BarItem items[] = {{'M', "Message Bases"}, {'F', "File Vaults"},    {'D', "Doors"},         {'T', "Teleconference"},
                                             {'W', "Who's Online"},  {'O', "Oneliners"},      {'U', "User Settings"}, {'Y', "Yell for SysOp"},
-                                            {'I', "System Info"},   {'C', "Credits"},        {'G', "Goodbye"},       {'?', "This Menu"}};
+                                            {'I', "System Info"},   {'C', "Credits"},        {'G', "Goodbye"},       {'N', "MultiNode"}};
             out_ += theme::titleBar("Main Menu");
             out_ += std::string("  ") + theme::ORANGE + "\xc9" + std::string(74, '\xcd') + "\xbb\r\n";
             char b[160];
@@ -428,6 +461,7 @@ void Node::showMainMenu() {
                                        {"[W]", "who's online"},
                                        {"[P]", "page the sysop"},
                                        {"[U] [O]", "your account and tagline, oneliners"},
+                                       {"[N]", "multinode: notes, broadcasts, split chat"},
                                        {"[I] [C]", "system info, credits"},
                                        {"[G]", "goodbye"}});
     prompt();
@@ -462,6 +496,25 @@ void Node::key(char c) {
     }
     if (state_ == State::Matrix) {
         matrixKey(c);
+        return;
+    }
+    if (splitAsk_ && (state_ == State::Menu || state_ == State::MultiNode)) {  // answering a split chat request
+        char k = (char)(c | 0x20);
+        if (k != 'y' && k != 'n') return;
+        int with = splitAsk_;
+        splitAsk_ = 0;
+        if (send_) send_(k == 'y' ? kSplitYes : kSplitNo, with, std::string());
+        if (k == 'y') startSplit(with, splitHandle_);
+        else state_ == State::Menu ? prompt() : multiKey(0);
+        return;
+    }
+    if (state_ == State::Split) {
+        splitKey(c);
+        return;
+    }
+    if (state_ == State::MultiNode) {
+        if (mnAsk_ == 'W' && c != 0x1b) return;  // waiting on their answer
+        multiKey(c);
         return;
     }
     if (state_ == State::Login) {
@@ -707,6 +760,16 @@ void Node::key(char c) {
         return;
     }
     if (state_ != State::Menu) return;
+    if (o2() && o2Keys_ && c != '?') {  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
+        static const char from[] = "abcefgklmorstxy+=./", to[] = "utmpgguwmdoiffuuncg";
+        const char*       hit = std::strchr(from, (char)(c | 0x20));
+        if (!hit || !*hit) {
+            out_ += std::string("\r\n   ") + AMBER + "Not on this board yet." + theme::TEXT;
+            prompt();
+            return;
+        }
+        c = to[hit - from];
+    }
     switch (c | 0x20) {  // either case
         case 't':
         case 'p':
@@ -806,6 +869,9 @@ void Node::key(char c) {
             settings_->begin();
             break;
         }
+        case 'n':
+            showMultiNode();
+            break;
         case 'o':
             if (linersGet_) menuOrLiners();
             else prompt();
@@ -914,6 +980,259 @@ void Node::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string&
     state_ = State::Files;
 }
 
+// ---- MultiNode (Oblivion/2's & commands): notes, broadcasts, chat availability, force, split chat
+
+void Node::showMultiNode() {
+    state_ = State::MultiNode;
+    mnAsk_ = 0;
+    out_ += theme::CLS;
+    out_ += "\r\n" + theme::drip("NODES");
+    std::vector<std::pair<std::string, std::string>> rows = {{"[M]", "message one node"},
+                                                             {"[B]", "broadcast to every node"},
+                                                             {"[S]", "split-screen chat with a node"},
+                                                             {"[A]", std::string("available for chat: ") + (available_ ? "yes" : "no")},
+                                                             {"[W]", "who's online"},
+                                                             {"[Q]", "back to the main menu"}};
+    if (sysop_) rows.insert(rows.begin() + 3, {"[F]", "force a node into the teleconference"});
+    out_ += theme::window("MULTINODE", rows);
+    multiKey(0);
+}
+
+void Node::multiKey(char c) {
+    auto promptHere = [this] {
+        if (o2()) o2Prompt("MultiNode");
+        else out_ += "\r\n   " + theme::fade("MultiNode") + theme::ORANGE + ": " + theme::WHITE;
+    };
+    if (!c) {
+        promptHere();
+        return;
+    }
+    if (mnAsk_) {  // typing a node number, then (for M and B) the text
+        if (c == 8 || c == 127) {
+            if (!line_.empty()) {
+                line_.pop_back();
+                out_ += "\b \b";
+            }
+            return;
+        }
+        if (c == 0x1b) {
+            mnAsk_ = 0;
+            line_.clear();
+            promptHere();
+            return;
+        }
+        if (c != '\r') {
+            bool digits = !mnTo_ && mnAsk_ != 'B';
+            if ((digits ? (c >= '0' && c <= '9' && line_.size() < 2) : ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && line_.size() < 70))) {
+                line_ += c;
+                out_ += c;
+            }
+            return;
+        }
+        std::string got = line_;
+        line_.clear();
+        if (mnAsk_ == 'B' || mnTo_) {  // the text is in
+            if (!got.empty() && send_) send_(mnAsk_ == 'B' ? kNodeBroadcast : kNodeNote, mnAsk_ == 'B' ? 0 : mnTo_, got);
+            out_ += std::string("\r\n   ") + theme::TEXT + (got.empty() ? "Nothing sent." : mnAsk_ == 'B' ? "Sent to every node." : "Sent to node " + std::to_string(mnTo_) + ".");
+            mnAsk_ = 0;
+            mnTo_ = 0;
+            promptHere();
+            return;
+        }
+        int                  to = std::atoi(got.c_str());
+        const WhoLine*       hit = nullptr;
+        std::vector<WhoLine> all = who_ ? who_() : std::vector<WhoLine>{};
+        for (const WhoLine& w : all)
+            if (w.node == to) hit = &w;
+        const char* why = to == node_ ? "That's you." : !hit || hit->handle.empty() ? "Nobody is on that node."
+                        : mnAsk_ != 'F' && hit->activity.find("(DND)") != std::string::npos ? "That caller is not available right now."
+                                                                                              : nullptr;
+        if (why) {
+            out_ += std::string("\r\n   ") + AMBER + why + theme::TEXT;
+            mnAsk_ = 0;
+            promptHere();
+            return;
+        }
+        if (mnAsk_ == 'M') {
+            mnTo_ = to;
+            out_ += std::string("\r\n   ") + theme::TEXT + "Message for " + theme::WHITE + hit->handle + theme::TEXT + ": " + theme::WHITE;
+            return;
+        }
+        if (mnAsk_ == 'F') {
+            if (send_) send_(kNodeForce, to, "");
+            out_ += std::string("\r\n   ") + theme::TEXT + hit->handle + " is pulled into the teleconference.";
+            mnAsk_ = 0;
+            promptHere();
+            return;
+        }
+        // S: ask them; their answer comes back through nodeIn
+        mnAsk_ = 0;
+        splitAsk_ = 0;
+        mnTo_ = to;
+        if (send_) send_(kSplitAsk, to, "");
+        out_ += std::string("\r\n   ") + theme::TEXT + "Waiting for node " + std::to_string(to) + " to answer... (Esc gives up)";
+        mnAsk_ = 'W';
+        return;
+    }
+    switch (c | 0x20) {
+        case 'm':
+        case 's':
+        case 'f':
+            if ((c | 0x20) == 'f' && !sysop_) {
+                out_ += std::string("\r\n   ") + AMBER + "Only the sysop can pull a caller into chat." + theme::TEXT;
+                promptHere();
+                return;
+            }
+            mnAsk_ = (char)(c & ~0x20);
+            mnTo_ = 0;
+            line_.clear();
+            out_ += std::string("\r\n   ") + theme::TEXT + "Node number: " + theme::WHITE;
+            break;
+        case 'b':
+            mnAsk_ = 'B';
+            line_.clear();
+            out_ += std::string("\r\n   ") + theme::TEXT + "Message for every node: " + theme::WHITE;
+            break;
+        case 'a':
+            available_ = !available_;
+            out_ += std::string("\r\n   ") + theme::TEXT +
+                    (available_ ? "You're available for chat and notes again." : "You're not available: no notes, broadcasts or chat requests.");
+            promptHere();
+            break;
+        case 'w': {
+            std::vector<WhoLine> all = who_ ? who_() : std::vector<WhoLine>{{node_, handle_, "Menu"}};
+            out_ += "\r\n";
+            for (const WhoLine& w : all)
+                out_ += std::string("\r\n   ") + theme::HOT + "node " + std::to_string(w.node) + "  " + theme::WHITE +
+                        (w.handle.empty() ? std::string(theme::DGREY) + "waiting for a caller" : w.handle + theme::TEXT + "  " + w.activity);
+            promptHere();
+            break;
+        }
+        case 'q':
+            showMainMenu();
+            break;
+        default:
+            break;
+    }
+}
+
+void Node::showNotes() {
+    for (const std::string& n : notes_) out_ += "\r\n" + n;
+    notes_.clear();
+}
+
+void Node::nodeIn(int kind, int from, const std::string& handle, const std::string& text) {
+    bool screenFree = state_ == State::Menu || state_ == State::MultiNode || state_ == State::Chat || state_ == State::Settings ||
+                      state_ == State::Files || state_ == State::Messages || state_ == State::Doors || state_ == State::Paging;
+    if (kind == kNodeNote || kind == kNodeBroadcast) {
+        if (!available_ || state_ == State::Split) return;
+        std::string n = std::string("   ") + theme::HOT + "*** " + (kind == kNodeBroadcast ? "to every node" : "note") + " from " + theme::WHITE +
+                        handle + theme::DGREY + " (node " + std::to_string(from) + ")" + theme::HOT + ": " + theme::WHITE + text + theme::TEXT;
+        if (!screenFree) {
+            notes_.push_back(n);
+            return;
+        }
+        out_ += "\r\n" + n + "\r\n";
+        if (state_ == State::Chat) out_ += std::string(theme::ORANGE) + "> " + theme::WHITE + line_;
+        else if (state_ == State::Menu || state_ == State::MultiNode) state_ == State::Menu ? prompt() : multiKey(0);
+    } else if (kind == kNodeForce) {
+        if (state_ != State::Menu && state_ != State::MultiNode && state_ != State::Chat) {
+            notes_.push_back(std::string("   ") + theme::HOT + "*** the sysop wants you in the teleconference ([T])" + theme::TEXT);
+            return;
+        }
+        if (state_ == State::Chat) return;
+        line_.clear();
+        state_ = State::Chat;
+        out_ += theme::CLS;
+        out_ += "\r\n" + theme::drip("CHAT") + "   " + theme::fade("TELECONFERENCE");
+        out_ += std::string(theme::TEXT) + "  the sysop pulled you in. " + theme::ORANGE + "/Q" + theme::TEXT + " leaves.\r\n\r\n";
+        out_ += std::string(theme::ORANGE) + "> " + theme::WHITE;
+    } else if (kind == kSplitAsk) {
+        if (!available_ || splitWith_ || splitAsk_ || !(state_ == State::Menu || state_ == State::MultiNode)) {
+            if (send_) send_(kSplitNo, from, "");
+            return;
+        }
+        splitAsk_ = from;
+        splitHandle_ = handle;
+        mnAsk_ = 0;
+        out_ += std::string("\r\n\r\n   ") + theme::HOT + "*** " + theme::WHITE + handle + theme::DGREY + " (node " + std::to_string(from) + ")" +
+                theme::TEXT + " wants a split-screen chat. Accept? " + theme::key("Y", "/") + theme::key("N", "") + theme::ORANGE + ": " + theme::WHITE;
+    } else if (kind == kSplitYes && mnAsk_ == 'W' && from == mnTo_) {
+        mnAsk_ = 0;
+        startSplit(from, handle);
+    } else if (kind == kSplitNo && mnAsk_ == 'W' && from == mnTo_) {
+        mnAsk_ = 0;
+        out_ += std::string("\r\n   ") + AMBER + "Node " + std::to_string(from) + " declined (or isn't free)." + theme::TEXT;
+        multiKey(0);
+    } else if (kind == kSplitKey && state_ == State::Split && from == splitWith_) {
+        for (char k : text) splitPut(0, k);
+        char b[24];
+        std::snprintf(b, sizeof b, "\x1b[%d;%dH", splitRow_[1], splitCol_[1]);  // back to my cursor
+        out_ += b;
+    } else if (kind == kSplitEnd && state_ == State::Split && from == splitWith_) {
+        splitWith_ = 0;
+        showMainMenu();
+    }
+}
+
+// Split-screen chat: their keystrokes in the top half (rows 2 to 12), mine in the bottom (14 to 24),
+// each half wiping itself when it fills. Every key goes across as it's typed, like Oblivion/2's.
+void Node::startSplit(int with, const std::string& them) {
+    state_ = State::Split;
+    splitWith_ = with;
+    splitAsk_ = 0;
+    splitRow_[0] = 2, splitCol_[0] = 1, splitRow_[1] = 14, splitCol_[1] = 1;
+    out_ += theme::CLS;
+    out_ += std::string("\x1b[1;1H") + theme::ORANGE + std::string(4, '\xc4') + theme::DGREY + "[ " + theme::WHITE + them + theme::DGREY + " ]" +
+            theme::ORANGE + std::string(20, '\xc4') + theme::DGREY + " split screen chat " + theme::ORANGE + std::string(10, '\xc4') +
+            theme::DGREY + " Esc ends " + theme::ORANGE + std::string(6, '\xc4');
+    out_ += std::string("\x1b[13;1H") + theme::ORANGE + std::string(4, '\xc4') + theme::DGREY + "[ " + theme::WHITE + handle_ + theme::DGREY +
+            " ]" + theme::ORANGE + std::string(60, '\xc4');
+    out_ += std::string("\x1b[14;1H") + theme::WHITE;
+}
+
+void Node::splitPut(int half, char c) {
+    int &row = splitRow_[half], &col = splitCol_[half], top = half ? 14 : 2, bottom = half ? 24 : 12;
+    char b[24];
+    auto wipe = [&] {
+        for (int r = top; r <= bottom; r++) {
+            std::snprintf(b, sizeof b, "\x1b[%d;1H\x1b[K", r);
+            out_ += b;
+        }
+        row = top, col = 1;
+    };
+    if (c == '\r' || col > 79) {
+        row++, col = 1;
+        if (row > bottom) wipe();
+        if (c == '\r') return;
+    }
+    if (c == 8 || c == 127) {
+        if (col > 1) {
+            col--;
+            std::snprintf(b, sizeof b, "\x1b[%d;%dH ", row, col);
+            out_ += b;
+        }
+        return;
+    }
+    if ((unsigned char)c < 0x20) return;
+    std::snprintf(b, sizeof b, "\x1b[%d;%dH%s", row, col, half ? theme::WHITE : theme::HOT);
+    out_ += b;
+    out_ += c;
+    col++;
+}
+
+void Node::splitKey(char c) {
+    if (c == 0x1b) {
+        if (send_) send_(kSplitEnd, splitWith_, "");
+        splitWith_ = 0;
+        showMainMenu();
+        return;
+    }
+    if (c == '\n') return;
+    splitPut(1, c);
+    if (send_) send_(kSplitKey, splitWith_, std::string(1, c));
+}
+
 std::string Node::tagline() const {
     const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
     return u ? u->tagline : "";
@@ -939,6 +1258,8 @@ std::string Node::activityText() const {
         case State::Chat: return "teleconference";
         case State::Paging: return "paging the sysop";
         case State::Settings: return "account settings";
+        case State::MultiNode: return "multinode menu";
+        case State::Split: return "split-screen chat";
         case State::Done: return "leaving";
     }
     return "online";

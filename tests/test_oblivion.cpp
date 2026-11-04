@@ -95,3 +95,39 @@ TEST_CASE("an Oblivion art file from the card replaces the stock screen, its pip
     CHECK(out.find(kBar) != std::string::npos);  // the lightbar still goes on top
     theme::use(theme::Look::Axis);
 }
+
+TEST_CASE("a matrix screen with O/2 pulldown marks gets the lightbar at those marks, the marks blanked") {
+    BbsConfig c = O2::make(true);
+    Node      n(1, info, c);
+    n.setArt([](const std::string& name) {
+        return name == "MATRIX.ANS" ? std::string("\x1b[2J\x1b[16;10H|01%01\x1b[16;20H|02%02\x1b[16;30H|03%03\x1b[16;40H|04%04\x1b[16;50H|05%05")
+                                    : std::string();
+    });
+    n.begin(0);
+    std::string out = n.takeOutput();
+    CHECK(out.find("|01") == std::string::npos);
+    CHECK(out.find("%02") == std::string::npos);
+    CHECK(out.find("\x1b[16;10H\x1b[0;1;37;44m") != std::string::npos);  // Login, lit, where |01 was
+    CHECK(out.find("\x1b[16;20H") != std::string::npos);                 // Apply where |02 was
+    std::string mv = n.takeOutput();
+    n.input((const uint8_t*)"\x1b[C", 3, 0);  // right: Apply
+    mv = n.takeOutput();
+    CHECK(mv.find("\x1b[16;20H\x1b[0;1;37;44m") != std::string::npos);
+    theme::use(theme::Look::Axis);
+}
+
+TEST_CASE("with an O/2 MAIN.ANS on the card, the keys follow stock Oblivion/2 letters") {
+    BbsConfig c = O2::make(true);
+    c.doors = {{"lord", "LORD", "LORD.EXE", "", ""}};
+    Node n(1, info, c);
+    n.setArt([](const std::string& name) { return name == "MAIN.ANS" ? std::string("o open doors  = multinode") : std::string(); });
+    n.begin(0);
+    n.input((const uint8_t*)"lRev\r", 5, 0);
+    n.takeOutput();
+    n.input((const uint8_t*)"o", 1, 0);  // O/2: open doors
+    CHECK(n.state() == Node::State::Doors);
+    n.input((const uint8_t*)"\r", 1, 0);
+    n.input((const uint8_t*)"=", 1, 0);  // O/2: multinode
+    CHECK(n.state() == Node::State::MultiNode);
+    theme::use(theme::Look::Axis);
+}

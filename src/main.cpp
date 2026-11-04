@@ -895,6 +895,16 @@ static void answerIn(WiFiClient incoming) {
                 }
                 return v;
             });
+        node->setNodeLink([slot](int kind, int to, const std::string& text) {  // notes, broadcasts, split chat keys
+            if (!node) return;
+            if (cluster) {
+                cluster->send(node->handle(), kind, to, text, slot);
+                return;
+            }
+            for (size_t i = 0; i < sessions.size(); i++)
+                if ((int)i != slot && sessionNode(i) && (to == 0 || sessionNumber((int)i) == to))
+                    sessionNode(i)->nodeIn(kind, sessionNumber(slot), node->handle(), text);
+        });
         node->setMessages(&callerMessages());
         node->setArt([](const std::string& name) {  // the sysop's own screens for the theme, from the card (8 KB at most)
             std::string s;
@@ -1268,12 +1278,22 @@ static void startCluster() {
             screenDirty = true;
         }
         if (localNode) {
-            localNode->chatIn(l.node, l.handle, l.text, l.page);
+            if (l.kind >= 2) {
+                if (!l.to) localNode->nodeIn(l.kind, l.node, l.handle, l.text);  // the console gets broadcasts
+            } else {
+                localNode->chatIn(l.node, l.handle, l.text, l.page);
+            }
             localFeed();
         }
         for (size_t i = 0; i < sessions.size(); i++)
             if (sessionNode(i) && sessionLine(i)) {
-                sessionNode(i)->chatIn(l.node, l.handle, l.text, l.page);
+                if (l.kind >= 2) {  // node to node: only the node it's for (or all), never back to the sender
+                    int me = sessionNumber((int)i);
+                    if (me == l.node || (l.to && l.to != me)) continue;
+                    sessionNode(i)->nodeIn(l.kind, l.node, l.handle, l.text);
+                } else {
+                    sessionNode(i)->chatIn(l.node, l.handle, l.text, l.page);
+                }
                 std::string out = sessionNode(i)->takeOutput();
                 sessionLine(i)->write((const uint8_t*)out.data(), out.size());
                 sessionLine(i)->flush();
@@ -1733,7 +1753,8 @@ static void serviceSession(int i) {
             bool mine = busySlot == i;
             activity = mine && (door || viewer || dosShell) ? "Doors" : mine && job ? "Transfer" : st == S::Files ? "Files"
                      : st == S::Applying ? "Applying" : st == S::Chat ? "Chat" : st == S::Messages ? "Messages" : st == S::Menu ? "Menu"
-                     : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : "Online";
+                     : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : st == S::Split ? "Split chat" : "Online";
+            if (!node->available()) activity += " (DND)";
         }
         Session& me = sessions[(size_t)i];
         if (handle + "|" + activity != me.lastStatus) {

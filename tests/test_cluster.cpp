@@ -425,3 +425,19 @@ TEST_CASE("a joining board gets the main's BBS settings") {
     run({&a, &b}, now, 3000);
     CHECK(got == "bbs_name=Axis Underground CNC\nlocation=Myrtle Beach, SC, USA\n");
 }
+
+TEST_CASE("node to node lines keep their kind and target across boards") {
+    TwoBoards                t;
+    std::vector<ChatLine>    got;
+    t.a.c->onChat = [&](const ChatLine& l) { got.push_back(l); };
+    t.b.c->send("Spindle Kid", 2, 1, "meet me in LORD");  // a note (kind 2) for node 1, from node 2
+    t.b.c->send("Spindle Kid", 8, 1, "h");                // a split chat keystroke
+    run({&t.a, &t.b}, t.now, 500);
+    REQUIRE(got.size() == 2);
+    CHECK(got[0].kind == 2);
+    CHECK(got[0].to == 1);
+    CHECK(got[0].node == 2);
+    CHECK(got[0].text == "meet me in LORD");
+    CHECK(got[1].kind == 8);
+    CHECK_FALSE(got[0].page);
+}

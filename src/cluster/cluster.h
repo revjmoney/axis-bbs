@@ -43,6 +43,7 @@ struct ChatLine {
     int         node = 0;
     std::string handle, text;
     bool        page = false;  // a page for the sysop
+    int         kind = 0, to = 0;  // node to node (bbs/node.h kNodeNote ...): the kind, and the node it is for (0 = all)
 };
 
 class Cluster {
@@ -64,6 +65,9 @@ public:
     void setHasFiles(bool sd) { hasFiles_ = sd; }  // this board holds the file areas (an SD card)
     void chat(const std::string& handle, const std::string& text, int slot = 0) { say(handle, text, false, slot); }
     void page(const std::string& handle, const std::string& text, int slot = 0) { say(handle, text, true, slot); }
+    // a node to node line (a note, a broadcast, a split chat keystroke ...): every board gets it, each
+    // hands it to the session with node number "to" (or to all for 0)
+    void send(const std::string& handle, int kind, int to, const std::string& text, int slot = 0) { say(handle, text, kind == 1, slot, kind, to); }
 
     // Follower: one request to the main (remotefiles.h) and its reply, waiting up to timeoutMs while
     // the link keeps being served; false with no main or no answer.
@@ -95,7 +99,7 @@ private:
     };
     void becomeMain(uint32_t now, uint32_t epoch, int number);
     void discover(uint32_t now);
-    void say(const std::string& handle, const std::string& text, bool page, int slot);
+    void say(const std::string& handle, const std::string& text, bool page, int slot, int kind = 0, int to = 0);
     std::vector<int> allocate(const std::vector<int>& want);  // main: free numbers, the wanted ones first
     void deliver(const ChatLine& line);  // main: to this board and every follower
     void handleDatagram(const std::string& d, uint32_t from, uint32_t now);

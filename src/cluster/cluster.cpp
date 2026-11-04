@@ -82,18 +82,18 @@ void Cluster::setStatus(int slot, const std::string& handle, const std::string& 
     }
 }
 
-void Cluster::say(const std::string& handle, const std::string& text, bool page, int slot) {
+void Cluster::say(const std::string& handle, const std::string& text, bool page, int slot, int kind, int to) {
     int      me = slot >= 0 && slot < (int)numbers_.size() ? numbers_[(size_t)slot] : number_;
-    ChatLine line{me, handle, text, page};
+    ChatLine line{me, handle, text, page, kind, to};
     if (role_ == Role::Main) deliver(line);
     else if (role_ == Role::Follower && !links_.empty())
-        net_.send(links_[0].id, frame(Frame::Chat, {num((uint32_t)me), handle, text, page ? "1" : "0"}));
+        net_.send(links_[0].id, frame(Frame::Chat, {num((uint32_t)me), handle, text, page ? "1" : "0", num((uint32_t)kind), num((uint32_t)to)}));
     else if (onChat) onChat(line);  // on our own: just this board
 }
 
 void Cluster::deliver(const ChatLine& line) {
     if (onChat) onChat(line);
-    std::string f = frame(Frame::Chat, {num(line.node), line.handle, line.text, line.page ? "1" : "0"});
+    std::string f = frame(Frame::Chat, {num(line.node), line.handle, line.text, line.page ? "1" : "0", num((uint32_t)line.kind), num((uint32_t)line.to)});
     for (Link& l : links_) net_.send(l.id, f);
 }
 
@@ -265,7 +265,7 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
                     n->activity = f[1];
                 }
         } else if (t == Frame::Chat && f.size() >= 4) {
-            deliver({toU(f[0]) ? (int)toU(f[0]) : l.node, f[1], f[2], f[3] == "1"});
+            deliver({toU(f[0]) ? (int)toU(f[0]) : l.node, f[1], f[2], f[3] == "1", f.size() >= 6 ? (int)toU(f[4]) : 0, f.size() >= 6 ? (int)toU(f[5]) : 0});
         } else if (t == Frame::UserChange) {
             if (onUser) onUser(body);
         } else if (t == Frame::FileReq) {
@@ -305,7 +305,7 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
         for (const NodeInfo& n : nodes_)
             if (n.ip == mainIp_) lastMain_ = n.number;
     } else if (t == Frame::Chat && f.size() >= 4) {
-        if (onChat) onChat({(int)toU(f[0]), f[1], f[2], f[3] == "1"});
+        if (onChat) onChat({(int)toU(f[0]), f[1], f[2], f[3] == "1", f.size() >= 6 ? (int)toU(f[4]) : 0, f.size() >= 6 ? (int)toU(f[5]) : 0});
     } else if (t == Frame::UserChange) {
         if (onUser) onUser(body);
     } else if (t == Frame::Settings) {
