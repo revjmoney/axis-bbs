@@ -505,3 +505,157 @@ TEST_CASE("a chat line that arrives while a request waits is held until after it
     CHECK(heard == 1);  // delivered after it
     CHECK(nested);      // and by then a fresh request is fine
 }
+
+// SD card clustering: the main knows which followers hold a card and how much room it has, and can
+// ask one of them a question (requestTo), the way a follower asks the main.
+namespace {
+struct CardBoards {  // a: main with a card, b: follower with a card, c: follower without one
+    FakeLan  lan;
+    Board    a{lan, 101, "board-a"}, b{lan, 102, "board-b"}, c{lan, 103, "board-c"};
+    uint32_t now = 0;
+    CardBoards() {
+        a.c->setHasFiles(true);
+        b.c->setHasFiles(true);
+        b.c->setFreeBytes(5000000000ull);  // more than 32 bits
+        a.c->start(now);
+        run({&a}, now, 4000);
+        b.c->start(now);
+        run({&a, &b}, now, 3000);
+        c.c->start(now);
+        run({&a, &b, &c}, now, 3000);
+    }
+};
+}  // namespace
+
+TEST_CASE("a follower with an SD card tells the main its free space; one without a card is not listed") {
+    CardBoards t;
+    REQUIRE(t.a.c->role() == Role::Main);
+    auto cards = t.a.c->cardBoards();
+    REQUIRE(cards.size() == 1);
+    CHECK(cards[0].id == "board-b");
+    CHECK(cards[0].ip == 102);
+    CHECK(cards[0].freeBytes == 5000000000ull);
+    CHECK(cards[0].alive);
+    t.b.c->setFreeBytes(4000);  // an upload landed: it tells the main again
+    run({&t.a, &t.b, &t.c}, t.now, 200);
+    CHECK(t.a.c->cardBoards()[0].freeBytes == 4000);
+}
+
+TEST_CASE("a card board that goes away stays listed as down, and comes back alive when it rejoins") {
+    CardBoards t;
+    t.b.net.powerOff();
+    run({&t.a, &t.c}, t.now, 500);
+    auto cards = t.a.c->cardBoards();
+    REQUIRE(cards.size() == 1);
+    CHECK_FALSE(cards[0].alive);
+    t.b.net.powered = true;
+    t.b.c->start(t.now, 2);
+    run({&t.a, &t.b, &t.c}, t.now, 4000);
+    REQUIRE(t.a.c->cardBoards().size() == 1);
+    CHECK(t.a.c->cardBoards()[0].alive);
+}
+
+TEST_CASE("the main asks a card board a question and gets its answer, binary bytes intact") {
+    CardBoards t;
+    t.b.c->onMainRequest = [](const std::string& req) { return "1b saw:" + req; };
+    t.a.c->clockMs = [&t] { return t.now; };
+    t.a.c->sleepMs = [&t](uint32_t) {  // while the main waits, the follower keeps running
+        t.now += 5;
+        t.b.c->tick(t.now);
+    };
+    std::string reply, req("A\x1f" "ansi\x1f\x00\xff", 9);
+    REQUIRE(t.a.c->requestTo("board-b", req, reply));
+    CHECK(reply == "1b saw:" + req);
+}
+
+TEST_CASE("the main's request to an unknown or gone board fails at once, and one that never answers times out") {
+    CardBoards t;
+    t.a.c->clockMs = [&t] { return t.now; };
+    t.a.c->sleepMs = [&t](uint32_t ms) { t.now += ms ? ms : 1; };  // nobody else runs
+    std::string reply;
+    uint32_t    start = t.now;
+    CHECK_FALSE(t.a.c->requestTo("board-z", "L\x1f" "ansi", reply, 1000));
+    CHECK(t.now == start);
+    CHECK_FALSE(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 1000));  // b is frozen
+    CHECK(t.now - start >= 1000);
+    t.b.net.powerOff();
+    start = t.now;
+    CHECK_FALSE(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 1000));
+    CHECK(t.now - start < 100);  // the link is down: no waiting out the timeout
+}
+
+TEST_CASE("a follower without an answer for the main says no") {
+    CardBoards t;
+    t.a.c->clockMs = [&t] { return t.now; };
+    t.a.c->sleepMs = [&t](uint32_t) {
+        t.now += 5;
+        t.b.c->tick(t.now);
+    };
+    std::string reply;
+    REQUIRE(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 1000));
+    CHECK(reply == "0");
+}
+
+TEST_CASE("a cardless follower's request that makes the main ask a card board gets the combined answer") {
+    CardBoards t;
+    t.b.c->onMainRequest = [](const std::string& req) { return "1from b:" + req; };
+    t.a.c->clockMs = [&t] { return t.now; };
+    t.a.c->sleepMs = [&t](uint32_t) {
+        t.now += 5;
+        t.b.c->tick(t.now);
+    };
+    t.a.c->onRequest = [&t](int, const std::string& req) {
+        std::string r;
+        return t.a.c->requestTo("board-b", req, r) ? "1main+" + r : std::string("0");
+    };
+    t.c.c->clockMs = [&t] { return t.now; };
+    t.c.c->sleepMs = [&t](uint32_t) {
+        t.now += 5;
+        t.a.c->tick(t.now);
+    };
+    std::string reply;
+    REQUIRE(t.c.c->request("L\x1f" "ansi", reply, 3000));
+    CHECK(reply == "1main+1from b:L\x1f" "ansi");
+}
+
+TEST_CASE("a follower answers the main even while it waits on its own request, so the two never deadlock") {
+    CardBoards t;
+    t.b.c->onMainRequest = [](const std::string&) { return std::string("1here"); };
+    // the main is busy asking b something when b's own request goes out: the main's question is
+    // already on the wire to b
+    Wire* w = nullptr;
+    for (auto& link : t.b.net.wires) w = link.second.first.get();
+    REQUIRE(w);
+    w->toFollower += frame(Frame::MainReq, {"77", "L\x1f" "ansi"});
+    t.b.c->clockMs = [&t] { return t.now; };
+    t.b.c->sleepMs = [&t](uint32_t ms) { t.now += ms ? ms : 1; };  // the main never answers b
+    std::string reply;
+    CHECK_FALSE(t.b.c->request("q", reply, 300));
+    FrameReader r;
+    r.add(w->toMain);
+    Frame       ty;
+    std::string body;
+    bool        answered = false;
+    while (r.next(ty, body))
+        if (ty == Frame::MainResp) answered = fields(body)[0] == "77" && body.substr(3) == "1here";
+    CHECK(answered);  // answered from inside the wait
+}
+
+TEST_CASE("while the main waits on a card board, other followers' frames wait for after it and heartbeats keep going") {
+    CardBoards t;
+    t.a.c->clockMs = [&t] { return t.now; };
+    int heardOnA = 0;
+    t.a.c->onChat = [&](const ChatLine&) { heardOnA++; };
+    bool chatted = false;
+    t.a.c->sleepMs = [&](uint32_t) {  // b is frozen; c keeps running and chats once
+        t.now += 5;
+        if (!chatted) t.c.c->chat("Chip", "hello from c"), chatted = true;
+        t.c.c->tick(t.now);
+    };
+    std::string reply;
+    CHECK_FALSE(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 6000));  // longer than a follower waits for a beat
+    CHECK(heardOnA == 0);  // held while the main waited
+    CHECK(t.c.c->role() == Role::Follower);  // the heartbeat kept coming: no failover
+    run({&t.a, &t.c}, t.now, 100);
+    CHECK(heardOnA == 1);
+}

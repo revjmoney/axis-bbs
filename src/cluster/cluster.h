@@ -39,6 +39,14 @@ struct NodeInfo {
     uint32_t    ip = 0;
 };
 
+// A follower holding an SD card, as the main knows it (the pooled file library adds its files).
+struct CardBoard {
+    std::string id;  // the board's id
+    uint32_t    ip = 0;
+    uint64_t    freeBytes = 0;
+    bool        alive = false;  // false: its link went; it stays listed so @CARDS can say so
+};
+
 struct ChatLine {
     int         node = 0;
     std::string handle, text;
@@ -63,6 +71,11 @@ public:
     void setStatus(const std::string& handle, const std::string& activity) { setStatus(0, handle, activity); }
     void setStatus(int slot, const std::string& handle, const std::string& activity);
     void setHasFiles(bool sd) { hasFiles_ = sd; }  // this board holds the file areas (an SD card)
+    // this board's card's free space; a follower tells the main when it changes
+    void     setFreeBytes(uint64_t bytes);
+    uint64_t freeBytes() const { return freeBytes_; }
+    // Main: every follower that has told it about an SD card, in id order.
+    std::vector<CardBoard> cardBoards() const;
     void chat(const std::string& handle, const std::string& text, int slot = 0) { say(handle, text, false, slot); }
     void page(const std::string& handle, const std::string& text, int slot = 0) { say(handle, text, true, slot); }
     // a node to node line (a note, a broadcast, a split chat keystroke ...): every board gets it, each
@@ -72,6 +85,10 @@ public:
     // Follower: one request to the main (remotefiles.h) and its reply, waiting up to timeoutMs while
     // the link keeps being served; false with no main or no answer.
     bool request(const std::string& req, std::string& reply, uint32_t timeoutMs = 4000);
+    // Main: one request to the follower board with this id and its reply (onMainRequest answers it
+    // there), the same way: the other links keep being read but their frames wait for the next
+    // tick, and heartbeats go on. False at once for a board with no link, or after timeoutMs.
+    bool requestTo(const std::string& boardId, const std::string& req, std::string& reply, uint32_t timeoutMs = 2500);
     // One user record (users.h formatUser): a follower sends it to the main, the main to every follower.
     void sendUser(const std::string& record);
     // Main: the BBS settings changed (settings()), send them to every board now, not just at join.
@@ -82,6 +99,8 @@ public:
     std::function<void(const std::string&)> onEvent;   // "node 2 joined", "MAIN NODE LOST ..."
     std::function<std::string(int node, const std::string& req)> onRequest;  // main: answer a follower
     std::function<void(int node)>                 onNodeGone;  // main: a follower's link closed
+    std::function<std::string(const std::string& req)> onMainRequest;  // follower: answer the main (requestTo)
+    std::function<void()>                         onMainGone;  // follower: the link to the main closed
     std::function<void(const std::string& record)> onUser;     // a user record came over the link
     std::function<std::vector<std::string>()>     allUsers;    // main: every user, for a board that joins
     std::function<std::string()>                  settings;    // main: the BBS settings, for a board that joins
@@ -127,7 +146,19 @@ private:
     std::string*          replyTo_ = nullptr;
     bool                  replied_ = false;
     bool                  inRequest_ = false;  // request() is waiting: other frames are held, never handled inside it
-    std::vector<std::pair<Frame, std::string>> held_;  // what arrived meanwhile, for the next tick
+    struct Held {
+        int         link;
+        Frame       type;
+        std::string body;
+    };
+    std::vector<Held>     held_;  // what arrived meanwhile, for the next tick (by link id)
+    uint64_t              freeBytes_ = 0;
+    struct Card {
+        uint32_t ip = 0;
+        uint64_t freeBytes = 0;
+        bool     alive = false;
+    };
+    std::map<std::string, Card> cards_;  // main: the followers with SD cards, by board id
     std::vector<NodeInfo> nodes_;
     std::vector<Link>     links_;  // main: one per follower; follower: one, to the main
 };
