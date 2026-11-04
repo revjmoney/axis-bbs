@@ -534,6 +534,9 @@ static bool                              localKeys = false;  // the keyboard is 
 static bool                              localZoom = true;   // 40 columns in 8x8 cells (readable), or all 80 in 4x8
 static int                               localPan = 0;       // zoomed: which 40 columns (0 or 40)
 static axis::bbs::TouchKeyboard          localKb("type, then OK", false, 70);
+static axis::bbs::TouchKeyboard          pwKb("new password, then OK", true, 40);  // the sysop menu's SET PASS / SYSOP PW
+static int                               pwFor = -1;  // whose password the keyboard sets: -1 none, 0 the sysop, else a user id
+static void                              runCommand(const String& cmd, Print& out);
 static void localFeed() {
     if (!localNode) return;
     std::string out = localNode->takeOutput();
@@ -750,6 +753,27 @@ static void drawNodeDetail(int i) {
 
 // The sysop menu: drippy title, the screen's text in big VGA cells, then the touch buttons.
 static void drawSysop() {
+    if (pwFor >= 0) {  // setting a password: the touch keyboard
+        scr.fillScreen(pal::BLACK);
+        scr.setFont(&fonts::Font2);
+        scr.setTextColor(pal::ORANGE, pal::BLACK);
+        axis::bbs::User* u = pwFor > 0 ? users.byId(pwFor) : nullptr;
+        scr.drawString((std::string("PASSWORD FOR ") + (pwFor == 0 ? cfg.sysopHandle + " (sysop)" : u ? u->handle : "?")).c_str(), 8, 4);
+        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
+        scr.setTextColor(pal::WHITE, pal::BLACK);
+        scr.drawString((pwKb.shown() + "_").c_str(), 10, 35);
+        scr.setTextDatum(textdatum_t::middle_center);
+        for (auto& k : pwKb.keys()) {
+            uint16_t fill = k.lit ? pal::ORANGE : pal::DIM;
+            scr.fillRoundRect(k.x, k.y, k.w, k.h, 4, fill);
+            scr.drawRoundRect(k.x, k.y, k.w, k.h, 4, pal::ORANGE);
+            scr.setTextColor(k.lit ? pal::BLACK : pal::WHITE, fill);
+            scr.drawString(k.label.c_str(), k.x + k.w / 2, k.y + k.h / 2);
+        }
+        scr.setTextDatum(textdatum_t::top_left);
+        scr.setFont(&fonts::Font0);
+        return;
+    }
     axis::bbs::SysopData d;
     d.cfg = cfg;
     d.info = sysInfo();
@@ -1472,6 +1496,9 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
         logEvent(String("sysop: ") + u->handle.c_str() + (a == A::ToggleFiles ? " files " : a == A::ToggleMessages ? " messages "
                                                            : a == A::ToggleDoors ? " doors " : " free downloads ") + (f ? "on" : "off"));
         saveUsers();  // and on to every board
+    } else if (a == A::SetUserPassword || a == A::SetSysopPassword) {  // the touch keyboard takes it from here
+        pwFor = a == A::SetSysopPassword ? 0 : sysop.selectedUser();
+        pwKb.reset("new password, then OK", true);
     } else if (a == A::CycleTheme) {  // the next caller sees it; every board gets it
         cfg.theme = cfg.theme == "oblivion" ? "axis" : "oblivion";
         bool ok = configSave(cfg);
@@ -1748,6 +1775,26 @@ static void handleTap(int x, int y) {
                 endLocal();
             }
             screenDirty = true;
+            return;
+        }
+        if (sysop.isOpen() && pwFor >= 0) {  // the password keyboard
+            pwKb.tap(x, y);
+            if (pwKb.done() || pwKb.cancelled()) {
+                if (pwKb.done()) {  // the same code as @SYSOPPASS / @USERPASS (4+ characters)
+                    axis::bbs::User* u = pwFor > 0 ? users.byId(pwFor) : nullptr;
+                    String c = pwFor == 0 ? String("@SYSOPPASS ") + pwKb.text().c_str()
+                                          : String("@USERPASS ") + (u ? u->handle.c_str() : "") + " " + pwKb.text().c_str();
+                    String reply;
+                    struct Sink : Print {
+                        String& s;
+                        explicit Sink(String& r) : s(r) {}
+                        size_t write(uint8_t b) override { s += (char)b; return 1; }
+                    } sink(reply);
+                    runCommand(c, sink);
+                }
+                pwKb.reset("new password, then OK", true);
+                pwFor = -1;
+            }
             return;
         }
         if (sysop.isOpen()) {

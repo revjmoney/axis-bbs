@@ -15,3 +15,4 @@ PC unit tests run per task; board flashing and live checks wait for the end.
 - Task 3 done: PanelSession (src/bbs/panelproto.*). Login also logs 'panel: <who> logged in'.
 - Task 4: new commands act on THIS board's nodes only (@KICK/@ADDTIME/@FORCETC/@NOTE/@BCAST); the panel must send each to the board holding the node. No node unit test for addMinutes (shifts callStart_). cyd 95.3%.
 - Rev (mid-build): set sysop and user passwords on the touchscreen; then he'll set everything to 1234 himself (Claude doesn't type passwords). Add @USERPASS handle pw + a SET PASSWORD button on the touch sysop menu (touchkeyboard) + a panel control.
+- Touch passwords done: SET PASS on a user's ACCESS screen, SYSOP PW on SYSTEM; OK runs @USERPASS/@SYSOPPASS (4+ chars). @SYSOPPASS minimum lowered 6 -> 4 to match the wizard (so Rev can use 1234). Not tried on the screen yet.

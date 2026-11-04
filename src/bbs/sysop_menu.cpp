@@ -63,6 +63,7 @@ std::vector<SysopMenu::Button> SysopMenu::buttons() const {
             if (screen_ == Screen::Access) {  // one toggle beside each permission's line
                 const char* t[5] = {"FILES", "MSGS", "DOORS", "FREE DL", "SYSOP"};
                 for (int i = 0; i < 5; i++) b.push_back({t[i], 208, 28 + i * 34, 104, 30, i == 4});  // beside lines 0, 2, 4, 6, 8
+                b.push_back({"SET PASS", 104, 204, 96, 30});  // the caller's password, on the touch keyboard
                 break;
             }
             if (screen_ == Screen::Files || screen_ == Screen::Logs || screen_ == Screen::Users) b.push_back({"MORE", 222, 204, 90, 30});
@@ -71,8 +72,11 @@ std::vector<SysopMenu::Button> SysopMenu::buttons() const {
                 b.push_back({"RUN SETUP", 192, 204, 120, 30, true});
             }
             if (screen_ == Screen::System) {
-                b.push_back({"FORMAT SD", 106, 204, 100, 30, true});
-                b.push_back({"RESTART", 214, 204, 98, 30});
+                b.back().w = 58;
+                b.push_back({"SYSOP PW", 70, 204, 80, 30});  // the sysop password, on the touch keyboard
+                b.push_back({"FORMAT SD", 154, 204, 76, 30, true});
+                b.push_back({"RESTART", 234, 204, 78, 30});
+
             }
             break;
     }
@@ -110,6 +114,8 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
         } else if (b.label == "RESTART") return Action::Restart;
         else if (b.label == "RUN SETUP") return Action::RerunSetup;
         else if (b.label == "THEME") return Action::CycleTheme;
+        else if (b.label == "SET PASS") return Action::SetUserPassword;
+        else if (b.label == "SYSOP PW") return Action::SetSysopPassword;
         return Action::None;
     }
     if (screen_ == Screen::Users && x >= 8 && x < 312 && y >= 32 && y < 32 + kLinesPerPage * 16) {  // a caller's row
