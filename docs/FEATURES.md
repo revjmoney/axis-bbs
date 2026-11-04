@@ -12,6 +12,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | First-boot setup | working (telnet path) | Tap screen + PIN + wizard over telnet tested live 2026-11-02; on-screen wizard and touch WiFi picker still to come | WiFi on the touchscreen, then the board asks with a tap: finish on the screen or over telnet (setup PIN); asks sysop account, names, location, address, port, timezone, FTN address, new-user defaults |
 | Several callers per board | working | Port 23, LAN only in v1; a second caller gets a "node busy" screen |
 | Multi-board cluster | working (2 boards): discovery, node numbers, heartbeat, failover, SD handover, shared files, user + settings sync, caller relay, chat, several sessions per board; DOS doors on followers still to come | Boards on the LAN join as node 2, 3, 4...; one BBS with shared data |
+| SD card clustering (pool and mirror) | in progress (built and PC tested 2026-11-04; hardware test to come) | Every SD card in the cluster adds to one file library; uploads go to the roomiest card; `areaN=...\|m` keeps a mirrored area on two cards. See the section below |
 | One caller address | working (relay) | Callers dial `axis.local`; the main answers with a free board's IP so each caller connects directly (no relay), so a failing board never drops other boards' callers |
 | Main-board failover | planned | Lowest surviving node becomes main within ~5 s; callers stay connected; full replica on every board (SD, or LittleFS if it fits) |
 | Real DOS doors on the board | in progress (PC build working) | 8086 runtime, high-level DOS, FOSSIL on INT 14h to telnet, door code served from flash |
@@ -38,6 +39,18 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Log rotation | working | Board events go to internal flash `events.log`, rolled to `events.old` at 8 KB (16 KB total at most); the Logs screen keeps 40 lines / 2 KB in RAM and reloads the newest lines after a reboot |
 | Internet access | planned (later) | Needs login throttling, bot filtering, non-default port |
 
+### SD card clustering (pool and mirror)
+
+**2026-11-04 (Rev's request).** With an SD card in more than one board, the cards work as one library:
+
+- **One library.** The main lists each area across every card: its own (`SdFileLibrary`) and each card follower's, reached over the link (`src/cluster/pooledlib.*`, a `RemoteFileLibrary` per card board over `Cluster::requestTo`). A file on two cards shows once (the larger copy if they differ; same size counts as the same file), with the description from whichever card's FILES.BBS has one. Followers, with or without a card, use the main's pooled view, so a caller anywhere sees everything.
+- **Uploads go to the roomiest card**, this board's or another's, and the FILES.BBS description follows the file (also when the upload checker rezips it). Downloads read from a card that has the file, the main's own card first, falling back to the mirror copy. Sysop remove and rename reach every copy.
+- **Mirroring**: `areaN=id|name|level|m` (4th field `m`). The main's `MirrorJob` (`src/cluster/mirrorjob.*`) finds files in mirrored areas held by only one live card and copies each to the card with the most room (keeping 1 MB spare), one file at a time and at most 2 KB per loop turn, never while a door or transfer runs on the main or a follower is mid-upload. The copy shows only when whole and keeps its description. A copy cut short (a board left, a read or write failed, the file changed) is thrown away and tried again on a later pass (every 30 s). Events go in the log: `mirror: copied X to node 2`.
+- **A board that is down** adds nothing until it is back; no request waits more than 2.5 s.
+- **Cluster frames** (old boards ignore them): `MainReq`/`MainResp` (the main asks a follower, the way followers ask the main; a follower answers even while it waits on its own request, so the two never deadlock; the main keeps sending heartbeats while it waits), `CardInfo` (a follower's card and free bytes, also sent in Hello). `Cluster::cardBoards()` lists the card boards (id, IP, free bytes, up or down).
+- **Bench commands** on the main: `@CARDS` (each card board, free space, up or down) and `@MIRROR` (the mirrored areas and the job's state).
+- With one SD card in the cluster (today's setup) nothing changes. SD uploads now get their own temp file each (`.uploadN.tmp`), so a mirror copy and an upload in one area can't collide.
+
 ## Settings
 
 | Setting | Default | Where | Notes |
@@ -56,6 +69,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Idle logoff | 5 minutes | fixed (for now) | |
 | Partition table | app 1.5 MB, door 768 KB, LittleFS ~1.7 MB | firmware | Same on every board |
 | Data store | SD if present, else LittleFS | automatic | |
+| File area mirror | off | config file `areaN=id\|name\|level\|m` | `m` keeps the area's files on two SD cards when the cluster has two (see SD card clustering) |
 
 ## Change log
 
@@ -126,3 +140,4 @@ Living record of every feature and setting, updated as the project goes. Status:
 - **2026-11-04 (Rev):** **Local console readable and themed**: it opens on all 80 columns drawn crisp (each 4x8 pixel lit when 2 of its 4 font pixels are, no blending); **ZOOM** shows 40 columns in full 8x8 cells and `>>`/`<<` flips halves (it follows the cursor); the local console now gets the theme's screens (O/2 art), rumors and lists like a caller. Also fixed: two callers on the same board ending a split chat crashed it (cluster requests now never nest; frames that arrive while one waits are held for the next tick).
 - **2026-11-04 (Rev):** **Product**: a ready-to-plug-in unit for sale on jmscnc.com, $79.00 plus $9 shipping (desk-gadget class), SKU JMSCNC-AXISBBS-CYD, WooCommerce product 19113 (draft until the GitHub repo and site are live), slug `axis-underground-bbs-ready-to-plug-in`. The website (`site/`, GitHub Pages at revjmoney.github.io/axis-bbs), README and listing link to each other; private test access requests go through the contact links on rotatocam.com.
 - **2026-11-04 (Rev):** **CNC rumors**: `site/rumors.txt` holds 153 silly CNC and machinist rumors (our own wording, inspired by shop sayings like "close enough for government work" and "there's no place like G28"); they're loaded onto the board's rumor list (cap raised from 50 to 300) with the new serial command `@RUMOR text`, so one shows over the main menu, and the website shows a random one per visit plus the whole list. Also new: `@SYSOPPASS secret` sets the sysop account's password (shared to every board).
+- **2026-11-04 (Rev):** **SD card clustering (pool and mirror)**: every SD card in the cluster adds to one file library, uploads go to the roomiest card, `areaN=...|m` mirrors an area onto two cards in the background; `@CARDS` and `@MIRROR` on the main. Details in the section above. Built and tested on the PC; not yet tried on the boards.
