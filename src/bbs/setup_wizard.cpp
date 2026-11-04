@@ -62,6 +62,7 @@ const std::vector<SetupWizard::Field>& SetupWizard::fields() const {
         {"new_user_security", "New user security level", "1 to 255", false, false},
         {"daily_minutes", "Daily minutes per caller", "1 to 1440", false, false},
         {"idle_minutes", "Idle logoff, minutes", "1 to 60", false, false},
+        {"nup", "New user password", "optional: callers must know it to apply (Enter keeps the current one)", true, true},
     };
     return f;
 }
@@ -139,6 +140,10 @@ void SetupWizard::set(const std::string& k, const std::string& v) {
     else if (k == "new_user_security") cfg_.newUserSecurity = n;
     else if (k == "daily_minutes") cfg_.dailyMinutes = n;
     else if (k == "idle_minutes") cfg_.idleMinutes = n;
+    else if (k == "nup" && !v.empty()) {  // Enter keeps whatever NUP there was
+        cfg_.nupSalt = makeSalt(rng_);
+        cfg_.nupHash = hashPassword(cfg_.nupSalt, v);
+    }
 }
 
 void SetupWizard::setPassword(const std::string& password) {

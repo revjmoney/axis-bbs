@@ -294,3 +294,44 @@ TEST_CASE("a user the sysop promoted (security 255) logs in with sysop access") 
     PermRig plainUser;
     CHECK_FALSE(plainUser.node.isSysop());
 }
+
+namespace {
+BbsConfig withNup(const char* nup) {
+    BbsConfig c;
+    c.nupSalt = makeSalt(rng);
+    c.nupHash = hashPassword(c.nupSalt, nup);
+    return c;
+}
+}  // namespace
+
+TEST_CASE("with a new user password set, Apply asks for it first") {
+    Rig         r(withNup("elite"));
+    r.type("Chip Breaker\r");
+    std::string out = r.type("y");
+    CHECK(out.find("New user password") != std::string::npos);
+    CHECK(r.node.state() == Node::State::NupAsk);
+    out = r.type("elite\r");
+    CHECK(r.node.state() == Node::State::Applying);  // right one: the application starts
+    CHECK(out.find("elite") == std::string::npos);   // typed as stars
+}
+
+TEST_CASE("three wrong new user passwords hang up and are logged") {
+    Rig         r(withNup("elite"));
+    std::string logged;
+    r.node.onEvent = [&](const std::string& e) { logged += e; };
+    r.type("Chip Breaker\ry");
+    r.type("lamer\r");
+    CHECK(r.node.state() == Node::State::NupAsk);
+    r.type("leech\r");
+    r.type("narc\r");
+    CHECK(r.node.wantsHangup());
+    CHECK(logged.find("new user password") != std::string::npos);
+    CHECK(logged.find("Chip Breaker") != std::string::npos);
+    CHECK(r.users.all().empty());
+}
+
+TEST_CASE("without a new user password, Apply goes straight to the application") {
+    Rig r;
+    r.type("Chip Breaker\ry");
+    CHECK(r.node.state() == Node::State::Applying);
+}

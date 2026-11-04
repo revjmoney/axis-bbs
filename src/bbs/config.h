@@ -28,6 +28,7 @@ std::vector<FileArea> defaultFileAreas();  // Rev's list (design spec, file area
 struct BbsConfig {
     std::string sysopHandle, sysopSalt, sysopHash, sysopRealName;
     std::string dosSalt, dosHash;  // the DOS Prompt door password (set at the serial console: @DOSPASS)
+    std::string nupSalt, nupHash;  // NUP: the new user password asked before Apply ("" = none; wizard, @NUP)
     std::string bbsName = "Axis Underground CNC", location, boardName = "axis", publicHost;
     int         telnetPort = 23;
     std::string timezone = "EASTERN";

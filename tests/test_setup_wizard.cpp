@@ -18,7 +18,7 @@ static SetupWizard defaultsRun() {
     type(w, "Rev\r");
     type(w, "secret1\r");
     type(w, "secret1\r");
-    for (int i = 0; i < 14; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions)
+    for (int i = 0; i < 15; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
     return w;
 }
 
@@ -65,7 +65,7 @@ TEST_CASE("wizard password echo is stars and the summary hides it") {
     type(w, "abcd");
     CHECK(w.takeOutput() == "****");
     type(w, "\rabcd\r");
-    for (int i = 0; i < 14; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions)
+    for (int i = 0; i < 15; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
     CHECK(w.takeOutput().find("abcd") == std::string::npos);
 }
 
@@ -86,7 +86,7 @@ TEST_CASE("wizard password confirm mismatch restarts the password") {
     std::string out = w.takeOutput();
     CHECK(out.find("did not match") != std::string::npos);
     type(w, "good1\rgood1\r");
-    for (int i = 0; i < 14; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions)
+    for (int i = 0; i < 15; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
     type(w, "y");
     CHECK(checkPassword(w.result().sysopSalt, w.result().sysopHash, "good1"));
 }
@@ -118,7 +118,7 @@ TEST_CASE("wizard timezone by number") {
     for (int i = 0; i < 9; i++) type(w, "\r");
     CHECK(w.takeOutput().find("PACIFIC") != std::string::npos);  // the list is shown
     type(w, "5\r");
-    for (int i = 0; i < 4; i++) type(w, "\r");
+    for (int i = 0; i < 5; i++) type(w, "\r");
     type(w, "y");
     CHECK(w.result().timezone == "PACIFIC");
 }
@@ -134,7 +134,7 @@ TEST_CASE("wizard N at the summary cancels and nothing is applied") {
 
 TEST_CASE("wizard set and fields support the touch path") {
     SetupWizard w(BbsConfig{}, rng);
-    CHECK(w.fields().size() == 17);
+    CHECK(w.fields().size() == 18);
     CHECK(w.defaultFor("bbs_name") == "Axis Underground CNC");
     w.set("bbs_name", "Shop BBS");
     CHECK(w.defaultFor("bbs_name") == "Shop BBS");
@@ -151,7 +151,7 @@ TEST_CASE("the wizard asks for optional No-IP dynamic DNS and keeps it out of th
     type(w, "axisbbs.ddns.net\r");
     type(w, "revjmoney\r");
     type(w, "noippass1\r");
-    for (int i = 0; i < 6; i++) type(w, "\r");
+    for (int i = 0; i < 7; i++) type(w, "\r");
     out = w.takeOutput();
     CHECK(out.find("axisbbs.ddns.net") != std::string::npos);  // in the summary
     CHECK(out.find("noippass1") == std::string::npos);         // never echoed
@@ -179,4 +179,31 @@ TEST_CASE("skipping the No-IP questions leaves dynamic DNS off") {
     SetupWizard w = defaultsRun();
     type(w, "y");
     CHECK(w.noip().host.empty());
+}
+
+TEST_CASE("the wizard's last question sets a new user password, kept only as a hash") {
+    SetupWizard w(BbsConfig{}, rng);
+    w.begin();
+    type(w, "Rev\rsecret1\rsecret1\r");
+    for (int i = 0; i < 14; i++) type(w, "\r");  // everything up to the NUP
+    CHECK(w.takeOutput().find("New user password") != std::string::npos);
+    type(w, "elite\r");
+    std::string out = w.takeOutput();
+    CHECK(out.find("elite") == std::string::npos);  // never echoed, not in the summary
+    type(w, "y");
+    REQUIRE(w.finished());
+    CHECK(checkPassword(w.result().nupSalt, w.result().nupHash, "elite"));
+    CHECK(formatConfig(w.result()).find("elite") == std::string::npos);
+}
+
+TEST_CASE("pressing Enter at the NUP question keeps the one already set") {
+    BbsConfig c;
+    c.nupSalt = "abc";
+    c.nupHash = "def";
+    SetupWizard w(c, rng);
+    w.begin();
+    type(w, "Rev\rsecret1\rsecret1\r");
+    for (int i = 0; i < 15; i++) type(w, "\r");
+    type(w, "y");
+    CHECK(w.result().nupHash == "def");
 }

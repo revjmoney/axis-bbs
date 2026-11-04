@@ -209,7 +209,7 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
     <figure class="crt"><a class="lb" href="media/setup-wizard.png"><div class="screen"><img src="media/setup-wizard.png" alt="The setup wizard over telnet asking for the sysop handle, password, BBS name, location, board name, port and timezone" loading="lazy" width="736" height="490"></div></a><figcaption>The setup wizard over telnet</figcaption></figure>
   </div>
   <p>The wizard asks, in order (press Enter to keep the value in brackets):</p>
-  <details class="ref"><summary>Reference table: question, setting, notes (16 rows)</summary><div class="table-wrap"><table>
+  <details class="ref"><summary>Reference table: question, setting, notes (17 rows)</summary><div class="table-wrap"><table>
     <thead><tr><th>Question</th><th>Setting</th><th>Notes</th></tr></thead>
     <tbody>
       <tr><td>Sysop handle</td><td><code>sysop_handle</code></td><td>The name you log in with.</td></tr>
@@ -228,6 +228,7 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
       <tr><td>New user security level</td><td><code>new_user_security</code></td><td>1 to 255.</td></tr>
       <tr><td>Daily minutes per caller</td><td><code>daily_minutes</code></td><td>1 to 1440. Enforced per call (see <a href="#time-limits">time limits</a>).</td></tr>
       <tr><td>Idle logoff, minutes</td><td><code>idle_minutes</code></td><td>1 to 60.</td></tr>
+      <tr><td>New user password</td><td>NUP (stored as a salted hash)</td><td>Optional. When set, a caller must know it before the new user application starts; three wrong tries and they're disconnected, logged in the event log. Enter keeps the one already set. Also <code>@NUP</code> on the serial console.</td></tr>
     </tbody>
   </table></div></details>
   <p>The answers are saved to <code>/axis.ini</code> in internal flash. You can run the wizard again any time from the sysop menu (BBS SETUP, RUN SETUP); nothing changes until the wizard saves.</p></div>
@@ -1049,6 +1050,7 @@ setup_done=1</code></pre></details>
       <tr><td><code>@PUT</code>, <code>@LS</code>, <code>@RM</code>, <code>@MKDIR</code>, <code>@BAUD</code></td><td>File transfer to the board's storage, used by <code>tools/sdput.py</code> (<em>bench</em>).</td></tr>
       <tr><td><code>@DISCORD [url]</code></td><td>Discord webhook on that board, or off. See <a href="#internet">internet extras</a>.</td></tr>
       <tr><td><code>@DDNS [domain|host|key|secret]</code></td><td>GoDaddy dynamic DNS on that board, or off.</td></tr>
+      <tr><td><code>@NUP [password]</code></td><td>Sets the new user password (NUP) callers need before they can apply, shared to every board. <code>@NUP</code> alone lets anyone apply again.</td></tr>
       <tr><td><code>@NOIP [host|username|password]</code></td><td>No-IP dynamic DNS on that board, or off. <code>@NOIPNOW</code> updates at once. See <a href="#internet">internet extras</a>.</td></tr>
       <tr><td><code>@WEB</code>, <code>@WEBTEST</code>, <code>@WEBPING</code></td><td>Internet extras status, a test announcement, and an HTTPS test.</td></tr>
     </tbody>

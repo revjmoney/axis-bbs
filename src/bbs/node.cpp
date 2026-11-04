@@ -680,7 +680,12 @@ void Node::key(char c) {
     }
     if (state_ == State::ApplyAsk) {
         char k = (char)(c | 0x20);
-        if (k == 'y') {
+        if (k == 'y' && !cfg_.nupHash.empty()) {  // an elite board: the new user password first
+            out_ += "yes\r\n\r\n   " + theme::fade("New user password") + theme::ORANGE + ": " + theme::WHITE;
+            state_ = State::NupAsk;
+            tries_ = 0;
+            line_.clear();
+        } else if (k == 'y') {
             out_ += "yes";
             state_ = State::Applying;
             app_.reset(new NewUserApp(handle_, out_, cfg_, rng_));
@@ -689,6 +694,32 @@ void Node::key(char c) {
             out_ += "no\r\n";
             state_ = State::Login;
             prompt();
+        }
+        return;
+    }
+    if (state_ == State::NupAsk) {
+        if (c == '\r') {
+            bool ok = checkPassword(cfg_.nupSalt, cfg_.nupHash, line_);
+            line_.clear();
+            if (ok) {
+                state_ = State::Applying;
+                app_.reset(new NewUserApp(handle_, out_, cfg_, rng_));
+                app_->begin();
+            } else if (++tries_ >= 3) {
+                out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + "Wrong." + theme::TEXT + " This board is private.\r\n";
+                if (onEvent) onEvent("new user password: 3 wrong tries from " + handle_);
+                state_ = State::Done;
+            } else {
+                out_ += "\r\n   " + std::string(theme::ORANGE) + "Wrong." + theme::TEXT + " New user password" + theme::ORANGE + ": " + theme::WHITE;
+            }
+        } else if (c == '\b' || c == 0x7f) {
+            if (!line_.empty()) {
+                line_.pop_back();
+                out_ += "\b \b";
+            }
+        } else if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && line_.size() < 40) {
+            line_ += c;
+            out_ += '*';
         }
         return;
     }
@@ -1800,6 +1831,7 @@ std::string Node::activityText() const {
         case State::Login:
         case State::Password: return "logging in";
         case State::ApplyAsk:
+        case State::NupAsk:
         case State::Applying: return "new user application";
         case State::Pending: return "waiting to be validated";
         case State::OneLinerAsk:

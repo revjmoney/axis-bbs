@@ -1055,6 +1055,7 @@ static void answerIn(WiFiClient incoming) {
         node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, cfg, &callerFiles()));
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
+        node->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
         node->setChat(
             [slot](const std::string& text, bool page) {  // through the main to every node (or just this board)
                 if (!node) return;
@@ -1749,6 +1750,7 @@ static void handleTap(int x, int y) {
             localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,
                                                 &callerFiles()));
             localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
+            localNode->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
             localNode->setMessages(&callerMessages());
             localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
             localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
@@ -1953,6 +1955,13 @@ static void handleSerial() {
             logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
             if (cluster) cluster->shareSettings();
             screenDirty = true;
+        } else if (cmd.startsWith("@NUP")) {  // "@NUP secret": the new user password asked before Apply; alone, anyone can apply
+            String pw = cmd.length() > 5 ? cmd.substring(5) : String();
+            cfg.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
+            cfg.nupHash = pw.length() ? axis::bbs::hashPassword(cfg.nupSalt, pw.c_str()) : std::string();
+            bool ok = configSave(cfg);
+            if (cluster) cluster->shareSettings();  // every board asks the same one
+            logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
         } else if (cmd.startsWith("@DOSPASS")) {  // "@DOSPASS secret" sets the DOS Prompt password; alone, disables it
             String pw = cmd.length() > 9 ? cmd.substring(9) : String();
             cfg.dosSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();

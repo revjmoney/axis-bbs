@@ -34,7 +34,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -47,6 +47,7 @@ public:
     // accounts: without them anyone is let in by handle (the first builds, tests)
     void setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow);
     bool isSysop() const { return sysop_; }
+    std::function<void(const std::string&)> onEvent;  // for the event log ("new user password: 3 wrong tries from X")
     // Chat across the nodes: say(text, page) sends a teleconference line (or a page for the sysop);
     // who() lists every node. Without them [T] [W] [P] say the chat is offline.
     void setChat(std::function<void(const std::string&, bool)> say, std::function<std::vector<WhoLine>()> who) {
