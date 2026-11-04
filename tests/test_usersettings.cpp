@@ -8,6 +8,7 @@
 #include "bbs/msgbase.h"
 #include "bbs/node.h"
 #include "bbs/password.h"
+#include "bbs/theme.h"
 #include "bbs/users.h"
 
 using namespace axis::bbs;
@@ -181,4 +182,40 @@ TEST_CASE("each login goes on the last callers list, and [L] shows the newest fi
     REQUIRE(old != std::string::npos);
     CHECK(kid < old);  // newest first
     CHECK(out.find("Conway, SC") != std::string::npos);
+}
+
+TEST_CASE("a call has a time limit: a warning with 5 minutes left, then goodbye") {
+    BbsConfig c;
+    c.dailyMinutes = 10;
+    Rig r(c);  // logged in at t = 1000 ms
+    r.node.poll(1000 + 4 * 60000);
+    CHECK(r.node.state() != Node::State::Done);
+    r.node.takeOutput();
+    r.node.poll(1000 + 5 * 60000 + 40000);
+    CHECK(plain(r.node.takeOutput()).find("5 minutes") != std::string::npos);  // the warning, once
+    r.node.poll(1000 + 6 * 60000);
+    CHECK(plain(r.node.takeOutput()).find("5 minutes") == std::string::npos);
+    r.node.poll(1000 + 10 * 60000 + 1000);
+    CHECK(r.node.state() == Node::State::Done);
+}
+
+TEST_CASE("the Oblivion bracket prompt shows the minutes left on the call") {
+    BbsConfig c;
+    c.dailyMinutes = 10;
+    c.theme = "oblivion";
+    UserStore users;
+    User      u;
+    u.handle = "Kid Chips";
+    u.salt = makeSalt(rng);
+    u.hash = hashPassword(u.salt, "oldpass1");
+    u.status = User::Status::Validated;
+    users.add(u);
+    Node n(1, info, c);
+    n.setAccounts(&users, [] {}, rng, [] { return 1800000000u; });
+    n.begin(0);
+    n.input((const uint8_t*)"lKid Chips\roldpass1\r", 20, 1000);
+    n.takeOutput();
+    n.input((const uint8_t*)"i", 1, 1000 + 5 * 60000 + 30000);
+    CHECK(plain(n.takeOutput()).find("4 left") != std::string::npos);
+    axis::bbs::theme::use(axis::bbs::theme::Look::Axis);
 }

@@ -331,3 +331,22 @@ TEST_CASE("[N] at the area list shows every area's files newer than the caller's
     CHECK(p.find("README.TXT") == std::string::npos);
     CHECK(p.find("2 new files") != std::string::npos);
 }
+
+TEST_CASE("/ at the area list searches every area's names and descriptions") {
+    FakeLibrary lib = library();
+    std::string out;
+    BbsConfig   c = twoAreas();
+    FileBrowser b(c.areas, lib, out);
+    b.begin();
+    out.clear();
+    b.key('/');
+    for (char ch : std::string("flash\r")) b.key(ch);  // "Ready to flash" is AXISFLSH.ZIP's description
+    std::string p = plain(out);
+    CHECK(p.find("AXISFLSH.ZIP") != std::string::npos);
+    CHECK(p.find("Axis Micro BBS Firmware") != std::string::npos);  // which area it's in
+    CHECK(p.find("1 found") != std::string::npos);
+    out.clear();
+    b.key('/');
+    for (char ch : std::string("list1\r")) b.key(ch);  // names too: LIST1.TXT, LIST10 ... LIST19
+    CHECK(plain(out).find("LIST15.TXT") != std::string::npos);
+}

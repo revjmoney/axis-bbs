@@ -25,6 +25,7 @@ struct User {
     // what the caller may use (the sysop sets these on the CYD); downloads also need an upload
     // first, unless freeDownloads
     bool        permFiles = true, permMessages = true, permDoors = true, freeDownloads = false;
+    bool        twit = false;  // the old stealth flag: their posts, oneliners, rumors and chat reach nobody but them
     std::map<std::string, int> lastRead;  // message area -> newest message read
     std::vector<std::pair<std::string, std::string>> answers;  // the application: question, answer
 };

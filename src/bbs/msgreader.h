@@ -21,6 +21,8 @@ public:
                   std::map<std::string, int>& lastRead, std::function<std::string()> now)
         : areas_(areas), st_(store), out_(out), handle_(std::move(handle)), lastRead_(lastRead), now_(std::move(now)) {}
     void        setTagline(std::string t) { tagline_ = std::move(t); }  // signs each post
+    // posts by these writers don't show (a twit's, to everyone but them and the sysop)
+    void        setHidden(std::function<bool(const std::string& from)> h) { hidden_ = std::move(h); }
     void        begin();
     // the new scan: every area's new messages one after another ([N] moves on, across areas)
     void        beginScan();
@@ -44,6 +46,8 @@ private:
     MessageStore&                st_;
     std::string                  tagline_;
     bool                         scanning_ = false;
+    std::function<bool(const std::string&)> hidden_;
+    std::vector<Message>         headersOf(const std::string& area);
     std::string&                 out_;
     std::string                  handle_;
     std::map<std::string, int>&  lastRead_;

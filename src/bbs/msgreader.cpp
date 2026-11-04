@@ -3,6 +3,7 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/msgreader.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 
@@ -34,6 +35,15 @@ bool MessageReader::lineKey(char c, size_t max) {
 
 void MessageReader::begin() { showAreas(); }
 
+std::vector<Message> MessageReader::headersOf(const std::string& area) {
+    std::vector<Message> h = st_.headers(area);
+    if (hidden_)
+        for (size_t i = 0; i < h.size();)
+            if (hidden_(h[i].from)) h.erase(h.begin() + (long)i);
+            else i++;
+    return h;
+}
+
 int MessageReader::countNew(const std::vector<FileArea>& areas, MessageStore& store, const std::map<std::string, int>& lastRead) {
     int n = 0;
     for (const FileArea& a : areas) {
@@ -47,7 +57,7 @@ int MessageReader::countNew(const std::vector<FileArea>& areas, MessageStore& st
 void MessageReader::beginScan() {
     scanning_ = true;
     area_ = 0;
-    heads_ = st_.headers(areas_.empty() ? std::string() : areas_[0].id);
+    heads_ = headersOf(areas_.empty() ? std::string() : areas_[0].id);
     if (areas_.empty()) {
         showAreas();
         return;
@@ -59,7 +69,7 @@ void MessageReader::showAreas() {
     s_ = St::Areas;
     out_ += "\x1b[0m\x1b[2J\x1b[H\r\n" + drip("MSGS") + "   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
     for (size_t i = 0; i < areas_.size(); i++) {
-        auto h = st_.headers(areas_[i].id);
+        auto h = headersOf(areas_[i].id);
         int  last = lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, fresh = 0;
         for (auto& m : h) fresh += m.num > last;
         char b[160];
@@ -74,7 +84,7 @@ void MessageReader::showAreas() {
 
 void MessageReader::openArea(size_t i) {
     area_ = i;
-    heads_ = st_.headers(areas_[i].id);
+    heads_ = headersOf(areas_[i].id);
     showList();
 }
 
@@ -128,7 +138,7 @@ void MessageReader::show(int num) {
 
 void MessageReader::nextNew() {
     int last = lastRead_.count(areas_[area_].id) ? lastRead_[areas_[area_].id] : 0;
-    heads_ = st_.headers(areas_[area_].id);
+    heads_ = headersOf(areas_[area_].id);
     for (const Message& m : heads_)
         if (m.num > last) {
             show(m.num);
@@ -137,7 +147,7 @@ void MessageReader::nextNew() {
     if (scanning_)  // the scan goes on to the next area that has something new
         for (size_t j = area_ + 1; j < areas_.size(); j++) {
             int  lastJ = lastRead_.count(areas_[j].id) ? lastRead_[areas_[j].id] : 0;
-            auto h = st_.headers(areas_[j].id);
+            auto h = headersOf(areas_[j].id);
             for (const Message& m : h)
                 if (m.num > lastJ) {
                     area_ = j;
@@ -163,6 +173,23 @@ void MessageReader::startPost(bool reply) {
     if (reply) {
         draft_.to = current_.from;
         draft_.subject = current_.subject.rfind("Re: ", 0) == 0 ? current_.subject : "Re: " + current_.subject;
+        std::string who;  // the old boards' quoting: the writer's initials in front of each line
+        bool        start = true;
+        for (char ch : current_.from) {
+            if (start && std::isalnum((unsigned char)ch) && who.size() < 3) who += (char)std::toupper((unsigned char)ch);
+            start = ch == ' ' || ch == '_' || ch == '.';
+        }
+        int    quoted = 0;
+        size_t pos = 0;
+        while (pos <= current_.body.size() && quoted < 8) {
+            size_t      e = current_.body.find('\n', pos);
+            std::string l = current_.body.substr(pos, e == std::string::npos ? std::string::npos : e - pos);
+            pos = e == std::string::npos ? current_.body.size() + 1 : e + 1;
+            if (l.empty() || l.compare(0, 4, "... ") == 0) continue;  // blank lines, taglines
+            draft_.body += who + "> " + l.substr(0, 70) + "\n";
+            quoted++;
+        }
+        if (!draft_.body.empty()) draft_.body += "\n";
     }
     line_.clear();
     lines_ = 0;
@@ -177,7 +204,7 @@ void MessageReader::save() {
     int n = st_.post(areas_[area_].id, draft_);
     out_ += std::string("\r\n   ") + (n ? std::string(TEXT) + "Saved as #" + std::to_string(n) + "." : std::string(ORANGE) + "Couldn't save it, sorry.") + "\r\n";
     if (n) lastRead_[areas_[area_].id] = n > lastRead_[areas_[area_].id] ? n : lastRead_[areas_[area_].id];
-    heads_ = st_.headers(areas_[area_].id);
+    heads_ = headersOf(areas_[area_].id);
     s_ = St::List;
     listPrompt();
 }

@@ -66,7 +66,7 @@ void FileBrowser::showAreas() {
         out_ += b;
     }
     out_ += DIM;
-    out_ += "\r\n   " + theme::key("N", "ew files since your last call") + DIM + "\r\n   Area number (Enter for the main menu): ";
+    out_ += "\r\n   " + theme::key("N", "ew files since your last call   ") + theme::key("/", " search") + DIM + "\r\n   Area number (Enter for the main menu): ";
     out_ += HI;
 }
 
@@ -106,6 +106,33 @@ void FileBrowser::showPage() {
 
 std::string FileBrowser::where() const {
     return st_ == St::Areas || area_ >= areas_.size() ? "area list" : areas_[area_].name;
+}
+
+void FileBrowser::search(const std::string& what) {
+    auto lower = [](std::string s) {
+        for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
+        return s;
+    };
+    std::string want = lower(what);
+    out_ += "\r\n\r\n   " + theme::fade("SEARCH") + DIM + "  \"" + what + "\"\r\n";
+    int  count = 0;
+    char b[160];
+    for (const FileArea& a : areas_) {
+        bool header = false;
+        for (const FileEntry& f : lib_.list(a.id)) {
+            if (lower(f.name).find(want) == std::string::npos && lower(f.desc).find(want) == std::string::npos) continue;
+            if (!header) {
+                out_ += std::string("\r\n   ") + theme::ORANGE + a.name + "\r\n";
+                header = true;
+            }
+            if (++count > 60) continue;
+            std::snprintf(b, sizeof b, "   %s%-14.14s %s%6s  %s%.52s\r\n", HI, f.name.c_str(), DIM, fileSizeText(f.size).c_str(), DIM, f.desc.c_str());
+            out_ += b;
+        }
+    }
+    out_ += std::string("\r\n   ") + theme::TEXT + std::to_string(count) + " found" + (count > 60 ? " (the first 60 listed)" : "") + "\r\n";
+    out_ += DIM;
+    out_ += "\r\n   Area number (Enter for the main menu): ";
 }
 
 void FileBrowser::showNewFiles() {
@@ -311,6 +338,11 @@ bool FileBrowser::key(char c) {
                 showNewFiles();
                 return true;
             }
+            if (line_.empty() && c == '/') {
+                st_ = St::Search;
+                out_ += std::string("\r\n   ") + DIM + "Search every area for: " + HI;
+                return true;
+            }
             if (!lineKey(c, 3)) return true;
             if (line_.empty()) return false;  // Enter alone: back to the main menu
             {
@@ -318,6 +350,16 @@ bool FileBrowser::key(char c) {
                 line_.clear();
                 if (n >= 1 && (size_t)n <= areas_.size()) openArea((size_t)n - 1);
                 else showAreas();
+            }
+            return true;
+        case St::Search:
+            if (!lineKey(c, 30)) return true;
+            {
+                std::string what = line_;
+                line_.clear();
+                st_ = St::Areas;
+                if (what.empty()) showAreas();
+                else search(what);
             }
             return true;
         case St::List:

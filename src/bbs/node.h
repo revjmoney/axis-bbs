@@ -34,7 +34,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -142,11 +142,24 @@ private:
     void                      showRumors();
     void                      showBbsList();
     void                      showTopTen();
+    int                       editId_ = 0;  // the sysop's user editor: the caller open (0 = the list)
+    bool                      twit() const;
+    bool                      hiddenWriter(const std::string& from) const;  // this caller is flagged a twit
+    void                      showUsers();
+    void                      showUser();
+    void                      userEditKey(char c);
+    int                       voteQ_ = 0;  // the question open in the voting booth (1-based)
+    void                      showVotes();
+    void                      showQuestion(int q);
+    void                      votingKey(char c);
     void                      rumorLine();          // one random rumor, over the main menu
     void                      extrasKey(char c);    // Rumors and BbsList states
     void                      showLastCallers();
     bool                      available_ = true;
-    uint32_t                  prevCall_ = 0;  // the caller's last call before this one (unix time)
+    uint32_t                  prevCall_ = 0;
+    uint32_t                  callStart_ = 0;  // when they logged in (ms); the call's time limit counts from here
+    bool                      timeWarned_ = false;
+    int                       minutesLeft(uint32_t nowMs) const;  // -1 = no limit  // the caller's last call before this one (unix time)
     char                      mnAsk_ = 0;          // MultiNode: the command waiting for a node number / text
     int                       mnTo_ = 0, splitWith_ = 0, splitAsk_ = 0;  // the node asked, in split chat with, asking us
     int                       splitRow_[2] = {2, 14}, splitCol_[2] = {1, 1};  // split chat cursors: their half, mine

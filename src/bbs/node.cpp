@@ -104,6 +104,8 @@ void Node::setAccounts(UserStore* users, std::function<void()> save, uint32_t (*
 
 void Node::loggedIn() {
     state_ = State::Menu;
+    callStart_ = lastInput_;
+    timeWarned_ = false;
     if (msgStore_) {  // new private mail: said under the main menu
         const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
         auto        it = (u ? u->lastRead : lastRead_).find(EmailBox::kArea);
@@ -364,6 +366,9 @@ void Node::o2Prompt(const char* menu) {  // ▄▀[Main Menu]▀▀[Node 1]▀ �
     }
     out_ += std::string("\r\n  ") + theme::HOT + "\xdc" + theme::ORANGE + "\xdf" + theme::DGREY + "[" + m + theme::DGREY + "]" + theme::ORANGE +
             "\xdf\xdf" + theme::DGREY + "[" + theme::HOT + "N" + theme::ORANGE + "ode " + theme::WHITE + std::to_string(node_) + theme::DGREY + "]" +
+            (minutesLeft(lastInput_) >= 0 ? std::string(theme::ORANGE) + "\xdf" + theme::DGREY + "[" + theme::WHITE + std::to_string(minutesLeft(lastInput_)) +
+                                                theme::ORANGE + " left" + theme::DGREY + "]"
+                                          : std::string()) +
             theme::ORANGE + "\xdf " + theme::DGREY + "\xdf " + theme::TEXT + ": " + theme::WHITE;
 }
 
@@ -485,7 +490,7 @@ void Node::showMainMenu() {
                                        {"[N]", "multinode: notes, broadcasts, split chat"},
                                        {"[L]", "last callers"},
                                        {"[E] [S]", "private email, scan for new messages"},
-                                       {"[R] [B] [K]", "rumors, BBS list, top ten"},
+                                       {"[R] [B] [K] [V]", "rumors, BBS list, top ten, voting booth"},
                                        {"[I] [C]", "system info, credits"},
                                        {"[G]", "goodbye"}});
     rumorLine();
@@ -526,6 +531,14 @@ void Node::key(char c) {
     if (state_ == State::Bulletin) {  // any key: on to the oneliners or the menu
         menuOrLiners();
         if (state_ == State::Bulletin) showMainMenu();
+        return;
+    }
+    if (state_ == State::UserEdit) {
+        userEditKey(c);
+        return;
+    }
+    if (state_ == State::Voting) {
+        votingKey(c);
         return;
     }
     if (state_ == State::Rumors || state_ == State::BbsList) {
@@ -787,7 +800,7 @@ void Node::key(char c) {
     }
     if (state_ == State::OneLiner) {
         if (c == '\r') {
-            if (!line_.empty() && linersAdd_) linersAdd_(handle_ + ": " + line_);
+            if (!line_.empty() && linersAdd_ && !twit()) linersAdd_(handle_ + ": " + line_);  // (a twit's goes nowhere)
             line_.clear();
             showMainMenu();
         } else if (c == 8 || c == 127) {
@@ -802,8 +815,8 @@ void Node::key(char c) {
         return;
     }
     if (state_ != State::Menu) return;
-    if (o2() && o2Keys_ && c != '?') {  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
-        static const char from[] = "abcefgklmorstwxy+=./!-", to[] = "ubtepguwmdriflfuuncgsk";  // a account, c chat, e email, f feedback, l list users, o open doors, r rumors, t transfers, w recent callers ...
+    if (o2() && o2Keys_ && c != '?' && c != '*') {  // (? the menu, * the sysop's editor: the same in every look)  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
+        static const char from[] = "abcefgklmorstvwxy+=./!-", to[] = "ubtepguwmdrifvlfuuncgsk";  // a account, c chat, e email, f feedback, l list users, o open doors, r rumors, t transfers, w recent callers ...
         const char*       hit = std::strchr(from, (char)(c | 0x20));
         if (!hit || !*hit) {
             out_ += std::string("\r\n   ") + AMBER + "Not on this board yet." + theme::TEXT;
@@ -898,6 +911,7 @@ void Node::key(char c) {
             msgs_.reset(new MessageReader(myMsgAreas_, *msgStore_, out_, handle_, u ? u->lastRead : lastRead_,
                                           [this] { return info_().timeText; }));
             msgs_->setTagline(tagline());
+            msgs_->setHidden([this](const std::string& from) { return hiddenWriter(from); });
             msgs_->begin();
             break;
         }
@@ -927,6 +941,13 @@ void Node::key(char c) {
         case 'k':
             showTopTen();
             break;
+        case 'v':
+            showVotes();
+            break;
+        case '*':
+            if (sysop_ && users_) showUsers();
+            else prompt();
+            break;
         case 'l':
             showLastCallers();
             break;
@@ -949,6 +970,7 @@ void Node::key(char c) {
             msgs_.reset(new MessageReader(myMsgAreas_, *msgStore_, out_, handle_, u ? u->lastRead : lastRead_,
                                           [this] { return info_().timeText; }));
             msgs_->setTagline(tagline());
+            msgs_->setHidden([this](const std::string& from) { return hiddenWriter(from); });
             msgs_->beginScan();
             break;
         }
@@ -1054,7 +1076,8 @@ void Node::lineKey(char c) {
         } else if (text == "/q" || text == "/Q") {
             showMainMenu();
         } else {
-            if (!text.empty()) say_(text, false);  // it shows, with a fresh prompt, when it comes back from the main
+            if (!text.empty() && twit()) chatIn(node_, handle_, text, false);  // a twit only ever hears themself
+            else if (!text.empty()) say_(text, false);  // it shows, with a fresh prompt, when it comes back from the main
             else out_ += std::string(theme::ORANGE) + "> " + theme::WHITE;
         }
     } else if (c == 8 || c == 127) {
@@ -1331,7 +1354,7 @@ void Node::extrasKey(char c) {
         return;
     }
     if (rumors) {
-        if (listAdd_) listAdd_("rumors", got);
+        if (listAdd_ && !twit()) listAdd_("rumors", got);
         out_ += std::string("\r\n   ") + theme::TEXT + "The rumor is out there now.";
         showRumors();
         return;
@@ -1344,6 +1367,134 @@ void Node::extrasKey(char c) {
     }
     if (listAdd_) listAdd_("bbslist", entry_);
     showBbsList();
+}
+
+// The voting booth: "votes" holds "question|choice|choice...", "ballots" holds "question#|handle|choice#".
+namespace {
+std::vector<std::string> fields(const std::string& l) {
+    std::vector<std::string> f;
+    for (size_t pos = 0;;) {
+        size_t bar = l.find('|', pos);
+        f.push_back(l.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos));
+        if (bar == std::string::npos) return f;
+        pos = bar + 1;
+    }
+}
+bool sameName(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++)
+        if ((a[i] | 0x20) != (b[i] | 0x20)) return false;
+    return true;
+}
+}  // namespace
+
+void Node::showVotes() {
+    state_ = State::Voting;
+    step_ = 0;
+    voteQ_ = 0;
+    std::vector<std::string> qs = listGet_ ? listGet_("votes") : std::vector<std::string>{};
+    out_ += "\r\n\r\n   " + theme::fade("VOTING BOOTH") + "\r\n";
+    if (qs.empty()) out_ += std::string("   ") + theme::TEXT + "(no questions yet)\r\n";
+    for (size_t i = 0; i < qs.size() && i < 9; i++)
+        out_ += std::string("   ") + theme::KEY + std::to_string(i + 1) + theme::DGREY + ". " + theme::WHITE + fields(qs[i])[0] + "\r\n";
+    out_ += "\r\n   " + theme::key("#", " look and vote   ") + theme::key("A", "sk a question   ") + theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
+}
+
+void Node::showQuestion(int q) {
+    std::vector<std::string> qs = listGet_ ? listGet_("votes") : std::vector<std::string>{};
+    if (q < 1 || q > (int)qs.size()) {
+        showVotes();
+        return;
+    }
+    std::vector<std::string> f = fields(qs[(size_t)q - 1]);
+    std::vector<int>         count(f.size(), 0);
+    int                      mine = 0, total = 0;
+    for (const std::string& b : listGet_ ? listGet_("ballots") : std::vector<std::string>{}) {
+        std::vector<std::string> v = fields(b);
+        if (v.size() < 3 || std::atoi(v[0].c_str()) != q) continue;
+        int c = std::atoi(v[2].c_str());
+        if (c < 1 || c >= (int)f.size()) continue;
+        count[(size_t)c]++;
+        total++;
+        if (sameName(v[1], handle_)) mine = c;
+    }
+    voteQ_ = q;
+    step_ = 1;
+    out_ += "\r\n\r\n   " + std::string(theme::WHITE) + f[0] + "\r\n";
+    char b[160];
+    for (size_t i = 1; i < f.size(); i++) {
+        int bar = total ? count[i] * 30 / total : 0;
+        std::snprintf(b, sizeof b, "   %s%u%s. %s%-24.24s %s%s%s %d\r\n", theme::KEY, (unsigned)i, theme::DGREY, theme::TEXT, f[i].c_str(), theme::ORANGE,
+                      std::string((size_t)bar, '\xdb').c_str(), theme::DGREY, count[i]);
+        out_ += b;
+    }
+    out_ += std::string("   ") + theme::TEXT + std::to_string(total) + (total == 1 ? " vote" : " votes");
+    if (mine) out_ += std::string(", you voted ") + theme::WHITE + f[(size_t)mine] + theme::TEXT + ". (any key)";
+    else out_ += std::string(". Your vote ") + theme::ORANGE + "[1-" + std::to_string(f.size() - 1) + "]" + theme::TEXT + ", Enter to skip: " + theme::WHITE;
+    if (mine) step_ = 2;  // seen: any key goes back
+}
+
+void Node::votingKey(char c) {
+    if (step_ == 0) {  // the list
+        if (c >= '1' && c <= '9') showQuestion(c - '0');
+        else if ((c | 0x20) == 'q') showMainMenu();
+        else if ((c | 0x20) == 'a') {
+            if (!sysop_) {
+                out_ += std::string("\r\n   ") + AMBER + "Only the sysop puts questions in the booth." + theme::TEXT;
+                showVotes();
+                return;
+            }
+            step_ = 10;
+            entry_.clear();
+            line_.clear();
+            out_ += std::string("\r\n   ") + theme::TEXT + "The question:\r\n   " + theme::ORANGE + "> " + theme::WHITE;
+        }
+        return;
+    }
+    if (step_ == 1) {  // their vote
+        std::vector<std::string> f = fields((listGet_ ? listGet_("votes") : std::vector<std::string>{"?"})[(size_t)voteQ_ - 1]);
+        int                      pick = c - '0';
+        if (pick >= 1 && pick < (int)f.size() && listAdd_) {
+            listAdd_("ballots", std::to_string(voteQ_) + "|" + handle_ + "|" + std::to_string(pick));
+            out_ += std::string("\r\n   ") + theme::TEXT + "Counted.";
+        }
+        showVotes();
+        return;
+    }
+    if (step_ == 2) {  // looked at a question they voted on
+        showVotes();
+        return;
+    }
+    // step 10: the question, then 11+: choices until an empty line (6 at most)
+    if (c == 8 || c == 127) {
+        if (!line_.empty()) {
+            line_.pop_back();
+            out_ += "\b \b";
+        }
+        return;
+    }
+    if (c != '\r') {
+        if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && c != '|' && line_.size() < 50) {
+            line_ += c;
+            out_ += c;
+        }
+        return;
+    }
+    std::string got = line_;
+    line_.clear();
+    if (!got.empty()) entry_ += (step_ > 10 ? "|" : "") + got;
+    if ((got.empty() && step_ >= 12) || step_ >= 16) {  // a question with two choices or more
+        if (listAdd_) listAdd_("votes", entry_);
+        showVotes();
+        return;
+    }
+    if (got.empty()) {
+        if (step_ == 10) showVotes();
+        else out_ += std::string("\r\n   ") + theme::TEXT + "At least two choices.\r\n   " + theme::ORANGE + "> " + theme::WHITE;
+        return;
+    }
+    step_++;
+    out_ += std::string("\r\n   ") + theme::TEXT + "Choice " + std::to_string(step_ - 10) + " (Enter alone when done):\r\n   " + theme::ORANGE + "> " + theme::WHITE;
 }
 
 void Node::showTopTen() {
@@ -1505,6 +1656,126 @@ std::vector<FileArea> Node::openTo(const std::vector<FileArea>& all) const {
     return v;
 }
 
+int Node::minutesLeft(uint32_t nowMs) const {
+    if (sysop_ || cfg_.dailyMinutes <= 0 || !callStart_) return -1;
+    int32_t left = (int32_t)((uint32_t)cfg_.dailyMinutes * 60000u - (nowMs - callStart_));
+    return left > 0 ? left / 60000 : 0;
+}
+
+bool Node::twit() const {
+    const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+    return u && u->twit;
+}
+
+bool Node::hiddenWriter(const std::string& from) const {  // a twit's posts: hidden from everyone but them and the sysop
+    if (sysop_ || !users_ || from == handle_) return false;
+    const User* u = const_cast<UserStore*>(users_)->find(from);
+    return u && u->twit;
+}
+
+// The sysop's user editor over telnet: the callers, then one at a time.
+void Node::showUsers() {
+    state_ = State::UserEdit;
+    editId_ = 0;
+    line_.clear();
+    out_ += "\r\n\r\n   " + theme::fade("USER EDITOR") + "\r\n";
+    char b[160];
+    int  i = 0;
+    for (const User& u : users_->all()) {
+        i++;
+        const char* st = u.status == User::Status::Pending ? "pending" : u.status == User::Status::Denied ? "denied" : "ok";
+        std::snprintf(b, sizeof b, "   %s%3d %s%-24.24s %ssec %-3d %-8s %s%s\r\n", theme::KEY, i, theme::WHITE, u.handle.c_str(), theme::TEXT, u.security, st,
+                      theme::ORANGE, u.twit ? "TWIT" : "");
+        out_ += b;
+    }
+    out_ += std::string("\r\n   ") + theme::TEXT + "Number to edit (Enter or Q for the menu): " + theme::WHITE;
+}
+
+void Node::showUser() {
+    User* u = users_->byId(editId_);
+    if (!u) {
+        showUsers();
+        return;
+    }
+    const char* st = u->status == User::Status::Pending ? "pending" : u->status == User::Status::Denied ? "denied" : "validated";
+    out_ += "\r\n\r\n";
+    out_ += theme::window("CALLER", {{"handle", u->handle},
+                                     {"status", st},
+                                      {"security", std::to_string(u->security)},
+                                      {"from", u->location},
+                                      {"calls", std::to_string(u->calls)},
+                                      {"up/down", std::to_string(u->uploads / 1024) + " / " + std::to_string(u->downloads / 1024) + " KB"},
+                                      {"access", std::string(u->permFiles ? "files " : "") + (u->permMessages ? "msgs " : "") + (u->permDoors ? "doors " : "") +
+                                                     (u->freeDownloads ? "free-dl" : "")},
+                                      {"twit", u->twit ? "YES" : "no"}});
+    out_ += "   " + theme::key("S", "ecurity  ") + theme::key("V", "alidate  ") + theme::key("D", "eny  ") + theme::key("T", "wit  ") + theme::key("F", "iles  ") +
+            theme::key("M", "sgs  ") + theme::key("O", " doors  ") + theme::key("L", " free dl  ") + theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
+}
+
+void Node::userEditKey(char c) {
+    if (c == 8 || c == 127) {
+        if (!line_.empty()) {
+            line_.pop_back();
+            out_ += "\b \b";
+        }
+        return;
+    }
+    if (!editId_ || step_ == 30) {  // typing a number: which caller, or (step 30) their new security level
+        if (c >= '0' && c <= '9' && line_.size() < 3) {
+            line_ += c;
+            out_ += c;
+            return;
+        }
+        if (!editId_ && line_.empty() && (c == '\r' || (c | 0x20) == 'q')) {
+            showMainMenu();
+            return;
+        }
+        if (c != '\r') return;
+        int n = std::atoi(line_.c_str());
+        line_.clear();
+        if (step_ == 30) {
+            step_ = 0;
+            if (User* u = users_->byId(editId_); u && n >= 0 && n <= 255) {
+                u->security = n;
+                if (saveUsers_) saveUsers_();
+            }
+            showUser();
+            return;
+        }
+        auto& all = users_->all();
+        if (n < 1 || n > (int)all.size()) {
+            showUsers();
+            return;
+        }
+        editId_ = all[(size_t)n - 1].id;
+        showUser();
+        return;
+    }
+    User* u = users_->byId(editId_);
+    if (!u) {
+        showUsers();
+        return;
+    }
+    switch (c | 0x20) {
+        case 's':
+            step_ = 30;
+            line_.clear();
+            out_ += std::string("\r\n   ") + theme::TEXT + "New security level (0-255, 255 = sysop): " + theme::WHITE;
+            return;
+        case 'v': u->status = User::Status::Validated; if (u->security < 20) u->security = 20; break;
+        case 'd': u->status = User::Status::Denied; break;
+        case 't': u->twit = !u->twit; break;
+        case 'f': u->permFiles = !u->permFiles; break;
+        case 'm': u->permMessages = !u->permMessages; break;
+        case 'o': u->permDoors = !u->permDoors; break;
+        case 'l': u->freeDownloads = !u->freeDownloads; break;
+        case 'q': showUsers(); return;
+        default: return;
+    }
+    if (saveUsers_) saveUsers_();  // and on to every board
+    showUser();
+}
+
 std::string Node::tagline() const {
     const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
     return u ? u->tagline : "";
@@ -1535,13 +1806,27 @@ std::string Node::activityText() const {
         case State::Rumors: return "rumors";
         case State::BbsList: return "BBS list";
         case State::Bulletin: return "bulletin";
+        case State::Voting: return "voting booth";
+        case State::UserEdit: return "user editor";
         case State::Split: return "split-screen chat";
         case State::Done: return "leaving";
     }
     return "online";
 }
 
-void Node::poll(uint32_t nowMs) {  // the idle timer covers the application and the pending screen too
+void Node::poll(uint32_t nowMs) {
+    if (callStart_ && !sysop_ && cfg_.dailyMinutes > 0 && state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer) {
+        uint32_t used = nowMs - callStart_, limit = (uint32_t)cfg_.dailyMinutes * 60000u;
+        if (used >= limit) {
+            out_ += std::string("\r\n\r\n   ") + AMBER + "Your time is up for this call. Call back soon." + theme::RESET + "\r\n";
+            state_ = State::Done;
+            return;
+        }
+        if (!timeWarned_ && limit - used <= 5u * 60000u) {
+            timeWarned_ = true;
+            out_ += std::string("\r\n   ") + theme::HOT + "*** 5 minutes left on this call." + theme::TEXT + "\r\n";
+        }
+    }  // the idle timer covers the application and the pending screen too
     if (state_ == State::Splash) {
         if (splash_ && !splash_->done(nowMs)) {
             out_ += splash_->step(nowMs);

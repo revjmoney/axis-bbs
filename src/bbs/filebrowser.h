@@ -17,6 +17,7 @@ class FileBrowser {
     std::function<std::string(uint32_t)> gate_;
     uint32_t                             since_ = 0;
     void                                 showNewFiles();
+    void                                 search(const std::string& what);  // every area: names and descriptions
 
 public:
     static constexpr int kPerPage = 15, kViewLines = 20;
@@ -37,7 +38,7 @@ public:
     void transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t size);
 
 private:
-    enum class St { Areas, List, ViewName, Viewing, DownName, UpDesc, Proto, UpName, Transfer, InfoName };
+    enum class St { Areas, List, ViewName, Viewing, DownName, UpDesc, Proto, UpName, Transfer, InfoName, Search };
     void showAreas();
     void openArea(size_t i);
     void showPage();

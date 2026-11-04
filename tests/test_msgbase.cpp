@@ -127,7 +127,7 @@ TEST_CASE("a caller reads an area's messages and posts a reply") {
     CHECK(h[1].subject == "Re: welcome");
     Message m;
     r.st.read("general", 2, m);
-    CHECK(m.body == "thanks, it lives");
+    CHECK(m.body.find("thanks, it lives") != std::string::npos);  // under the quote
 }
 
 TEST_CASE("posting a new message asks who it's to and the subject") {
@@ -158,4 +158,20 @@ TEST_CASE("[S]can: new messages in every area, one after another, then back to t
     r.type("\r");
     CHECK(r.n.state() == Node::State::Menu);
     CHECK(r.type("s").find("No new messages") != std::string::npos);  // read them all: nothing new
+}
+
+TEST_CASE("a reply starts with the message quoted, initials in front, like the old boards") {
+    MsgRig r;
+    r.type("m");
+    r.type("1\r");
+    r.type("r1\r");  // read "welcome" from Spindle Kid
+    r.type("a");    // reply
+    r.type("\r");   // to: Spindle Kid
+    r.type("\r");   // subject: Re: welcome
+    r.type("right on\r");
+    r.type("/s\r");
+    Message m;
+    REQUIRE(r.st.read("general", 2, m));
+    CHECK(m.body.find("SK> glad the board is up") != std::string::npos);
+    CHECK(m.body.find("right on") != std::string::npos);
 }

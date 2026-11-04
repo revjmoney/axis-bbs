@@ -163,7 +163,7 @@ static void callersAddLocal(const std::string& line) {
 static bool asFollower();
 
 // The board's small shared lists (rumors, the BBS list): 50 lines each in internal flash on the main.
-static bool listName(const std::string& n) { return n == "rumors" || n == "bbslist"; }
+static bool listName(const std::string& n) { return n == "rumors" || n == "bbslist" || n == "votes" || n == "ballots"; }
 static std::vector<std::string> listLoad(const std::string& n) {
     std::vector<std::string> v;
     if (!listName(n)) return v;
@@ -180,7 +180,7 @@ static void listAddLocal(const std::string& n, const std::string& line) {
     if (!listName(n)) return;
     std::vector<std::string> v = listLoad(n);
     v.push_back(line.substr(0, 120));
-    while (v.size() > 50) v.erase(v.begin());
+    while (v.size() > (n == "ballots" ? 500u : 50u)) v.erase(v.begin());
     std::string text;
     for (auto& l : v) text += l + "\n";
     flashWrite(("/list_" + n + ".txt").c_str(), text);
