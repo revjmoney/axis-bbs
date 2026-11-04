@@ -11,6 +11,8 @@
   <span class="brand">&#9608; AXIS <small>SYSOP PANEL</small></span>
   <nav id="tabs">
     <button data-tab="nodes" class="on"><b>N</b>odes</button>
+    <button data-tab="wall"><b>W</b>all</button>
+    <button data-tab="console"><b>C</b>onsole</button>
     <button data-tab="users"><b>U</b>sers</button>
     <button data-tab="settings"><b>S</b>ettings</button>
     <button data-tab="lists"><b>L</b>ists</button>
@@ -34,6 +36,25 @@
     <div id="boards" class="grid"></div>
     <div class="win"><h2>[ BROADCAST ]</h2>
       <form id="bcast"><input id="bcasttext" placeholder="message to every caller on every board"><button>Send</button></form>
+    </div>
+  </section>
+
+  <section id="tab-wall" class="tab" hidden>
+    <p class="dim">Every node's screen, live. Tap a tile to watch it big; Console takes it over.</p>
+    <div id="wall" class="wall"></div>
+  </section>
+
+  <section id="tab-console" class="tab" hidden>
+    <div class="win"><h2>[ CONSOLE ]</h2>
+      <div class="acts">
+        <select id="conboard"></select>
+        <button id="connew">New sysop session</button>
+        <select id="connode"></select><button id="conjoin">Break in</button>
+        <button id="conoff" class="danger">Leave</button>
+        <span id="conmsg" class="dim"></span>
+      </div>
+      <pre id="conscreen" class="term big" tabindex="0"></pre>
+      <form id="conline"><input id="context" placeholder="type here (Enter sends) or click the screen and type" autocomplete="off"><button>Send</button></form>
     </div>
   </section>
 
@@ -70,6 +91,7 @@
   </section>
 </main>
 <footer class="status"><span id="who"></span><span id="clock"></span></footer>
+<script src="/static/term.js"></script>
 <script src="/static/panel.js"></script>
 </body>
 </html>

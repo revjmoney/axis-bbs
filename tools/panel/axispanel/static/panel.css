@@ -38,3 +38,12 @@ form#settings label input { flex: 1; max-width: 60%; }
 #login form { max-width: 360px; }
 .status { position: sticky; bottom: 0; display: flex; justify-content: space-between; padding: 2px 12px; background: var(--c1); color: var(--c15); }
 .tag { color: var(--c14); }
+.wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--c8); background: #000; cursor: pointer; min-width: 0; }
+.tile.on { border-color: var(--c10); }
+.tile .cap { padding: 2px 6px; background: #111; color: var(--c14); display: flex; justify-content: space-between; }
+.term { margin: 0; font: 8px/9px "AxisVGA", monospace; white-space: pre; overflow: hidden; color: #aaa; background: #000; max-height: none; }
+.term.big { font-size: clamp(7px, 1.15vw, 16px); line-height: 1.15; padding: 4px; outline: none; overflow-x: auto; }
+.term.big:focus { box-shadow: 0 0 0 1px var(--c10); }
+#conline { display: flex; gap: 6px; margin-top: 6px; } #conline input { flex: 1; }
+.acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

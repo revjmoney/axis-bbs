@@ -28,7 +28,11 @@ def make_app(hub):
         import asyncio
         asyncio.ensure_future(broadcast({'evt': {'board': ip, 'line': line}}))
 
-    hub.on_change, hub.on_event = changed, event
+    def screen(ip, node, data):
+        import asyncio
+        asyncio.ensure_future(broadcast({'scr': {'board': ip, 'node': node, 'data': data}}))
+
+    hub.on_change, hub.on_event, hub.on_screen = changed, event, screen
 
     async def index(request):
         return web.FileResponse(os.path.join(STATIC, 'index.html'))
@@ -54,6 +58,13 @@ def make_app(hub):
                     await ws.send_str(json.dumps({'boards': hub.boards()}))
             elif not ws.authed:
                 await ws.send_str(json.dumps({'need': 'login'}))
+            elif 'wall' in m:
+                await hub.set_wall(bool(m['wall']))
+            elif 'con' in m:
+                answer = await hub.console(m.get('board'), m['con'])
+                await ws.send_str(json.dumps({'con': {'board': m.get('board'), 'answer': answer}}))
+            elif 'key' in m:
+                await hub.key(m.get('board'), m['key'])
             elif 'cmd' in m:
                 lines = await hub.command(m['cmd'], m.get('board'))
                 await ws.send_str(json.dumps({'reply': {'cmd': m['cmd'], 'board': m.get('board'), 'lines': lines}}))

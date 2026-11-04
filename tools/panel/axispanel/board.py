@@ -68,6 +68,16 @@ class BoardLink:
                     return out
                 out.append(line)
 
+    async def ask(self, line, timeout=5):
+        """A screen wall or console line (WALL / CON); returns the board's one-line answer."""
+        async with self._lock:
+            return await self._ask(line, timeout)
+
+    async def send(self, line):
+        """A line with no answer (KEY)."""
+        self.writer.write((line + '\n').encode('latin-1'))
+        await self.writer.drain()
+
     async def _ask(self, line, timeout=5):
         self.writer.write((line + '\n').encode('latin-1'))
         await self.writer.drain()
@@ -81,7 +91,10 @@ class BoardLink:
                     break
                 line = raw.decode('latin-1').rstrip('\r\n')
                 self.last_seen = time.monotonic()
-                if line.startswith('EVT '):
+                if line.startswith('SCR '):  # a node's screen bytes (base64): the wall and the console
+                    _, node, data = (line.split(' ', 2) + [''])[:3]
+                    await self.events.put(('scr', (int(node), data)))
+                elif line.startswith('EVT '):
                     await self.events.put(('evt', line[4:]))
                 elif line.startswith('STAT '):
                     self.stat = parse_stat(line[5:])

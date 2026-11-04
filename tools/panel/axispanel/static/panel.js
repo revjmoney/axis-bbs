@@ -3,6 +3,10 @@
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let ws, boards = [], nodes = {}, events = [], authed = false, waiting = {};
+  const terms = {};  // 'ip#node' -> Term (the wall's tiles)
+  let con = null, conTerm = null;  // the console: {board, node}
+  const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const enc = (str) => btoa(unescape(encodeURIComponent(str)).replace(/[\u0080-\uffff]/g, '?'));
 
   function connect() {
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
@@ -31,6 +35,18 @@
     if (m.boards) { boards = m.boards; drawBoards(); }
     if (m.evt) { events.push(m.evt.board + '  ' + m.evt.line); events = events.slice(-300); $('#events').textContent = events.join('\n'); }
     if (m.reply) { const q = waiting[m.reply.cmd]; if (q && q.length) q.shift()(m.reply.lines); }
+    if (m.scr) {
+      const k = m.scr.board + '#' + m.scr.node, bytes = b64(m.scr.data);
+      (terms[k] || tile(m.scr.board, m.scr.node)).feed(bytes);
+      if (con && conTerm && con.board === m.scr.board && con.node === m.scr.node) conTerm.feed(bytes);
+    }
+    if (m.con) {
+      const a = m.con.answer || '';
+      const n = parseInt(a.split(' ')[1], 10);
+      if (a.startsWith('CON NO')) { $('#conmsg').textContent = a.slice(7); $('#conmsg').className = 'warn'; }
+      else if (n > 0) { con = { board: m.con.board, node: n }; $('#conmsg').textContent = `on node ${n}`; $('#conmsg').className = 'ok'; conTerm.reset(); const t = terms[m.con.board + '#' + n]; if (t) { conTerm.grid = t.grid.map((r) => r.map((c) => c.slice())); conTerm.dirty = true; } $('#conscreen').focus(); }
+      else { con = null; $('#conmsg').textContent = 'left'; $('#conmsg').className = 'dim'; }
+    }
   }
 
   // ---- nodes: each board's @NODES, cards per board
@@ -68,6 +84,8 @@
     }
     $('#boards').innerHTML = html || '<p class="dim">Looking for boards on the network...</p>';
     drawSystem();
+    drawWallTiles();
+    fillBoards();
   }
 
   function fmtUp(s) { s = +s || 0; const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}h${m}m` : `${m}m`; }
@@ -92,6 +110,61 @@
     e.preventDefault(); const t = $('#bcasttext').value.trim(); if (!t) return;
     for (const b of boards.filter((b) => b.alive)) await cmd('@BCAST ' + t, b.ip);
     $('#bcasttext').value = '';
+  });
+
+  // ---- the screen wall: a tile per node, fed by the boards' SCR lines
+  function tile(board, node) {
+    const k = board + '#' + node;
+    const d = document.createElement('div');
+    d.className = 'tile'; d.dataset.k = k;
+    d.innerHTML = `<div class="cap"><span>node ${node}</span><span class="dim">${esc(board)}</span></div><pre class="term"></pre>`;
+    d.onclick = () => { $('#conboard').value = board; fillNodes(); $('#connode').value = node; showTab('console'); };
+    $('#wall').appendChild(d);
+    terms[k] = new Term(d.querySelector('pre'));
+    return terms[k];
+  }
+  function drawWallTiles() {  // a tile for every node that's online, even before it draws anything
+    for (const [ip, list] of Object.entries(nodes)) for (const n of list) if (n.ip === ip && !terms[ip + '#' + n.num]) tile(ip, n.num);
+    for (const el of document.querySelectorAll('.tile')) {
+      const [ip, num] = el.dataset.k.split('#');
+      const n = (nodes[ip] || []).find((x) => x.num === +num);
+      el.classList.toggle('on', !!(n && n.handle));
+      el.querySelector('.dim').textContent = n && n.handle ? n.handle : ip;
+    }
+  }
+  setInterval(() => { for (const t of Object.values(terms)) t.draw(); if (conTerm) conTerm.draw(); }, 150);
+
+  // ---- the console: a new sysop session, or break in on a caller
+  conTerm = new Term($('#conscreen'));
+  function fillBoards() {
+    const cur = $('#conboard').value;
+    $('#conboard').innerHTML = boards.filter((b) => b.alive).map((b) => `<option value="${esc(b.ip)}">${esc(b.ip)}${b.stat && b.stat.role === 'main' ? ' (main)' : ''}</option>`).join('');
+    if (cur) $('#conboard').value = cur;
+    fillNodes();
+  }
+  function fillNodes() {
+    const ip = $('#conboard').value, cur = $('#connode').value;
+    $('#connode').innerHTML = (nodes[ip] || []).filter((n) => n.ip === ip && n.handle).map((n) => `<option value="${n.num}">node ${n.num} ${esc(n.handle)}</option>`).join('') || '<option value="">(nobody on)</option>';
+    if (cur) $('#connode').value = cur;
+  }
+  $('#conboard').onchange = fillNodes;
+  $('#connew').onclick = () => send({ con: 'new', board: $('#conboard').value });
+  $('#conjoin').onclick = () => { if ($('#connode').value) send({ con: 'join ' + $('#connode').value, board: $('#conboard').value }); };
+  $('#conoff').onclick = () => { if (con) send({ con: 'off', board: con.board }); };
+  const keyFor = (e) => {
+    const map = { Enter: '\r', Backspace: '\b', Tab: '\t', Escape: '\x1b', ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D' };
+    if (map[e.key]) return map[e.key];
+    if (e.ctrlKey && e.key.length === 1) return String.fromCharCode(e.key.toUpperCase().charCodeAt(0) - 64);
+    return e.key.length === 1 ? e.key : '';
+  };
+  $('#conscreen').addEventListener('keydown', (e) => {
+    if (!con) return;
+    const k = keyFor(e); if (!k) return;
+    e.preventDefault(); send({ key: enc(k), board: con.board });
+  });
+  $('#conline').addEventListener('submit', (e) => {
+    e.preventDefault(); if (!con) return;
+    send({ key: enc($('#context').value + '\r'), board: con.board }); $('#context').value = '';
   });
 
   // ---- users
@@ -172,11 +245,14 @@
   });
 
   // ---- tabs, login, refresh
+  function showTab(name) {
+    document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x.dataset.tab === name));
+    document.querySelectorAll('.tab').forEach((t) => (t.hidden = t.id !== 'tab-' + name));
+    send({ wall: name === 'wall' || name === 'console' });  // the boards only stream screens while you're looking
+    ({ nodes: loadNodes, wall: loadNodes, console: loadNodes, users: loadUsers, settings: loadSettings, lists: loadLists, system: drawSystem })[name]();
+  }
   $('#tabs').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-tab]'); if (!b) return;
-    document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b));
-    document.querySelectorAll('.tab').forEach((t) => (t.hidden = t.id !== 'tab-' + b.dataset.tab));
-    ({ nodes: loadNodes, users: loadUsers, settings: loadSettings, lists: loadLists, system: drawSystem })[b.dataset.tab]();
+    const b = e.target.closest('button[data-tab]'); if (b) showTab(b.dataset.tab);
   });
   $('#loginform').addEventListener('submit', (e) => {
     e.preventDefault();

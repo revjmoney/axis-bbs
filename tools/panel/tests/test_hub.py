@@ -120,3 +120,39 @@ def test_a_board_that_goes_quiet_is_dropped_and_comes_back():
         await asyncio.sleep(0.2)
         assert hub.links['board1'].alive
     asyncio.run(go())
+
+
+def test_screen_bytes_reach_the_hub_and_console_lines_get_answers():
+    async def go():
+        fb = FakeBoard()
+        port = await fb.start()
+        got = []
+        orig = fb.client
+
+        async def client(r, w):  # after login, answer CON and push a screen line
+            w.write(b'AXISPANEL 1 n1\n')
+            while True:
+                raw = await r.readline()
+                if not raw:
+                    return
+                line = raw.decode().strip()
+                if line.startswith('SALT '):
+                    w.write(b'SALT abc\n')
+                elif line.startswith('AUTH '):
+                    w.write(b'OK\nSTAT role=main\nSCR 3 aGk=\n')
+                elif line == 'CON NEW':
+                    w.write(b'CON 3\n')
+                await w.drain()
+        fb.client = client
+        fb.server.close()
+        fb.server = await asyncio.start_server(client, '127.0.0.1', 0)
+        port = fb.server.sockets[0].getsockname()[1]
+        hub = Hub(link_factory=link_to(port))
+        hub.on_screen = lambda ip, node, data: got.append((node, data))
+        hub.seen('b')
+        await asyncio.sleep(0)
+        assert await hub.login('Rev', 'x')
+        await asyncio.sleep(0.1)
+        assert got == [(3, 'aGk=')]
+        assert await hub.console('b', 'new') == 'CON 3'
+    asyncio.run(go())

@@ -17,6 +17,8 @@ the tray (Open panel, Quit). Log in with your sysop handle and password, or any 
   broadcast), **Users** (validate, deny, security, password, permissions, twit), **Settings** (every
   setting, the sysop password and the new user password), **Lists** (rumors, oneliners, BBS list,
   votes), **System** (each board's status, web and No-IP, cards, event log, and the live event feed).
+- **Wall**: every node's screen, live (the boards only stream while the Wall or Console tab is open). Tap a tile to open it in the Console.
+- **Console**: open a new sysop session on any board (it takes a free node, headless boards too), or break in on a caller: you see their screen and type into it, and they're told when you break in and when you leave.
 - Every button runs the same `@` command you can type on a board's serial console.
 - Your password is used only to answer each board's login challenge; the app never saves it.
 
