@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "doctest.h"
+#include "bbs/filebrowser.h"
 #include "bbs/filelib.h"
 #include "bbs/node.h"
 
@@ -310,4 +311,23 @@ TEST_CASE("a node says where its caller is, for the sysop's activity screen") {
     type(n, "LIST1.TXT\r");
     type(n, "z");
     CHECK(n.activityText() == "downloading LIST1.TXT");
+}
+
+TEST_CASE("[N] at the area list shows every area's files newer than the caller's last call") {
+    FakeLibrary lib = library();
+    lib.areas["axis"][0].date = 2000;  // AXISFLSH.ZIP: new since the last call
+    lib.areas["axis"][1].date = 500;   // README.TXT: old
+    lib.areas["text"][3].date = 3000;  // LIST3.TXT: new
+    std::string out;
+    BbsConfig   c = twoAreas();
+    FileBrowser b(c.areas, lib, out);
+    b.setNewSince(1000);
+    b.begin();
+    out.clear();
+    b.key('n');
+    std::string p = plain(out);
+    CHECK(p.find("AXISFLSH.ZIP") != std::string::npos);
+    CHECK(p.find("LIST3.TXT") != std::string::npos);
+    CHECK(p.find("README.TXT") == std::string::npos);
+    CHECK(p.find("2 new files") != std::string::npos);
 }

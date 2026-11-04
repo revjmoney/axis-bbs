@@ -39,7 +39,7 @@ std::string FileServer::handle(const std::string& req) {
     switch (op) {
         case 'L': {  // list: name, size, description per line
             std::string out;
-            for (auto& e : lib_.list(arg(0))) out += e.name + kSep + std::to_string(e.size) + kSep + e.desc + "\n";
+            for (auto& e : lib_.list(arg(0))) out += e.name + kSep + std::to_string(e.size) + kSep + e.desc + kSep + std::to_string(e.date) + "\n";
             return ok(out);
         }
         case 'R': {  // read a small file whole
@@ -109,10 +109,10 @@ std::vector<bbs::FileEntry> RemoteFileLibrary::list(const std::string& areaId) {
     while (pos < data.size()) {
         size_t e = data.find('\n', pos);
         if (e == std::string::npos) e = data.size();
-        auto parts = splitN(data.substr(pos, e - pos), 3);
+        auto parts = splitN(data.substr(pos, e - pos), 4);
         pos = e + 1;
         if (parts.size() < 3 || parts[0].empty()) continue;
-        v.push_back({parts[0], toU(parts[1]), parts[2]});
+        v.push_back({parts[0], toU(parts[1]), parts[2], parts.size() > 3 ? toU(parts[3]) : 0});
     }
     return v;
 }

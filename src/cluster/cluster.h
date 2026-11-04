@@ -105,6 +105,7 @@ private:
     void handleDatagram(const std::string& d, uint32_t from, uint32_t now);
     void handleFrame(Link& l, Frame t, const std::string& body, uint32_t now);
     void heartbeat();
+    void announce();
     void tidyNumbers(uint32_t now);  // main: once every node has sat idle a while, it is 1, 2 ... and the others follow
     void event(const std::string& e) {
         if (onEvent) onEvent(e);

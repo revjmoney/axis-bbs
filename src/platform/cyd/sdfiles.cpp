@@ -3,6 +3,7 @@
 #include "platform/cyd/sdfiles.h"
 
 
+#include <map>
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -67,6 +68,7 @@ bool safeName(const std::string& n) {  // one name inside the area, never a path
 
 std::vector<FileEntry> SdFileLibrary::list(const std::string& areaId) {
     std::vector<std::pair<std::string, uint32_t>> folder;
+    std::map<std::string, uint32_t>               when;  // each file's modification time
     if (!storageHasSd() || !safeName(areaId)) return {};
     std::string dir = folderOf(areaId);
     if (DIR* d = opendir(dir.c_str())) {
@@ -75,12 +77,16 @@ std::vector<FileEntry> SdFileLibrary::list(const std::string& areaId) {
             struct stat st;
             if (n[0] == '.' || ::stat((dir + "/" + n).c_str(), &st) != 0 || S_ISDIR(st.st_mode)) continue;
             folder.emplace_back(n, (uint32_t)st.st_size);
+            when[n] = (uint32_t)st.st_mtime;
         }
         closedir(d);
     }
     std::string bbs;
     read(areaId, "FILES.BBS", bbs, 16 * 1024);
-    return axis::bbs::mergeFilesBbs(bbs, folder);
+    std::vector<FileEntry> all = axis::bbs::mergeFilesBbs(bbs, folder);
+    for (FileEntry& e : all)
+        if (when.count(e.name)) e.date = when[e.name];
+    return all;
 }
 
 std::unique_ptr<axis::bbs::RandomFile> SdFileLibrary::open(const std::string& areaId, const std::string& name) {

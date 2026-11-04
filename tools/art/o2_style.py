@@ -176,16 +176,16 @@ def main_menu(out):
     cv.text(6, 6 + w + 2, 'cnc', 15)
     # stock Oblivion/2 letters (the board maps them onto its own commands when this art is up)
     cols = [
-        [('a', 'account/tagline'), ('c', 'chat'), ('e', 'email/msgs'), ('f', 'feedback'), ('g', 'goodbye')],
-        [('l', 'list users'), ('m', 'messages'), ('o', 'open doors'), ('r', 'rumors'), ('s', 'system stats')],
-        [('t', 'transfers'), ('x', 'file vaults'), ('y', 'user stats'), ('=', 'multinode'), ('.', 'credits')],
+        [('a', 'account/tagline'), ('c', 'chat'), ('e', 'email'), ('f', 'feedback'), ('!', 'new scan'), ('g', 'goodbye')],
+        [('l', 'list users'), ('m', 'messages'), ('o', 'open doors'), ('r', 'rumors'), ('s', 'system stats'), ('w', 'recent callers')],
+        [('t', 'transfers'), ('x', 'file vaults'), ('y', 'user stats'), ('=', 'multinode'), ('.', 'credits'), ('/g', 'fast logoff')],
     ]
     for ci, col in enumerate(cols):
         for ri, (k, name) in enumerate(col):
             cv.text(13 + ri, 8 + ci * 24, k, 11)
             cv.text(13 + ri, 10 + ci * 24, name, 3 if ri % 2 else 7)
-    cv.text(19, 60, '-rev^axis', 3)
-    open(out, 'wb').write(cv.ansi(19).encode('latin-1'))  # the strings hold CP437 byte values
+    cv.text(20, 60, '-rev^axis', 3)
+    open(out, 'wb').write(cv.ansi(20).encode('latin-1'))  # the strings hold CP437 byte values
 
 
 def rotato(out):

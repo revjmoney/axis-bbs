@@ -49,6 +49,9 @@ private:
 const char* statusName(User::Status s);  // "pending", "validated", "denied"
 // may download (and read) files: file permission, and something uploaded first (or let off by the sysop)
 inline bool mayDownload(const User& u) { return u.permFiles && (u.freeDownloads || u.uploads > 0); }
+// The download ratio (setting "ratio", 0 = off): a caller may take up to ratio times what they've
+// uploaded, plus freeKb. "" = this download is fine, else why not (with what's left to take).
+std::string ratioBlock(const User& u, uint32_t size, int ratio, int freeKb);
 
 // One user as a users.dat block, for the cluster link. The handle is a user's identity across
 // boards; ids are each board's own.

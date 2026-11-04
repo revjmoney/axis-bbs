@@ -159,6 +159,32 @@ static void callersAddLocal(const std::string& line) {
     flashWrite("/callers.txt", text);
 }
 static bool asFollower();
+
+// The sysop's own screens for the theme (MATRIX.ANS, MAIN.ANS): from the card on the main, 7 KB at
+// most, cut at the SAUCE record; a board without the card asks the main once and keeps the answer,
+// so every node looks and keys the same. The settings arriving (a theme change) forget them.
+static std::map<std::string, std::string> artCache;
+static std::string themeArtLocal(const std::string& name) {
+    std::string s;
+    if (!storageHasSd() || name.find('/') != std::string::npos) return s;
+    if (FILE* f = fopen(("/sd/themes/" + cfg.theme + "/" + name).c_str(), "rb")) {
+        char b[512];
+        for (size_t n; s.size() < 7168 && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
+        fclose(f);
+    }
+    if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) s.resize(sauce);
+    if (s.size() > 7168) s.resize(7168);
+    return s;
+}
+static std::string themeArt(const std::string& name) {
+    if (!asFollower()) return themeArtLocal(name);
+    auto it = artCache.find(name);
+    if (it != artCache.end()) return it->second;
+    std::string reply;
+    std::string art = cluster->request(std::string("T\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1' ? reply.substr(1) : "";
+    artCache[name] = art;
+    return art;
+}
 static uint32_t lastServedMs = 0;  // main: a follower's door files
 static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string& req, std::string& reply) {
     return cluster && cluster->request(req, reply);
@@ -947,17 +973,7 @@ static void answerIn(WiFiClient incoming) {
                     sessionNode(i)->nodeIn(kind, sessionNumber(slot), node->handle(), text);
         });
         node->setMessages(&callerMessages());
-        node->setArt([](const std::string& name) {  // the sysop's own screens for the theme, from the card (8 KB at most)
-            std::string s;
-            if (!storageHasSd()) return s;
-            if (FILE* f = fopen(("/sd/themes/" + cfg.theme + "/" + name).c_str(), "rb")) {
-                char b[512];
-                for (size_t n; s.size() < 8192 && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
-                fclose(f);
-            }
-            if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) s.resize(sauce);  // stop at the SAUCE record
-            return s;
-        });
+        node->setArt([](const std::string& name) { return themeArt(name); });
         node->setOneLiners(
             [] {  // the wall: here on the main, over the link on a follower
                 if (!asFollower()) return oneLiners;
@@ -1363,6 +1379,11 @@ static void startCluster() {
     };
     cluster->settings = [] { return axis::bbs::formatConfig(cfg); };
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
+        artCache.clear();  // the theme may have changed
+        if (storageHasSd()) {  // the SD board keeps the BBS's settings: a stand-in main's older copy must not replace them
+            Serial.println("axis: settings from a main without the card: kept our own");
+            return;
+        }
         Serial.printf("axis: settings from the main: %u bytes\n", (unsigned)ini.size());
         axis::bbs::BbsConfig m = axis::bbs::mergeSettings(cfg, ini);
         if (axis::bbs::formatConfig(m) == axis::bbs::formatConfig(cfg)) return;
@@ -1410,6 +1431,7 @@ static void startCluster() {
             for (auto& l : oneLiners) out += l + "\n";
             return out;
         }
+        if (req.rfind("T\x1f", 0) == 0) return "1" + themeArtLocal(req.substr(2));  // a theme screen
         if (req == "K") {  // the last callers
             std::string out = "1";
             for (auto& l : lastCallers) out += l + "\n";
@@ -1630,6 +1652,27 @@ static void handleSerial() {
                 logEvent(String("sysop: ") + u->handle.c_str() + " is now a sysop (serial)");
                 saveUsers();
                 Serial.printf("axis: %s is now a sysop\n", u->handle.c_str());
+            }
+        } else if (cmd.startsWith("@ADDUSER ")) {  // "@ADDUSER handle|location|password": a validated caller (security 20)
+            String a = cmd.substring(9);
+            int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
+            if (b1 <= 0 || b2 < 0 || a.length() - b2 - 1 < 6) {
+                Serial.println("axis: @ADDUSER handle|location|password (6+ characters)");
+            } else if (users.find(a.substring(0, b1).c_str())) {
+                Serial.println("axis: that handle is taken");
+            } else {
+                axis::bbs::User u;
+                u.handle = a.substring(0, b1).c_str();
+                u.location = a.substring(b1 + 1, b2).c_str();
+                u.salt = axis::bbs::makeSalt(hwRandom);
+                u.hash = axis::bbs::hashPassword(u.salt, a.substring(b2 + 1).c_str());
+                u.status = axis::bbs::User::Status::Validated;
+                u.security = 20;
+                u.created = unixNow();
+                users.add(u);
+                logEvent(String("sysop: added ") + u.handle.c_str() + " (serial)");
+                saveUsers();  // and on to every board
+                Serial.printf("axis: added %s\n", u.handle.c_str());
             }
         } else if (cmd == "@LED") {  // what the LED is showing and why (bench)
             ledReport = true;

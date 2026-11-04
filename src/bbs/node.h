@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "bbs/config.h"
+#include "bbs/email.h"
 #include "bbs/filebrowser.h"
 #include "bbs/filelib.h"
 #include "bbs/msgreader.h"
@@ -33,7 +34,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -117,6 +118,7 @@ private:
     MessageStore*                                msgStore_ = nullptr;
     std::unique_ptr<MessageReader>               msgs_;
     std::unique_ptr<UserSettings>                settings_;
+    std::unique_ptr<EmailBox>                    email_;
     std::map<std::string, int>                   lastRead_;  // without an account (tests, first builds)
     std::function<void(const std::string&)>      linersAdd_;
     std::function<SysInfo()>  info_;
@@ -129,6 +131,7 @@ private:
     std::function<void(const std::string&)>   callersAdd_;
     void                      showLastCallers();
     bool                      available_ = true;
+    uint32_t                  prevCall_ = 0;  // the caller's last call before this one (unix time)
     char                      mnAsk_ = 0;          // MultiNode: the command waiting for a node number / text
     int                       mnTo_ = 0, splitWith_ = 0, splitAsk_ = 0;  // the node asked, in split chat with, asking us
     int                       splitRow_[2] = {2, 14}, splitCol_[2] = {1, 1};  // split chat cursors: their half, mine

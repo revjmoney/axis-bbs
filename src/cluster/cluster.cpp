@@ -63,7 +63,7 @@ void Cluster::becomeMain(uint32_t now, uint32_t epoch, int number) {
     for (size_t i = 0; i < numbers_.size(); i++)
         nodes_.push_back({numbers_[i], id_, status_[i].first, status_[i].second, net_.myIp()});
     lastBeat_ = lastAnnounce_ = now;
-    net_.broadcast("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_));
+    announce();
     if (onNumber) onNumber(number_);
 }
 
@@ -109,6 +109,10 @@ void Cluster::heartbeat() {
     std::string b = frame(Frame::Heartbeat, f);
     for (Link& l : links_)
         if (!net_.send(l.id, b)) event("heartbeat to node " + num((uint32_t)l.node) + " failed");
+}
+
+void Cluster::announce() {  // "AXIS! ip epoch node sd": where the main is, and whether it holds the SD card
+    net_.broadcast("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_) + (hasFiles_ ? " 1" : " 0"));
 }
 
 void Cluster::tidyNumbers(uint32_t now) {
@@ -162,7 +166,7 @@ void Cluster::tidyNumbers(uint32_t now) {
 
 void Cluster::handleDatagram(const std::string& d, uint32_t from, uint32_t now) {
     if (d.rfind("AXIS? ", 0) == 0) {
-        if (role_ == Role::Main) net_.broadcast("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_));
+        if (role_ == Role::Main) announce();
         return;
     }
     if (d.rfind("AXIS! ", 0) != 0) return;
@@ -177,8 +181,13 @@ void Cluster::handleDatagram(const std::string& d, uint32_t from, uint32_t now) 
     uint32_t ip = toU(p[0]), epoch = toU(p[1]);
     int      number = (int)toU(p[2]);
     if (ip == net_.myIp()) return;
-    if (role_ == Role::Main) {  // two mains: the higher epoch wins; on a tie, the lower node number
-        if (epoch > epoch_ || (epoch == epoch_ && number < number_)) {
+    bool theirSd = p.size() >= 4 && p[3] == "1";
+    if (role_ == Role::Main) {  // two mains: the SD card's board wins; then the higher epoch, the lower node, the lower address
+        bool theyWin = theirSd != hasFiles_ ? theirSd
+                     : epoch != epoch_      ? epoch > epoch_
+                     : number != number_    ? number < number_
+                                            : ip < net_.myIp();
+        if (theyWin) {
             event("another main with epoch " + num(epoch) + ": joining it");
             wantNumber_ = number_;
             minEpoch_ = epoch;
@@ -187,7 +196,7 @@ void Cluster::handleDatagram(const std::string& d, uint32_t from, uint32_t now) 
             return;
         }
     }
-    if (role_ != Role::Discovering || epoch < minEpoch_) return;
+    if (role_ != Role::Discovering || (epoch < minEpoch_ && !theirSd)) return;
     int link = net_.connect(ip);
     if (link < 0) return;
     links_.push_back({link, FrameReader(), 0});
@@ -435,7 +444,7 @@ void Cluster::tick(uint32_t now) {
             }
             if (now - lastAnnounce_ >= kAnnounceMs) {
                 lastAnnounce_ = now;
-                net_.broadcast("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_));
+                announce();
             }
             break;
         case Role::Follower:

@@ -103,6 +103,12 @@ void Node::setAccounts(UserStore* users, std::function<void()> save, uint32_t (*
 
 void Node::loggedIn() {
     state_ = State::Menu;
+    if (msgStore_) {  // new private mail: said under the main menu
+        const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+        auto        it = (u ? u->lastRead : lastRead_).find(EmailBox::kArea);
+        int         n = EmailBox::countNew(*msgStore_, handle_, it == (u ? u->lastRead : lastRead_).end() ? 0 : it->second);
+        if (n) notes_.push_back(std::string("   ") + theme::HOT + "*** You have " + std::to_string(n) + " new mail: [E] reads it." + theme::TEXT);
+    }
     if (callersAdd_) {
         const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
         callersAdd_(handle_ + "|" + std::to_string(node_) + "|" + info_().timeText + "|" + (u ? u->location : cfg_.location));
@@ -467,6 +473,7 @@ void Node::showMainMenu() {
                                        {"[U] [O]", "your account and tagline, oneliners"},
                                        {"[N]", "multinode: notes, broadcasts, split chat"},
                                        {"[L]", "last callers"},
+                                       {"[E] [S]", "private email, scan for new messages"},
                                        {"[I] [C]", "system info, credits"},
                                        {"[G]", "goodbye"}});
     prompt();
@@ -599,6 +606,7 @@ void Node::key(char c) {
                 return;
             }
             u->calls++;
+            prevCall_ = u->lastCall;  // for [N]ew files: what landed since they were last here
             if (unixNow_) u->lastCall = unixNow_();
             if (saveUsers_) saveUsers_();
             if (u->status == User::Status::Denied) {
@@ -724,6 +732,13 @@ void Node::key(char c) {
         lineKey(c);
         return;
     }
+    if (state_ == State::Email) {
+        if (email_ && email_->key(c)) return;
+        email_.reset();
+        if (saveUsers_ && users_ && !sysop_) saveUsers_();  // what they read, kept with the account
+        showMainMenu();
+        return;
+    }
     if (state_ == State::Settings) {
         if (settings_ && settings_->key(c)) return;
         settings_.reset();
@@ -766,7 +781,7 @@ void Node::key(char c) {
     }
     if (state_ != State::Menu) return;
     if (o2() && o2Keys_ && c != '?') {  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
-        static const char from[] = "abcefgklmorstwxy+=./", to[] = "utmpgguwmdoiflfuuncg";
+        static const char from[] = "acefgklmorstwxy+=./!", to[] = "utepguwmdoiflfuuncgs";  // a account, c chat, e email, f feedback, l list users, o open doors, r rumors, t transfers, w recent callers ...
         const char*       hit = std::strchr(from, (char)(c | 0x20));
         if (!hit || !*hit) {
             out_ += std::string("\r\n   ") + AMBER + "Not on this board yet." + theme::TEXT;
@@ -837,11 +852,13 @@ void Node::key(char c) {
             state_ = State::Files;
             myAreas_ = openTo(cfg_.areas);
             browser_.reset(new FileBrowser(myAreas_, *files_, out_));
-            browser_->setDownloadGate([this]() -> std::string {
+            browser_->setDownloadGate([this](uint32_t size) -> std::string {
                 User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
-                if (!u || mayDownload(*u)) return "";
-                return "Downloads open up once you've uploaded something: [U]pload first. Keep the scene alive.";
+                if (!u) return "";
+                if (!mayDownload(*u)) return "Downloads open up once you've uploaded something: [U]pload first. Keep the scene alive.";
+                return size ? ratioBlock(*u, size, cfg_.ratio, cfg_.freeKb) : std::string();
             });
+            browser_->setNewSince(prevCall_ ? prevCall_ : (unixNow_ && unixNow_() > 7 * 86400 ? unixNow_() - 7 * 86400 : 0));
             browser_->begin();
             break;
         case 'm': {
@@ -882,6 +899,57 @@ void Node::key(char c) {
         case 'l':
             showLastCallers();
             break;
+        case 's': {  // the new scan across every message area this caller can see
+            User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+            if (!msgStore_ || (u && !u->permMessages)) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += "The message areas aren't open to you right now.";
+                showMenu();
+                break;
+            }
+            myMsgAreas_ = openTo(cfg_.msgAreas);
+            if (MessageReader::countNew(myMsgAreas_, *msgStore_, u ? u->lastRead : lastRead_) == 0) {
+                out_ += std::string("\r\n\r\n   ") + theme::TEXT + "No new messages anywhere.";
+                showMenu();
+                break;
+            }
+            state_ = State::Messages;
+            msgs_.reset(new MessageReader(myMsgAreas_, *msgStore_, out_, handle_, u ? u->lastRead : lastRead_,
+                                          [this] { return info_().timeText; }));
+            msgs_->setTagline(tagline());
+            msgs_->beginScan();
+            break;
+        }
+        case 'e': {
+            if (!msgStore_) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += "Email is offline right now.";
+                showMenu();
+                break;
+            }
+            User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+            state_ = State::Email;
+            email_.reset(new EmailBox(*msgStore_, out_, handle_, (u ? u->lastRead : lastRead_)[EmailBox::kArea],
+                                      [this](const std::string& name, std::string& handle) {
+                                          if (!users_) return false;
+                                          if (User* f = users_->find(name)) {
+                                              handle = f->handle;
+                                              return true;
+                                          }
+                                          if (!cfg_.sysopHandle.empty() && name.size() == cfg_.sysopHandle.size()) {
+                                              bool same = true;
+                                              for (size_t i = 0; i < name.size(); i++) same = same && (name[i] | 0x20) == (cfg_.sysopHandle[i] | 0x20);
+                                              if (same) handle = cfg_.sysopHandle;
+                                              return same;
+                                          }
+                                          return false;
+                                      },
+                                      [this] { return info_().timeText; }, tagline()));
+            email_->begin();
+            break;
+        }
         case 'o':
             if (linersGet_) menuOrLiners();
             else prompt();
@@ -1306,6 +1374,7 @@ std::string Node::activityText() const {
         case State::Paging: return "paging the sysop";
         case State::Settings: return "account settings";
         case State::MultiNode: return "multinode menu";
+        case State::Email: return "email";
         case State::Split: return "split-screen chat";
         case State::Done: return "leaving";
     }

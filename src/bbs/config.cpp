@@ -95,6 +95,8 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "daily_minutes") c.dailyMinutes = n;
         else if (k == "idle_minutes") c.idleMinutes = n;
         else if (k == "login_splash") c.loginSplash = n != 0;
+        else if (k == "ratio") c.ratio = (int)n;
+        else if (k == "free_kb") c.freeKb = (int)n;
         else if (k == "theme") c.theme = v == "oblivion" ? "oblivion" : "axis";
         else if (k == "sessions") c.sessions = n < 1 ? 1 : n > 4 ? 4 : n;
         else if (k == "setup_done") c.setupDone = n == 1;
@@ -177,6 +179,8 @@ std::string formatConfig(const BbsConfig& c) {
     kv("sessions", std::to_string(c.sessions));
     kv("login_splash", c.loginSplash ? "1" : "0");
     kv("theme", c.theme);
+    kv("ratio", std::to_string(c.ratio));
+    kv("free_kb", std::to_string(c.freeKb));
     for (size_t i = 0; i < c.doors.size(); i++) {
         const DoorEntry& d = c.doors[i];
         kv(("door" + std::to_string(i + 1)).c_str(), d.id + "|" + d.name + "|" + d.exe + "|" + d.args + "|" + d.drop);

@@ -34,6 +34,27 @@ bool MessageReader::lineKey(char c, size_t max) {
 
 void MessageReader::begin() { showAreas(); }
 
+int MessageReader::countNew(const std::vector<FileArea>& areas, MessageStore& store, const std::map<std::string, int>& lastRead) {
+    int n = 0;
+    for (const FileArea& a : areas) {
+        auto it = lastRead.find(a.id);
+        int  last = it == lastRead.end() ? 0 : it->second;
+        for (const Message& m : store.headers(a.id)) n += m.num > last;
+    }
+    return n;
+}
+
+void MessageReader::beginScan() {
+    scanning_ = true;
+    area_ = 0;
+    heads_ = st_.headers(areas_.empty() ? std::string() : areas_[0].id);
+    if (areas_.empty()) {
+        showAreas();
+        return;
+    }
+    nextNew();
+}
+
 void MessageReader::showAreas() {
     s_ = St::Areas;
     out_ += "\x1b[0m\x1b[2J\x1b[H\r\n" + drip("MSGS") + "   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
@@ -113,7 +134,25 @@ void MessageReader::nextNew() {
             show(m.num);
             return;
         }
-    out_ += std::string("\r\n   ") + TEXT + "No new messages in " + areas_[area_].name + ".\r\n";
+    if (scanning_)  // the scan goes on to the next area that has something new
+        for (size_t j = area_ + 1; j < areas_.size(); j++) {
+            int  lastJ = lastRead_.count(areas_[j].id) ? lastRead_[areas_[j].id] : 0;
+            auto h = st_.headers(areas_[j].id);
+            for (const Message& m : h)
+                if (m.num > lastJ) {
+                    area_ = j;
+                    heads_ = h;
+                    out_ += std::string("\r\n   ") + DGREY + "--- " + WHITE + areas_[j].name + DGREY + " ---" + TEXT;
+                    show(m.num);
+                    return;
+                }
+        }
+    if (scanning_) {
+        scanning_ = false;
+        out_ += std::string("\r\n   ") + TEXT + "Scan done: you're all caught up.\r\n";
+    } else {
+        out_ += std::string("\r\n   ") + TEXT + "No new messages in " + areas_[area_].name + ".\r\n";
+    }
     s_ = St::List;
     listPrompt();
 }

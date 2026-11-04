@@ -66,7 +66,7 @@ void FileBrowser::showAreas() {
         out_ += b;
     }
     out_ += DIM;
-    out_ += "\r\n   Area number (Enter for the main menu): ";
+    out_ += "\r\n   " + theme::key("N", "ew files since your last call") + DIM + "\r\n   Area number (Enter for the main menu): ";
     out_ += HI;
 }
 
@@ -106,6 +106,28 @@ void FileBrowser::showPage() {
 
 std::string FileBrowser::where() const {
     return st_ == St::Areas || area_ >= areas_.size() ? "area list" : areas_[area_].name;
+}
+
+void FileBrowser::showNewFiles() {
+    out_ += "\r\n\r\n   " + theme::fade("NEW FILES SINCE YOUR LAST CALL") + "\r\n";
+    int  count = 0;
+    char b[160];
+    for (const FileArea& a : areas_) {
+        bool header = false;
+        for (const FileEntry& f : lib_.list(a.id)) {
+            if (f.date <= since_) continue;
+            if (!header) {
+                out_ += std::string("\r\n   ") + theme::ORANGE + a.name + "\r\n";
+                header = true;
+            }
+            if (++count > 60) continue;  // a flood: the first 60, then the count
+            std::snprintf(b, sizeof b, "   %s%-14.14s %s%6s  %s%.52s\r\n", HI, f.name.c_str(), DIM, fileSizeText(f.size).c_str(), DIM, f.desc.c_str());
+            out_ += b;
+        }
+    }
+    out_ += std::string("\r\n   ") + theme::TEXT + (count ? std::to_string(count) + (count == 1 ? " new file" : " new files") : std::string("Nothing new since your last call.")) + "\r\n";
+    out_ += DIM;
+    out_ += "\r\n   Area number (Enter for the main menu): ";
 }
 
 void FileBrowser::listPrompt() {
@@ -285,6 +307,10 @@ void FileBrowser::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::
 bool FileBrowser::key(char c) {
     switch (st_) {
         case St::Areas:
+            if (line_.empty() && (c | 0x20) == 'n') {
+                showNewFiles();
+                return true;
+            }
             if (!lineKey(c, 3)) return true;
             if (line_.empty()) return false;  // Enter alone: back to the main menu
             {
@@ -365,7 +391,7 @@ bool FileBrowser::key(char c) {
             } else {
                 std::string name = line_;
                 line_.clear();
-                if (std::string why = gate_ ? gate_() : std::string(); !why.empty()) {
+                if (std::string why = gate_ ? gate_(0) : std::string(); !why.empty()) {
                     out_ += AMBER;
                     out_ += "   " + why + "\r\n";
                     st_ = St::List;
@@ -391,7 +417,7 @@ bool FileBrowser::key(char c) {
                 listPrompt();
                 return true;
             }
-            if (std::string why = gate_ ? gate_() : std::string(); !why.empty()) {
+            if (std::string why = gate_ ? gate_(f->size) : std::string(); !why.empty()) {
                 out_ += AMBER;
                 out_ += "   " + why + "\r\n";
                 st_ = St::List;

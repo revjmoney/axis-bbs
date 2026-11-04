@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include "doctest.h"
+#include "bbs/config.h"
 #include "bbs/users.h"
 
 using namespace axis::bbs;
@@ -129,4 +130,27 @@ TEST_CASE("a user's permissions survive a save: files, messages, doors, free dow
     CHECK(mayDownload(fresh));
     fresh.permFiles = false;
     CHECK_FALSE(mayDownload(fresh));
+}
+
+TEST_CASE("the download ratio: up to ratio times what you uploaded, plus a free allowance") {
+    User u;
+    u.uploads = 100 * 1024;    // 100 KB given
+    u.downloads = 250 * 1024;  // 250 KB taken
+    CHECK(ratioBlock(u, 40 * 1024, 0, 0).empty());           // ratio off: anything goes
+    CHECK(ratioBlock(u, 40 * 1024, 3, 0).empty());           // 1:3 -> 300 KB, 290 after this one
+    std::string why = ratioBlock(u, 60 * 1024, 3, 0);        // would be 310 KB
+    CHECK(why.find("50 KB") != std::string::npos);           // what's left to take
+    CHECK(ratioBlock(u, 60 * 1024, 3, 16).empty());          // a 16 KB free allowance covers it
+    u.freeDownloads = true;
+    CHECK(ratioBlock(u, 900 * 1024, 3, 0).empty());          // the sysop's FREE DL
+}
+
+TEST_CASE("the ratio settings are kept in the settings file") {
+    BbsConfig c = parseConfig("ratio=3\nfree_kb=512\n");
+    CHECK(c.ratio == 3);
+    CHECK(c.freeKb == 512);
+    BbsConfig back = parseConfig(formatConfig(c));
+    CHECK(back.ratio == 3);
+    CHECK(back.freeKb == 512);
+    CHECK(parseConfig("").ratio == 0);
 }

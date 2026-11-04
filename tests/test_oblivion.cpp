@@ -131,3 +131,24 @@ TEST_CASE("with an O/2 MAIN.ANS on the card, the keys follow stock Oblivion/2 le
     CHECK(n.state() == Node::State::MultiNode);
     theme::use(theme::Look::Axis);
 }
+
+TEST_CASE("every stock O/2 letter lands on the right command") {
+    struct Want {
+        char        key;
+        Node::State state;
+    } wants[] = {{'c', Node::State::Chat}, {'f', Node::State::Paging}, {'o', Node::State::Doors}, {'=', Node::State::MultiNode},
+                 {'a', Node::State::Menu} /* no accounts: stays at the menu */};
+    for (const Want& w : wants) {
+        BbsConfig c = O2::make(true);
+        c.doors = {{"lord", "LORD", "LORD.EXE", "", ""}};
+        Node n(1, info, c);
+        n.setArt([](const std::string& name) { return name == "MAIN.ANS" ? std::string("art") : std::string(); });
+        n.setChat([](const std::string&, bool) {}, [] { return std::vector<Node::WhoLine>{}; });
+        n.begin(0);
+        n.input((const uint8_t*)"lRev\r", 5, 0);
+        n.takeOutput();
+        n.input((const uint8_t*)&w.key, 1, 0);
+        CHECK_MESSAGE(n.state() == w.state, "key " << w.key);
+    }
+    theme::use(theme::Look::Axis);
+}

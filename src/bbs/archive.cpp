@@ -4,6 +4,7 @@
 #include "bbs/archive.h"
 
 #include <cstring>
+#include <memory>
 
 #include "bbs/zipreader.h"
 
@@ -83,9 +84,10 @@ void listRar4(RandomFile& f, ArchiveInfo& a) {
 void listRar5(RandomFile& f, ArchiveInfo& a) {
     a.kind = "RAR5";
     uint32_t pos = 8, size = f.size();
-    uint8_t  b[512];
+    std::unique_ptr<uint8_t[]> buf(new uint8_t[512]);  // heap, not stack: the loop task has 8 KB in all
+    uint8_t*                   b = buf.get();
     while (pos + 6 <= size && a.entries.size() < kMaxEntries) {
-        size_t n = size - pos < sizeof b ? size - pos : sizeof b;
+        size_t n = size - pos < 512 ? size - pos : 512;
         if (!f.readAt(pos, b, n)) break;
         size_t   at = 4;  // past the header CRC
         uint64_t headSize, type, flags, extra = 0, data = 0;
@@ -121,8 +123,9 @@ void listRar5(RandomFile& f, ArchiveInfo& a) {
 void listArj(RandomFile& f, ArchiveInfo& a) {
     a.kind = "ARJ";
     uint32_t pos = 0, size = f.size();
-    uint8_t  b[2600];
-    bool     first = true;  // the first header describes the archive itself
+    std::unique_ptr<uint8_t[]> buf(new uint8_t[2600]);
+    uint8_t*                   b = buf.get();
+    bool                       first = true;  // the first header describes the archive itself
     while (pos + 4 <= size && a.entries.size() < kMaxEntries) {
         if (!f.readAt(pos, b, 4) || b[0] != 0x60 || b[1] != 0xEA) break;
         uint16_t n = le16(b + 2);
@@ -166,7 +169,8 @@ bool tarHeaderOk(const uint8_t* h) {  // the checksum: the header's bytes, its o
 void listTar(RandomFile& f, ArchiveInfo& a) {
     a.kind = "TAR";
     uint32_t pos = 0, size = f.size();
-    uint8_t  h[512];
+    std::unique_ptr<uint8_t[]> buf(new uint8_t[512]);
+    uint8_t*                   h = buf.get();
     while (pos + 512 <= size && a.entries.size() < kMaxEntries && f.readAt(pos, h, 512) && tarHeaderOk(h)) {
         ArchiveEntry e;
         std::string  prefix = memcmp(h + 257, "ustar", 5) == 0 ? std::string((const char*)h + 345, strnlen((const char*)h + 345, 155)) : "";
@@ -214,8 +218,8 @@ ArchiveInfo listArchive(const std::string& name, RandomFile& f) {
     else if (m[0] == 0x60 && m[1] == 0xEA) listArj(f, a);
     else if (m[0] == 0x1F && m[1] == 0x8B) listGzip(f, a);
     else if (f.size() >= 512) {
-        uint8_t h[512];
-        if (f.readAt(0, h, 512) && tarHeaderOk(h)) listTar(f, a);
+        std::unique_ptr<uint8_t[]> h(new uint8_t[512]);
+        if (f.readAt(0, h.get(), 512) && tarHeaderOk(h.get())) listTar(f, a);
     }
     (void)name;
     return a;

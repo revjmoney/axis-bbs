@@ -80,6 +80,14 @@ std::string UserStore::format() const {
     return s;
 }
 
+std::string ratioBlock(const User& u, uint32_t size, int ratio, int freeKb) {
+    if (ratio <= 0 || u.freeDownloads) return "";
+    uint64_t allowed = (uint64_t)u.uploads * (uint64_t)ratio + (uint64_t)(freeKb > 0 ? freeKb : 0) * 1024;
+    if ((uint64_t)u.downloads + size <= allowed) return "";
+    uint64_t left = allowed > u.downloads ? allowed - u.downloads : 0;
+    return "Ratio 1:" + std::to_string(ratio) + ": you can take " + std::to_string(left / 1024) + " KB more. Upload to earn more. Feed the scene.";
+}
+
 std::string formatUser(const User& u) {
     std::string s;
     {

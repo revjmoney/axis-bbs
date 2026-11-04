@@ -441,3 +441,38 @@ TEST_CASE("node to node lines keep their kind and target across boards") {
     CHECK(got[1].kind == 8);
     CHECK_FALSE(got[0].page);
 }
+
+TEST_CASE("two mains that meet (both node 1, same epoch): the one with the SD card stays main") {
+    FakeLan  lanA, lanB;
+    Board    a(lanA, 101, "board-a"), b(lanB, 102, "board-b");
+    uint32_t now = 0;
+    a.c->setHasFiles(true);
+    a.c->start(now);
+    b.c->start(now);
+    run({&a, &b}, now, 4000);  // two separate LANs: each becomes main, node 1, epoch 1
+    REQUIRE(a.c->role() == Role::Main);
+    REQUIRE(b.c->role() == Role::Main);
+    REQUIRE(a.c->epoch() == b.c->epoch());
+    lanB.nets.clear();  // now they share one LAN
+    b.net.lan = &lanA;
+    lanA.nets.push_back(&b.net);
+    run({&a, &b}, now, 15000);
+    CHECK(a.c->role() == Role::Main);
+    CHECK(b.c->role() == Role::Follower);
+    CHECK(a.c->nodes().size() == 2);
+}
+
+TEST_CASE("two mains without SD cards that tie on everything: the lower address stays main") {
+    FakeLan  lanA, lanB;
+    Board    a(lanA, 101, "board-a"), b(lanB, 102, "board-b");
+    uint32_t now = 0;
+    a.c->start(now);
+    b.c->start(now);
+    run({&a, &b}, now, 4000);
+    lanB.nets.clear();
+    b.net.lan = &lanA;
+    lanA.nets.push_back(&b.net);
+    run({&a, &b}, now, 15000);
+    CHECK(a.c->role() == Role::Main);
+    CHECK(b.c->role() == Role::Follower);
+}

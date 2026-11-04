@@ -15,6 +15,7 @@ struct FileEntry {
     std::string name;
     uint32_t    size = 0;
     std::string desc;  // from the area's FILES.BBS
+    uint32_t    date = 0;  // unix time it landed (0 = unknown)
 };
 
 // A file opened for reading anywhere in it (a ZIP's directory sits at its end).

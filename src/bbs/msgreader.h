@@ -22,6 +22,9 @@ public:
         : areas_(areas), st_(store), out_(out), handle_(std::move(handle)), lastRead_(lastRead), now_(std::move(now)) {}
     void        setTagline(std::string t) { tagline_ = std::move(t); }  // signs each post
     void        begin();
+    // the new scan: every area's new messages one after another ([N] moves on, across areas)
+    void        beginScan();
+    static int  countNew(const std::vector<FileArea>& areas, MessageStore& store, const std::map<std::string, int>& lastRead);
     bool        key(char c);  // false once the caller leaves for the main menu
     std::string where() const;
 
@@ -40,6 +43,7 @@ private:
     const std::vector<FileArea>& areas_;
     MessageStore&                st_;
     std::string                  tagline_;
+    bool                         scanning_ = false;
     std::string&                 out_;
     std::string                  handle_;
     std::map<std::string, int>&  lastRead_;

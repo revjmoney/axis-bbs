@@ -144,3 +144,18 @@ TEST_CASE("posting a new message asks who it's to and the subject") {
     CHECK(h[0].to == "All");
     CHECK(h[0].subject == "4th axis");
 }
+
+TEST_CASE("[S]can: new messages in every area, one after another, then back to the menu") {
+    MsgRig r;
+    r.st.post("cnc", msg("Spindle Kid", "All", "4th axis", "who has one?"));
+    std::string out = r.type("s");
+    CHECK(out.find("glad the board is up") != std::string::npos);  // General's new one first
+    out = r.type("n");
+    CHECK(out.find("who has one?") != std::string::npos);  // then on to CNC Shop Talk's
+    out = r.type("n");
+    CHECK(out.find("all caught up") != std::string::npos);
+    r.type("q");
+    r.type("\r");
+    CHECK(r.n.state() == Node::State::Menu);
+    CHECK(r.type("s").find("No new messages") != std::string::npos);  // read them all: nothing new
+}
