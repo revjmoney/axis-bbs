@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -258,6 +259,30 @@ TEST_CASE("[I] shows a ZIP's full archive listing while browsing") {
     CHECK(out.find("PROGRAM.EXE") != std::string::npos);
     CHECK(out.find("3 files") != std::string::npos);
     CHECK(out.find("3703") != std::string::npos);  // REV-AXIS.ANS unpacked size
+}
+
+TEST_CASE("[I] lists a TAR's files too, and says the board only lists that kind") {
+    FakeLibrary lib = library();
+    std::string h(512, '\0'), body = "greetz to the underground\n";
+    std::memcpy(&h[0], "GREETZ.TXT", 10);
+    std::memcpy(&h[100], "0000644", 7);
+    std::snprintf(&h[124], 12, "%011o", (unsigned)body.size());
+    h[156] = '0';
+    std::memset(&h[148], ' ', 8);
+    unsigned sum = 0;
+    for (unsigned char c : h) sum += c;
+    std::snprintf(&h[148], 8, "%06o", sum);
+    std::string tar = h + body + std::string(512 - body.size(), '\0') + std::string(1024, '\0');
+    lib.areas["axis"].push_back({"GREETZ.TAR", (uint32_t)tar.size(), "Greetz"});
+    lib.text["axis/GREETZ.TAR"] = tar;
+    Node n = inFiles(lib);
+    type(n, "f1\r");
+    n.takeOutput();
+    type(n, "igreetz.tar\r");
+    std::string out = plain(n.takeOutput());
+    CHECK(out.find("TAR, 1 files") != std::string::npos);
+    CHECK(out.find("GREETZ.TXT") != std::string::npos);
+    CHECK(out.find("1 files, 26 bytes") != std::string::npos);
 }
 
 TEST_CASE("[I] on a file that isn't an archive shows what is known about it") {

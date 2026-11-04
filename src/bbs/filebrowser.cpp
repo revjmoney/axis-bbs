@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "bbs/archive.h"
 #include "bbs/theme.h"
 #include "bbs/zipreader.h"
 
@@ -129,36 +130,36 @@ void FileBrowser::info(const std::string& name) {
     std::vector<std::pair<std::string, std::string>> rows = {
         {"file", f->name}, {"size", fileSizeText(f->size) + "  (" + std::to_string(f->size) + " bytes)"}, {"area", areas_[area_].name}};
     if (!f->desc.empty()) rows.push_back({"about", f->desc.substr(0, 60)});
-    std::string up = f->name;
-    for (char& ch : up) ch = (char)std::toupper((unsigned char)ch);
-    std::unique_ptr<RandomFile> file;
-    std::unique_ptr<ZipReader>  zip;
-    if (up.size() > 4 && up.compare(up.size() - 4, 4, ".ZIP") == 0 && (file = lib_.open(areas_[area_].id, f->name))) {
-        RandomFile* raw = file.get();
-        zip.reset(new ZipReader([raw](uint32_t off, uint8_t* buf, size_t n) { return raw->readAt(off, buf, n); }, raw->size()));
-        if (!zip->open()) rows.push_back({"archive", "not a readable ZIP (damaged, or an old method)"});
-    }
+    std::unique_ptr<RandomFile> file = lib_.open(areas_[area_].id, f->name);
+    ArchiveInfo                 arc;
+    if (file) arc = listArchive(f->name, *file);
+    if (!arc.kind.empty()) rows.push_back({"archive", arc.kind + ", " + std::to_string(arc.entries.size()) + " files"});
     out_ += "\r\n";
     out_ += theme::window("FILE INFO", rows);
-    if (zip && !zip->entries().empty()) {  // the central directory: every entry, no unpacking needed
+    if (!arc.entries.empty()) {  // the archive's own directory: every entry, nothing unpacked
         uint64_t total = 0;
         char     b[160];
-        out_ += std::string("\r\n   ") + theme::DGREY + "name             size    packed  method   date       crc\r\n";
+        out_ += std::string("\r\n   ") + theme::DGREY + "name                     size    packed  method    crc\r\n";
         size_t shown = 0;
-        for (const ZipEntry& e : zip->entries()) {
-            total += e.usize;
+        for (const ArchiveEntry& e : arc.entries) {
+            total += e.size;
             if (shown++ >= 40) continue;  // a long pack: the first 40, then the count
-            const char* how = e.method == 0 ? "stored" : e.method == 8 ? "deflate" : e.method == 6 ? "implode"
-                            : e.method == 1 ? "shrink" : "other";
-            std::snprintf(b, sizeof b, "   %s%-14.14s %s%7lu %9lu  %-7s  %04u-%02u-%02u  %08lx\r\n", theme::WHITE, e.name.c_str(), theme::TEXT,
-                          (unsigned long)e.usize, (unsigned long)e.csize, how, 1980u + (e.date >> 9), (e.date >> 5) & 15u,
-                          e.date & 31u, (unsigned long)e.crc);
+            std::string n = e.name.size() > 22 ? "~" + e.name.substr(e.name.size() - 21) : e.name;  // the end of a long path
+            std::snprintf(b, sizeof b, "   %s%-22.22s %s%7lu %9lu  %-8.8s  %08lx\r\n", theme::WHITE, n.c_str(), theme::TEXT,
+                          (unsigned long)e.size, (unsigned long)e.packed, e.method.c_str(), (unsigned long)e.crc);
             out_ += b;
         }
-        std::snprintf(b, sizeof b, "   %s%u files, %lu bytes unpacked%s\r\n", theme::ORANGE, (unsigned)zip->entries().size(),
+        std::snprintf(b, sizeof b, "   %s%u files, %lu bytes unpacked%s\r\n", theme::ORANGE, (unsigned)arc.entries.size(),
                       (unsigned long)total, shown > 40 ? " (first 40 listed)" : "");
         out_ += b;
-        for (const ZipEntry& e : zip->entries()) {  // FILE_ID.DIZ, when it's stored as is (no workspace here to unpack)
+        if (arc.kind != "ZIP" && arc.kind != "TAR")
+            out_ += std::string("   ") + theme::DGREY + "(listed only: this board unpacks ZIP; the rest download as is)\r\n";
+    }
+    if (arc.kind == "ZIP") {
+        RandomFile* raw = file.get();
+        ZipReader   zipr([raw](uint32_t off, uint8_t* buf, size_t n) { return raw->readAt(off, buf, n); }, raw->size());
+        ZipReader*  zip = zipr.open() ? &zipr : nullptr;
+        for (const ZipEntry& e : zip ? zip->entries() : std::vector<ZipEntry>{}) {  // FILE_ID.DIZ, when it's stored as is (no workspace here to unpack)
             std::string n = e.name;
             for (char& ch : n) ch = (char)std::toupper((unsigned char)ch);
             if (n != "FILE_ID.DIZ" || e.method != 0 || e.usize > 2048) continue;
