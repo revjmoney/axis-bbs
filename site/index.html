@@ -2,65 +2,145 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Axis Micro BBS Firmware: a real telnet BBS on an ESP32 touchscreen</title>
 <meta name="description" content="Axis Micro BBS Firmware is a real old-school telnet BBS written from scratch in C++ for the ESP32 Cheap Yellow Display: ANSI menus, file areas with ZMODEM, messages, multinode chat, real DOS doors like LORD, and a touch sysop console. Made by Rev. J. Money, the maker of RotatoCAM.">
-<meta name="theme-color" content="#090b0e">
+<meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
 <meta property="og:title" content="Axis Micro BBS Firmware">
 <meta property="og:description" content="A real telnet BBS on a 2.8 inch ESP32 touchscreen board. ANSI, ZMODEM, multinode chat, and LORD running on an 8086 emulator.">
 <meta property="og:image" content="https://revjmoney.github.io/axis-bbs/media/main-menu.png">
 <meta property="og:url" content="https://revjmoney.github.io/axis-bbs/">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='4' fill='%23090b0e' stroke='%23ff8c1a' stroke-width='3'/%3E%3Cpath d='M9 24 16 7l7 17M11.5 18h9' fill='none' stroke='%23ff8c1a' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Cpath d='M3 14V6h2V4h2V2h2v2h2v2h2v8h-3v-3H6v3zM6 9h4V7H6z' fill='%23AA5500'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/AxisVGA.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="home">
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="site-header">
   <div class="header-inner">
-    <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">A</span>AXIS <small>Micro BBS Firmware</small></a>
+    <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">&#9608;</span>AXIS <small>Micro BBS Firmware</small></a>
     <nav class="site-nav" aria-label="Main">
-      <a class="hide-sm" href="#features">Features</a>
-      <a href="docs.html">Docs</a>
-      <a class="hide-sm" href="https://github.com/revjmoney/axis-bbs">GitHub</a>
+      <a class="hide-sm" href="#features"><span class="hk">L</span>earn more</a>
+      <a href="docs.html"><span class="hk">D</span>ocs</a>
+      <a class="hide-sm" href="https://github.com/revjmoney/axis-bbs"><span class="hk">G</span>itHub</a>
       <a class="hide-sm" href="https://rotatocam.com">RotatoCAM</a>
-      <a class="nav-buy" href="#buy">Get one</a>
+      <a class="nav-buy" href="#buy"><span class="hk">B</span>uy one</a>
     </nav>
   </div>
 </header>
 
 <main id="main">
 
-<section class="hero">
-  <div class="wrap hero-grid">
-    <div>
-      <div class="eyebrow">Telnet BBS firmware for the ESP32 CYD</div>
-      <h1><span class="glow">Axis</span> Micro BBS<span class="sub">A real BBS on a 2.8 inch board</span></h1>
-      <p class="lede">An old-school telnet bulletin board, written from scratch in C++ and running entirely on a tiny ESP32 touchscreen. ANSI art, ZMODEM file areas, messages, live multinode chat, and real DOS doors like Legend of the Red Dragon on a built-in 8086 emulator.</p>
-      <div class="btn-row">
-        <a class="btn btn-primary" href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Buy one</a>
-        <a class="btn btn-ghost" href="docs.html">Docs</a>
-        <a class="btn btn-ghost" href="https://github.com/revjmoney/axis-bbs">GitHub</a>
-        <a class="btn btn-cyan" href="#test-board">Request test access</a>
+<!-- the front door: the matrix -->
+<section class="matrix" aria-labelledby="site-title">
+  <div class="wrap">
+    <div class="term-line" aria-hidden="true"><span class="c-grey">ATDT</span> AXIS.LOCAL<span class="c-grey">  ...  </span><span class="c-yellow">CONNECT 9600</span></div>
+    <figure class="term crt dimmed">
+      <div class="screen">
+        <div class="term-splash" hidden>
+          <img src="media/splash.gif" alt="Connecting: the animated RotatoCAM ANSI splash" width="640" height="424">
+          <p class="term-skip">connecting... <span class="c-grey">(any key skips)</span></p>
+        </div>
+        <div class="term-matrix">
+          <img class="matrix-art" src="media/matrix-art.png" alt="The AXIS matrix screen: big AXIS block letters fading white to cyan to green, with underground cnc, axis underground cnc and rev^axis" width="640" height="224">
+          <h1 id="site-title" class="sr-only">Axis Micro BBS Firmware</h1>
+          <nav class="lightbar" aria-label="Front door">
+            <ul>
+              <li><a href="#features" class="lit" data-key="l">learn</a></li>
+              <li><a href="docs.html" data-key="d">docs</a></li>
+              <li><a href="#buy" data-key="b">buy</a></li>
+              <li><a href="#test-board" data-key="t">test</a></li>
+              <li><a href="https://github.com/revjmoney/axis-bbs" data-key="g">github</a></li>
+            </ul>
+            <p class="lightbar-help" aria-hidden="true">arrows move, <span class="c-bright">Enter</span> picks, or press the letter</p>
+          </nav>
+          <p class="term-links"><a href="https://rotatocam.com">rotatocam.com</a> <span class="c-grey">&middot;</span> <a href="https://jmscnc.com">jmscnc.com</a> <span class="c-grey">&middot;</span> <span class="c-bright">axis micro bbs firmware</span></p>
+        </div>
       </div>
-      <div class="price-tag"><strong>$79.00</strong> + $9.00 shipping (US). Ready to plug in.</div>
-      <p class="credit-line">Made by Rev. J. Money, the maker of <a href="https://rotatocam.com">RotatoCAM</a>. Also at <a href="https://jmscnc.com">jmscnc.com</a>.</p>
-    </div>
-    <figure class="crt power-on">
-      <a class="lb" href="media/splash.gif"><div class="screen"><img src="media/splash.gif" alt="The animated RotatoCAM ANSI splash that plays when you call the BBS" width="640" height="424" fetchpriority="high"></div></a>
-      <figcaption><span>AXIS UNDERGROUND CNC, live capture</span></figcaption>
+      <figcaption>AXIS UNDERGROUND CNC, the matrix, node 1</figcaption>
+      <span class="dim dim-x" aria-hidden="true"><b>80 COLUMNS</b></span>
+      <span class="dim dim-y" aria-hidden="true"><b>25 ROWS</b></span>
+      <span class="dim-callout" aria-hidden="true">ANSI / CP437</span>
     </figure>
+
+    <div class="boxes">
+      <section class="box" aria-labelledby="the-board">
+        <h2 class="box-title" id="the-board">THE BOARD</h2>
+        <dl>
+          <dt>BBS</dt><dd>Axis Micro BBS Firmware</dd>
+          <dt>what</dt><dd>A real telnet BBS on a 2.8 inch ESP32 touchscreen. No PC behind it.</dd>
+          <dt>sysop</dt><dd>Rev. J. Money, the maker of <a href="https://rotatocam.com">RotatoCAM</a></dd>
+          <dt>price</dt><dd><span class="c-yellow">$79.00</span> + $9.00 shipping (US), <a href="#buy">ready to plug in</a></dd>
+        </dl>
+      </section>
+      <section class="box" aria-labelledby="the-system">
+        <h2 class="box-title" id="the-system">THE SYSTEM</h2>
+        <dl>
+          <dt>software</dt><dd>Axis Micro BBS Firmware 0.3</dd>
+          <dt>license</dt><dd>GPL-3.0+ by Rev. J. Money</dd>
+          <dt>hardware</dt><dd>ESP32-2432S028R, 240 MHz, 4 MB flash</dd>
+          <dt>doors</dt><dd>LORD 4.07 on a built-in 8086 emulator</dd>
+        </dl>
+      </section>
+    </div>
   </div>
 </section>
 
-<section class="section tight" id="features">
+<!-- the main menu: the site's section index -->
+<section class="mainmenu" aria-labelledby="menu-title">
+  <div class="wrap">
+    <h2 id="menu-title" class="sr-only">Main menu</h2>
+    <div class="menu-bar" aria-hidden="true"><span class="mb-a">&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;</span><span class="mb-b">&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;</span><span class="mb-c">&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;</span><span class="mb-d">&#9600;&#9600;&#9600;&#9600;</span></div>
+    <p class="menu-label">main menu...</p>
+    <ul class="o2menu">
+      <li><a href="#features" data-key="l"><kbd>l</kbd>learn more: the tour</a></li>
+      <li><a href="docs.html" data-key="d"><kbd>d</kbd>docs and wiki</a></li>
+      <li><a href="#buy" data-key="b"><kbd>b</kbd>buy one, ready to plug in</a></li>
+      <li><a href="#test-board" data-key="t"><kbd>t</kbd>test board access</a></li>
+      <li><a href="https://github.com/revjmoney/axis-bbs" data-key="g"><kbd>g</kbd>github source</a></li>
+      <li><a href="#updates" data-key="u"><kbd>u</kbd>updates: recent changes</a></li>
+      <li><a href="docs.html#files" data-key="f"><kbd>f</kbd>file vaults</a></li>
+      <li><a href="docs.html#messages" data-key="m"><kbd>m</kbd>messages and email</a></li>
+      <li><a href="docs.html#doors" data-key="o"><kbd>o</kbd>open doors</a></li>
+      <li><a href="docs.html#multinode" data-key="="><kbd>=</kbd>multinode</a></li>
+      <li><a href="docs.html#hardware" data-key="s"><kbd>s</kbd>system stats: hardware</a></li>
+      <li><a href="docs.html#rumor-list" data-key="w"><kbd>w</kbd>rumor wall: every rumor</a></li>
+    </ul>
+    <p class="rumor"><span class="rumor-text"><span class="c-grey">rumor:</span> the ring board dreams in green</span> <button type="button" class="rumor-next" data-key="r"><span class="hk">R</span> another rumor</button></p>
+    <p class="o2prompt" aria-hidden="true"><span class="c-cyan-hi">&#9604;</span><span class="c-cyan">&#9600;</span><span class="c-grey">[</span><span class="c-cyan-hi">M</span><span class="c-cyan">ain </span><span class="c-cyan-hi">M</span><span class="c-cyan">enu</span><span class="c-grey">]</span><span class="c-cyan">&#9600;&#9600;</span><span class="c-grey">[</span><span class="c-cyan-hi">N</span><span class="c-cyan">ode </span><span class="c-bright">1</span><span class="c-grey">]</span><span class="c-cyan">&#9600; </span><span class="c-grey">&#9600; </span>: <span class="cursor">_</span></p>
+  </div>
+</section>
+
+<!-- recent updates, last callers style -->
+<section class="section tight" id="updates" aria-labelledby="updates-title">
+  <div class="wrap">
+    <div class="box callers">
+      <h2 class="box-title" id="updates-title">LAST UPDATES</h2>
+      <ul class="callers-list">
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Local console opens on all 80 columns drawn crisp; ZOOM gives 40 big columns</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">File search, quoted replies, a call time limit, the voting booth, a user editor and the twit flag</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">DOS shell: MORE, TREE, DOSKEY history, DATE and TIME, archive listings</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Rumors, a BBS list, top ten and a bulletin screen</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Email, a new message scan, download ratios and new files since your last call</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Oblivion/2 multinode commands and split-screen chat across boards</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Theme selector with an Oblivion/2 style look</span></li>
+        <li><span class="cl-date">2026-11-03</span><span class="cl-what">LORD 4.07 plays on the CYD over telnet</span></li>
+      </ul>
+      <p class="more-line"><a href="https://github.com/revjmoney/axis-bbs/blob/HEAD/docs/FEATURES.md"><span class="c-grey">&#9472;&#9472;</span> more <span class="c-grey">&#9472;&#9472;</span></a> <span class="c-grey">the full log in FEATURES.md</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- the tour -->
+<section class="section tight" id="features" aria-labelledby="tour-title">
   <div class="wrap">
     <div class="eyebrow">The tour</div>
-    <h2>Everything a 90s board had</h2>
+    <h2 id="tour-title">Everything a 90s board had</h2>
     <p class="lede">Real captures from the live boards. Hover or tap a card for more; every card opens its page in the docs.</p>
     <div class="fgrid">
 
@@ -185,21 +265,44 @@
       </article>
 
     </div>
+    <p class="more-line"><a href="docs.html"><span class="c-grey">&#9472;&#9472;</span> more <span class="c-grey">&#9472;&#9472;</span></a> <span class="c-grey">every feature, in the docs</span></p>
   </div>
 </section>
 
 <section class="section tight" id="buy">
   <div class="wrap strips">
     <div class="panel bolted buy-box strip">
-      <img class="buy-photo" src="media/axisbbs-cyd.jpg" alt="The AXIS BBS board in its clear case with a USB cable and stylus, its screen showing the activity screen" loading="lazy">
-      <div>
+      <figure class="sheet">
+        <img src="media/axisbbs-cyd.jpg" alt="The AXIS BBS board in its clear case with a USB cable and stylus, its screen showing the activity screen" loading="lazy" width="1194" height="740">
+        <svg viewBox="0 0 1194 740" aria-hidden="true" focusable="false">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0 1 10 5 0 9z" fill="#0000AA"/></marker>
+          </defs>
+          <g stroke="#0000AA" stroke-width="2" fill="none">
+            <path d="M136 72V14M786 72V14"/>
+            <path d="M136 30H786" marker-start="url(#ah)" marker-end="url(#ah)"/>
+            <path d="M152 548 770 86" marker-start="url(#ah)" marker-end="url(#ah)"/>
+            <path d="M852 560 890 706H1140"/>
+            <path d="M1012 64 1012 22 960 22"/>
+            <path d="M560 668 560 716 600 716"/>
+          </g>
+          <g font-family="Martian Mono, Consolas, monospace" font-size="24" fill="#0000AA" stroke="#FFFFFF" stroke-width="8" paint-order="stroke" font-weight="600">
+            <text x="461" y="24" text-anchor="middle">320 x 240 px</text>
+            <text x="461" y="330" text-anchor="middle" font-size="30">2.8 in DIAG.</text>
+            <text x="896" y="698">ESP32-2432S028R</text>
+            <text x="958" y="16" text-anchor="end" font-size="20">USB CABLE</text>
+            <text x="606" y="724" font-size="20">STYLUS</text>
+          </g>
+        </svg>
+        <figcaption><span>FIG. 1  AXIS BBS, READY TO PLUG IN</span><span>DIMS NOMINAL</span></figcaption>
+      </figure>
+      <div class="buy-text">
         <div class="eyebrow">Get one</div>
         <h2>Ready to plug in: <span class="glow-o">$79.00</span> + $9.00 shipping (US)</h2>
         <p>The 2.8 inch ESP32 touchscreen board in a clear acrylic case with the firmware installed and tested, a touch stylus and a USB cable. You supply USB power and 2.4 GHz WiFi; a microSD card (FAT32) turns on the file areas.</p>
+        <a class="btn btn-primary" href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/"><span class="hk">B</span>uy on jmscnc.com</a>
       </div>
-      <a class="btn btn-primary" href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Buy on jmscnc.com</a>
     </div>
-
     <div class="banner strip" id="test-board">
       <div>
         <div class="status-led">Online</div>
@@ -212,14 +315,13 @@
         <a class="btn" href="https://discord.gg/23KqHWM6vd">Ask on Discord</a>
       </div>
     </div>
-
     <div class="panel strip">
       <div>
         <div class="eyebrow cyan">Open source</div>
         <h2>Or flash your own</h2>
         <p>GPL-3.0-or-later. Grab a CYD, install PlatformIO, and flash it in one command. The <a href="docs.html#getting-started">docs</a> walk you through it.</p>
       </div>
-      <a class="btn btn-ghost" href="https://github.com/revjmoney/axis-bbs">Source on GitHub</a>
+      <a class="btn btn-ghost" href="https://github.com/revjmoney/axis-bbs"><span class="hk">G</span>itHub source</a>
     </div>
   </div>
 </section>
@@ -228,31 +330,36 @@
 
 <footer class="site-footer">
   <div class="wrap">
-    <div class="footer-grid">
-      <div>
-        <h4>Axis Micro BBS</h4>
-        <p>A real telnet BBS on a 2.8 inch ESP32 touchscreen board. Made by Rev. J. Money, the maker of RotatoCAM.</p>
-      </div>
-      <div>
-        <h4>Get it</h4>
-        <ul>
-          <li><a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Buy a ready-to-plug-in unit</a></li>
-          <li><a href="https://github.com/revjmoney/axis-bbs">Source on GitHub</a></li>
-          <li><a href="docs.html">Docs / Wiki</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4>Rev. J. Money</h4>
+    <div class="titleblock" role="contentinfo" aria-label="Title block">
+      <div class="tb title wide"><span>Title</span><b>Axis Micro BBS Firmware</b></div>
+      <div class="tb"><span>Part</span><b>AXIS-BBS</b></div>
+      <div class="tb"><span>Rev</span><b>0.3</b></div>
+      <div class="tb wide"><span>Drawn</span><b>Rev. J. Money, the maker of RotatoCAM</b></div>
+      <div class="tb"><span>Scale</span><b>1:1</b></div>
+      <div class="tb"><span>Sheet</span><b>1 OF 1</b></div>
+      <div class="tb"><span>Material</span><b>ESP32</b></div>
+      <div class="tb"><span>Board</span><b>ESP32-2432S028R</b></div>
+      <div class="tb links"><span>References</span>
         <ul>
           <li><a href="https://rotatocam.com">rotatocam.com</a></li>
-          <li><a href="https://jmscnc.com/axis-bbs/">AXIS BBS on jmscnc.com</a></li>
           <li><a href="https://jmscnc.com">jmscnc.com</a></li>
+          <li><a href="https://github.com/revjmoney/axis-bbs">GitHub source</a></li>
+          <li><a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Buy a ready-to-plug-in unit</a></li>
+          <li><a href="docs.html">Docs / Wiki</a></li>
         </ul>
       </div>
     </div>
     <p class="fineprint">Copyright (C) 2026 Rev. J. Money. GPL-3.0-or-later with an attribution term: keep the credit "Rev. J. Money, rotatocam.com, jmscnc.com".</p>
+<p class="fineprint">Text face: the IBM VGA 8x16 glyphs as packaged by VileR (int10h.org), CC BY-SA 4.0, built into a webfont from the board's own font table.</p>
   </div>
 </footer>
+<div class="statusbar">
+  <span class="sb-name">AXIS UNDERGROUND CNC</span>
+  <span class="sb-hide">Node 1</span>
+  <span class="sb-hide">9600 bps</span>
+  <span class="sb-hide">ANSI</span>
+  <span class="sb-keys"><a href="docs.html"><span class="hk">D</span>ocs</a> <a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/"><span class="hk">B</span>uy</a> <a href="#test-board"><span class="hk">T</span>est access</a></span>
+</div>
 <script src="site.js"></script>
 </body>
 </html>

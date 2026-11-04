@@ -2,18 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Docs and Wiki: Axis Micro BBS Firmware</title>
 <meta name="description" content="The complete manual for Axis Micro BBS Firmware: a real telnet BBS for the ESP32 Cheap Yellow Display. Setup, calling in, themes, files, messages, multinode clustering, DOS doors, the sysop console, every setting and every serial command.">
-<meta name="theme-color" content="#090b0e">
+<meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
 <meta property="og:title" content="Axis Micro BBS Firmware: Docs and Wiki">
 <meta property="og:description" content="Every feature and every setting of the telnet BBS that runs on an ESP32 touchscreen board.">
 <meta property="og:image" content="https://revjmoney.github.io/axis-bbs/media/main-menu.png">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='4' fill='%23090b0e' stroke='%23ff8c1a' stroke-width='3'/%3E%3Cpath d='M9 24 16 7l7 17M11.5 18h9' fill='none' stroke='%23ff8c1a' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Cpath d='M3 14V6h2V4h2V2h2v2h2v2h2v8h-3v-3H6v3zM6 9h4V7H6z' fill='%23AA5500'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/AxisVGA.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -21,20 +22,21 @@
 
 <header class="site-header">
   <div class="header-inner">
-    <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">A</span>AXIS <small>Micro BBS Firmware</small></a>
+    <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">&#9608;</span>AXIS <small>Micro BBS Firmware</small></a>
     <nav class="site-nav" aria-label="Main">
-      <a class="hide-sm" href="index.html#features">Features</a>
-      <a href="docs.html" aria-current="page">Docs</a>
-      <a class="hide-sm" href="https://github.com/revjmoney/axis-bbs">Source</a>
-      <a class="nav-buy" href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Get one</a>
+      <a class="hide-sm" href="index.html#features"><span class="hk">L</span>earn more</a>
+      <a href="docs.html" aria-current="page"><span class="hk">D</span>ocs</a>
+      <a class="hide-sm" href="https://github.com/revjmoney/axis-bbs"><span class="hk">G</span>itHub</a>
+      <a class="hide-sm" href="https://rotatocam.com">RotatoCAM</a>
+      <a class="nav-buy" href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/"><span class="hk">B</span>uy one</a>
     </nav>
   </div>
 </header>
 
 <div class="wrap wiki">
 <nav class="side" aria-label="Topics"><details class="toc" open><summary>Topics</summary>
-<label class="search-box small"><span class="sr-only">Search topics</span><input type="search" class="doc-search" placeholder="Search..." autocomplete="off"></label>
-<a class="side-hub" href="#hub">All topics</a>
+<label class="search-box small"><span class="search-prompt">Search for:</span><input type="search" class="doc-search" placeholder="( / )" autocomplete="off"></label>
+<a class="side-hub" href="#hub">All areas</a>
 <div class="side-group"><div class="side-g">Getting started</div><ul>
 <li><a href="#overview" data-k="overview about intro requirements hardware wifi sd card terminal what the bbs is, what it does and what you need to run one.">Overview</a></li>
 <li><a href="#getting-started" data-k="flashing and wifi flash install platformio upload wifi picker keyboard flash the firmware with platformio and join wifi on the touchscreen.">Flashing and WiFi</a></li>
@@ -55,6 +57,7 @@
 </ul></div>
 <div class="side-group"><div class="side-g">Community</div><ul>
 <li><a href="#community" data-k="community oneliners rumors bbs list top ten voting last callers oneliners, rumors, bbs list, top ten, voting booth, last callers.">Community</a></li>
+<li><a href="#rumor-list" data-k="rumors list rumors list cnc machinist jokes add every silly cnc rumor on the board, and how to add yours.">Rumors list</a></li>
 </ul></div>
 <div class="side-group"><div class="side-g">Multinode</div><ul>
 <li><a href="#multinode" data-k="nodes and clustering cluster sessions nodes failover relay main renumber several callers per board, and boards that join into one bbs.">Nodes and clustering</a></li>
@@ -87,14 +90,23 @@
 <section class="hub" id="hub" aria-labelledby="hub-title">
 <div class="hub-head"><div><div class="eyebrow">Docs / Wiki</div><h1 id="hub-title">The Manual</h1>
 <p class="lede">Every feature and every setting of Axis Micro BBS Firmware, one card per topic. Pick a card, or search.</p></div>
-<label class="search-box"><span class="sr-only">Search the docs</span><input type="search" class="doc-search" placeholder="Search topics: zmodem, theme, lord..." autocomplete="off"></label></div>
-<div class="hub-group" data-group="Getting started"><h2 class="hub-g">Getting started</h2><div class="cards-grid">
+<label class="search-box"><span class="search-prompt">Search for:</span><input type="search" class="doc-search" placeholder="zmodem, theme, lord ( / )" autocomplete="off"></label></div>
+<div class="box arealist"><h2 class="box-title">MESSAGE AREAS</h2><ul>
+<li><a href="#area-getting-started"><span class="al-n">[ 1]</span> <span class="al-name">Getting started</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">4 topics</span></a></li>
+<li><a href="#area-callers"><span class="al-n">[ 2]</span> <span class="al-name">Callers</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">10 topics</span></a></li>
+<li><a href="#area-community"><span class="al-n">[ 3]</span> <span class="al-name">Community</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">2 topics</span></a></li>
+<li><a href="#area-multinode"><span class="al-n">[ 4]</span> <span class="al-name">Multinode</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">2 topics</span></a></li>
+<li><a href="#area-doors"><span class="al-n">[ 5]</span> <span class="al-name">Doors</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">4 topics</span></a></li>
+<li><a href="#area-sysop"><span class="al-n">[ 6]</span> <span class="al-name">Sysop</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">7 topics</span></a></li>
+<li><a href="#area-reference"><span class="al-n">[ 7]</span> <span class="al-name">Reference</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">5 topics</span></a></li>
+</ul></div>
+<div class="hub-group" id="area-getting-started" data-group="Getting started"><h2 class="hub-g">Getting started</h2><div class="cards-grid">
 <a class="tcard" href="#overview" data-k="overview about intro requirements hardware wifi sd card terminal what the bbs is, what it does and what you need to run one."><span class="tcard-thumb"><img src="media/axis-main-menu.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Overview</span><span class="tcard-sum">What the BBS is, what it does and what you need to run one.</span></a>
 <a class="tcard" href="#getting-started" data-k="flashing and wifi flash install platformio upload wifi picker keyboard flash the firmware with platformio and join wifi on the touchscreen."><span class="tcard-thumb"><img src="media/wifi-keyboard.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Flashing and WiFi</span><span class="tcard-sum">Flash the firmware with PlatformIO and join WiFi on the touchscreen.</span></a>
 <a class="tcard" href="#first-setup" data-k="first-boot setup setup wizard pin sysop account password timezone the 6-digit setup pin, the telnet wizard and your sysop account."><span class="tcard-thumb"><img src="media/setup-pin.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">First-boot setup</span><span class="tcard-sum">The 6-digit setup PIN, the telnet wizard and your sysop account.</span></a>
 <a class="tcard" href="#calling-in" data-k="calling in syncterm telnet port forwarding router dhcp reservation internet mdns terminals, axis.local, and opening the board to the internet."><span class="tcard-thumb"><img src="media/axis-login.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Calling in</span><span class="tcard-sum">Terminals, axis.local, and opening the board to the internet.</span></a>
 </div></div>
-<div class="hub-group" data-group="Callers"><h2 class="hub-g">Callers</h2><div class="cards-grid">
+<div class="hub-group" id="area-callers" data-group="Callers"><h2 class="hub-g">Callers</h2><div class="cards-grid">
 <a class="tcard" href="#login" data-k="the login flow splash matrix login password bulletin oneliners splash, front door, password, bulletin, oneliners, menu."><span class="tcard-thumb"><img src="media/splash.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">The login flow</span><span class="tcard-sum">Splash, front door, password, bulletin, oneliners, menu.</span></a>
 <a class="tcard" href="#main-menu" data-k="main menu menu keys commands every main menu key in both looks."><span class="tcard-thumb"><img src="media/main-menu.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Main menu</span><span class="tcard-sum">Every main menu key in both looks.</span></a>
 <a class="tcard" href="#themes" data-k="themes theme look axis oblivion switch the axis and oblivion looks, and the theme button."><span class="tcard-thumb"><img src="media/matrix.gif" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Themes</span><span class="tcard-sum">The Axis and Oblivion looks, and the THEME button.</span></a>
@@ -106,20 +118,21 @@
 <a class="tcard" href="#email" data-k="private email email mail private inbox mail between callers, with a new mail notice at login."><span class="tcard-thumb"><img src="media/email-send.gif" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Private email</span><span class="tcard-sum">Mail between callers, with a new mail notice at login.</span></a>
 <a class="tcard" href="#user-settings" data-k="user settings account tagline password user settings a caller&#x27;s own account: name, location, tagline, password."><span class="tcard-thumb"><img src="media/account.gif" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">User settings</span><span class="tcard-sum">A caller's own account: name, location, tagline, password.</span></a>
 </div></div>
-<div class="hub-group" data-group="Community"><h2 class="hub-g">Community</h2><div class="cards-grid">
+<div class="hub-group" id="area-community" data-group="Community"><h2 class="hub-g">Community</h2><div class="cards-grid">
 <a class="tcard" href="#community" data-k="community oneliners rumors bbs list top ten voting last callers oneliners, rumors, bbs list, top ten, voting booth, last callers."><span class="tcard-thumb"><img src="media/oneliners.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Community</span><span class="tcard-sum">Oneliners, rumors, BBS list, top ten, voting booth, last callers.</span></a>
+<a class="tcard" href="#rumor-list" data-k="rumors list rumors list cnc machinist jokes add every silly cnc rumor on the board, and how to add yours."><span class="tcard-thumb"><img src="media/rumors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Rumors list</span><span class="tcard-sum">Every silly CNC rumor on the board, and how to add yours.</span></a>
 </div></div>
-<div class="hub-group" data-group="Multinode"><h2 class="hub-g">Multinode</h2><div class="cards-grid">
+<div class="hub-group" id="area-multinode" data-group="Multinode"><h2 class="hub-g">Multinode</h2><div class="cards-grid">
 <a class="tcard" href="#multinode" data-k="nodes and clustering cluster sessions nodes failover relay main renumber several callers per board, and boards that join into one bbs."><span class="tcard-thumb"><img src="media/cyd-wfc.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Nodes and clustering</span><span class="tcard-sum">Several callers per board, and boards that join into one BBS.</span></a>
 <a class="tcard" href="#chat" data-k="chat between callers who teleconference page sysop multinode note broadcast split chat dnd force who&#x27;s online, teleconference, paging, node messages, split-screen chat."><span class="tcard-thumb"><img src="media/split-chat.gif" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Chat between callers</span><span class="tcard-sum">Who's online, teleconference, paging, node messages, split-screen chat.</span></a>
 </div></div>
-<div class="hub-group" data-group="Doors"><h2 class="hub-g">Doors</h2><div class="cards-grid">
+<div class="hub-group" id="area-doors" data-group="Doors"><h2 class="hub-g">Doors</h2><div class="cards-grid">
 <a class="tcard" href="#doors" data-k="doors and the dos runtime doors dos runtime 8086 fossil door.sys doorn the 8086 door runtime and adding doors with doorn."><span class="tcard-thumb"><img src="media/doors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Doors and the DOS runtime</span><span class="tcard-sum">The 8086 door runtime and adding doors with doorN.</span></a>
 <a class="tcard" href="#lord" data-k="lord and black jack lord legend red dragon black jack install legend of the red dragon 4.07 and bbs black jack on the board."><span class="tcard-thumb"><img src="media/lord-title.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">LORD and Black Jack</span><span class="tcard-sum">Legend of the Red Dragon 4.07 and BBS Black Jack on the board.</span></a>
 <a class="tcard" href="#ansi-viewer" data-k="ansi pack viewer ansi viewer artpack movies artpacks straight out of their zips, and ansi movies."><span class="tcard-thumb"><img src="media/ansi-viewer.gif" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">ANSI Pack Viewer</span><span class="tcard-sum">Artpacks straight out of their ZIPs, and ANSI movies.</span></a>
 <a class="tcard" href="#dos-prompt" data-k="dos prompt door dos prompt shell sandbox dospass commands a password-locked c:\&gt; sandbox and its commands."><span class="tcard-thumb"><img src="media/doors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">DOS Prompt door</span><span class="tcard-sum">A password-locked C:\&gt; sandbox and its commands.</span></a>
 </div></div>
-<div class="hub-group" data-group="Sysop"><h2 class="hub-g">Sysop</h2><div class="cards-grid">
+<div class="hub-group" id="area-sysop" data-group="Sysop"><h2 class="hub-g">Sysop</h2><div class="cards-grid">
 <a class="tcard" href="#accounts" data-k="accounts and security accounts application validate security level permissions time limit idle twit sysop applications, validation, levels, permissions, time limits, twits."><span class="tcard-thumb"><img src="media/cyd-users.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Accounts and security</span><span class="tcard-sum">Applications, validation, levels, permissions, time limits, twits.</span></a>
 <a class="tcard" href="#user-editor" data-k="sysop user editor user editor star sysop edit any caller over telnet with *."><span class="tcard-thumb"><img src="media/user-editor-caller.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Sysop user editor</span><span class="tcard-sum">Edit any caller over telnet with *.</span></a>
 <a class="tcard" href="#cyd-console" data-k="the cyd console cyd wfc activity screen kick sysop menu touch activity screen, node detail and kick, the touch sysop menu."><span class="tcard-thumb"><img src="media/cyd-sysop.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">The CYD console</span><span class="tcard-sum">Activity screen, node detail and KICK, the touch sysop menu.</span></a>
@@ -128,7 +141,7 @@
 <a class="tcard" href="#headless" data-k="headless nodes headless node esp32 hotspot axis-setup ring plain esp32 boards as extra nodes, set up over axis-setup."><span class="tcard-thumb"><img src="media/multinode-who.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Headless nodes</span><span class="tcard-sum">Plain ESP32 boards as extra nodes, set up over AXIS-SETUP.</span></a>
 <a class="tcard" href="#internet" data-k="internet extras discord ddns godaddy dynamic dns web https optional discord announcements and godaddy dynamic dns."><span class="tcard-thumb"><img src="media/rumors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Internet extras</span><span class="tcard-sum">Optional Discord announcements and GoDaddy dynamic DNS.</span></a>
 </div></div>
-<div class="hub-group" data-group="Reference"><h2 class="hub-g">Reference</h2><div class="cards-grid">
+<div class="hub-group" id="area-reference" data-group="Reference"><h2 class="hub-g">Reference</h2><div class="cards-grid">
 <a class="tcard" href="#settings" data-k="settings reference settings axis.ini set keys config every axis.ini key with its default and an example."><span class="tcard-thumb"><img src="media/cyd-setup.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Settings reference</span><span class="tcard-sum">Every axis.ini key with its default and an example.</span></a>
 <a class="tcard" href="#serial" data-k="serial console serial console commands @set usb sdput every @ command on the usb serial console."><span class="tcard-thumb"><img src="media/cyd-wfc.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Serial console</span><span class="tcard-sum">Every @ command on the USB serial console.</span></a>
 <a class="tcard" href="#hardware" data-k="hardware and building hardware partitions sd build platformio cmake tests the board, partitions, sd layout, platformio and pc tests."><span class="tcard-thumb"><img src="media/cyd-sysop.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Hardware and building</span><span class="tcard-sum">The board, partitions, SD layout, PlatformIO and PC tests.</span></a>
@@ -138,7 +151,7 @@
 <p class="no-hits" hidden>No topic matches that search.</p></section>
 
 <article class="topic" id="overview" data-group="Getting started" aria-labelledby="overview-title">
-<header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="overview-title">Overview</h2></header>
+<header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="overview-title">Overview</h2><dl class="msghead"><dt>Topic</dt><dd>Overview</dd><dt>Area</dt><dd>Getting started</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>1 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">What the BBS is, what it does and what you need to run one.</p><p>Axis Micro BBS Firmware is a real, old-school bulletin board system that you call with a telnet terminal. It is written from scratch in C++ and runs entirely on the ESP32 "Cheap Yellow Display" (CYD, model ESP32-2432S028R): a 2.8 inch 320x240 touchscreen board with 4 MB of flash and no PSRAM. There is no PC behind it. The little board answers the calls, draws the ANSI screens, keeps the users and messages, serves the files over ZMODEM, and even runs real DOS door games like Legend of the Red Dragon on an 8086 emulator.</p>
   <p>The live board it was built for is <strong>AXIS UNDERGROUND CNC</strong>, run by Rev. J. Money, the maker of <a href="https://rotatocam.com">RotatoCAM</a>. The software is the same for anyone who flashes it.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/axis-main-menu.png"><div class="screen"><img src="media/axis-main-menu.png" alt="The main menu in the Axis look: a drippy orange MENU banner over a boxed command list" loading="lazy" width="640" height="424"></div></a><figcaption>Main menu, Axis look</figcaption></figure></div></div>
 <div class="topic-body"><div class="figs">
@@ -167,11 +180,11 @@
       <tr><td>More boards (optional)</td><td>Another CYD or a plain ESP32 joins as more nodes of the same BBS.</td></tr>
     </tbody>
   </table></div></details></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#hub"><small>Back</small>All topics</a><a class="pager-next" href="#getting-started"><small>Next</small>Flashing and WiFi</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#hub" data-key="p"><small><span class="hk">P</span>rev</small>All areas</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#getting-started" data-key="n"><small><span class="hk">N</span>ext</small>Flashing and WiFi</a></nav>
 </article>
 
 <article class="topic" id="getting-started" data-group="Getting started" aria-labelledby="getting-started-title">
-<header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="getting-started-title">Flashing and WiFi</h2></header>
+<header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="getting-started-title">Flashing and WiFi</h2><dl class="msghead"><dt>Topic</dt><dd>Flashing and WiFi</dd><dt>Area</dt><dd>Getting started</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>2 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Flash the firmware with PlatformIO and join WiFi on the touchscreen.</p><p>If you bought a ready-to-plug-in unit, the firmware is already installed: skip to <a href="#first-wifi">WiFi</a>. To flash your own board, start with <a href="#flashing">flashing</a>.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/wifi-keyboard.png"><div class="screen"><img src="media/wifi-keyboard.png" alt="The CYD touch keyboard asking for a WiFi password, with SHIFT, symbols, SPACE, DEL and OK keys" loading="lazy" width="640" height="480"></div></a><figcaption>The on-screen keyboard (CYD panel at 2x)</figcaption></figure></div></div>
 <details class="sub" id="flashing" open><summary>Flashing the firmware</summary><div class="sub-body"><p>The firmware builds with <a href="https://platformio.org/">PlatformIO</a>. Install it (the VS Code extension or the command line), clone the repository, plug the CYD in over USB, find its COM port, and run:</p>
 <pre><code>git clone https://github.com/revjmoney/axis-bbs.git
@@ -180,11 +193,11 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
   <p>Use your own port name (<code>COM5</code> on Windows, something like <code>/dev/ttyUSB0</code> on Linux). The <code>cyd</code> environment is the default, so <code>pio run -t upload</code> does the same. Other environments are covered under <a href="#headless">headless nodes</a> and <a href="#hardware">building</a>.</p>
   <div class="note"><strong>Note</strong>Your users, settings and logs live in the internal LittleFS partition. Flashing new firmware over the top keeps them: the partition table keeps LittleFS at the same place on every release.</div></div></details>
 <details class="sub" id="first-wifi"><summary>WiFi on the touchscreen</summary><div class="sub-body"><p>On first boot (or whenever no saved network is in range) the board opens a touch WiFi picker. It lists the networks it can hear, strongest first. Tap yours, type the password on the on-screen keyboard (it is masked; SHOW reveals it) and press OK. HIDDEN lets you type a network name that does not broadcast, RESCAN looks again and MORE pages the list. The network is saved only after the join works, and the board remembers up to five networks.</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#overview"><small>Previous</small>Overview</a><a class="pager-next" href="#first-setup"><small>Next</small>First-boot setup</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#overview" data-key="p"><small><span class="hk">P</span>rev</small>Overview</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#first-setup" data-key="n"><small><span class="hk">N</span>ext</small>First-boot setup</a></nav>
 </article>
 
 <article class="topic" id="first-setup" data-group="Getting started" aria-labelledby="first-setup-title">
-<header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="first-setup-title">First-boot setup</h2></header>
+<header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="first-setup-title">First-boot setup</h2><dl class="msghead"><dt>Topic</dt><dd>First-boot setup</dd><dt>Area</dt><dd>Getting started</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>3 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">The 6-digit setup PIN, the telnet wizard and your sysop account.</p><p>Once it is on your network, the board asks how you want to set the BBS up: <strong>ON THIS SCREEN</strong> or <strong>OVER TELNET</strong>.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/setup-pin.png"><div class="screen"><img src="media/setup-pin.png" alt="The CYD first-boot setup screen: telnet axis.local and a six digit setup PIN in big yellow numbers" loading="lazy" width="640" height="480"></div></a><figcaption>Setup over telnet: the one-time PIN</figcaption></figure></div></div>
 <div class="topic-body"><ul>
     <li><strong>Over telnet</strong> is the easy way: the screen shows <code>telnet axis.local</code>, the board's address, and a 6-digit <strong>setup PIN</strong>. Call in from a computer on the same network, type the PIN, and answer the wizard. Anyone who calls before setup is done only sees "This BBS is being set up" and a PIN prompt.</li>
@@ -215,11 +228,11 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
   </table></div></details>
   <p>The answers are saved to <code>/axis.ini</code> in internal flash. You can run the wizard again any time from the sysop menu (BBS SETUP, RUN SETUP); nothing changes until the wizard saves.</p></div>
 <details class="sub" id="sysop-account" open><summary>Your sysop account</summary><div class="sub-body"><p>The sysop handle and password from the wizard are the main sysop account. Log in with them over telnet and you get "Sysop access": no time limit, every area visible, and the sysop-only commands (the user editor <kbd>*</kbd>, forcing a caller into chat, asking voting booth questions). You can also make any caller a sysop later; see <a href="#sysops">sysop promotion</a>. On the board, the <a href="#local-console">LOCAL</a> button logs you in as the sysop without a password.</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#getting-started"><small>Previous</small>Flashing and WiFi</a><a class="pager-next" href="#calling-in"><small>Next</small>Calling in</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#getting-started" data-key="p"><small><span class="hk">P</span>rev</small>Flashing and WiFi</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#calling-in" data-key="n"><small><span class="hk">N</span>ext</small>Calling in</a></nav>
 </article>
 
 <article class="topic" id="calling-in" data-group="Getting started" aria-labelledby="calling-in-title">
-<header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="calling-in-title">Calling in</h2></header>
+<header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="calling-in-title">Calling in</h2><dl class="msghead"><dt>Topic</dt><dd>Calling in</dd><dt>Area</dt><dd>Getting started</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>4 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Terminals, axis.local, and opening the board to the internet.</p><p>Callers reach the BBS with a telnet terminal. <a href="https://syncterm.bbsdev.net/">SyncTERM</a> is the reference terminal and everything is tested with it; other ANSI BBS terminals work too. Set the terminal to 80x25 with a CP437 (IBM PC) font so the block art lines up.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/axis-login.png"><div class="screen"><img src="media/axis-login.png" alt="The Axis login screen: a drippy AXIS logo over THE BOARD and THE SYSTEM boxes with BBS name, sysop, location, dial address, nodes, software, license, hardware, storage and uptime" loading="lazy" width="640" height="424"></div></a><figcaption>What a caller sees on connect (Axis look)</figcaption></figure></div></div>
 <details class="sub" id="dialing" open><summary>Dialing on your own network</summary><div class="sub-body"><p>On the same LAN the board announces itself over mDNS, so callers dial the board name with <code>.local</code>:</p>
 <pre><code>syncterm telnet://axis.local
@@ -236,11 +249,11 @@ telnet axis.local 23</code></pre>
 
   
   <p>Only one session can be in a door or a file transfer per board at a time. If a second caller on the same board asks, they are told the door is busy and to try again (or call back, since they may land on a free node).</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#first-setup"><small>Previous</small>First-boot setup</a><a class="pager-next" href="#login"><small>Next</small>The login flow</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#first-setup" data-key="p"><small><span class="hk">P</span>rev</small>First-boot setup</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#login" data-key="n"><small><span class="hk">N</span>ext</small>The login flow</a></nav>
 </article>
 
 <article class="topic" id="login" data-group="Callers" aria-labelledby="login-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="login-title">The login flow</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="login-title">The login flow</h2><dl class="msghead"><dt>Topic</dt><dd>The login flow</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>5 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Splash, front door, password, bulletin, oneliners, menu.</p><p>Every call walks through the same steps. Each one can be skipped or customized.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/splash.gif"><div class="screen"><img src="media/splash.gif" alt="The animated RotatoCAM ANSI splash: the logo, a tool path and a colour-cycling marquee" loading="lazy" width="640" height="424"></div></a><figcaption>The RotatoCAM splash (animated)</figcaption></figure></div></div>
 <div class="topic-body"><ol class="steps">
     <li><strong>The RotatoCAM splash.</strong> An animated ANSI splash types in like a 9600 baud modem, then plays about five seconds of moving parts (a light sweep on the logo, a tool path, spinning flutes, chips) and a colour-cycling marquee. Any key skips it. Turn it off with <code>login_splash=0</code>.</li>
@@ -257,11 +270,11 @@ telnet axis.local 23</code></pre>
   </div>
   <p>Validated callers go straight to the menu. A caller whose application is waiting gets the <strong>PENDING VERIFICATION</strong> screen and a short menu instead: <kbd>S</kbd>tatus, <kbd>C</kbd>redits, <kbd>G</kbd>oodbye. A denied caller is told so and disconnected.</p>
   <p>Two timers run on every call: the <strong>idle logoff</strong> (<code>idle_minutes</code>, default 5) and the <strong>call time limit</strong> (<code>daily_minutes</code>, default 60). See <a href="#time-limits">time limits</a>.</p></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#calling-in"><small>Previous</small>Calling in</a><a class="pager-next" href="#main-menu"><small>Next</small>Main menu</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#calling-in" data-key="p"><small><span class="hk">P</span>rev</small>Calling in</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#main-menu" data-key="n"><small><span class="hk">N</span>ext</small>Main menu</a></nav>
 </article>
 
 <article class="topic" id="main-menu" data-group="Callers" aria-labelledby="main-menu-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="main-menu-title">Main menu</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="main-menu-title">Main menu</h2><dl class="msghead"><dt>Topic</dt><dd>Main menu</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>6 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Every main menu key in both looks.</p><p>Commands are single keys, upper or lower case. Both looks accept the same keys; the Oblivion look with a <code>MAIN.ANS</code> up uses the <a href="#o2-letters">stock O/2 letters</a> instead.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/axis-main-menu.png"><div class="screen"><img src="media/axis-main-menu.png" alt="The Axis look main menu with the boxed command list" loading="lazy" width="640" height="424"></div></a><figcaption>Axis look</figcaption></figure></div></div>
 <div class="topic-body"><details class="ref"><summary>Reference table: key, command, section (21 rows)</summary><div class="table-wrap"><table>
     <thead><tr><th>Key</th><th>Command</th><th>Section</th></tr></thead>
@@ -294,11 +307,11 @@ telnet axis.local 23</code></pre>
     
     <figure class="crt cyan"><a class="lb" href="media/main-menu.png"><div class="screen"><img src="media/main-menu.png" alt="The Oblivion look main menu from MAIN.ANS with stock O/2 letters and a rumor line above the bracket prompt" loading="lazy" width="640" height="424"></div></a><figcaption>Oblivion look with MAIN.ANS and a rumor</figcaption></figure>
   </div></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#login"><small>Previous</small>The login flow</a><a class="pager-next" href="#themes"><small>Next</small>Themes</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#login" data-key="p"><small><span class="hk">P</span>rev</small>The login flow</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#themes" data-key="n"><small><span class="hk">N</span>ext</small>Themes</a></nav>
 </article>
 
 <article class="topic" id="themes" data-group="Callers" aria-labelledby="themes-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="themes-title">Themes</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="themes-title">Themes</h2><dl class="msghead"><dt>Topic</dt><dd>Themes</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>7 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">The Axis and Oblivion looks, and the THEME button.</p><p>The whole board wears one of two looks, set by <code>theme</code>. Every caller on every node sees the same one.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/axis-files.png"><div class="screen"><img src="media/axis-files.png" alt="The file area list in the Axis look with a drippy FILES title and orange numbers" loading="lazy" width="640" height="424"></div></a><figcaption>Axis look</figcaption></figure></div></div>
 <div class="topic-body"><div class="table-wrap"><table>
     <thead><tr><th>Look</th><th><code>theme=</code></th><th>Style</th></tr></thead>
@@ -320,11 +333,11 @@ telnet axis.local 23</code></pre>
   <div class="figs one">
     <figure class="crt cyd"><a class="lb" href="media/cyd-setup.png"><div class="screen"><img src="media/cyd-setup.png" alt="BBS SETUP on the CYD showing BBS name, sysop, location, dial, time, FTN, new user, idle, theme and doors, with BACK, THEME and RUN SETUP buttons" loading="lazy" width="640" height="480"></div></a><figcaption>BBS SETUP with the THEME button</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#main-menu"><small>Previous</small>Main menu</a><a class="pager-next" href="#theme-art"><small>Next</small>Theme art and codes</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#main-menu" data-key="p"><small><span class="hk">P</span>rev</small>Main menu</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#theme-art" data-key="n"><small><span class="hk">N</span>ext</small>Theme art and codes</a></nav>
 </article>
 
 <article class="topic" id="theme-art" data-group="Callers" aria-labelledby="theme-art-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="theme-art-title">Theme art and codes</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="theme-art-title">Theme art and codes</h2><dl class="msghead"><dt>Topic</dt><dd>Theme art and codes</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>8 of 34</dd></dl></header>
 <div class="lead nofig"><div class="lead-text"><p class="lede">Your own ANSI screens, pipe colours, MCI codes and O/2 letters.</p><p>Put ANSI screens on the main board's SD card under <code>/sd/themes/&lt;theme&gt;/</code> (so <code>/sd/themes/oblivion/</code> or <code>/sd/themes/axis/</code>). Boards without a card fetch them from the main over the link, so every node looks the same.</p></div></div>
 <div class="topic-body"><div class="table-wrap"><table>
     <thead><tr><th>File</th><th>Used in</th><th>Replaces</th></tr></thead>
@@ -396,11 +409,11 @@ telnet axis.local 23</code></pre>
   <p><code>tools/art/o2_style.py</code> draws original screens in the 90s Oblivion/2 artpack style (grey label bar, chunky letters fading white to cyan to green, a light shadow, acid speckle). It writes <code>MATRIX.ANS</code> (with the pulldown marks) and <code>MAIN.ANS</code> for <code>/sd/themes/oblivion/</code>, plus <code>ROTATO.ANS</code> and <code>AXISNFO.ANS</code>. These make up AXIS artpack #1, <code>AXIS-01.ZIP</code> in the ANSI Packs area.</p>
 <pre><code>python tools/art/o2_style.py out
 # then copy out/MATRIX.ANS and out/MAIN.ANS to /sd/themes/oblivion/ on the main board's card</code></pre></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#themes"><small>Previous</small>Themes</a><a class="pager-next" href="#files"><small>Next</small>File areas</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#themes" data-key="p"><small><span class="hk">P</span>rev</small>Themes</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#files" data-key="n"><small><span class="hk">N</span>ext</small>File areas</a></nav>
 </article>
 
 <article class="topic" id="files" data-group="Callers" aria-labelledby="files-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="files-title">File areas</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="files-title">File areas</h2><dl class="msghead"><dt>Topic</dt><dd>File areas</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>9 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Areas on the SD card, FILES.BBS and browsing.</p><p>The file areas live on the main board's microSD card. Press <kbd>F</kbd> at the main menu. Without a card the file areas say they are offline; boards in a cluster without a card browse and transfer the main's files over the link.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/files.gif"><div class="screen"><img src="media/files.gif" alt="Animated tour of the file areas: the area list, a file list page and file info" loading="lazy" width="640" height="424"></div></a><figcaption>Browsing the file areas (animated)</figcaption></figure></div></div>
 <div class="topic-body"><div class="figs">
     
@@ -457,11 +470,11 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <figure class="crt"><a class="lb" href="media/files-list.png"><div class="screen"><img src="media/files-list.png" alt="A page of files in one area with names, sizes and descriptions and the N P V I D U Q keys" loading="lazy" width="640" height="424"></div></a><figcaption>A file list page</figcaption></figure>
     <figure class="crt"><a class="lb" href="media/files-new.png"><div class="screen"><img src="media/files-new.png" alt="New files since your last call, grouped by area" loading="lazy" width="640" height="424"></div></a><figcaption>New files since your last call</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#theme-art"><small>Previous</small>Theme art and codes</a><a class="pager-next" href="#file-info"><small>Next</small>File info and search</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#theme-art" data-key="p"><small><span class="hk">P</span>rev</small>Theme art and codes</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#file-info" data-key="n"><small><span class="hk">N</span>ext</small>File info and search</a></nav>
 </article>
 
 <article class="topic" id="file-info" data-group="Callers" aria-labelledby="file-info-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="file-info-title">File info and search</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="file-info-title">File info and search</h2><dl class="msghead"><dt>Topic</dt><dd>File info and search</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>10 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Archive listings, search every area, new files.</p><p><kbd>I</kbd> shows a file's name, size, area and description. For an archive it also lists what is inside, read straight from the archive headers: every entry with its size, packed size, method, date and CRC (the first 40 of a long pack, then the count), plus <code>FILE_ID.DIZ</code> when there is one. Supported formats: <strong>ZIP, RAR (1.5 to 4), RAR 5, ARJ, TAR and GZIP</strong>. Info is open to everyone, even before they have earned downloads.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/files-info.png"><div class="screen"><img src="media/files-info.png" alt="File info for one file: name, size, area and description" loading="lazy" width="640" height="424"></div></a><figcaption>File info</figcaption></figure></div></div>
 <div class="topic-body"><div class="figs">
     
@@ -472,22 +485,22 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <figure class="crt"><a class="lb" href="media/files-search.gif"><div class="screen"><img src="media/files-search.gif" alt="Animated file search: typing a word and getting matches from several areas" loading="lazy" width="640" height="424"></div></a><figcaption>File search (animated)</figcaption></figure>
     <figure class="crt"><a class="lb" href="media/files-search.png"><div class="screen"><img src="media/files-search.png" alt="Search results grouped by area" loading="lazy" width="640" height="424"></div></a><figcaption>Search results</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#files"><small>Previous</small>File areas</a><a class="pager-next" href="#transfers"><small>Next</small>Downloads and uploads</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#files" data-key="p"><small><span class="hk">P</span>rev</small>File areas</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#transfers" data-key="n"><small><span class="hk">N</span>ext</small>Downloads and uploads</a></nav>
 </article>
 
 <article class="topic" id="transfers" data-group="Callers" aria-labelledby="transfers-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="transfers-title">Downloads and uploads</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="transfers-title">Downloads and uploads</h2><dl class="msghead"><dt>Topic</dt><dd>Downloads and uploads</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>11 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">ZMODEM and XMODEM, the upload checker, the download gate and ratio.</p><p>Pick <kbd>D</kbd>, type the file name, then the protocol: <kbd>Z</kbd> ZMODEM, <kbd>X</kbd> XMODEM (CRC) or <kbd>K</kbd> XMODEM-1K. A themed window shows the file, size, protocol and an estimated time; start your terminal's download and press <kbd>Ctrl-X</kbd> five times to cancel. A second window reports the bytes moved and the speed. ZMODEM is by far the fastest (around 247 KB/s measured on the board over WiFi), and the CYD shows a live progress window during the transfer.</p>
   <p>For <kbd>U</kbd>, describe the file in one line (Enter cancels), pick the protocol and start your terminal's upload. ZMODEM sends the file name; for XMODEM the board asks what to save it as. Uploads get a clean name, never overwrite an existing file, and land in one piece (written to a temporary file, then renamed). The description goes into the area's <code>FILES.BBS</code>.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/files-download-gate.png"><div class="screen"><img src="media/files-download-gate.png" alt="A new caller trying to download and being told downloads open up once they have uploaded something" loading="lazy" width="640" height="424"></div></a><figcaption>The download gate</figcaption></figure></div></div>
 <div class="topic-body"><h4 id="upload-processor">The upload processor</h4>
   <p>Every ZIP upload is checked before it is accepted: the board unpacks it, tests every entry's CRC-32, adds or replaces an <code>AXISBBS.NFO</code> (board name, telnet address, location, software, rotatocam.com and jmscnc.com) and writes a clean standard ZIP in place. Damaged, password-protected and old-method (shrink or implode) ZIPs are rejected and removed with the reason shown. Other file types are kept as uploaded. The caller watches a PROCESSING UPLOAD window with a live bar, and the description reaches <code>FILES.BBS</code> only after the check passes.</p></div>
 <details class="sub" id="download-gate" open><summary>The download gate and ratio</summary><div class="sub-body"><p>Downloads are earned. A new caller can browse the lists and use <kbd>I</kbd>nfo, but <kbd>D</kbd>ownload and <kbd>V</kbd>iew wait until they have uploaded something. The sysop can wave this for one caller with <strong>FREE DL</strong> (on the CYD under CALLER, ACCESS, or with <kbd>L</kbd> in the telnet user editor).</p>
   <p>On top of that you can set a ratio: with <code>ratio=3</code> and <code>free_kb=512</code>, a caller can download up to three times the bytes they have uploaded, plus a 512 KB allowance. <code>ratio=0</code> (the default) means no ratio. FREE DL skips the ratio too. Upload and download bytes are counted on every account and shown in the user editor and on the node detail screen.</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#file-info"><small>Previous</small>File info and search</a><a class="pager-next" href="#messages"><small>Next</small>Message areas</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#file-info" data-key="p"><small><span class="hk">P</span>rev</small>File info and search</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#messages" data-key="n"><small><span class="hk">N</span>ext</small>Message areas</a></nav>
 </article>
 
 <article class="topic" id="messages" data-group="Callers" aria-labelledby="messages-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="messages-title">Message areas</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="messages-title">Message areas</h2><dl class="msghead"><dt>Topic</dt><dd>Message areas</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>12 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Reading, posting, quoting, taglines and the new scan.</p><p>Press <kbd>M</kbd> for the message areas. The main board keeps one message file per area (on the SD card, or internal flash without one); other boards read and post over the link, so every caller sees the same messages.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/messages.gif"><div class="screen"><img src="media/messages.gif" alt="Animated tour of the message areas: area list, message list and reading a message" loading="lazy" width="640" height="424"></div></a><figcaption>Reading messages (animated)</figcaption></figure></div></div>
 <div class="topic-body"><div class="figs">
     
@@ -517,11 +530,11 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <figure class="crt"><a class="lb" href="media/msgs-scan.gif"><div class="screen"><img src="media/msgs-scan.gif" alt="Animated new message scan moving through new messages in several areas" loading="lazy" width="640" height="424"></div></a><figcaption>The new scan (animated)</figcaption></figure>
     <figure class="crt"><a class="lb" href="media/msgs-scan.png"><div class="screen"><img src="media/msgs-scan.png" alt="The new scan showing one new message" loading="lazy" width="640" height="424"></div></a><figcaption>One stop in the new scan</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#transfers"><small>Previous</small>Downloads and uploads</a><a class="pager-next" href="#email"><small>Next</small>Private email</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#transfers" data-key="p"><small><span class="hk">P</span>rev</small>Downloads and uploads</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#email" data-key="n"><small><span class="hk">N</span>ext</small>Private email</a></nav>
 </article>
 
 <article class="topic" id="email" data-group="Callers" aria-labelledby="email-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="email-title">Private email</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="email-title">Private email</h2><dl class="msghead"><dt>Topic</dt><dd>Private email</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>13 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Mail between callers, with a new mail notice at login.</p><p><kbd>E</kbd> opens your mailbox. Email is kept in a hidden area of the same message store, and only the addressee can read it. At login, "You have N new mail" shows under the menu.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/email-send.gif"><div class="screen"><img src="media/email-send.gif" alt="Animated: sending a private email to another caller" loading="lazy" width="640" height="424"></div></a><figcaption>Sending mail (animated)</figcaption></figure></div></div>
 <div class="topic-body"><ul class="keys">
     <li><kbd>#</kbd> read mail by number</li>
@@ -535,11 +548,11 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <figure class="crt"><a class="lb" href="media/email-inbox.png"><div class="screen"><img src="media/email-inbox.png" alt="The private mailbox listing mail with sender, subject and date" loading="lazy" width="640" height="424"></div></a><figcaption>The mailbox</figcaption></figure>
     <figure class="crt"><a class="lb" href="media/email-read.gif"><div class="screen"><img src="media/email-read.gif" alt="Animated: opening and reading a private email" loading="lazy" width="640" height="424"></div></a><figcaption>Reading mail (animated)</figcaption></figure>
   </div></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#messages"><small>Previous</small>Message areas</a><a class="pager-next" href="#user-settings"><small>Next</small>User settings</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#messages" data-key="p"><small><span class="hk">P</span>rev</small>Message areas</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#user-settings" data-key="n"><small><span class="hk">N</span>ext</small>User settings</a></nav>
 </article>
 
 <article class="topic" id="user-settings" data-group="Callers" aria-labelledby="user-settings-title">
-<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="user-settings-title">User settings</h2></header>
+<header class="topic-head"><div class="eyebrow">Callers</div><h2 id="user-settings-title">User settings</h2><dl class="msghead"><dt>Topic</dt><dd>User settings</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>14 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">A caller's own account: name, location, tagline, password.</p><p><kbd>U</kbd> shows a caller's own account (handle, real name, location, email, tagline, security, calls, uploads and downloads) and lets them change it. Changes are saved at once and synced to every board.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/account.gif"><div class="screen"><img src="media/account.gif" alt="Animated user settings: changing the tagline" loading="lazy" width="640" height="424"></div></a><figcaption>Setting a tagline (animated)</figcaption></figure></div></div>
 <div class="topic-body"><ul class="keys">
     <li><kbd>R</kbd> real name</li>
@@ -553,11 +566,11 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     
     <figure class="crt"><a class="lb" href="media/account.png"><div class="screen"><img src="media/account.png" alt="The user settings screen with handle, name, location, email, tagline, security and stats" loading="lazy" width="640" height="424"></div></a><figcaption>User settings</figcaption></figure>
   </div></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#email"><small>Previous</small>Private email</a><a class="pager-next" href="#community"><small>Next</small>Community</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#email" data-key="p"><small><span class="hk">P</span>rev</small>Private email</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#community" data-key="n"><small><span class="hk">N</span>ext</small>Community</a></nav>
 </article>
 
 <article class="topic" id="community" data-group="Community" aria-labelledby="community-title">
-<header class="topic-head"><div class="eyebrow">Community</div><h2 id="community-title">Community</h2></header>
+<header class="topic-head"><div class="eyebrow">Community</div><h2 id="community-title">Community</h2><dl class="msghead"><dt>Topic</dt><dd>Community</dd><dt>Area</dt><dd>Community</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>15 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Oneliners, rumors, BBS list, top ten, voting booth, last callers.</p><p>The scene features. The main board keeps all of these in its internal flash and the other boards read and add to them over the link.</p></div><div class="lead-fig"><figure class="crt cyan"><a class="lb" href="media/oneliners.png"><div class="screen"><img src="media/oneliners.png" alt="The oneliners wall" loading="lazy" width="640" height="424"></div></a><figcaption>The oneliners wall</figcaption></figure></div></div>
 <details class="sub" id="oneliners" open><summary>Oneliners</summary><div class="sub-body"><p>After login the newest 10 oneliners show and the caller may add one (60 characters). The board keeps the newest 20. <kbd>O</kbd> at the main menu brings the wall back up.</p></div></details>
 <details class="sub" id="rumors"><summary>Rumors</summary><div class="sub-body"><p>Anonymous one-liners, like the old days. <kbd>R</kbd> opens them: <kbd>A</kbd> adds one (70 characters, nobody sees who wrote it), <kbd>L</kbd> lists the newest 15, <kbd>Q</kbd> quits. A random rumor shows above the main menu prompt.</p>
@@ -580,11 +593,18 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
   <div class="figs one">
     <figure class="crt"><a class="lb" href="media/last-callers.png"><div class="screen"><img src="media/last-callers.png" alt="The last callers list with handle, node, time and location" loading="lazy" width="640" height="424"></div></a><figcaption>Last callers</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#user-settings"><small>Previous</small>User settings</a><a class="pager-next" href="#multinode"><small>Next</small>Nodes and clustering</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#user-settings" data-key="p"><small><span class="hk">P</span>rev</small>User settings</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#rumor-list" data-key="n"><small><span class="hk">N</span>ext</small>Rumors list</a></nav>
+</article>
+
+<article class="topic" id="rumor-list" data-group="Community" aria-labelledby="rumor-list-title">
+<header class="topic-head"><div class="eyebrow">Community</div><h2 id="rumor-list-title">Rumors list</h2><dl class="msghead"><dt>Topic</dt><dd>Rumors list</dd><dt>Area</dt><dd>Community</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>16 of 34</dd></dl></header>
+<div class="lead nofig"><div class="lead-text"><p class="lede">Every silly CNC rumor on the board, and how to add yours.</p><p>These are the rumors on the AXIS UNDERGROUND CNC board, one line each, the way callers see them under the main menu. On the board, press <kbd>R</kbd> at the main menu and <kbd>A</kbd> to add your own (70 characters, anonymous). The landing page shows a random one on every visit.</p><p class="rumor-count">153 rumors on file.</p></div></div>
+<div class="topic-body"><ul class="rumor-wall" data-src="rumors.txt"><li>measure twice, cut once, scrap it anyway, blame the endmill</li><li>the first part off a new program is always a paperweight</li><li>close enough for government work. the government disagrees.</li><li>there's no place like G28 X0 Y0 Z0</li><li>a machinist is an engineer who can find the parts bin</li><li>the spoilboard has more cuts in it than the project ever will</li><li>someone zeroed Z on the clamp again. the clamp lost.</li><li>rumor: the sysop's 4th axis has never once crashed. lies.</li><li>feeds and speeds tables are suggestions, like speed limits</li><li>chips or it didn't happen</li><li>your tool isn't dull, it's experienced</li><li>the shop vac has eaten more endmills than the machine has broken</li><li>it's not a mistake, it's a prototype</li><li>the second part is perfect. the customer wanted forty.</li><li>"it'll only take five minutes" was said 9 hours ago</li><li>every collet nut in the shop is the wrong size but one</li><li>dead nuts on the first try means you measured wrong</li><li>the coolant has achieved sentience and it smells like it</li><li>nobody has ever found the 1/8 inch collet when they needed it</li><li>a tenth is a tenth until it's the last tenth</li><li>the e-stop is the most used button on the machine</li><li>somewhere a 1/32 endmill just snapped and nobody heard it</li><li>your toolpath looked great in the simulator. so did mine.</li><li>the gantry is square. the gantry has never been square.</li><li>real machinists sweep the floor with the part they just scrapped</li><li>the longest job always runs out of filament at 98 percent</li><li>air cutting: the safest machining there is</li><li>climb vs conventional: the forums are still arguing</li><li>the cat sat on the jog pendant. the cat now owns the shop.</li><li>G0 Z-1. we don't talk about what happened next.</li><li>one more pass. it's always one more pass.</li><li>rumor has it the sysop names every endmill. RIP Kevin.</li><li>a dial indicator never lies. the guy reading it might.</li><li>the work offset was right. the program was in inches.</li><li>metric vs imperial: the only war with no survivors</li><li>step over 40 percent? bold. we respect it.</li><li>the deburring is where the fingers go to bleed</li><li>the machine isn't loud. you're just not wearing ear muffs.</li><li>probe first, crash later</li><li>rumor: the AXIS board was milled on a router made of other routers</li><li>the fixture took 3 days. the part took 4 minutes.</li><li>blue tape and superglue: the original workholding</li><li>you can never have too many clamps. you can have too few.</li><li>a sharp tool cuts. a dull tool rubs. a cheap tool screams.</li><li>the chip load calculator says one thing, the noise says another</li><li>it was square when it left here</li><li>the drawing says plus or minus nothing. the drawing lies.</li><li>the tolerances are tight but the budget is loose</li><li>the boss said make it to the print. the print is a napkin.</li><li>"can you just add a little radius there?" said every designer ever</li><li>measure with a micrometer, mark with chalk, cut with an axe</li><li>the spindle warm up is the most relaxing three minutes of the day</li><li>dust collection: moving the mess from the floor to the air</li><li>somebody touched the zero button. we will find them.</li><li>rumor: RotatoCAM toolpaths are rendered by tiny shop gnomes</li><li>a 4th axis is just a lathe that went to college</li><li>your CAM software crashed? that's the CAM's way of saying no.</li><li>the post processor is held together by hope and semicolons</li><li>when in doubt, slow the feed down. when in more doubt, go home.</li><li>the wrong stock size is the right stock size if you believe</li><li>this job is a quick one. famous last words, part 4,293.</li><li>rumor: the sysop's shop has never once been clean</li><li>a dull V-bit will still sign your name. badly.</li><li>endmills are consumables. the wallet is too.</li><li>the machine knows when the customer is watching</li><li>running in the dark? the lights went out to save the chips.</li><li>there are two kinds of operators: crashed, and about to crash</li><li>the vise jaws have more history than the history channel</li><li>it cut perfect yesterday. it's the same file. it's not perfect.</li><li>rumor: a 9600 baud modem once ran a CNC. it's still on the first line.</li><li>tool length offset: the number you forget exactly once a week</li><li>facing cut first, questions later</li><li>aluminum: gummy, shiny, chips in your socks for a month</li><li>MDF dust: the glitter of the woodshop</li><li>acrylic melts if you look at it wrong. or right.</li><li>hardwood: the router's favorite kind of loud</li><li>brass cuts like butter. butter made of money.</li><li>titanium: the material that makes your tools cry</li><li>stainless: work hardens just to spite you</li><li>foam: the only material that cuts itself</li><li>the coffee is cold. the spindle is hot. the deadline was yesterday.</li><li>rumor: the sysop's toolchanger is a coffee can and a prayer</li><li>an apprentice asked for the left-handed endmill. still looking.</li><li>go fetch the board stretcher and a metric crescent wrench</li><li>the tap broke in the last hole. it always breaks in the last hole.</li><li>a tap extractor is just a second tap you haven't broken yet</li><li>the drill bit that walks is the drill bit that talks</li><li>chatter is the machine trying to tell you something</li><li>the machine stopped. that's either good or very bad.</li><li>pause the job to check. it was fine. the pause ruined it.</li><li>a happy machine sings. a sad machine sings louder.</li><li>the dust shoe was off. the shop is now a snow globe.</li><li>rumor: the LORD door was coded on a lathe</li><li>your cabinet needs a 4th axis. trust me.</li><li>nobody reads the manual until the smoke comes out</li><li>the limit switch works. you found out the fun way.</li><li>homing sequence: the machine's morning stretch</li><li>backlash: when the machine has opinions about direction</li><li>the belt is loose. the belt has always been loose.</li><li>lead screw or ball screw, the debate continues on node 3</li><li>steppers lose steps like I lose socks</li><li>servos: steppers that went to therapy</li><li>the controller firmware update fixed one bug and made two pets</li><li>grbl, Mach3, LinuxCNC: pick your religion</li><li>a G-code file is just a very bossy text file</li><li>semicolon comments are the operator's diary</li><li>M3 S12000: the sound of a paycheck starting</li><li>M5: the sweetest command in the language</li><li>M30: the job is done, go take a picture</li><li>somebody ran the file twice. now we have a pair.</li><li>the wasteboard is technically also a project</li><li>rumor: there's a secret Z offset that makes everything perfect</li><li>the part fits. the other part doesn't. they were cut together.</li><li>a good fit is a press fit you didn't need a hammer for</li><li>"just tap it in" ended with the big hammer</li><li>the sacrificial layer has sacrificed enough</li><li>double sided tape: holding the shop together since forever</li><li>the hold down clamps are in the way of every single toolpath</li><li>a tabbed part is a part with trust issues</li><li>the last tab always breaks first</li><li>rumor: the ring board LEDs blink faster when someone crashes a router</li><li>3D printer people and CNC people: subtractive vs additive gang wars</li><li>the laser cutter just smelled like burnt maple. it's art now.</li><li>engrave it in reverse? no. engrave it in reverse.</li><li>the slowest feed rate is the one the customer chose</li><li>the job was quoted in hours. the job lives in days.</li><li>rumor: chips found in the BBS server. the BBS server is the CNC.</li><li>the tool library has 400 tools and you use 3</li><li>quarter inch upcut: the duct tape of endmills</li><li>ball nose for 3D, flat for life</li><li>V-bit for signs, and for the occasional regret</li><li>compression bit: two endmills that agreed to disagree</li><li>a downcut leaves a clean top and a packed slot</li><li>the bit is spinning backwards. the bit is fine. you aren't.</li><li>sharpen your tools, sharpen your mind, sharpen your excuses</li><li>safety glasses: the only tool that never gets used enough</li><li>keep your fingers out of the work envelope. they don't grow back.</li><li>rumor: a sysop once called in to the BBS from inside the enclosure</li><li>the enclosure is soundproof. the neighbors disagree.</li><li>running the spindle at night is how you meet the neighbors</li><li>the shop light flickers when the spindle spins up. totally normal.</li><li>your extension cord is not rated for that. it knows.</li><li>the shop radio only plays one station, and it's static</li><li>rumor: AXIS UNDERGROUND CNC runs on a $15 board and pure spite</li><li>the CYD is small but the BBS is mighty</li><li>two boards, seven nodes, zero sleep</li><li>there's no crying in machining. there's just coolant in your eyes.</li><li>when the job finishes at 3am, you will be there to see it</li><li>the best tool is the one you didn't break today</li><li>it's not hoarding if it's offcuts. offcuts are future parts.</li><li>that scrap bin is load bearing</li><li>the offcut you threw away was the exact size you needed</li><li>rumor: the sysop keeps every broken endmill in a jar. the jar is full.</li></ul><noscript><p class="note"><strong>Note</strong>This list was copied in when the page was built; with JavaScript on it reloads from rumors.txt.</p></noscript></div>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#community" data-key="p"><small><span class="hk">P</span>rev</small>Community</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#multinode" data-key="n"><small><span class="hk">N</span>ext</small>Nodes and clustering</a></nav>
 </article>
 
 <article class="topic" id="multinode" data-group="Multinode" aria-labelledby="multinode-title">
-<header class="topic-head"><div class="eyebrow">Multinode</div><h2 id="multinode-title">Nodes and clustering</h2></header>
+<header class="topic-head"><div class="eyebrow">Multinode</div><h2 id="multinode-title">Nodes and clustering</h2><dl class="msghead"><dt>Topic</dt><dd>Nodes and clustering</dd><dt>Area</dt><dd>Multinode</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>17 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Several callers per board, and boards that join into one BBS.</p><p>One board takes several callers at once, and several boards on one LAN join into one BBS with shared users, settings, files, messages and lists. Each caller slot is a <strong>node</strong>.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen showing node 1+2, status lights and the system ticker" loading="lazy" width="640" height="480"></div></a><figcaption>The main board serving nodes 1 and 2</figcaption></figure></div></div>
 <details class="sub" id="sessions" open><summary>Sessions per board</summary><div class="sub-body"><p><code>sessions</code> sets how many callers a board takes at once: 1 to 4, default 2 on a CYD (a headless node defaults to 3). Each session is its own node number; the activity screen shows them as, for example, <code>node 1+2</code>. Doors and file transfers share one memory slot per board, so only one session per board can be in a door or a transfer at a time. Everything else (menus, messages, chat, browsing) runs side by side.</p></div></details>
 <details class="sub" id="cluster"><summary>How boards join</summary><div class="sub-body"><p>Flash another board, put it on the same network, and it finds the others by itself (mDNS service <code>_axisbbs._tcp</code> plus UDP broadcast). There is nothing to configure.</p>
@@ -601,11 +621,11 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     
     <figure class="crt"><a class="lb" href="media/multinode-who.png"><div class="screen"><img src="media/multinode-who.png" alt="Who's online listing every node across the boards with caller handles and what they are doing" loading="lazy" width="640" height="424"></div></a><figcaption>Who's online across every board</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#community"><small>Previous</small>Community</a><a class="pager-next" href="#chat"><small>Next</small>Chat between callers</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#rumor-list" data-key="p"><small><span class="hk">P</span>rev</small>Rumors list</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#chat" data-key="n"><small><span class="hk">N</span>ext</small>Chat between callers</a></nav>
 </article>
 
 <article class="topic" id="chat" data-group="Multinode" aria-labelledby="chat-title">
-<header class="topic-head"><div class="eyebrow">Multinode</div><h2 id="chat-title">Chat between callers</h2></header>
+<header class="topic-head"><div class="eyebrow">Multinode</div><h2 id="chat-title">Chat between callers</h2><dl class="msghead"><dt>Topic</dt><dd>Chat between callers</dd><dt>Area</dt><dd>Multinode</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>18 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Who's online, teleconference, paging, node messages, split-screen chat.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/teleconference.gif"><div class="screen"><img src="media/teleconference.gif" alt="Animated teleconference: callers on different nodes chatting line by line" loading="lazy" width="640" height="424"></div></a><figcaption>Teleconference (animated)</figcaption></figure></div></div>
 <div class="topic-body"><h3 id="who" class="lead-h">Who's online</h3>
   <p><kbd>W</kbd> lists every node on every board: the node number, the caller, and what they are doing (main menu, a file area by name, a door, the teleconference, and so on). A caller who is not available for chat shows <code>(DND)</code>.</p></div>
@@ -635,11 +655,11 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <figure class="crt"><a class="lb" href="media/split-ask.png"><div class="screen"><img src="media/split-ask.png" alt="A caller being asked to accept a split-screen chat request" loading="lazy" width="640" height="424"></div></a><figcaption>The chat request</figcaption></figure>
     <figure class="crt"><a class="lb" href="media/split-chat.gif"><div class="screen"><img src="media/split-chat.gif" alt="Animated split-screen chat: two callers typing live in the top and bottom halves" loading="lazy" width="640" height="424"></div></a><figcaption>Two callers typing live (animated)</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#multinode"><small>Previous</small>Nodes and clustering</a><a class="pager-next" href="#doors"><small>Next</small>Doors and the DOS runtime</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#multinode" data-key="p"><small><span class="hk">P</span>rev</small>Nodes and clustering</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#doors" data-key="n"><small><span class="hk">N</span>ext</small>Doors and the DOS runtime</a></nav>
 </article>
 
 <article class="topic" id="doors" data-group="Doors" aria-labelledby="doors-title">
-<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="doors-title">Doors and the DOS runtime</h2></header>
+<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="doors-title">Doors and the DOS runtime</h2><dl class="msghead"><dt>Topic</dt><dd>Doors and the DOS runtime</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>19 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">The 8086 door runtime and adding doors with doorN.</p><p><kbd>D</kbd> lists the doors, numbered 1 to 9, then A, B, C and on. Type a door's key to go in; Enter goes back to the menu. When the door ends, the caller comes back to the BBS, with a note if the door ran out of memory, ran out of time, or could not start.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/doors.png"><div class="screen"><img src="media/doors.png" alt="The doors list: Legend of the Red Dragon, BBS Black Jack, ANSI Pack Viewer and DOS Prompt" loading="lazy" width="640" height="424"></div></a><figcaption>The default doors</figcaption></figure></div></div>
 <details class="sub" id="dos-runtime" open><summary>The DOS door runtime</summary><div class="sub-body"><p>Real DOS door games run on the ESP32 itself. The runtime is an 8086 CPU emulator (a refactored FabGL core) with paged memory, a high-level DOS, a BIOS, and a FOSSIL driver on INT 14h that connects the door's serial port to the caller's telnet line. The door gets a <code>DOOR.SYS</code> (or <code>DORINFO1.DEF</code>) drop file like it would on a 90s BBS.</p>
   <ul>
@@ -665,11 +685,11 @@ door4=dos|DOS Prompt (password)|*DOSSHELL|dosbox|none</code></pre>
     </tbody>
   </table></div></details>
   <p>If no <code>doorN</code> lines are set, the four doors above are the list. The DOS Prompt is always added if a saved list leaves it out. For a multinode door with <code>%N</code>, nodes other than 1 get their own drop folder <code>NODE&lt;n&gt;\</code>, and LORD's <code>NODE&lt;n&gt;.DAT</code> is made once from <code>NODE1.DAT</code>.</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#chat"><small>Previous</small>Chat between callers</a><a class="pager-next" href="#lord"><small>Next</small>LORD and Black Jack</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#chat" data-key="p"><small><span class="hk">P</span>rev</small>Chat between callers</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#lord" data-key="n"><small><span class="hk">N</span>ext</small>LORD and Black Jack</a></nav>
 </article>
 
 <article class="topic" id="lord" data-group="Doors" aria-labelledby="lord-title">
-<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="lord-title">LORD and Black Jack</h2></header>
+<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="lord-title">LORD and Black Jack</h2><dl class="msghead"><dt>Topic</dt><dd>LORD and Black Jack</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>20 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Legend of the Red Dragon 4.07 and BBS Black Jack on the board.</p><p>The unmodified LORD 4.07 plays on the board through FOSSIL and DOOR.SYS, as a multinode door (<code>%N /DREW</code>). To install it, prepare a clean copy on a PC and copy it to <code>/doors/lord/</code>:</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/lord-title.png"><div class="screen"><img src="media/lord-title.png" alt="The Legend of the Red Dragon title screen over telnet from the board" loading="lazy" width="640" height="424"></div></a><figcaption>LORD 4.07 running on the CYD, over telnet</figcaption></figure></div></div>
 <div class="topic-body"><pre><code>python -I tools/door_prepare.py LORD_FOLDER build/lord-ready
 # copy build/lord-ready to /doors/lord on the SD card, or send it over USB:
@@ -683,11 +703,11 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
   <div class="figs one">
     <figure class="crt"><a class="lb" href="media/blackjack.png"><div class="screen"><img src="media/blackjack.png" alt="BBS Black Jack standings: high scorers and this week's standings" loading="lazy" width="640" height="424"></div></a><figcaption>BBS Black Jack in the AXIS door runtime</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#doors"><small>Previous</small>Doors and the DOS runtime</a><a class="pager-next" href="#ansi-viewer"><small>Next</small>ANSI Pack Viewer</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#doors" data-key="p"><small><span class="hk">P</span>rev</small>Doors and the DOS runtime</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#ansi-viewer" data-key="n"><small><span class="hk">N</span>ext</small>ANSI Pack Viewer</a></nav>
 </article>
 
 <article class="topic" id="ansi-viewer" data-group="Doors" aria-labelledby="ansi-viewer-title">
-<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="ansi-viewer-title">ANSI Pack Viewer</h2></header>
+<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="ansi-viewer-title">ANSI Pack Viewer</h2><dl class="msghead"><dt>Topic</dt><dd>ANSI Pack Viewer</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>21 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Artpacks straight out of their ZIPs, and ANSI movies.</p><p>A door built into the firmware. It lists the artpack ZIPs in a file area (the ANSI Packs area, <code>ansi</code>, by default), then the pieces inside a pack in three columns, and shows any piece straight out of the ZIP without unpacking it to the card. Long-named packs list with their shared prefix cut off.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/ansi-viewer.gif"><div class="screen"><img src="media/ansi-viewer.gif" alt="Animated ANSI Pack Viewer: picking a pack, a piece, and the art scrolling in" loading="lazy" width="640" height="424"></div></a><figcaption>The ANSI Pack Viewer (animated)</figcaption></figure></div></div>
 <div class="topic-body"><ul>
     <li>A still piece pauses every screen (<code>-- more --</code>): <kbd>Enter</kbd> for more, <kbd>N</kbd> nonstop, <kbd>Q</kbd> quit.</li>
@@ -700,11 +720,11 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
     <figure class="crt"><a class="lb" href="media/ansi-viewer-pieces.png"><div class="screen"><img src="media/ansi-viewer-pieces.png" alt="The pieces inside one artpack in three columns" loading="lazy" width="640" height="424"></div></a><figcaption>Pieces inside a pack</figcaption></figure>
     <figure class="crt"><a class="lb" href="media/ansi-viewer-art.png"><div class="screen"><img src="media/ansi-viewer-art.png" alt="An ANSI art piece shown from inside a ZIP" loading="lazy" width="640" height="424"></div></a><figcaption>A piece, straight out of the ZIP</figcaption></figure>
   </div></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#lord"><small>Previous</small>LORD and Black Jack</a><a class="pager-next" href="#dos-prompt"><small>Next</small>DOS Prompt door</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#lord" data-key="p"><small><span class="hk">P</span>rev</small>LORD and Black Jack</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#dos-prompt" data-key="n"><small><span class="hk">N</span>ext</small>DOS Prompt door</a></nav>
 </article>
 
 <article class="topic" id="dos-prompt" data-group="Doors" aria-labelledby="dos-prompt-title">
-<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="dos-prompt-title">DOS Prompt door</h2></header>
+<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="dos-prompt-title">DOS Prompt door</h2><dl class="msghead"><dt>Topic</dt><dd>DOS Prompt door</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>22 of 34</dd></dl></header>
 <div class="lead nofig"><div class="lead-text"><p class="lede">A password-locked C:\&gt; sandbox and its commands.</p><p>A <code>C:\&gt;</code> prompt over a sandbox folder on the SD card (<code>dosbox</code> by default). Nothing of the BBS is reachable from it: <code>..</code> stops at the sandbox root and there are no other drives. The sandbox can hold up to 16 MB.</p></div></div>
 <div class="topic-body"><ul>
     <li><strong>Password.</strong> The door has its own password, set on the serial console with <code>@DOSPASS secret</code>. With no password set the door says it is not enabled; <code>@DOSPASS</code> alone clears the password and so turns it off.</li>
@@ -727,11 +747,11 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
     </tbody>
   </table></div></details>
   <p>DOSKEY-style history: the up and down arrows walk back through earlier commands, and <kbd>F3</kbd> repeats the last one. Running .COM or .EXE programs from the prompt is not supported.</p></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#ansi-viewer"><small>Previous</small>ANSI Pack Viewer</a><a class="pager-next" href="#accounts"><small>Next</small>Accounts and security</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#ansi-viewer" data-key="p"><small><span class="hk">P</span>rev</small>ANSI Pack Viewer</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#accounts" data-key="n"><small><span class="hk">N</span>ext</small>Accounts and security</a></nav>
 </article>
 
 <article class="topic" id="accounts" data-group="Sysop" aria-labelledby="accounts-title">
-<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="accounts-title">Accounts and security</h2></header>
+<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="accounts-title">Accounts and security</h2><dl class="msghead"><dt>Topic</dt><dd>Accounts and security</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>23 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Applications, validation, levels, permissions, time limits, twits.</p><p>Accounts are kept in internal flash (<code>/users.dat</code>) on every board. Passwords are stored as salted SHA-256 hashes, never as text. A caller gets three tries at a password, then the call ends.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-users.png"><div class="screen"><img src="media/cyd-users.png" alt="The USERS screen on the CYD listing callers and their status" loading="lazy" width="640" height="480"></div></a><figcaption>USERS on the CYD</figcaption></figure></div></div>
 <details class="sub" id="application" open><summary>The new user application</summary><div class="sub-body"><p>A caller who types a handle nobody uses is asked whether to apply (in the Oblivion look, Apply on the matrix does the same). The application is about twenty questions in sections, and only the sysop reads the answers:</p>
   <ul>
@@ -760,11 +780,11 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
 <details class="sub" id="time-limits"><summary>Time limits and idle logoff</summary><div class="sub-body"><p><code>daily_minutes</code> (default 60) is enforced per call: at 5 minutes left the caller sees a warning, and at zero they are logged off. The Oblivion prompt shows <code>[N left]</code>. A door session gets the same limit. The sysop is exempt. <code>idle_minutes</code> (default 5) logs off a caller who types nothing for that long, including during the application; doors and transfers are not counted as idle.</p></div></details>
 <details class="sub" id="twit"><summary>The twit flag</summary><div class="sub-body"><p>The quiet way to deal with a problem caller. A twit's message posts are hidden from everyone but them and the sysop, and their oneliners, rumors and teleconference lines reach nobody but them. They are told it all worked. Toggle it with <kbd>T</kbd> in the user editor.</p></div></details>
 <details class="sub" id="sysops"><summary>Sysop promotion</summary><div class="sub-body"><p>Any user at security 255 is a sysop: no time limit, every area, and the sysop commands. Promote a caller with <code>@SYSOP handle</code> on the serial console, the SYSOP toggle under ACCESS on the CYD, or security 255 in the user editor.</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#dos-prompt"><small>Previous</small>DOS Prompt door</a><a class="pager-next" href="#user-editor"><small>Next</small>Sysop user editor</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#dos-prompt" data-key="p"><small><span class="hk">P</span>rev</small>DOS Prompt door</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#user-editor" data-key="n"><small><span class="hk">N</span>ext</small>Sysop user editor</a></nav>
 </article>
 
 <article class="topic" id="user-editor" data-group="Sysop" aria-labelledby="user-editor-title">
-<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="user-editor-title">Sysop user editor</h2></header>
+<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="user-editor-title">Sysop user editor</h2><dl class="msghead"><dt>Topic</dt><dd>Sysop user editor</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>24 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Edit any caller over telnet with *.</p><p>Sysops press <kbd>*</kbd> at the main menu for every caller with their security level, status and twit flag. Type a caller's number to open them (handle, status, security, location, calls, up and down KB, access, twit), then:</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/user-editor-caller.png"><div class="screen"><img src="media/user-editor-caller.png" alt="One caller in the user editor with status, security, location, calls, transfer totals, access and twit, and the edit keys" loading="lazy" width="640" height="424"></div></a><figcaption>Editing one caller</figcaption></figure></div></div>
 <div class="topic-body"><ul class="keys">
     <li><kbd>S</kbd> set the security level</li>
@@ -777,11 +797,11 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
     <li><kbd>L</kbd> free downloads on or off</li>
     <li><kbd>Q</kbd> back to the list</li>
   </ul></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#accounts"><small>Previous</small>Accounts and security</a><a class="pager-next" href="#cyd-console"><small>Next</small>The CYD console</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#accounts" data-key="p"><small><span class="hk">P</span>rev</small>Accounts and security</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#cyd-console" data-key="n"><small><span class="hk">N</span>ext</small>The CYD console</a></nav>
 </article>
 
 <article class="topic" id="cyd-console" data-group="Sysop" aria-labelledby="cyd-console-title">
-<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="cyd-console-title">The CYD console</h2></header>
+<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="cyd-console-title">The CYD console</h2><dl class="msghead"><dt>Topic</dt><dd>The CYD console</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>25 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Activity screen, node detail and KICK, the touch sysop menu.</p><p>The board's own touchscreen is the sysop's control panel. Nothing here needs a password: whoever can touch the board is the sysop.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen: AXIS logo, LOCAL button, battery spot, status lights NET LINK SD CALL DOOR PAGE, two node lines, a ticker and the newest events" loading="lazy" width="640" height="480"></div></a><figcaption>The activity screen (CYD panel at 2x)</figcaption></figure></div></div>
 <details class="sub" id="wfc" open><summary>The activity screen</summary><div class="sub-body"><p>When idle the screen shows the drippy AXIS logo and a framed panel titled WAITING FOR CALLER (ACTIVITY while callers are on), with this board's node numbers in the corner.</p>
   
@@ -813,11 +833,11 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
     <figure class="crt cyd"><a class="lb" href="media/cyd-setup.png"><div class="screen"><img src="media/cyd-setup.png" alt="BBS SETUP with THEME and RUN SETUP" loading="lazy" width="640" height="480"></div></a><figcaption>BBS SETUP</figcaption></figure>
     <figure class="crt cyd"><a class="lb" href="media/cyd-users.png"><div class="screen"><img src="media/cyd-users.png" alt="USERS with callers and their status" loading="lazy" width="640" height="480"></div></a><figcaption>USERS</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#user-editor"><small>Previous</small>Sysop user editor</a><a class="pager-next" href="#local-console"><small>Next</small>Local console</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#user-editor" data-key="p"><small><span class="hk">P</span>rev</small>Sysop user editor</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#local-console" data-key="n"><small><span class="hk">N</span>ext</small>Local console</a></nav>
 </article>
 
 <article class="topic" id="local-console" data-group="Sysop" aria-labelledby="local-console-title">
-<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="local-console-title">Local console</h2></header>
+<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="local-console-title">Local console</h2><dl class="msghead"><dt>Topic</dt><dd>Local console</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>26 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">The BBS on the board's own screen: 80 columns crisp, or ZOOM.</p><p><strong>LOCAL</strong> opens the BBS on the board's own screen, logged in as the sysop. It is a full 80x25 ANSI terminal, and it opens on all 80 columns drawn crisp in tiny cells, so you see the whole screen exactly as a caller does. The buttons along the bottom:</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-local-sharp.png"><div class="screen"><img src="media/cyd-local-sharp.png" alt="The local console on the CYD showing all 80 columns of the BBS crisp, with KEYS, ENTER, ZOOM, arrows and EXIT buttons" loading="lazy" width="640" height="480"></div></a><figcaption>All 80 columns, crisp</figcaption></figure></div></div>
 <div class="topic-body"><ul class="keys">
     <li><kbd>KEYS</kbd> the touch keyboard; type a line, OK sends it</li>
@@ -833,11 +853,11 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
     <figure class="crt cyd"><a class="lb" href="media/cyd-local-zoom.png"><div class="screen"><img src="media/cyd-local-zoom.png" alt="The local console zoomed to 40 big columns, left half" loading="lazy" width="640" height="480"></div></a><figcaption>ZOOM: the left 40 columns</figcaption></figure>
     <figure class="crt cyd"><a class="lb" href="media/cyd-local-zoom-right.png"><div class="screen"><img src="media/cyd-local-zoom-right.png" alt="The local console zoomed to the right 40 columns" loading="lazy" width="640" height="480"></div></a><figcaption>&gt;&gt;: the right 40 columns</figcaption></figure>
   </div></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#cyd-console"><small>Previous</small>The CYD console</a><a class="pager-next" href="#leds"><small>Next</small>RGB LED and ring</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#cyd-console" data-key="p"><small><span class="hk">P</span>rev</small>The CYD console</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#leds" data-key="n"><small><span class="hk">N</span>ext</small>RGB LED and ring</a></nav>
 </article>
 
 <article class="topic" id="leds" data-group="Sysop" aria-labelledby="leds-title">
-<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="leds-title">RGB LED and ring</h2></header>
+<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="leds-title">RGB LED and ring</h2><dl class="msghead"><dt>Topic</dt><dd>RGB LED and ring</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>27 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">What the LED colours and the headless LED ring mean.</p><p>Every board shows the whole cluster's state on its LED, not just its own. On the CYD that is the RGB LED on the back (GPIO 4, 16 and 17). When several things are going on, each active signal gets a 2 second turn.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The activity screen's status lights, which mirror the LED signals" loading="lazy" width="640" height="480"></div></a><figcaption>The on-screen status lights carry the same news</figcaption></figure></div></div>
 <div class="topic-body"><details class="ref"><summary>Reference table: pattern, means (8 rows)</summary><div class="table-wrap"><table>
     <thead><tr><th>Pattern</th><th>Means</th></tr></thead>
@@ -863,11 +883,11 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
     <li>The sysop is paged: every red flashes four times a second.</li>
   </ul>
   <p>A plain <code>headless</code> board shows the RGB patterns as brightness on its single LED (GPIO 2).</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#local-console"><small>Previous</small>Local console</a><a class="pager-next" href="#headless"><small>Next</small>Headless nodes</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#local-console" data-key="p"><small><span class="hk">P</span>rev</small>Local console</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#headless" data-key="n"><small><span class="hk">N</span>ext</small>Headless nodes</a></nav>
 </article>
 
 <article class="topic" id="headless" data-group="Sysop" aria-labelledby="headless-title">
-<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="headless-title">Headless nodes</h2></header>
+<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="headless-title">Headless nodes</h2><dl class="msghead"><dt>Topic</dt><dd>Headless nodes</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>28 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Plain ESP32 boards as extra nodes, set up over AXIS-SETUP.</p><p>Any plain ESP32 dev board (no screen, no touch, no SD card) can join the cluster as more nodes. It takes 3 callers by default, since it has no screen to draw.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/multinode-who.png"><div class="screen"><img src="media/multinode-who.png" alt="Who's online with callers on several boards, headless nodes included" loading="lazy" width="640" height="424"></div></a><figcaption>Nodes from every board in who's online</figcaption></figure></div></div>
 <div class="topic-body"><pre><code>pio run -e headless -t upload --upload-port COM7
 pio run -e headless-ring -t upload --upload-port COM7   # with the eight-light ring</code></pre>
@@ -876,11 +896,11 @@ pio run -e headless-ring -t upload --upload-port COM7   # with the eight-light r
     <li><strong>It finds the main.</strong> There is no setup wizard: the node takes the main's settings over the link, names itself <code>axis-</code> plus the end of its MAC address, and starts taking callers on its own node numbers.</li>
     <li><strong>It shares everything.</strong> File areas, messages, theme screens, lists and doors all come from the main over the link. The ANSI viewer, the upload checker and the doors run on the node itself.</li>
   </ol></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#leds"><small>Previous</small>RGB LED and ring</a><a class="pager-next" href="#internet"><small>Next</small>Internet extras</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#leds" data-key="p"><small><span class="hk">P</span>rev</small>RGB LED and ring</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#internet" data-key="n"><small><span class="hk">N</span>ext</small>Internet extras</a></nav>
 </article>
 
 <article class="topic" id="internet" data-group="Sysop" aria-labelledby="internet-title">
-<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="internet-title">Internet extras</h2></header>
+<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="internet-title">Internet extras</h2><dl class="msghead"><dt>Topic</dt><dd>Internet extras</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>29 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Optional Discord announcements and GoDaddy dynamic DNS.</p><p>Two extras that reach out to the internet. Both are <strong>off by default</strong>, and both are optional: the BBS needs neither.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/rumors.png"><div class="screen"><img src="media/rumors.png" alt="Rumors, one of the kinds of scene news that can be announced on Discord" loading="lazy" width="640" height="424"></div></a><figcaption>Rumors, uploads and new users are the kind of news it posts</figcaption></figure></div></div>
 <div class="topic-body"><ul>
     <li><strong>Discord announcements.</strong> Scene news goes to a Discord channel webhook: new user applications, validations, accounts added, uploads, oneliners, rumors, door launches and sysop pages. Never calls, addresses or system details. <code>@everyone</code> and <code>@here</code> in caller text are neutralised.</li>
@@ -898,11 +918,11 @@ pio run -e headless-ring -t upload --upload-port COM7   # with the eight-light r
     </tbody>
   </table></div></details>
   <div class="note"><strong>Note</strong>On the AXIS UNDERGROUND CNC test board these extras are currently switched off.</div></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#headless"><small>Previous</small>Headless nodes</a><a class="pager-next" href="#settings"><small>Next</small>Settings reference</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#headless" data-key="p"><small><span class="hk">P</span>rev</small>Headless nodes</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#settings" data-key="n"><small><span class="hk">N</span>ext</small>Settings reference</a></nav>
 </article>
 
 <article class="topic" id="settings" data-group="Reference" aria-labelledby="settings-title">
-<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="settings-title">Settings reference</h2></header>
+<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="settings-title">Settings reference</h2><dl class="msghead"><dt>Topic</dt><dd>Settings reference</dd><dt>Area</dt><dd>Reference</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>30 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Every axis.ini key with its default and an example.</p><p>All settings live in <code>/axis.ini</code> in the board's internal flash: plain <code>key=value</code> lines, one per setting, that the board writes itself. There are three ways to change them:</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-setup.png"><div class="screen"><img src="media/cyd-setup.png" alt="BBS SETUP on the CYD listing the current settings" loading="lazy" width="640" height="480"></div></a><figcaption>The settings as BBS SETUP shows them</figcaption></figure></div></div>
 <div class="topic-body"><ul>
     <li><strong>On the CYD:</strong> BBS SETUP shows them; THEME flips the look and RUN SETUP runs the wizard again.</li>
@@ -966,11 +986,11 @@ msgarea1=general|General Chatter
 msgarea2=cnc|CNC Shop Talk
 setup_done=1</code></pre></details>
   <p>WiFi networks are not in <code>/axis.ini</code>: up to five are kept in the board's NVS, set from the touch picker (or the AXIS-SETUP page on a headless node), and never stored in the code or the repository. The Discord and dynamic DNS secrets are in NVS too.</p></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#internet"><small>Previous</small>Internet extras</a><a class="pager-next" href="#serial"><small>Next</small>Serial console</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#internet" data-key="p"><small><span class="hk">P</span>rev</small>Internet extras</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#serial" data-key="n"><small><span class="hk">N</span>ext</small>Serial console</a></nav>
 </article>
 
 <article class="topic" id="serial" data-group="Reference" aria-labelledby="serial-title">
-<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="serial-title">Serial console</h2></header>
+<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="serial-title">Serial console</h2><dl class="msghead"><dt>Topic</dt><dd>Serial console</dd><dt>Area</dt><dd>Reference</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>31 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Every @ command on the USB serial console.</p><p>Plug the board into a computer over USB and open its serial port at <strong>115200 baud</strong> (<code>pio device monitor</code>, or any serial terminal). Type a command and press Enter. The board also prints its boot log and events here. Commands marked <em>bench</em> are mainly for testing and debugging.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The activity screen showing the newest events, such as a setting changed from the serial console" loading="lazy" width="640" height="480"></div></a><figcaption>Serial changes show up in the event log ("sysop: set theme")</figcaption></figure></div></div>
 <div class="topic-body"><pre><code>pio device monitor -b 115200 -p COM5
 @SET theme=oblivion
@@ -983,6 +1003,8 @@ setup_done=1</code></pre></details>
       <tr><td><code>@SYSOP handle</code></td><td>Make a caller a sysop (validated, security 255).</td></tr>
       <tr><td><code>@ADDUSER handle|location|password</code></td><td>Add a validated caller at security 20 (password 6+ characters). Synced to every board.</td></tr>
       <tr><td><code>@DOSPASS secret</code></td><td>Set the DOS Prompt door password. <code>@DOSPASS</code> alone clears it (the door is then off).</td></tr>
+      <tr><td><code>@SYSOPPASS secret</code></td><td>Set the sysop account's password (6 or more characters). The main board shares it with every board.</td></tr>
+      <tr><td><code>@RUMOR text</code></td><td>Add a rumor to the board's list (kept on the main, 300 at most). Callers add their own with R then A at the main menu.</td></tr>
       <tr><td><code>@RESETSETUP</code></td><td>Erase <code>/axis.ini</code> and restart into the first-boot setup. Users are kept.</td></tr>
       <tr><td><code>@LOG</code></td><td>Print the event log, newest last.</td></tr>
       <tr><td><code>@LOGCLEAR</code></td><td>Wipe the event log (screen, flash file and its old copy) and the page shown on the activity screen.</td></tr>
@@ -1005,11 +1027,11 @@ setup_done=1</code></pre></details>
   <div class="note"><strong>Note</strong><code>@DISCORD</code> and <code>@DDNS</code> are stored on whichever board you type them into, normally a headless node, and are optional. They are off unless you set them.</div></div>
 <details class="sub" id="sdput" open><summary>Copying files over USB</summary><div class="sub-body"><p><code>tools/sdput.py</code> copies a folder onto the board's storage over the serial port and checks every file's byte sum. From Git Bash on Windows, put <code>MSYS_NO_PATHCONV=1</code> in front so the board path is not rewritten into a Windows path.</p>
 <pre><code>python -I tools/sdput.py COM5 my-files /files/text --baud=921600</code></pre></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#settings"><small>Previous</small>Settings reference</a><a class="pager-next" href="#hardware"><small>Next</small>Hardware and building</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#settings" data-key="p"><small><span class="hk">P</span>rev</small>Settings reference</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#hardware" data-key="n"><small><span class="hk">N</span>ext</small>Hardware and building</a></nav>
 </article>
 
 <article class="topic" id="hardware" data-group="Reference" aria-labelledby="hardware-title">
-<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="hardware-title">Hardware and building</h2></header>
+<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="hardware-title">Hardware and building</h2><dl class="msghead"><dt>Topic</dt><dd>Hardware and building</dd><dt>Area</dt><dd>Reference</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>32 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">The board, partitions, SD layout, PlatformIO and PC tests.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-sysop.png"><div class="screen"><img src="media/cyd-sysop.png" alt="The CYD's 2.8 inch screen showing the sysop menu" loading="lazy" width="640" height="480"></div></a><figcaption>Everything runs on this 320x240 board</figcaption></figure></div></div>
 <div class="topic-body"><h3 id="the-board" class="lead-h">The board</h3>
   <p>The ESP32-2432S028R "Cheap Yellow Display": an ESP32 at 240 MHz with 4 MB of flash and no PSRAM, a 2.8 inch 320x240 resistive touchscreen, a microSD slot, and an RGB LED. USB powers it and carries the serial console. The firmware is built to fit that: about 1.8 MB of program, a screen copy kept at 4 bits per pixel, and doors that borrow memory only while they run.</p></div>
@@ -1044,11 +1066,11 @@ setup_done=1</code></pre></details>
 cmake --build build
 build/axis_tests</code></pre>
   <p>The PC build also makes <code>doorhost</code>, which runs a DOS door locally or hosts one caller over telnet for testing (<code>doorhost --telnet 2323</code>), and <code>tools/xfertest</code>, which calls a board like a caller to measure transfers.</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#serial"><small>Previous</small>Serial console</a><a class="pager-next" href="#troubleshooting"><small>Next</small>Troubleshooting</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#serial" data-key="p"><small><span class="hk">P</span>rev</small>Serial console</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#troubleshooting" data-key="n"><small><span class="hk">N</span>ext</small>Troubleshooting</a></nav>
 </article>
 
 <article class="topic" id="troubleshooting" data-group="Reference" aria-labelledby="troubleshooting-title">
-<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="troubleshooting-title">Troubleshooting</h2></header>
+<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="troubleshooting-title">Troubleshooting</h2><dl class="msghead"><dt>Topic</dt><dd>Troubleshooting</dd><dt>Area</dt><dd>Reference</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>33 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Answers to the usual problems.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/files-download-gate.png"><div class="screen"><img src="media/files-download-gate.png" alt="The download gate message a new caller sees" loading="lazy" width="640" height="424"></div></a><figcaption>Not a bug: the download gate</figcaption></figure></div></div>
 <div class="topic-body"><details class="sub" id="faq-local"><summary>My computer can't find axis.local</summary><div class="sub-body"><p>Some systems do not resolve mDNS names. Dial the board's IP address instead: it is on the activity screen ticker and in SYSTEM on the sysop menu.</p></div></details>
   <details class="sub" id="faq-art"><summary>The art looks torn or shifted</summary><div class="sub-body"><p>Set your terminal to 80x25 with a CP437 font and let it wrap at column 80. SyncTERM is the reference. A Windows console telnet client is not a BBS terminal.</p></div></details>
@@ -1061,48 +1083,55 @@ build/axis_tests</code></pre>
   <details class="sub" id="faq-cluster"><summary>A second board doesn't join</summary><div class="sub-body"><p>Both boards must be on the same network and subnet, and the router must pass UDP broadcast and mDNS between them. Guest networks with client isolation block it. <code>@NODES</code> shows what each board sees.</p></div></details>
   <details class="sub" id="faq-password"><summary>I forgot the sysop password</summary><div class="sub-body"><p><code>@RESETSETUP</code> on the serial console erases the settings and restarts into the first-boot setup, where you set a new sysop account. User accounts are kept. If another account is a sysop (security 255), it can still log in meanwhile.</p></div></details>
   <details class="sub" id="faq-discord"><summary>Discord or dynamic DNS does nothing</summary><div class="sub-body"><p>Both are off until set, and the HTTPS work needs about 45 KB of free memory. Set them on a headless node, then check with <code>@WEB</code> and <code>@WEBPING</code>.</p></div></details></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#hardware"><small>Previous</small>Hardware and building</a><a class="pager-next" href="#license"><small>Next</small>License and credits</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#hardware" data-key="p"><small><span class="hk">P</span>rev</small>Hardware and building</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#license" data-key="n"><small><span class="hk">N</span>ext</small>License and credits</a></nav>
 </article>
 
 <article class="topic" id="license" data-group="Reference" aria-labelledby="license-title">
-<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="license-title">License and credits</h2></header>
+<header class="topic-head"><div class="eyebrow">Reference</div><h2 id="license-title">License and credits</h2><dl class="msghead"><dt>Topic</dt><dd>License and credits</dd><dt>Area</dt><dd>Reference</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>34 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">GPL-3.0-or-later with the attribution term.</p><p>Axis Micro BBS Firmware and the AXIS UNDERGROUND CNC board are created by <strong>Rev. J. Money</strong>, the maker of RotatoCAM: <a href="https://rotatocam.com">rotatocam.com</a> and <a href="https://jmscnc.com">jmscnc.com</a>.</p>
   <p>Copyright (C) 2026 Rev. J. Money. This project is free software under the <strong>GNU General Public License v3.0 or later</strong>. You can use, study, change and share it, but anything you distribute that is built from it must also be GPL-3.0 with its source available, and you must keep the copyright notices.</p>
   <p><strong>Additional term under GPLv3 section 7(b):</strong> any copy or derived work, in whole or in part, must keep the "Copyright (C) 2026 Rev. J. Money" notices in the source files, must keep the author credit (Rev. J. Money, rotatocam.com, jmscnc.com) in the README or an equivalent file, and, if it has an interactive interface, must keep that credit visible in its credits or about screen. On the BBS that is the <kbd>C</kbd>redits screen.</p>
   
   <p>Third-party pieces keep their own licenses and are listed in <a href="https://github.com/revjmoney/axis-bbs/blob/HEAD/THIRD_PARTY_NOTICES.md"><code>THIRD_PARTY_NOTICES.md</code></a>. Doors and artpacks belong to their authors; LORD is by Seth Able Robinson.</p>
+  <p>The website's text face is built from the board's own font table: the IBM VGA 8x16 glyphs as packaged by VileR (int10h.org), licensed CC BY-SA 4.0; the webfont (<code>site/fonts/AxisVGA.woff2</code>, made by <code>tools/art/make_vga_webfont.py</code>) carries the same license.</p>
   <p>Source: <a href="https://github.com/revjmoney/axis-bbs">github.com/revjmoney/axis-bbs</a>. Features and fixes log: <a href="https://github.com/revjmoney/axis-bbs/blob/HEAD/docs/FEATURES.md"><code>docs/FEATURES.md</code></a>.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/credits.png"><div class="screen"><img src="media/credits.png" alt="The BBS credits: Axis Micro BBS Firmware by Rev. J. Money, rotatocam.com, jmscnc.com, and the GPL v3 notice with the added credit term" loading="lazy" width="640" height="174"></div></a><figcaption>The credits screen every copy keeps (an early capture)</figcaption></figure></div></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#troubleshooting"><small>Previous</small>Troubleshooting</a><a class="pager-next" href="#hub"><small>Done</small>All topics</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#troubleshooting" data-key="p"><small><span class="hk">P</span>rev</small>Troubleshooting</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#hub" data-key="n"><small><span class="hk">N</span>ext</small>All areas</a></nav>
 </article>
 </main>
 </div>
 
 <footer class="site-footer">
   <div class="wrap">
-    <div class="footer-grid">
-      <div>
-        <h4>Axis Micro BBS</h4>
-        <p>A real telnet BBS on a 2.8 inch ESP32 touchscreen board. Made by Rev. J. Money, the maker of RotatoCAM.</p>
-      </div>
-      <div>
-        <h4>Get it</h4>
-        <ul>
-          <li><a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Buy a ready-to-plug-in unit</a></li>
-          <li><a href="https://github.com/revjmoney/axis-bbs">Source on GitHub</a></li>
-          <li><a href="docs.html">Docs / Wiki</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4>Rev. J. Money</h4>
+    <div class="titleblock" role="contentinfo" aria-label="Title block">
+      <div class="tb title wide"><span>Title</span><b>Axis Micro BBS Firmware</b></div>
+      <div class="tb"><span>Part</span><b>AXIS-BBS</b></div>
+      <div class="tb"><span>Rev</span><b>0.3</b></div>
+      <div class="tb wide"><span>Drawn</span><b>Rev. J. Money, the maker of RotatoCAM</b></div>
+      <div class="tb"><span>Scale</span><b>1:1</b></div>
+      <div class="tb"><span>Sheet</span><b>1 OF 1</b></div>
+      <div class="tb"><span>Material</span><b>ESP32</b></div>
+      <div class="tb"><span>Board</span><b>ESP32-2432S028R</b></div>
+      <div class="tb links"><span>References</span>
         <ul>
           <li><a href="https://rotatocam.com">rotatocam.com</a></li>
           <li><a href="https://jmscnc.com">jmscnc.com</a></li>
+          <li><a href="https://github.com/revjmoney/axis-bbs">GitHub source</a></li>
+          <li><a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Buy a ready-to-plug-in unit</a></li>
+          <li><a href="docs.html">Docs / Wiki</a></li>
         </ul>
       </div>
     </div>
     <p class="fineprint">Copyright (C) 2026 Rev. J. Money. GPL-3.0-or-later with an attribution term: keep the credit "Rev. J. Money, rotatocam.com, jmscnc.com".</p>
+    <p class="fineprint">Text face: the IBM VGA 8x16 glyphs as packaged by VileR (int10h.org), CC BY-SA 4.0, built into a webfont from the board's own font table.</p>
   </div>
 </footer>
+<div class="statusbar">
+  <span class="sb-name">AXIS UNDERGROUND CNC</span>
+  <span class="sb-hide">Node 1</span>
+  <span class="sb-hide">9600 bps</span>
+  <span class="sb-hide">ANSI</span>
+  <span class="sb-keys"><a href="docs.html"><span class="hk">D</span>ocs</a> <a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/"><span class="hk">B</span>uy</a> <a href="index.html#test-board"><span class="hk">T</span>est access</a></span>
+</div>
 <script src="site.js"></script>
 </body>
 </html>

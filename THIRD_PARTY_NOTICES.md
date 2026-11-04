@@ -17,3 +17,8 @@ Axis Micro BBS Firmware includes these third-party components, each under its ow
 - Source: https://github.com/richgel999/miniz (tag 3.0.2)
 - License: MIT (`third_party/miniz/LICENSE`), Copyright 2013-2014 RAD Game Tools and Valve Software,
   Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC.
+
+
+## IBM VGA 8x16 font (site web font)
+
+`site/fonts/AxisVGA.woff2` is built by `tools/art/make_vga_webfont.py` from `third_party/vga_font/font8x16.h`: the IBM VGA 8x16 glyphs as packaged by VileR in The Ultimate Oldschool PC Font Pack (https://int10h.org/oldschool-pc-fonts/), licensed CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). The web font is shared under the same license.
