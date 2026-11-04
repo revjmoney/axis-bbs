@@ -61,8 +61,8 @@ std::vector<SysopMenu::Button> SysopMenu::buttons() const {
                 break;
             }
             if (screen_ == Screen::Access) {  // one toggle beside each permission's line
-                const char* t[4] = {"FILES", "MSGS", "DOORS", "FREE DL"};
-                for (int i = 0; i < 4; i++) b.push_back({t[i], 208, 30 + i * 48, 104, 30});  // beside lines 0, 3, 6, 9
+                const char* t[5] = {"FILES", "MSGS", "DOORS", "FREE DL", "SYSOP"};
+                for (int i = 0; i < 5; i++) b.push_back({t[i], 208, 28 + i * 34, 104, 30, i == 4});  // beside lines 0, 2, 4, 6, 8
                 break;
             }
             if (screen_ == Screen::Files || screen_ == Screen::Logs || screen_ == Screen::Users) b.push_back({"MORE", 222, 204, 90, 30});
@@ -95,6 +95,7 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
         else if (b.label == "MSGS") return Action::ToggleMessages;
         else if (b.label == "DOORS") return Action::ToggleDoors;
         else if (b.label == "FREE DL") return Action::ToggleFreeDownloads;
+        else if (b.label == "SYSOP") return Action::ToggleSysop;
         else if (b.label == "VALIDATE") return Action::ValidateUser;
         else if (b.label == "DENY") return Action::DenyUser;
         else if (b.label == "MORE") page_++;
@@ -194,7 +195,7 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
             }
             break;
         }
-        case Screen::Access: {  // lines 0, 3, 6, 9 sit beside the toggles (48 px apart, 16 px lines)
+        case Screen::Access: {  // lines 0, 2, 4, 6, 8 sit beside the toggles (34 px apart, 16 px lines)
             const User* u = nullptr;
             for (auto& x : d.users.all())
                 if (x.id == user_) u = &x;
@@ -203,9 +204,9 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
                 break;
             }
             auto onOff = [](bool v) { return std::string(v ? "on" : "OFF"); };
-            all = {u->handle, row("files", onOff(u->permFiles)), "", "", row("messages", onOff(u->permMessages)), "", "",
-                   row("doors", onOff(u->permDoors)), "", "", row("downloads", u->freeDownloads ? "free" : u->uploads ? "earned" : "need an upload")};
-            all.erase(all.begin());  // (the handle is in the title bar's place)
+            all = {row("files", onOff(u->permFiles)), "", row("messages", onOff(u->permMessages)), "", row("doors", onOff(u->permDoors)), "",
+                   row("downloads", u->freeDownloads ? "free" : u->uploads ? "earned" : "need upload"), "",
+                   row("sysop", u->security >= kSysopSecurity ? "YES" : "no")};
             all.resize(10);
             break;
         }

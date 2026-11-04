@@ -21,6 +21,7 @@
 #include "bbs/ansiviewer.h"
 #include "bbs/dosshell.h"
 #include "bbs/ledsignal.h"
+#include "bbs/msgbase.h"
 #include "bbs/password.h"
 #include "bbs/rotatelog.h"
 #include "bbs/theme.h"
@@ -247,6 +248,22 @@ static void saveUsers() {
 }
 
 static bool asFollower() { return cluster && cluster->role() == axis::cluster::Role::Follower; }
+
+// The message base: on the main (SD card, or internal flash), and the main's over the link on every
+// follower, so the whole cluster is one conversation.
+static std::unique_ptr<axis::bbs::FileMessageStore> localMsgs;
+static axis::bbs::RemoteMessageStore remoteMsgs([](const std::string& req, std::string& reply) {
+    return cluster && cluster->request(req, reply, 4000);
+});
+static axis::bbs::MessageStore& callerMessages() {
+    if (!localMsgs) {
+        std::string root = std::string(storageRoot()) + "/msgs";
+        ::mkdir(root.c_str(), 0777);
+        localMsgs.reset(new axis::bbs::FileMessageStore(root));
+    }
+    if (asFollower()) return remoteMsgs;
+    return *localMsgs;
+}
 
 static axis::bbs::FileLibrary& callerFiles() {
     if (storageHasSd() || !cluster || cluster->role() != axis::cluster::Role::Follower) return sdFiles;
@@ -809,6 +826,7 @@ static void answerIn(WiFiClient incoming) {
                 }
                 return v;
             });
+        node->setMessages(&callerMessages());
         node->setOneLiners(
             [] {  // the wall: here on the main, over the link on a follower
                 if (!asFollower()) return oneLiners;
@@ -1120,6 +1138,14 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
         if (ok && u->security < 20) u->security = 20;
         logEvent(String("sysop: ") + (ok ? "validated " : "denied ") + u->handle.c_str());
         saveUsers();
+    } else if (a == A::ToggleSysop) {
+        axis::bbs::User* u = users.byId(sysop.selectedUser());
+        if (!u) return;
+        bool up = u->security < axis::bbs::kSysopSecurity;
+        u->security = up ? axis::bbs::kSysopSecurity : 20;
+        if (up) u->status = axis::bbs::User::Status::Validated;
+        logEvent(String("sysop: ") + u->handle.c_str() + (up ? " is now a sysop" : " is no longer a sysop"));
+        saveUsers();
     } else if (a == A::ToggleFiles || a == A::ToggleMessages || a == A::ToggleDoors || a == A::ToggleFreeDownloads) {
         axis::bbs::User* u = users.byId(sysop.selectedUser());
         if (!u) return;
@@ -1202,6 +1228,10 @@ static void startCluster() {
     cluster->onRequest = [](int nodeNum, const std::string& req) {
         servedRequest = true;  // a follower waits on this: no nap this turn
         lastServedMs = millis();
+        if (req.size() > 2 && req[0] == 'M') {  // the message base
+            callerMessages();  // (makes the local store)
+            return axis::bbs::serveMessages(*localMsgs, req);
+        }
         if (req == "O") {  // the oneliner wall
             std::string out = "1";
             for (auto& l : oneLiners) out += l + "\n";
@@ -1362,6 +1392,16 @@ static void handleSerial() {
                 for (auto& n : cluster->nodes())
                     Serial.printf("axis: node %d ip %s handle '%s' activity '%s'%s\n", n.number, IPAddress(n.ip).toString().c_str(),
                                   n.handle.c_str(), n.activity.c_str(), n.number == cluster->nodeNumber() ? " (this board)" : "");
+        } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
+            axis::bbs::User* u = users.find(cmd.substring(7).c_str());
+            if (!u) Serial.println("axis: no user by that handle");
+            else {
+                u->security = axis::bbs::kSysopSecurity;
+                u->status = axis::bbs::User::Status::Validated;
+                logEvent(String("sysop: ") + u->handle.c_str() + " is now a sysop (serial)");
+                saveUsers();
+                Serial.printf("axis: %s is now a sysop\n", u->handle.c_str());
+            }
         } else if (cmd == "@LED") {  // what the LED is showing and why (bench)
             ledReport = true;
         } else if (cmd == "@LOG") {  // the event log, newest last (bench)
@@ -1553,7 +1593,7 @@ static void serviceSession(int i) {
             S    st = node->state();
             bool mine = busySlot == i;
             activity = mine && (door || viewer || dosShell) ? "Doors" : mine && job ? "Transfer" : st == S::Files ? "Files"
-                     : st == S::Applying ? "Applying" : st == S::Chat ? "Chat" : st == S::Menu ? "Menu"
+                     : st == S::Applying ? "Applying" : st == S::Chat ? "Chat" : st == S::Messages ? "Messages" : st == S::Menu ? "Menu"
                      : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : "Online";
         }
         Session& me = sessions[(size_t)i];

@@ -219,6 +219,9 @@ TEST_CASE("a caller's ACCESS screen shows their permissions and toggles each one
     CHECK(a == SysopMenu::Action::ToggleDoors);
     tapButton(m, "FREE DL", &a);
     CHECK(a == SysopMenu::Action::ToggleFreeDownloads);
+    tapButton(m, "SYSOP", &a);
+    CHECK(a == SysopMenu::Action::ToggleSysop);
+    CHECK(all.find("sysop") != std::string::npos);
     CHECK(m.selectedUser() == 2);
     tapButton(m, "BACK");
     CHECK(m.screen() == SysopMenu::Screen::UserDetail);

@@ -13,6 +13,7 @@
 #include "bbs/config.h"
 #include "bbs/filebrowser.h"
 #include "bbs/filelib.h"
+#include "bbs/msgreader.h"
 #include "bbs/newuser.h"
 #include "bbs/splash.h"
 #include "bbs/users.h"
@@ -31,7 +32,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Doors, InDoor, Files, Transfer, Chat, Paging, Done };
+    enum class State { Splash, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -50,6 +51,8 @@ public:
         say_ = std::move(say);
         who_ = std::move(who);
     }
+    // the message base ([M]): nullptr = offline
+    void setMessages(MessageStore* store) { msgStore_ = store; }
     // the oneliner wall: get() the newest lines ("handle: text"), add() one; shown after login
     void setOneLiners(std::function<std::vector<std::string>()> get, std::function<void(const std::string&)> add) {
         linersGet_ = std::move(get);
@@ -92,6 +95,9 @@ private:
     std::function<void(const std::string&, bool)> say_;
     std::function<std::vector<WhoLine>()>        who_;
     std::function<std::vector<std::string>()>    linersGet_;
+    MessageStore*                                msgStore_ = nullptr;
+    std::unique_ptr<MessageReader>               msgs_;
+    std::map<std::string, int>                   lastRead_;  // without an account (tests, first builds)
     std::function<void(const std::string&)>      linersAdd_;
     std::function<SysInfo()>  info_;
     BbsConfig                 cfg_;

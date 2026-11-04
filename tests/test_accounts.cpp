@@ -287,3 +287,10 @@ TEST_CASE("a finished transfer counts toward the caller's uploads and downloads"
     r.node.transferDone(true, 1000, 100, "", 2000);
     CHECK(r.users.find("Spindle Kid")->downloads == 1000);
 }
+
+TEST_CASE("a user the sysop promoted (security 255) logs in with sysop access") {
+    PermRig r([](User& u) { u.security = 255; });
+    CHECK(r.node.isSysop());
+    PermRig plainUser;
+    CHECK_FALSE(plainUser.node.isSysop());
+}

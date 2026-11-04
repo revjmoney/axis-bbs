@@ -38,7 +38,9 @@ struct BbsConfig {
                                  {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"},
                                  {"dos", "DOS Prompt (password)", "*DOSSHELL", "dosbox", "none"}};
     // "*DOSSHELL": args = its sandbox folder on the SD card; always listed (added if a saved list lacks it)
-    std::vector<FileArea>  areas = defaultFileAreas();  // "areaN=id|name"; the defaults unless listed
+    std::vector<FileArea>  areas = defaultFileAreas();
+    std::vector<FileArea>  msgAreas{{"general", "General Chatter"}, {"cnc", "CNC Shop Talk"}, {"rotatocam", "RotatoCAM"},
+                                   {"scene", "BBS Scene & ANSI"}, {"sysop", "Ask the Sysop"}};  // "msgareaN=id|name"  // "areaN=id|name"; the defaults unless listed
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save
 };
 

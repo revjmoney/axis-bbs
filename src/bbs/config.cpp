@@ -62,6 +62,7 @@ BbsConfig parseConfig(const std::string& ini) {
     c.loginSplash = true;  // on unless the settings say login_splash=0
     std::vector<DoorEntry> listed;
     std::map<int, FileArea> areas;  // by number: sorted, and a repeated number replaces
+    std::map<int, FileArea> msgAreas;  // "msgareaN=id|name"
     size_t pos = 0;
     while (pos < ini.size()) {
         size_t end = ini.find('\n', pos);
@@ -104,6 +105,9 @@ BbsConfig parseConfig(const std::string& ini) {
                 DoorEntry d{f[0], f[1], f[2], f.size() > 3 ? f[3] : "", f.size() > 4 && !f[4].empty() ? f[4] : "doorsys"};
                 listed.push_back(d);
             }
+        } else if (k.rfind("msgarea", 0) == 0 && k.size() > 7 && std::isdigit((unsigned char)k[7])) {
+            size_t bar = v.find('|');
+            if (bar != std::string::npos && bar > 0) msgAreas[std::atoi(k.c_str() + 7)] = {v.substr(0, bar), v.substr(bar + 1)};
         } else if (k.rfind("area", 0) == 0 && k.size() > 4 && std::isdigit((unsigned char)k[4])) {
             size_t bar = v.find('|');
             if (bar != std::string::npos && bar > 0) areas[std::atoi(k.c_str() + 4)] = {v.substr(0, bar), v.substr(bar + 1)};
@@ -114,6 +118,10 @@ BbsConfig parseConfig(const std::string& ini) {
     for (auto& d : listed) dos = dos || d.exe == "*DOSSHELL";
     if (!dos) listed.push_back({"dos", "DOS Prompt (password)", "*DOSSHELL", "dosbox", "none"});
     c.doors = listed;
+    if (!msgAreas.empty()) {
+        c.msgAreas.clear();
+        for (auto& a : msgAreas) c.msgAreas.push_back(a.second);
+    }
     if (!areas.empty()) {
         c.areas.clear();
         for (auto& a : areas) c.areas.push_back(a.second);
@@ -157,6 +165,8 @@ std::string formatConfig(const BbsConfig& c) {
     }
     for (size_t i = 0; i < c.areas.size(); i++)
         kv(("area" + std::to_string(i + 1)).c_str(), c.areas[i].id + "|" + c.areas[i].name);
+    for (size_t i = 0; i < c.msgAreas.size(); i++)
+        kv(("msgarea" + std::to_string(i + 1)).c_str(), c.msgAreas[i].id + "|" + c.msgAreas[i].name);
     for (auto& u : c.unknown) kv(u.first.c_str(), u.second);
     kv("setup_done", c.setupDone ? "1" : "0");
     return s;

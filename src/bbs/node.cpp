@@ -243,7 +243,7 @@ void Node::showMenu() {
     out_ += theme::key("F", "iles   ") + theme::key("D", "oors   ") + theme::key("I", "nfo   ") + theme::key("C", "redits   ") +
             theme::key("G", "oodbye");
     out_ += "\r\n   ";
-    out_ += theme::key("T", "eleconference   ") + theme::key("W", "ho's online   ") + theme::key("P", "age the sysop");
+    out_ += theme::key("M", "essages   ") + theme::key("T", "eleconference   ") + theme::key("W", "ho's online   ") + theme::key("P", "age sysop");
     out_ += "\r\n";
     prompt();
 }
@@ -345,6 +345,7 @@ void Node::key(char c) {
                 state_ = State::Pending;
                 showPending();
             } else {
+                sysop_ = u->security >= kSysopSecurity;  // promoted by the sysop
                 loggedIn();
             }
         } else if (c == '\b' || c == 0x7f) {
@@ -461,6 +462,16 @@ void Node::key(char c) {
         lineKey(c);
         return;
     }
+    if (state_ == State::Messages) {
+        if (msgs_ && msgs_->key(c)) return;
+        msgs_.reset();
+        if (User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr)  // where they got to, kept with the account
+            if (saveUsers_) saveUsers_();
+        state_ = State::Menu;
+        out_ += "\x1b[0m\x1b[2J\x1b[H";
+        showMenu();
+        return;
+    }
     if (state_ == State::OneLinerAsk) {
         if ((c | 0x20) == 'y') {
             out_ += std::string("y\r\n   ") + theme::ORANGE + "> " + theme::WHITE;
@@ -552,6 +563,22 @@ void Node::key(char c) {
             });
             browser_->begin();
             break;
+        case 'm': {
+            User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+            if (!msgStore_ || (u && !u->permMessages)) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += msgStore_ ? "The message areas are closed to your account. Page the sysop if that's wrong."
+                                  : "The message areas are offline right now.";
+                showMenu();
+                break;
+            }
+            state_ = State::Messages;
+            msgs_.reset(new MessageReader(cfg_.msgAreas, *msgStore_, out_, handle_, u ? u->lastRead : lastRead_,
+                                          [this] { return info_().timeText; }));
+            msgs_->begin();
+            break;
+        }
         case 'd':
             if (User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr; u && !u->permDoors) {
                 out_ += "\r\n\r\n   ";
@@ -665,6 +692,7 @@ std::string Node::activityText() const {
         case State::OneLinerAsk:
         case State::OneLiner: return "oneliners";
         case State::Menu: return "main menu";
+        case State::Messages: return msgs_ ? msgs_->where() : "message areas";
         case State::Doors: return "door menu";
         case State::InDoor: return "in " + door().name;
         case State::Files: return "files: " + (browser_ ? browser_->where() : std::string("area list"));

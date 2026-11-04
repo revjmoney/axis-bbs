@@ -22,6 +22,8 @@ add_library(axiscore STATIC
     src/bbs/rotatelog.cpp
     src/bbs/dosshell.cpp
     src/bbs/ledsignal.cpp
+    src/bbs/msgbase.cpp
+    src/bbs/msgreader.cpp
     src/bbs/setupportal.cpp
     src/bbs/splash.cpp
     src/bbs/theme.cpp
@@ -87,6 +89,7 @@ add_executable(axis_tests
     tests/test_rotatelog.cpp
     tests/test_dosshell.cpp
     tests/test_ledsignal.cpp
+    tests/test_msgbase.cpp
     tests/test_setupportal.cpp
     tests/test_splash.cpp
     tests/test_transfer.cpp
