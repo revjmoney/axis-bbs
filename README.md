@@ -26,12 +26,14 @@ The software behind **AXIS UNDERGROUND CNC**. Made by Rev. J. Money, the maker o
 | Messages | Areas, quoted replies, taglines, new scan, private email | [messages](https://revjmoney.github.io/axis-bbs/docs.html#messages) |
 | Community | Oneliners, rumors, BBS list, top ten, voting booth, last callers | [community](https://revjmoney.github.io/axis-bbs/docs.html#community) |
 | Multinode | Up to 4 callers per board; more boards join as nodes of one BBS with failover | [multinode](https://revjmoney.github.io/axis-bbs/docs.html#multinode) |
+| SD card clustering | Every card in the cluster as one library, with mirrored areas (built, PC tested). **Work in progress:** the SD disc changer, each card a hot-swappable disc with FILE_ID.DIZ descriptions | [sd-pool](https://revjmoney.github.io/axis-bbs/docs.html#sd-pool) |
 | Chat | Teleconference, node messages, broadcasts, split-screen chat | [chat](https://revjmoney.github.io/axis-bbs/docs.html#chat) |
 | DOS doors | 8086 emulator with FOSSIL and DOOR.SYS: LORD 4.07, BBS Black Jack | [lord](https://revjmoney.github.io/axis-bbs/docs.html#lord) |
 | Built-in doors | ANSI Pack Viewer with ANSI movies; password-locked DOS prompt | [ansi-viewer](https://revjmoney.github.io/axis-bbs/docs.html#ansi-viewer) |
 | Accounts | New user application, validation, levels, permissions, time limits, twit flag | [accounts](https://revjmoney.github.io/axis-bbs/docs.html#accounts) |
 | Sysop console | Activity screen with status lights, KICK, touch sysop menu, local console | [cyd-console](https://revjmoney.github.io/axis-bbs/docs.html#cyd-console) |
 | Headless nodes | Plain ESP32 boards as extra nodes, set up over the AXIS-SETUP hotspot | [headless](https://revjmoney.github.io/axis-bbs/docs.html#headless) |
+| Internet extras | No-IP dynamic DNS (asked by the setup wizard), GoDaddy DNS, Discord announcements | [internet](https://revjmoney.github.io/axis-bbs/docs.html#internet) |
 
 <p>
   <a href="https://revjmoney.github.io/axis-bbs/docs.html#themes"><img src="site/media/main-menu.png" alt="Main menu in the Oblivion look" width="400"></a>

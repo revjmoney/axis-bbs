@@ -76,7 +76,7 @@
 <li><a href="#local-console" data-k="local console local console zoom keys the bbs on the board&#x27;s own screen: 80 columns crisp, or zoom.">Local console</a></li>
 <li><a href="#leds" data-k="rgb led and ring led rgb ring lights what the led colours and the headless led ring mean.">RGB LED and ring</a></li>
 <li><a href="#headless" data-k="headless nodes headless node esp32 hotspot axis-setup ring plain esp32 boards as extra nodes, set up over axis-setup.">Headless nodes</a></li>
-<li><a href="#internet" data-k="internet extras discord ddns godaddy dynamic dns web https optional discord announcements and godaddy dynamic dns.">Internet extras</a></li>
+<li><a href="#internet" data-k="internet extras discord ddns no-ip noip godaddy dynamic dns web https optional discord announcements and dynamic dns.">Internet extras</a></li>
 </ul></div>
 <div class="side-group"><div class="side-g">Reference</div><ul>
 <li><a href="#settings" data-k="settings reference settings axis.ini set keys config every axis.ini key with its default and an example.">Settings reference</a></li>
@@ -139,7 +139,7 @@
 <a class="tcard" href="#local-console" data-k="local console local console zoom keys the bbs on the board&#x27;s own screen: 80 columns crisp, or zoom."><span class="tcard-thumb"><img src="media/cyd-local-sharp.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Local console</span><span class="tcard-sum">The BBS on the board's own screen: 80 columns crisp, or ZOOM.</span></a>
 <a class="tcard" href="#leds" data-k="rgb led and ring led rgb ring lights what the led colours and the headless led ring mean."><span class="tcard-thumb"><img src="media/cyd-wfc.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">RGB LED and ring</span><span class="tcard-sum">What the LED colours and the headless LED ring mean.</span></a>
 <a class="tcard" href="#headless" data-k="headless nodes headless node esp32 hotspot axis-setup ring plain esp32 boards as extra nodes, set up over axis-setup."><span class="tcard-thumb"><img src="media/multinode-who.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Headless nodes</span><span class="tcard-sum">Plain ESP32 boards as extra nodes, set up over AXIS-SETUP.</span></a>
-<a class="tcard" href="#internet" data-k="internet extras discord ddns godaddy dynamic dns web https optional discord announcements and godaddy dynamic dns."><span class="tcard-thumb"><img src="media/rumors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Internet extras</span><span class="tcard-sum">Optional Discord announcements and GoDaddy dynamic DNS.</span></a>
+<a class="tcard" href="#internet" data-k="internet extras discord ddns no-ip noip godaddy dynamic dns web https optional discord announcements and dynamic dns."><span class="tcard-thumb"><img src="media/rumors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Internet extras</span><span class="tcard-sum">Optional Discord announcements and dynamic DNS (No-IP or GoDaddy).</span></a>
 </div></div>
 <div class="hub-group" id="area-reference" data-group="Reference"><h2 class="hub-g">Reference</h2><div class="cards-grid">
 <a class="tcard" href="#settings" data-k="settings reference settings axis.ini set keys config every axis.ini key with its default and an example."><span class="tcard-thumb"><img src="media/cyd-setup.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Settings reference</span><span class="tcard-sum">Every axis.ini key with its default and an example.</span></a>
@@ -208,7 +208,7 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
     <figure class="crt"><a class="lb" href="media/setup-wizard.png"><div class="screen"><img src="media/setup-wizard.png" alt="The setup wizard over telnet asking for the sysop handle, password, BBS name, location, board name, port and timezone" loading="lazy" width="736" height="490"></div></a><figcaption>The setup wizard over telnet</figcaption></figure>
   </div>
   <p>The wizard asks, in order (press Enter to keep the value in brackets):</p>
-  <details class="ref"><summary>Reference table: question, setting, notes (13 rows)</summary><div class="table-wrap"><table>
+  <details class="ref"><summary>Reference table: question, setting, notes (16 rows)</summary><div class="table-wrap"><table>
     <thead><tr><th>Question</th><th>Setting</th><th>Notes</th></tr></thead>
     <tbody>
       <tr><td>Sysop handle</td><td><code>sysop_handle</code></td><td>The name you log in with.</td></tr>
@@ -218,6 +218,9 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
       <tr><td>Location</td><td><code>location</code></td><td>City, state. Shown on the login screen.</td></tr>
       <tr><td>Board name on the LAN</td><td><code>board_name</code></td><td>Callers on your network dial <code>&lt;name&gt;.local</code>. Default <code>axis</code>.</td></tr>
       <tr><td>Public hostname</td><td><code>public_host</code></td><td>Optional: the name callers use from the internet.</td></tr>
+      <tr><td>No-IP update hostname</td><td>(board storage)</td><td>Optional <a href="#internet">No-IP dynamic DNS</a>: your No-IP host, or <code>all.ddnskey.com</code> for a DDNS key. Enter skips the three No-IP questions.</td></tr>
+      <tr><td>No-IP username</td><td>(board storage)</td><td>Your noip.com login, or the DDNS key's username.</td></tr>
+      <tr><td>No-IP password</td><td>(board storage)</td><td>Never shown, never put in <code>/axis.ini</code>.</td></tr>
       <tr><td>Telnet port</td><td><code>telnet_port</code></td><td>23 is standard.</td></tr>
       <tr><td>Timezone</td><td><code>timezone</code></td><td>Pick a number from the list of ten zones.</td></tr>
       <tr><td>FidoNet address</td><td><code>ftn_address</code></td><td><code>99:1/0</code> is a private test zone.</td></tr>
@@ -243,7 +246,7 @@ telnet axis.local 23</code></pre>
   <ol class="steps">
     <li><strong>Give the main board a fixed address.</strong> In your router's DHCP settings, make a DHCP reservation for the board's MAC address so its LAN IP never changes.</li>
     <li><strong>Forward a TCP port</strong> to that address, port 23 (or whatever <code>telnet_port</code> is). You can forward outside port 23 straight through, or use a different outside port such as 2323 and point it at the board's port 23. A non-standard outside port cuts down on bot traffic.</li>
-    <li><strong>Tell callers the address.</strong> Put your public hostname in <code>public_host</code>; the Oblivion look's front door shows it as the dial address. A changing home IP can be followed with the optional <a href="#internet">dynamic DNS</a> extra.</li>
+    <li><strong>Tell callers the address.</strong> Put your public hostname in <code>public_host</code>; the Oblivion look's front door shows it as the dial address. A changing home IP can be followed with the optional <a href="#internet">dynamic DNS</a> extra (No-IP, asked by the wizard, or GoDaddy).</li>
   </ol>
   <div class="warn"><strong>Heads up</strong>Only the main board needs a forward. Other boards in the cluster are reached through it.</div>
 
@@ -630,6 +633,16 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <li><strong>Checking on it.</strong> On the main's serial console, <code>@CARDS</code> lists each card board with its free space and whether it is up, and <code>@MIRROR</code> shows the mirrored areas and what the mirror is doing (copying, resting, how many copied or failed, the last event). Mirror copies also go in the event log ("mirror: copied X to node 2").</li>
   </ul>
   <p>With one SD card in the cluster (the usual setup) everything works exactly as before: the main's card is the library.</p></div></details>
+<details class="sub" id="disc-changer"><summary>SD disc changer (work in progress)</summary><div class="sub-body"><div class="note"><strong>Work in progress</strong>Designed and planned on 2026-11-04, not built yet. This is how the SD cards will work by default; pool and mirror (above) becomes a build option, <code>AXIS_SD_POOL</code>.</div>
+  <p>Every SD card becomes a disc in a CD-ROM changer, the way a Night Owl shareware CD worked on a 90s board. Swap cards and the file areas follow.</p>
+  <ul>
+    <li><strong>A card is a disc.</strong> Only the card's <code>/files</code> folder is the disc; each subfolder with files in it is one area, named after the disc (<code>NIGHTOWL 12: Games</code>). The disc name is the card's volume label. The rest of the card stays free for anything else.</li>
+    <li><strong>Hot swap.</strong> Pull a card out of any board or push one in and, within a few seconds, every node gains or loses that disc's areas, with a <strong>DISC IN</strong> or <strong>DISC OUT</strong> toast on the screens and a notice to callers online. A blank card does nothing until files show up in its <code>/files</code>.</li>
+    <li><strong>FILE_ID.DIZ built in.</strong> A file with no description gets one from the FILE_ID.DIZ inside its archive, read once when the disc goes in and saved with the disc. A FILES.BBS description wins.</li>
+    <li><strong>Never merged.</strong> The same folder on two discs is two areas.</li>
+    <li><strong>The main's card too.</strong> Its message bases and doors will be backed up on another board's card, so pulling it keeps the BBS running from the backup; uploads land on the backup meanwhile and are combined back when the card returns. The main stays main.</li>
+  </ul>
+  <p>Design: <code>docs/superpowers/specs/2026-11-04-sd-disc-changer-design.md</code>. Plan: <code>docs/superpowers/plans/2026-11-04-sd-disc-changer.md</code>.</p></div></details>
 <nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#rumor-list" data-key="p"><small><span class="hk">P</span>rev</small>Rumors list</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#chat" data-key="n"><small><span class="hk">N</span>ext</small>Chat between callers</a></nav>
 </article>
 
@@ -910,23 +923,26 @@ pio run -e headless-ring -t upload --upload-port COM7   # with the eight-light r
 
 <article class="topic" id="internet" data-group="Sysop" aria-labelledby="internet-title">
 <header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="internet-title">Internet extras</h2><dl class="msghead"><dt>Topic</dt><dd>Internet extras</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>29 of 34</dd></dl></header>
-<div class="lead"><div class="lead-text"><p class="lede">Optional Discord announcements and GoDaddy dynamic DNS.</p><p>Two extras that reach out to the internet. Both are <strong>off by default</strong>, and both are optional: the BBS needs neither.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/rumors.png"><div class="screen"><img src="media/rumors.png" alt="Rumors, one of the kinds of scene news that can be announced on Discord" loading="lazy" width="640" height="424"></div></a><figcaption>Rumors, uploads and new users are the kind of news it posts</figcaption></figure></div></div>
+<div class="lead"><div class="lead-text"><p class="lede">Optional Discord announcements and dynamic DNS (No-IP or GoDaddy).</p><p>Extras that reach out to the internet. Both are <strong>off by default</strong>, and both are optional: the BBS needs neither.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/rumors.png"><div class="screen"><img src="media/rumors.png" alt="Rumors, one of the kinds of scene news that can be announced on Discord" loading="lazy" width="640" height="424"></div></a><figcaption>Rumors, uploads and new users are the kind of news it posts</figcaption></figure></div></div>
 <div class="topic-body"><ul>
     <li><strong>Discord announcements.</strong> Scene news goes to a Discord channel webhook: new user applications, validations, accounts added, uploads, oneliners, rumors, door launches and sysop pages. Never calls, addresses or system details. <code>@everyone</code> and <code>@here</code> in caller text are neutralised.</li>
+    <li><strong>No-IP dynamic DNS.</strong> Keeps a free No-IP hostname (like <code>myboard.ddns.net</code>) pointed at your home IP. Works with an account login or a DDNS key (update host <code>all.ddnskey.com</code>, which updates every host on the key). Checked every 10 minutes, updated only when the IP changes; the first check waits a minute after boot. If No-IP refuses (bad login, unknown host, abuse) the board stops asking until you set it again, as No-IP requires. The setup wizard asks for it, or set it on the serial console.</li>
     <li><strong>GoDaddy dynamic DNS.</strong> Keeps a GoDaddy subdomain's A record pointed at your home IP, checked every 10 minutes (via api.ipify.org). Handy with <a href="#port-forwarding">port forwarding</a>.</li>
   </ul>
-  <p>Both use HTTPS with real certificate checks (the root certificates are built into the firmware). A TLS handshake needs about 45 KB of free memory, more than a busy CYD main has, so the work is done by <strong>whichever board holds these settings</strong>, typically a headless node. Every board's news travels to the main and out over the link to that board. The secrets live in that board's own NVS, set on its serial console, and never go into <code>/axis.ini</code> or the cluster settings.</p>
-  <details class="ref"><summary>Reference table: command, what it does (5 rows)</summary><div class="table-wrap"><table>
+  <p>They use HTTPS with real certificate checks (the root certificates are built into the firmware). A TLS handshake needs about 45 KB of free memory, more than a busy CYD main has, so the work is done by <strong>whichever board holds these settings</strong>, typically a headless node. No-IP is the exception: on a board without room for HTTPS it updates over plain HTTP (No-IP supports it), so it runs fine on the main. The board only tries HTTPS when the memory is there. Every board's news travels to the main and out over the link to that board. The secrets live in that board's own NVS, set on its serial console, and never go into <code>/axis.ini</code> or the cluster settings.</p>
+  <details class="ref"><summary>Reference table: command, what it does (7 rows)</summary><div class="table-wrap"><table>
     <thead><tr><th>Command</th><th>What it does</th></tr></thead>
     <tbody>
       <tr><td class="wrap"><code>@DISCORD https://discord.com/api/webhooks/...</code></td><td>Saves the channel webhook. <code>@DISCORD</code> alone turns it off.</td></tr>
       <tr><td class="wrap"><code>@DDNS domain|host|key|secret</code></td><td>Saves the GoDaddy domain, the subdomain host, and your API key and secret. <code>@DDNS</code> alone turns it off.</td></tr>
-      <tr><td><code>@WEB</code></td><td>Status: Discord on or off, the DDNS name or off, and the last result.</td></tr>
+      <tr><td class="wrap"><code>@NOIP host|username|password</code></td><td>Saves No-IP dynamic DNS on this board. <code>@NOIP</code> alone turns it off.</td></tr>
+      <tr><td><code>@NOIPNOW</code></td><td>Updates No-IP right now and prints the result (<code>good</code> or <code>nochg</code> means it worked).</td></tr>
+      <tr><td><code>@WEB</code></td><td>Status: Discord on or off, the DDNS and No-IP names or off (never the password), and the last results.</td></tr>
       <tr><td><code>@WEBTEST</code></td><td>Queues a test announcement ("is online").</td></tr>
       <tr><td><code>@WEBPING</code></td><td>Fetches your public IP over HTTPS and prints the HTTP code, the time and free memory.</td></tr>
     </tbody>
   </table></div></details>
-  <div class="note"><strong>Note</strong>On the AXIS UNDERGROUND CNC test board these extras are currently switched off.</div></div>
+  <div class="note"><strong>Note</strong>On the AXIS UNDERGROUND CNC test board, No-IP dynamic DNS is on (the main board updates it); Discord and GoDaddy are off.</div></div>
 <nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#headless" data-key="p"><small><span class="hk">P</span>rev</small>Headless nodes</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#settings" data-key="n"><small><span class="hk">N</span>ext</small>Settings reference</a></nav>
 </article>
 
@@ -1032,6 +1048,7 @@ setup_done=1</code></pre></details>
       <tr><td><code>@PUT</code>, <code>@LS</code>, <code>@RM</code>, <code>@MKDIR</code>, <code>@BAUD</code></td><td>File transfer to the board's storage, used by <code>tools/sdput.py</code> (<em>bench</em>).</td></tr>
       <tr><td><code>@DISCORD [url]</code></td><td>Discord webhook on that board, or off. See <a href="#internet">internet extras</a>.</td></tr>
       <tr><td><code>@DDNS [domain|host|key|secret]</code></td><td>GoDaddy dynamic DNS on that board, or off.</td></tr>
+      <tr><td><code>@NOIP [host|username|password]</code></td><td>No-IP dynamic DNS on that board, or off. <code>@NOIPNOW</code> updates at once. See <a href="#internet">internet extras</a>.</td></tr>
       <tr><td><code>@WEB</code>, <code>@WEBTEST</code>, <code>@WEBPING</code></td><td>Internet extras status, a test announcement, and an HTTPS test.</td></tr>
     </tbody>
   </table></div></details>
