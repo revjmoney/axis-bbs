@@ -29,6 +29,25 @@ public:
     static const size_t kStateBytes;  // the inflater and input alone, when the window is a block of its own
     static constexpr size_t kMaxEntries = 400;
 
+    // One entry pulled out a piece at a time (the viewer pauses per screen, or plays an ANSI movie at
+    // modem speed). The workspace (and state) must stay put until the stream is done with.
+    class Stream {
+    public:
+        Stream(ZipReader& zip, const ZipEntry& e, uint8_t* workspace, size_t workspaceSize, uint8_t* state = nullptr);
+        size_t read(uint8_t* out, size_t max);  // bytes given (0: the end, or trouble: see result())
+        Result result() const { return result_; }
+
+    private:
+        ZipReader& zip_;
+        ZipEntry   e_;
+        Result     result_ = Result::Ok;
+        bool       finished_ = false;
+        uint32_t   data_ = 0, inPos_ = 0, stored_ = 0;  // stored_: bytes given of a stored entry
+        void*      inf_ = nullptr;
+        uint8_t *  dict_ = nullptr, *in_ = nullptr;
+        size_t     inAvail_ = 0, inOfs_ = 0, dictOfs_ = 0, produced_ = 0, pendOfs_ = 0, pendLen_ = 0;
+    };
+
     ZipReader(ReadAt read, uint32_t fileSize) : read_(std::move(read)), size_(fileSize) {}
     bool                          open();  // finds and reads the central directory
     const std::vector<ZipEntry>&  entries() const { return entries_; }

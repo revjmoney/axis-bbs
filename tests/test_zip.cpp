@@ -135,3 +135,26 @@ TEST_CASE("zip reader says it lacks memory, not that a good ZIP is damaged, when
     auto res = r.extract(r.entries()[0], small.data(), small.size(), [](const uint8_t*, size_t) { return true; });
     CHECK(res == ZipReader::Result::NoMemory);
 }
+
+TEST_CASE("a piece can be pulled a few bytes at a time, and it matches extracting it in one go") {
+    auto z = testZip();
+    auto r = readerOver(z);
+    REQUIRE(r.open());
+    std::string whole = extract(r, "REV-AXIS.ANS");
+    std::vector<uint8_t> window(38400), state(ZipReader::kStateBytes);
+    ZipReader::Stream    s(r, r.entries()[0], window.data(), window.size(), state.data());
+    std::string          out;
+    uint8_t              buf[37];  // an odd size, to cross every boundary
+    for (size_t n; (n = s.read(buf, sizeof buf)) > 0;) out.append((const char*)buf, n);
+    CHECK(s.result() == ZipReader::Result::Ok);
+    CHECK(out == whole);
+    // a stored entry streams too
+    std::string stored = extract(r, "PROGRAM.EXE");
+    for (auto& e : r.entries())
+        if (e.name == "PROGRAM.EXE") {
+            ZipReader::Stream t(r, e, window.data(), window.size(), state.data());
+            std::string       got;
+            for (size_t n; (n = t.read(buf, sizeof buf)) > 0;) got.append((const char*)buf, n);
+            CHECK(got == stored);
+        }
+}

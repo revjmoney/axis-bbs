@@ -983,6 +983,7 @@ static void startDoor() {
         logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
         viewer.reset(new axis::bbs::AnsiViewer(callerFiles(), d.args, areaName(d.args), lentRam, lentBytes, *line));
         viewer->setZipState(zipStateTake());
+        viewer->setClock([] { return (uint32_t)millis(); });  // ANSI movies play at modem speed
         viewer->begin();
         line->flush();
         return;

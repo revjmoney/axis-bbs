@@ -10,6 +10,7 @@
 #include "bbs/ansiviewer.h"
 #include "bbs/zipreader.h"
 #include "door/bytestream.h"
+#include "net/crc.h"
 
 using namespace axis::bbs;
 using axis::door::ScriptStream;
@@ -78,8 +79,21 @@ TEST_CASE("choosing a piece shows the art without its SAUCE record") {
     r.v.begin();
     r.run("1\r");
     std::string out = r.run("1\r");
+    out += r.run("n");  // n: the rest without stopping (two statements: + has no order)
     CHECK(out.find("line 40") != std::string::npos);
     CHECK(out.find("SAUCE00") == std::string::npos);
+}
+
+TEST_CASE("a long piece stops after each screen until the caller asks for more") {
+    Rig         r;
+    r.v.begin();
+    r.run("1\r");
+    std::string first = r.run("1\r");
+    CHECK(first.find("more") != std::string::npos);
+    CHECK(first.find("line 40") == std::string::npos);
+    std::string rest = r.run("\r");
+    rest += r.run("\r");
+    CHECK(rest.find("line 40") != std::string::npos);
 }
 
 TEST_CASE("Enter after a piece shows the next one") {
@@ -87,6 +101,7 @@ TEST_CASE("Enter after a piece shows the next one") {
     r.v.begin();
     r.run("1\r");
     r.run("1\r");
+    r.run("n");
     CHECK(r.run("\r").find("AXIS test pack") != std::string::npos);
 }
 
@@ -105,4 +120,77 @@ TEST_CASE("a hang-up ends the viewer") {
     r.v.begin();
     r.line.hangUp();
     CHECK_FALSE(r.v.step());
+}
+
+namespace {
+// a stored (uncompressed) ZIP of the given files, built in memory
+std::string storedZip(const std::vector<std::pair<std::string, std::string>>& files) {
+    std::string z, cd;
+    auto        u16 = [](std::string& s, uint32_t v) { s += (char)(v & 255), s += (char)(v >> 8 & 255); };
+    auto        u32 = [&](std::string& s, uint32_t v) { u16(s, v & 0xFFFF), u16(s, v >> 16); };
+    for (auto& f : files) {
+        uint32_t crc = axis::net::crc32((const uint8_t*)f.second.data(), f.second.size()), off = (uint32_t)z.size();
+        u32(z, 0x04034b50), u16(z, 10), u16(z, 0), u16(z, 0), u16(z, 0), u16(z, 0x21);
+        u32(z, crc), u32(z, (uint32_t)f.second.size()), u32(z, (uint32_t)f.second.size());
+        u16(z, (uint32_t)f.first.size()), u16(z, 0);
+        z += f.first + f.second;
+        u32(cd, 0x02014b50), u16(cd, 20), u16(cd, 10), u16(cd, 0), u16(cd, 0), u16(cd, 0), u16(cd, 0x21);
+        u32(cd, crc), u32(cd, (uint32_t)f.second.size()), u32(cd, (uint32_t)f.second.size());
+        u16(cd, (uint32_t)f.first.size()), u16(cd, 0), u16(cd, 0), u16(cd, 0), u16(cd, 0), u32(cd, 0), u32(cd, off);
+        cd += f.first;
+    }
+    uint32_t at = (uint32_t)z.size();
+    z += cd;
+    u32(z, 0x06054b50), u16(z, 0), u16(z, 0), u16(z, (uint32_t)files.size()), u16(z, (uint32_t)files.size());
+    u32(z, (uint32_t)cd.size()), u32(z, at), u16(z, 0);
+    return z;
+}
+std::string movie() {  // an ANSI movie: the same spot redrawn, frame after frame
+    std::string m = "\x1b[2J";
+    for (int i = 0; i < 60; i++) m += "\x1b[10;30H\x1b[1;33mframe " + std::to_string(i) + "   \x1b[12;30H*";
+    return m;
+}
+}  // namespace
+
+TEST_CASE("an ANSI movie plays at modem speed, not all at once") {
+    Rig r;
+    r.lib.files.clear();
+    r.lib.files["MOVIES.ZIP"] = storedZip({{"TIE.ANS", movie()}});
+    r.lib.files["FILES.BBS"] = "MOVIES.ZIP ANSI movies\r\n";
+    uint32_t now = 0;
+    r.v.setClock([&now] { return now; });
+    r.v.begin();
+    r.run("1\r");
+    std::string start = r.run("1\r");
+    CHECK(start.find("frame 59") == std::string::npos);  // not yet
+    std::string all = start;
+    for (int k = 0; k < 40 && all.find("frame 59") == std::string::npos; k++) {
+        now += 500;
+        all += r.run("");
+    }
+    CHECK(all.find("frame 59") != std::string::npos);  // it gets there
+    CHECK(now >= 2000);                                // at 9600 baud the movie takes a few seconds
+    CHECK(all.find("more") == std::string::npos);      // a movie never stops for "more"
+}
+
+TEST_CASE("a movie can be stopped, and the speed changed while it plays") {
+    Rig r;
+    r.lib.files.clear();
+    r.lib.files["MOVIES.ZIP"] = storedZip({{"TIE.ANS", movie()}});
+    r.lib.files["FILES.BBS"] = "MOVIES.ZIP ANSI movies\r\n";
+    uint32_t now = 0;
+    r.v.setClock([&now] { return now; });
+    r.v.begin();
+    r.run("1\r");
+    r.run("1\r");
+    now += 300;
+    r.run("1");  // 2400 baud
+    now += 300;
+    size_t slow = r.run("").size();
+    r.run("4");  // 57600
+    now += 300;
+    size_t fast = r.run("").size();
+    CHECK(fast > slow * 3);
+    std::string out = r.run("q");
+    CHECK(out.find("TIE.ANS") != std::string::npos);  // back at the list of pieces
 }

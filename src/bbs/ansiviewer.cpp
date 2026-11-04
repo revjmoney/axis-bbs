@@ -150,17 +150,74 @@ void AnsiViewer::showPieces() {
 
 void AnsiViewer::showPiece(size_t i) {
     piece_ = i;
-    st_ = St::Shown;
     const ZipEntry& e = zip_->entries()[pieces_[i]];
     send(CLS);
-    bool ended = false;  // past the 1Ah end-of-file mark: the SAUCE record and padding stay hidden
-    auto res = zip_->extract(e, ws_, wsSize_, [&](const uint8_t* p, size_t n) {
-        size_t k = 0;
-        while (k < n && p[k] != 0x1A) k++;
-        if (k) line_.write(p, k);
-        if (k < n) ended = true;
-        return !ended && line_.carrier();
-    }, state_);
+    stream_.reset(new ZipReader::Stream(*zip_, e, ws_, wsSize_, state_));
+    chunk_.assign(4096, '\0');  // the start, to tell a movie from a still piece
+    chunk_.resize(stream_->read((uint8_t*)&chunk_[0], chunk_.size()));
+    chunkPos_ = 0;
+    int moves = 0;  // absolute cursor moves and cursor-ups: an animation redraws in place
+    for (size_t k = 0; k + 2 < chunk_.size(); k++)
+        if (chunk_[k] == 27 && chunk_[k + 1] == '[') {
+            size_t m = k + 2;
+            while (m < chunk_.size() && ((chunk_[m] >= '0' && chunk_[m] <= '9') || chunk_[m] == ';')) m++;
+            if (m < chunk_.size() && (chunk_[m] == 'H' || chunk_[m] == 'f' || chunk_[m] == 'A')) moves++;
+        }
+    movie_ = moves >= 10;
+    nonstop_ = false;
+    waiting_ = false;
+    lines_ = 0;
+    lastPump_ = now();
+    st_ = St::Playing;
+    pump();
+}
+
+void AnsiViewer::pump() {
+    if (st_ != St::Playing || waiting_) return;
+    size_t budget = 2048;  // a still piece: a screenful a turn at most
+    if (movie_ && clock_) {  // a movie: what the modem would have carried since last time
+        uint32_t t = now(), elapsed = t - lastPump_;
+        budget = (size_t)((uint64_t)elapsed * (baud_ / 10) / 1000);
+        if (budget == 0) return;
+        if (budget > 2048) budget = 2048;
+        lastPump_ = t;
+    }
+    std::string out;
+    bool        end = false;
+    while (out.size() < budget) {
+        if (chunkPos_ >= chunk_.size()) {  // the next part out of the ZIP
+            chunk_.assign(512, '\0');
+            chunk_.resize(stream_->read((uint8_t*)&chunk_[0], chunk_.size()));
+            chunkPos_ = 0;
+            if (chunk_.empty()) {
+                end = true;
+                break;
+            }
+        }
+        char c = chunk_[chunkPos_++];
+        if (c == 0x1A) {  // the end-of-file mark: the SAUCE record and padding stay hidden
+            end = true;
+            break;
+        }
+        out += c;
+        if (c == '\n' && !movie_ && !nonstop_ && ++lines_ >= kPageLines) {  // a screenful: wait for the caller
+            lines_ = 0;
+            waiting_ = true;
+            out += std::string("\x1b[0m") + DIM + "-- " + CYAN + "[Enter]" + DIM + " more  " + CYAN + "[N]" + DIM + "onstop  " + CYAN +
+                   "[Q]" + DIM + "uit --";
+            break;
+        }
+    }
+    if (!out.empty()) send(out);
+    if (end) finishPiece(stream_->result());
+}
+
+void AnsiViewer::finishPiece(ZipReader::Result res) {
+    stream_.reset();
+    chunk_.clear();
+    st_ = St::Shown;
+    const ZipEntry& e = zip_->entries()[pieces_[piece_]];
+    size_t          i = piece_;
     std::string s = "\x1b[0m\r\n";
     if (res == ZipReader::Result::Unsupported) s += std::string(AMBER) + "   (packed with an old PKZIP method this viewer can't open)\r\n";
     else if (res != ZipReader::Result::Ok && res != ZipReader::Result::Stopped) s += std::string(AMBER) + "   (this piece is damaged)\r\n";
@@ -200,6 +257,31 @@ bool AnsiViewer::key(char c) {
             if (n >= 1 && n <= (int)pieces_.size()) showPiece((size_t)n - 1);
             else showPieces();
             return true;
+        case St::Playing:
+            if ((c | 0x20) == 'q') {  // stop: back to the list of pieces
+                stream_.reset();
+                chunk_.clear();
+                send("\x1b[0m");
+                showPieces();
+                return true;
+            }
+            if (movie_) {
+                if (c == ' ') {  // pause, play
+                    waiting_ = !waiting_;
+                    lastPump_ = now();
+                } else if (c >= '1' && c <= '4') {  // 2400, 9600, 19200, 57600 baud
+                    const uint32_t speeds[4] = {2400, 9600, 19200, 57600};
+                    baud_ = speeds[c - '1'];
+                }
+                return true;
+            }
+            if (waiting_ && (c == '\r' || c == ' ' || (c | 0x20) == 'n')) {  // more: the prompt goes, the art goes on
+                if ((c | 0x20) == 'n') nonstop_ = true;
+                waiting_ = false;
+                send("\r\x1b[K");
+                pump();
+            }
+            return true;
         case St::Shown:
             switch (c | 0x20) {
                 case '\r' | 0x20:
@@ -235,6 +317,7 @@ bool AnsiViewer::step() {
         if (!key((char)c)) return false;
         if (!line_.carrier()) return false;
     }
+    pump();  // the piece playing goes on
     return true;
 }
 

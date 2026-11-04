@@ -66,58 +66,103 @@ bool ZipReader::open() {
     return true;
 }
 
-ZipReader::Result ZipReader::extract(const ZipEntry& e, uint8_t* ws, size_t wsSize, const Sink& sink, uint8_t* state) {
-    if (e.method != 0 && e.method != 8) return Result::Unsupported;
+ZipReader::Stream::Stream(ZipReader& zip, const ZipEntry& e, uint8_t* ws, size_t wsSize, uint8_t* state) : zip_(zip), e_(e) {
+    if (e.method != 0 && e.method != 8) {
+        result_ = Result::Unsupported;
+        finished_ = true;
+        return;
+    }
     uint8_t lh[30];
-    if (!read_(e.local, lh, 30)) return Result::ReadError;
-    if (u32(lh) != 0x04034b50) return Result::Corrupt;
-    uint32_t data = e.local + 30 + u16(lh + 26) + u16(lh + 28);
-    if (e.method == 0) {
-        uint8_t buf[512];
-        for (uint32_t done = 0; done < e.usize;) {
-            uint32_t n = e.usize - done < sizeof buf ? e.usize - done : (uint32_t)sizeof buf;
-            if (!read_(data + done, buf, n)) return Result::ReadError;
-            if (!sink(buf, n)) return Result::Stopped;
-            done += n;
-        }
-        return Result::Ok;
+    if (!zip.read_(e.local, lh, 30)) {
+        result_ = Result::ReadError;
+        finished_ = true;
+        return;
     }
-    tinfl_decompressor* inf;
-    uint8_t *           dict, *in;  // dict: the 32 KB ring, the output window
+    if (u32(lh) != 0x04034b50) {
+        result_ = Result::Corrupt;
+        finished_ = true;
+        return;
+    }
+    data_ = e.local + 30 + u16(lh + 26) + u16(lh + 28);
+    if (e.method == 0) return;
     if (state && wsSize >= TINFL_LZ_DICT_SIZE) {
-        inf = (tinfl_decompressor*)state;
-        in = state + align8(sizeof(tinfl_decompressor));
-        dict = ws;
+        inf_ = state;
+        in_ = state + align8(sizeof(tinfl_decompressor));
+        dict_ = ws;
     } else if (wsSize >= kWorkspace) {
-        inf = (tinfl_decompressor*)ws;
-        dict = ws + align8(sizeof(tinfl_decompressor));
-        in = dict + TINFL_LZ_DICT_SIZE;
+        inf_ = ws;
+        dict_ = ws + align8(sizeof(tinfl_decompressor));
+        in_ = dict_ + TINFL_LZ_DICT_SIZE;
     } else {
-        return Result::NoMemory;
+        result_ = Result::NoMemory;
+        finished_ = true;
+        return;
     }
-    tinfl_init(inf);
-    uint32_t inPos = 0;            // compressed bytes read so far
-    size_t   inAvail = 0, inOfs = 0, dictOfs = 0, produced = 0;
-    for (;;) {
-        if (inAvail == 0 && inPos < e.csize) {
-            size_t n = e.csize - inPos < kInput ? e.csize - inPos : kInput;
-            if (!read_(data + inPos, in, n)) return Result::ReadError;
-            inPos += (uint32_t)n;
-            inAvail = n;
-            inOfs = 0;
+    tinfl_init((tinfl_decompressor*)inf_);
+}
+
+size_t ZipReader::Stream::read(uint8_t* out, size_t max) {
+    size_t got = 0;
+    if (e_.method == 0) {  // stored: straight from the file
+        while (got < max && stored_ < e_.usize && !finished_) {
+            uint32_t n = e_.usize - stored_ < (uint32_t)(max - got) ? e_.usize - stored_ : (uint32_t)(max - got);
+            if (!zip_.read_(data_ + stored_, out + got, n)) {
+                result_ = Result::ReadError;
+                finished_ = true;
+                break;
+            }
+            stored_ += n;
+            got += n;
         }
-        size_t inBytes = inAvail, outBytes = TINFL_LZ_DICT_SIZE - dictOfs;
-        tinfl_status st = tinfl_decompress(inf, in + inOfs, &inBytes, dict, dict + dictOfs, &outBytes,
-                                           inPos < e.csize ? TINFL_FLAG_HAS_MORE_INPUT : 0);
-        inOfs += inBytes;
-        inAvail -= inBytes;
-        if (outBytes && !sink(dict + dictOfs, outBytes)) return Result::Stopped;
-        produced += outBytes;
-        dictOfs = (dictOfs + outBytes) & (TINFL_LZ_DICT_SIZE - 1);
-        if (st == TINFL_STATUS_DONE) return produced == e.usize ? Result::Ok : Result::Corrupt;
-        if (st < 0) return Result::Corrupt;
-        if (st == TINFL_STATUS_NEEDS_MORE_INPUT && inAvail == 0 && inPos >= e.csize) return Result::Corrupt;
+        return got;
     }
+    while (got < max) {
+        if (pendLen_) {  // what the last inflate step made, still to hand out
+            size_t k = pendLen_ < max - got ? pendLen_ : max - got;
+            std::memcpy(out + got, dict_ + pendOfs_, k);
+            got += k;
+            pendOfs_ += k;
+            pendLen_ -= k;
+            continue;
+        }
+        if (finished_) break;
+        if (inAvail_ == 0 && inPos_ < e_.csize) {
+            size_t n = e_.csize - inPos_ < kInput ? e_.csize - inPos_ : kInput;
+            if (!zip_.read_(data_ + inPos_, in_, n)) {
+                result_ = Result::ReadError;
+                finished_ = true;
+                break;
+            }
+            inPos_ += (uint32_t)n;
+            inAvail_ = n;
+            inOfs_ = 0;
+        }
+        size_t       inBytes = inAvail_, outBytes = TINFL_LZ_DICT_SIZE - dictOfs_;
+        tinfl_status st = tinfl_decompress((tinfl_decompressor*)inf_, in_ + inOfs_, &inBytes, dict_, dict_ + dictOfs_, &outBytes,
+                                           inPos_ < e_.csize ? TINFL_FLAG_HAS_MORE_INPUT : 0);
+        inOfs_ += inBytes;
+        inAvail_ -= inBytes;
+        pendOfs_ = dictOfs_;
+        pendLen_ = outBytes;
+        produced_ += outBytes;
+        dictOfs_ = (dictOfs_ + outBytes) & (TINFL_LZ_DICT_SIZE - 1);
+        if (st == TINFL_STATUS_DONE) {
+            finished_ = true;
+            if (produced_ != e_.usize) result_ = Result::Corrupt;
+        } else if (st < 0 || (st == TINFL_STATUS_NEEDS_MORE_INPUT && inAvail_ == 0 && inPos_ >= e_.csize)) {
+            finished_ = true;
+            result_ = Result::Corrupt;
+        }
+    }
+    return got;
+}
+
+ZipReader::Result ZipReader::extract(const ZipEntry& e, uint8_t* ws, size_t wsSize, const Sink& sink, uint8_t* state) {
+    Stream  s(*this, e, ws, wsSize, state);
+    uint8_t buf[512];
+    for (size_t n; (n = s.read(buf, sizeof buf)) > 0;)
+        if (!sink(buf, n)) return Result::Stopped;
+    return s.result();
 }
 
 }  // namespace axis::bbs
