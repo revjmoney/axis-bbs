@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rev. J. Money
+#include <map>
+#include <regex>
+#include <string>
+#include <vector>
+
+#include "doctest.h"
+#include "bbs/node.h"
+#include "bbs/password.h"
+#include "bbs/users.h"
+
+using namespace axis::bbs;
+
+namespace {
+SysInfo     info() { return SysInfo{}; }
+uint32_t    rng() { return 7; }
+std::string plain(const std::string& s) { return std::regex_replace(s, std::regex("\x1b\\[[0-9;?]*[A-Za-z]"), ""); }
+
+struct Rig {
+    std::map<std::string, std::vector<std::string>> lists;  // the main's lists: rumors, bbslist
+    UserStore                                       users;
+    Node                                            n;
+    explicit Rig(BbsConfig c = BbsConfig()) : n(1, info, c) {
+        n.setLists([this](const std::string& l) { return lists[l]; }, [this](const std::string& l, const std::string& v) { lists[l].push_back(v); });
+    }
+    void login(const char* handle = "Rev") {
+        n.begin(0);
+        type(std::string(handle) + "\r");
+    }
+    std::string type(const std::string& s) {
+        n.input((const uint8_t*)s.data(), s.size(), 1000);
+        return plain(n.takeOutput());
+    }
+};
+}  // namespace
+
+TEST_CASE("[R]umors: add one anonymously, list them, and one shows over the main menu") {
+    Rig r;
+    r.lists["rumors"] = {"the sysop runs LORD on a chip the size of a stamp"};
+    r.login();
+    std::string menu = r.type("?");
+    CHECK(menu.find("the sysop runs LORD") != std::string::npos);  // a rumor over the menu
+    r.type("r");
+    std::string out = r.type("a");
+    CHECK(out.find("rumor") != std::string::npos);
+    r.type("the ring board is haunted\r");
+    REQUIRE(r.lists["rumors"].size() == 2);
+    CHECK(r.lists["rumors"][1] == "the ring board is haunted");  // no name on it: rumors are anonymous
+    out = r.type("l");
+    CHECK(out.find("the ring board is haunted") != std::string::npos);
+    r.type("q");
+    CHECK(r.n.state() == Node::State::Menu);
+}
+
+TEST_CASE("[B]BS list: other boards to call, and callers can add one") {
+    Rig r;
+    r.lists["bbslist"] = {"Particles BBS|particlesbbs.dyndns.org:6400|Retro scene"};
+    r.login();
+    std::string out = r.type("b");
+    CHECK(out.find("Particles BBS") != std::string::npos);
+    CHECK(out.find("particlesbbs.dyndns.org:6400") != std::string::npos);
+    r.type("a");
+    r.type("Blackflag\r");
+    r.type("blackflag.acid.org\r");
+    r.type("ACiD's board\r");
+    REQUIRE(r.lists["bbslist"].size() == 2);
+    CHECK(r.lists["bbslist"][1] == "Blackflag|blackflag.acid.org|ACiD's board");
+}
+
+TEST_CASE("top ten: callers ranked by calls, by uploads and by posts") {
+    Rig r;
+    auto add = [&](const char* h, uint32_t calls, uint32_t up) {
+        User u;
+        u.handle = h;
+        u.salt = makeSalt(rng);
+        u.hash = hashPassword(u.salt, "pass1234");
+        u.status = User::Status::Validated;
+        u.calls = calls;
+        u.uploads = up;
+        r.users.add(u);
+    };
+    add("Kid Chips", 40, 0);
+    add("Spindle", 90, 5 * 1024 * 1024);
+    add("Lurker", 3, 0);
+    r.n.setAccounts(&r.users, [] {}, rng, [] { return 1800000000u; });
+    r.n.begin(0);
+    r.type("Lurker\rpass1234\r");
+    std::string out = r.type("k");
+    size_t      sp = out.find("Spindle"), kid = out.find("Kid Chips");
+    REQUIRE(sp != std::string::npos);
+    REQUIRE(kid != std::string::npos);
+    CHECK(sp < kid);  // most calls first
+    CHECK(out.find("5120 KB") != std::string::npos);  // top uploader's bytes
+}
+
+TEST_CASE("a BULLETIN.ANS from the card shows after login, before the main menu") {
+    BbsConfig c;
+    Rig       r(c);
+    r.n.setArt([](const std::string& name) { return name == "BULLETIN.ANS" ? std::string("SYSTEM NEWS: LORD is back") : std::string(); });
+    r.login();
+    std::string out = plain(r.n.takeOutput());
+    (void)out;
+    CHECK(r.n.state() == Node::State::Bulletin);
+    std::string after = r.type(" ");
+    CHECK(r.n.state() == Node::State::Menu);
+    (void)after;
+}

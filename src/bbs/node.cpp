@@ -8,6 +8,7 @@
 #include "bbs/password.h"
 #include "bbs/theme.h"
 
+#include <algorithm>
 #include <cstring>
 #include <cctype>
 #include <cstdio>
@@ -121,6 +122,14 @@ void Node::loggedIn() {
 }
 
 void Node::menuOrLiners() {
+    if (state_ != State::Bulletin && art_) {  // the sysop's BULLETIN.ANS first, once per call
+        std::string b = art_("BULLETIN.ANS");
+        if (!b.empty()) {
+            state_ = State::Bulletin;
+            out_ += theme::CLS + mci(b) + "\r\n   " + theme::DGREY + "(press a key)" + theme::RESET;
+            return;
+        }
+    }
     if (!linersGet_) {
         showMainMenu();
         return;
@@ -448,7 +457,7 @@ void Node::showMainMenu() {
         } else {
             static const BarItem items[] = {{'M', "Message Bases"}, {'F', "File Vaults"},    {'D', "Doors"},         {'T', "Teleconference"},
                                             {'W', "Who's Online"},  {'O', "Oneliners"},      {'U', "User Settings"}, {'Y', "Yell for SysOp"},
-                                            {'I', "System Info"},   {'C', "Credits"},        {'G', "Goodbye"},       {'N', "MultiNode"}};
+                                            {'I', "System Info"},   {'C', "Credits"},        {'G', "Goodbye"},       {'N', "MultiNode"}};  // (R rumors, B BBS list, K top ten, E email, S scan work too)
             out_ += theme::titleBar("Main Menu");
             out_ += std::string("  ") + theme::ORANGE + "\xc9" + std::string(74, '\xcd') + "\xbb\r\n";
             char b[160];
@@ -460,6 +469,7 @@ void Node::showMainMenu() {
             }
             out_ += std::string("  ") + theme::ORANGE + "\xc8" + std::string(74, '\xcd') + "\xbc" + theme::TEXT;
         }
+        rumorLine();
         prompt();
         return;
     }
@@ -474,8 +484,10 @@ void Node::showMainMenu() {
                                        {"[N]", "multinode: notes, broadcasts, split chat"},
                                        {"[L]", "last callers"},
                                        {"[E] [S]", "private email, scan for new messages"},
+                                       {"[R] [B] [K]", "rumors, BBS list, top ten"},
                                        {"[I] [C]", "system info, credits"},
                                        {"[G]", "goodbye"}});
+    rumorLine();
     prompt();
 }
 
@@ -508,6 +520,15 @@ void Node::key(char c) {
     }
     if (state_ == State::Matrix) {
         matrixKey(c);
+        return;
+    }
+    if (state_ == State::Bulletin) {  // any key: on to the oneliners or the menu
+        menuOrLiners();
+        if (state_ == State::Bulletin) showMainMenu();
+        return;
+    }
+    if (state_ == State::Rumors || state_ == State::BbsList) {
+        extrasKey(c);
         return;
     }
     if (splitAsk_ && (state_ == State::Menu || state_ == State::MultiNode)) {  // answering a split chat request
@@ -781,7 +802,7 @@ void Node::key(char c) {
     }
     if (state_ != State::Menu) return;
     if (o2() && o2Keys_ && c != '?') {  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
-        static const char from[] = "acefgklmorstwxy+=./!", to[] = "utepguwmdoiflfuuncgs";  // a account, c chat, e email, f feedback, l list users, o open doors, r rumors, t transfers, w recent callers ...
+        static const char from[] = "abcefgklmorstwxy+=./!-", to[] = "ubtepguwmdriflfuuncgsk";  // a account, c chat, e email, f feedback, l list users, o open doors, r rumors, t transfers, w recent callers ...
         const char*       hit = std::strchr(from, (char)(c | 0x20));
         if (!hit || !*hit) {
             out_ += std::string("\r\n   ") + AMBER + "Not on this board yet." + theme::TEXT;
@@ -895,6 +916,15 @@ void Node::key(char c) {
         }
         case 'n':
             showMultiNode();
+            break;
+        case 'r':
+            showRumors();
+            break;
+        case 'b':
+            showBbsList();
+            break;
+        case 'k':
+            showTopTen();
             break;
         case 'l':
             showLastCallers();
@@ -1217,6 +1247,132 @@ void Node::showLastCallers() {
     showMenu();
 }
 
+// ---- Oblivion/Iniquity extras: rumors, the BBS list, top ten
+
+void Node::rumorLine() {
+    std::vector<std::string> all = listGet_ ? listGet_("rumors") : std::vector<std::string>{};
+    if (all.empty()) return;
+    const std::string& r = all[(lastInput_ / 1000 + all.size() * 7 + node_) % all.size()];
+    out_ += std::string("\r\n  ") + theme::DGREY + "rumor: " + theme::HOT + r.substr(0, 68) + theme::TEXT;
+}
+
+void Node::showRumors() {
+    state_ = State::Rumors;
+    step_ = 0;
+    out_ += "\r\n\r\n   " + theme::fade("RUMORS") + theme::TEXT + "  anonymous, like the old days\r\n   " + theme::key("A", "dd one   ") +
+            theme::key("L", "ist   ") + theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
+}
+
+void Node::showBbsList() {
+    state_ = State::BbsList;
+    step_ = 0;
+    std::vector<std::string> all = listGet_ ? listGet_("bbslist") : std::vector<std::string>{};
+    out_ += theme::CLS;
+    out_ += "\r\n" + theme::drip("BBS LIST");
+    out_ += std::string("   ") + theme::DGREY + std::string(70, '\xc4') + "\r\n";
+    if (all.empty()) out_ += std::string("   ") + theme::TEXT + "(none yet: add the boards you call)\r\n";
+    char b[200];
+    for (const std::string& l : all) {
+        size_t      a = l.find('|'), z = a == std::string::npos ? a : l.find('|', a + 1);
+        std::string name = l.substr(0, a), addr = a == std::string::npos ? "" : l.substr(a + 1, z == std::string::npos ? z : z - a - 1),
+                    about = z == std::string::npos ? "" : l.substr(z + 1);
+        std::snprintf(b, sizeof b, "   %s%-22.22s %s%-30.30s %s%.20s\r\n", theme::WHITE, name.c_str(), theme::HOT, addr.c_str(), theme::TEXT, about.c_str());
+        out_ += b;
+    }
+    out_ += "\r\n   " + theme::key("A", "dd a board   ") + theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
+}
+
+void Node::extrasKey(char c) {
+    bool rumors = state_ == State::Rumors;
+    if (step_ == 0) {  // the little menu
+        switch (c | 0x20) {
+            case 'a':
+                step_ = 1;
+                line_.clear();
+                entry_.clear();
+                out_ += std::string("\r\n   ") + theme::TEXT + (rumors ? "Your rumor (nobody sees who wrote it):" : "Board name:") + "\r\n   " +
+                        theme::ORANGE + "> " + theme::WHITE;
+                break;
+            case 'l':
+                if (rumors) {
+                    std::vector<std::string> all = listGet_ ? listGet_("rumors") : std::vector<std::string>{};
+                    out_ += "\r\n";
+                    size_t from = all.size() > 15 ? all.size() - 15 : 0;
+                    for (size_t i = from; i < all.size(); i++) out_ += std::string("   ") + theme::HOT + "\xfa " + theme::WHITE + all[i] + "\r\n";
+                    if (all.empty()) out_ += std::string("   ") + theme::TEXT + "(no rumors yet)\r\n";
+                    showRumors();
+                }
+                break;
+            case 'q': showMainMenu(); break;
+            default: break;
+        }
+        return;
+    }
+    if (c == 8 || c == 127) {
+        if (!line_.empty()) {
+            line_.pop_back();
+            out_ += "\b \b";
+        }
+        return;
+    }
+    if (c != '\r') {
+        if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && c != '|' && line_.size() < (size_t)(rumors ? 70 : 40)) {
+            line_ += c;
+            out_ += c;
+        }
+        return;
+    }
+    std::string got = line_;
+    line_.clear();
+    if (got.empty()) {  // Enter alone: never mind
+        step_ = 0;
+        rumors ? showRumors() : showBbsList();
+        return;
+    }
+    if (rumors) {
+        if (listAdd_) listAdd_("rumors", got);
+        out_ += std::string("\r\n   ") + theme::TEXT + "The rumor is out there now.";
+        showRumors();
+        return;
+    }
+    entry_ += (step_ > 1 ? "|" : "") + got;
+    static const char* const asks[] = {"", "Address (host:port):", "About it (a few words):"};
+    if (++step_ <= 3) {
+        out_ += std::string("\r\n   ") + theme::TEXT + asks[step_ - 1] + "\r\n   " + theme::ORANGE + "> " + theme::WHITE;
+        return;
+    }
+    if (listAdd_) listAdd_("bbslist", entry_);
+    showBbsList();
+}
+
+void Node::showTopTen() {
+    if (!users_) {
+        out_ += std::string("\r\n\r\n   ") + AMBER + "Top ten needs accounts on this board." + theme::TEXT;
+        showMenu();
+        return;
+    }
+    std::vector<const User*> all;
+    for (const User& u : users_->all())
+        if (u.status == User::Status::Validated) all.push_back(&u);
+    out_ += theme::CLS;
+    out_ += "\r\n" + theme::drip("TOP TEN");
+    char b[160];
+    auto board = [&](const char* title, uint64_t (*value)(const User&), const char* unit) {
+        std::vector<const User*> v = all;
+        std::sort(v.begin(), v.end(), [&](const User* a, const User* z) { return value(*a) > value(*z); });
+        out_ += std::string("   ") + theme::fade(title) + "\r\n";
+        for (size_t i = 0; i < v.size() && i < 10 && value(*v[i]) > 0; i++) {
+            std::snprintf(b, sizeof b, "   %s%2u. %s%-24.24s %s%llu %s\r\n", theme::KEY, (unsigned)(i + 1), theme::WHITE, v[i]->handle.c_str(), theme::TEXT,
+                          (unsigned long long)value(*v[i]), unit);
+            out_ += b;
+        }
+        out_ += "\r\n";
+    };
+    board("MOST CALLS", [](const User& u) -> uint64_t { return u.calls; }, "calls");
+    board("TOP UPLOADERS", [](const User& u) -> uint64_t { return u.uploads / 1024; }, "KB");
+    showMenu();
+}
+
 void Node::showNotes() {
     for (const std::string& n : notes_) out_ += "\r\n" + n;
     notes_.clear();
@@ -1375,6 +1531,9 @@ std::string Node::activityText() const {
         case State::Settings: return "account settings";
         case State::MultiNode: return "multinode menu";
         case State::Email: return "email";
+        case State::Rumors: return "rumors";
+        case State::BbsList: return "BBS list";
+        case State::Bulletin: return "bulletin";
         case State::Split: return "split-screen chat";
         case State::Done: return "leaving";
     }

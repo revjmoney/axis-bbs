@@ -34,7 +34,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -78,6 +78,12 @@ public:
     void        setLastCallers(std::function<std::vector<std::string>()> get, std::function<void(const std::string&)> add) {
         callersGet_ = std::move(get);
         callersAdd_ = std::move(add);
+    }
+    // the board's shared lists ("rumors": anonymous one-liners, "bbslist": "name|address|about"), kept on the main
+    void        setLists(std::function<std::vector<std::string>(const std::string&)> get,
+                         std::function<void(const std::string&, const std::string&)> add) {
+        listGet_ = std::move(get);
+        listAdd_ = std::move(add);
     }
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
     void        begin(uint32_t nowMs);
@@ -129,6 +135,15 @@ private:
     std::function<void(int, int, const std::string&)> send_;
     std::function<std::vector<std::string>()> callersGet_;
     std::function<void(const std::string&)>   callersAdd_;
+    std::function<std::vector<std::string>(const std::string&)>        listGet_;
+    std::function<void(const std::string&, const std::string&)>       listAdd_;
+    int                       step_ = 0;            // which question a multi-step entry is on
+    std::string               entry_;               // the answers so far ("name|address|...")
+    void                      showRumors();
+    void                      showBbsList();
+    void                      showTopTen();
+    void                      rumorLine();          // one random rumor, over the main menu
+    void                      extrasKey(char c);    // Rumors and BbsList states
     void                      showLastCallers();
     bool                      available_ = true;
     uint32_t                  prevCall_ = 0;  // the caller's last call before this one (unix time)

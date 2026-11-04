@@ -178,7 +178,7 @@ def main_menu(out):
     cols = [
         [('a', 'account/tagline'), ('c', 'chat'), ('e', 'email'), ('f', 'feedback'), ('!', 'new scan'), ('g', 'goodbye')],
         [('l', 'list users'), ('m', 'messages'), ('o', 'open doors'), ('r', 'rumors'), ('s', 'system stats'), ('w', 'recent callers')],
-        [('t', 'transfers'), ('x', 'file vaults'), ('y', 'user stats'), ('=', 'multinode'), ('.', 'credits'), ('/g', 'fast logoff')],
+        [('t', 'transfers'), ('x', 'file vaults'), ('b', 'bbs list'), ('=', 'multinode'), ('.', 'credits'), ('-', 'top ten')],
     ]
     for ci, col in enumerate(cols):
         for ri, (k, name) in enumerate(col):

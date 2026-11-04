@@ -25,6 +25,7 @@ std::string announceLine(const std::string& e) {
     if (starts(e, "sysop: validated ", r)) return "**" + tame(r) + "** joined the underground.";
     if (starts(e, "sysop: added ", r)) return "**" + tame(r.substr(0, r.find(" ("))) + "** has an account now.";
     if (starts(e, "oneliner: ", r)) return "oneliner wall: " + tame(r);
+    if (starts(e, "rumor: ", r)) return "a rumor is going round: " + tame(r);
     if (starts(e, "new user application waiting", r)) return "A new user applied and waits for the sysop.";
     if (starts(e, "PAGE from ", r)) return "The sysop was paged by " + tame(r);
     size_t up = e.find(" uploaded ");

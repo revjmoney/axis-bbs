@@ -162,6 +162,30 @@ static void callersAddLocal(const std::string& line) {
 }
 static bool asFollower();
 
+// The board's small shared lists (rumors, the BBS list): 50 lines each in internal flash on the main.
+static bool listName(const std::string& n) { return n == "rumors" || n == "bbslist"; }
+static std::vector<std::string> listLoad(const std::string& n) {
+    std::vector<std::string> v;
+    if (!listName(n)) return v;
+    std::string text = flashRead(("/list_" + n + ".txt").c_str());
+    for (size_t pos = 0; pos < text.size();) {
+        size_t e = text.find('\n', pos);
+        if (e == std::string::npos) e = text.size();
+        if (e > pos) v.push_back(text.substr(pos, e - pos));
+        pos = e + 1;
+    }
+    return v;
+}
+static void listAddLocal(const std::string& n, const std::string& line) {
+    if (!listName(n)) return;
+    std::vector<std::string> v = listLoad(n);
+    v.push_back(line.substr(0, 120));
+    while (v.size() > 50) v.erase(v.begin());
+    std::string text;
+    for (auto& l : v) text += l + "\n";
+    flashWrite(("/list_" + n + ".txt").c_str(), text);
+}
+
 // The sysop's own screens for the theme (MATRIX.ANS, MAIN.ANS): from the card on the main, 7 KB at
 // most, cut at the SAUCE record; a board without the card asks the main once and keeps the answer,
 // so every node looks and keys the same. The settings arriving (a theme change) forget them.
@@ -1013,6 +1037,28 @@ static void answerIn(WiFiClient incoming) {
                     cluster->request(std::string("P\x1f") + line, reply, 3000);
                 }
             });
+        node->setLists(
+            [](const std::string& n) {
+                if (!asFollower()) return listLoad(n);
+                std::vector<std::string> v;
+                std::string              reply;
+                if (cluster->request(std::string("Y\x1f") + n, reply, 3000) && !reply.empty() && reply[0] == '1')
+                    for (size_t pos = 1; pos < reply.size();) {
+                        size_t e = reply.find('\n', pos);
+                        if (e == std::string::npos) e = reply.size();
+                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
+                        pos = e + 1;
+                    }
+                return v;
+            },
+            [](const std::string& n, const std::string& line) {
+                if (n == "rumors") logEvent(("rumor: " + line).c_str());
+                if (!asFollower()) listAddLocal(n, line);
+                else {
+                    std::string reply;
+                    cluster->request(std::string("Z\x1f") + n + "\x1f" + line, reply, 3000);
+                }
+            });
         node->setLastCallers(
             [] {
                 if (!asFollower()) return lastCallers;
@@ -1455,6 +1501,16 @@ static void startCluster() {
             return out;
         }
         if (req.rfind("T\x1f", 0) == 0) return "1" + themeArtLocal(req.substr(2));  // a theme screen
+        if (req.rfind("Y\x1f", 0) == 0) {  // a shared list
+            std::string out = "1";
+            for (auto& l : listLoad(req.substr(2))) out += l + "\n";
+            return out;
+        }
+        if (req.rfind("Z\x1f", 0) == 0) {
+            size_t sep = req.find('\x1f', 2);
+            if (sep != std::string::npos) listAddLocal(req.substr(2, sep - 2), req.substr(sep + 1));
+            return std::string("1");
+        }
         if (req == "K") {  // the last callers
             std::string out = "1";
             for (auto& l : lastCallers) out += l + "\n";

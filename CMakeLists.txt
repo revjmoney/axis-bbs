@@ -98,6 +98,7 @@ add_executable(axis_tests
     tests/test_oblivion.cpp
     tests/test_multinode.cpp
     tests/test_email.cpp
+    tests/test_extras.cpp
     tests/test_ansiview.cpp
     tests/test_rotatelog.cpp
     tests/test_dosshell.cpp
