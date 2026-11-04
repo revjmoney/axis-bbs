@@ -47,6 +47,7 @@ public:
     // accounts: without them anyone is let in by handle (the first builds, tests)
     void setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow);
     bool isSysop() const { return sysop_; }
+    void addMinutes(int m) { if (callStart_) callStart_ += (uint32_t)m * 60000u; }  // the sysop gives more time (this call only)
     std::function<void(const std::string&)> onEvent;  // for the event log ("new user password: 3 wrong tries from X")
     // Chat across the nodes: say(text, page) sends a teleconference line (or a page for the sysop);
     // who() lists every node. Without them [T] [W] [P] say the chat is offline.

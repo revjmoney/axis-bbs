@@ -1853,6 +1853,100 @@ static void runCommand(const String& cmd, Print& out) {
 #else
         out.println("axis: pool and mirror are not in this build (AXIS_SD_POOL)");
 #endif
+    } else if (cmd.startsWith("@KICK ") || cmd.startsWith("@ADDTIME ") || cmd.startsWith("@FORCETC ") || cmd.startsWith("@NOTE ")) {
+        // a node on this board ("@KICK 3", "@ADDTIME 3 15", "@FORCETC 3", "@NOTE 3 text"); the panel sends
+        // each to the board holding that node
+        String rest = cmd.substring(cmd.indexOf(' ') + 1);
+        int    sp = rest.indexOf(' '), num = rest.toInt(), slot = -1;
+        String arg = sp < 0 ? String() : rest.substring(sp + 1);
+        for (size_t i = 0; i < sessions.size(); i++)
+            if (sessionNumber((int)i) == num) slot = (int)i;
+        axis::bbs::Node* n = slot >= 0 ? sessionNode((size_t)slot) : nullptr;
+        if (!n || !sessionLine((size_t)slot)) out.printf("axis: nobody on node %d here\n", num);
+        else if (cmd.startsWith("@KICK ")) {
+            logEvent(String("sysop: kicked ") + n->handle().c_str());
+            sessionLine((size_t)slot)->hangUp();
+            out.printf("axis: kicked node %d\n", num);
+        } else if (cmd.startsWith("@ADDTIME ")) {
+            n->addMinutes(arg.toInt());
+            logEvent(String("sysop: ") + arg + " more minutes for " + n->handle().c_str());
+            out.printf("axis: node %d gets %d more minutes\n", num, (int)arg.toInt());
+        } else if (cmd.startsWith("@FORCETC ")) {
+            n->nodeIn(axis::bbs::Node::kNodeForce, 0, cfg.sysopHandle, "");
+            out.printf("axis: node %d sent to the teleconference\n", num);
+        } else {
+            n->nodeIn(axis::bbs::Node::kNodeNote, 0, cfg.sysopHandle, arg.c_str());
+            out.printf("axis: note sent to node %d\n", num);
+        }
+    } else if (cmd.startsWith("@BCAST ")) {  // "@BCAST text": a broadcast to every caller on this board
+        for (size_t i = 0; i < sessions.size(); i++)
+            if (sessionNode(i) && sessionLine(i)) sessionNode(i)->nodeIn(axis::bbs::Node::kNodeBroadcast, 0, cfg.sysopHandle, cmd.substring(7).c_str());
+        out.println("axis: broadcast sent");
+    } else if (cmd == "@USERS") {  // one line per user: id|handle|status|security|calls|flags
+        for (auto& u : users.all())
+            out.printf("user %d|%s|%s|%d|%u|%s%s%s%s%s\n", u.id, u.handle.c_str(),
+                       u.status == axis::bbs::User::Status::Pending ? "pending" : u.status == axis::bbs::User::Status::Denied ? "denied" : "valid",
+                       u.security, (unsigned)u.calls, u.permFiles ? "F" : "-", u.permMessages ? "M" : "-", u.permDoors ? "D" : "-",
+                       u.freeDownloads ? "$" : "-", u.twit ? "T" : "-");
+    } else if (cmd.startsWith("@USER ")) {  // a user's details and application answers
+        axis::bbs::User* u = users.find(cmd.substring(6).c_str());
+        if (!u) out.println("axis: no user by that handle");
+        else {
+            out.printf("handle %s\nreal %s\nfrom %s\nemail %s\ntagline %s\nsecurity %d\ncalls %u\nup %u\ndown %u\n", u->handle.c_str(),
+                       u->realName.c_str(), u->location.c_str(), u->email.c_str(), u->tagline.c_str(), u->security, (unsigned)u->calls,
+                       (unsigned)u->uploads, (unsigned)u->downloads);
+            for (auto& a : u->answers) out.printf("answer %s|%s\n", a.first.c_str(), a.second.c_str());
+        }
+    } else if (cmd.startsWith("@VALIDATE ") || cmd.startsWith("@DENY ") || cmd.startsWith("@SEC ") || cmd.startsWith("@PERM ") ||
+               cmd.startsWith("@TWIT ")) {
+        // "@VALIDATE h", "@DENY h", "@SEC h 30", "@PERM h files|msgs|doors|freedl on|off", "@TWIT h on|off"
+        String rest = cmd.substring(cmd.indexOf(' ') + 1), handle = rest, a1, a2;
+        int    sp = rest.indexOf(' ');
+        if (sp > 0 && !cmd.startsWith("@VALIDATE ") && !cmd.startsWith("@DENY ")) {
+            int last = rest.lastIndexOf(' ');
+            if (cmd.startsWith("@PERM ")) {
+                int mid = rest.lastIndexOf(' ', last - 1);
+                handle = rest.substring(0, mid), a1 = rest.substring(mid + 1, last), a2 = rest.substring(last + 1);
+            } else {
+                handle = rest.substring(0, last), a1 = rest.substring(last + 1);
+            }
+        }
+        axis::bbs::User* u = users.find(handle.c_str());
+        if (!u) out.println("axis: no user by that handle");
+        else {
+            bool on = a2 == "on" || a1 == "on";
+            if (cmd.startsWith("@VALIDATE ")) u->status = axis::bbs::User::Status::Validated;
+            else if (cmd.startsWith("@DENY ")) u->status = axis::bbs::User::Status::Denied;
+            else if (cmd.startsWith("@SEC ")) u->security = constrain((int)a1.toInt(), 1, 255);
+            else if (cmd.startsWith("@TWIT ")) u->twit = on;
+            else if (a1 == "files") u->permFiles = on;
+            else if (a1 == "msgs") u->permMessages = on;
+            else if (a1 == "doors") u->permDoors = on;
+            else if (a1 == "freedl") u->freeDownloads = on;
+            saveUsers();
+            logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + u->handle.c_str());
+            out.printf("axis: %s updated\n", u->handle.c_str());
+        }
+    } else if (cmd == "@SETTINGS") {  // axis.ini without any salt or hash line
+        std::string t = axis::bbs::formatConfig(cfg), line;
+        for (char ch : t) {
+            if (ch != '\n') {
+                line += ch;
+                continue;
+            }
+            if (line.find("_salt=") == std::string::npos && line.find("_hash=") == std::string::npos) out.println(line.c_str());
+            line.clear();
+        }
+    } else if (cmd == "@RUMORS" || cmd == "@BBSLIST" || cmd == "@VOTES" || cmd == "@LINERS") {
+        std::vector<std::string> v = cmd == "@LINERS" ? oneLiners : sharedList(cmd == "@RUMORS" ? "rumors" : cmd == "@BBSLIST" ? "bbslist" : "votes");
+        for (auto& l : v) out.println(l.c_str());
+    } else if (cmd == "@STATUS") {  // one line for the panel
+        int on = 0;
+        for (size_t i = 0; i < sessions.size(); i++) on += sessionLine(i) ? 1 : 0;
+        out.printf("id=%s role=%s nodes=%d on=%d heap=%u largest=%u up=%lu rssi=%d sd_mb=%u ip=%s\n", WiFi.macAddress().c_str(),
+                   !cluster ? "solo" : cluster->role() == axis::cluster::Role::Main ? "main" : "follower", (int)sessions.size(), on,
+                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                   (unsigned long)(millis() / 1000), (int)WiFi.RSSI(), (unsigned)(storageFreeBytes() >> 20), WiFi.localIP().toString().c_str());
     } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
         axis::bbs::User* u = users.find(cmd.substring(7).c_str());
         if (!u) out.println("axis: no user by that handle");
@@ -1980,10 +2074,24 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd.startsWith("@RUMOR ")) {  // "@RUMOR text": add a rumor to the board's list (the main keeps them)
         sharedListAdd("rumors", cmd.substring(7).c_str());
         out.println("axis: rumor added");
-    } else if (cmd.startsWith("@SYSOPPASS ")) {  // "@SYSOPPASS secret" sets the sysop account's password (6+ characters)
+    } else if (cmd.startsWith("@USERPASS ")) {  // "@USERPASS handle secret": the sysop sets a caller's password (4+ characters)
+        String rest = cmd.substring(10);
+        int    sp = rest.lastIndexOf(' ');
+        axis::bbs::User* u = sp > 0 ? users.find(rest.substring(0, sp).c_str()) : nullptr;
+        String pw = sp > 0 ? rest.substring(sp + 1) : String();
+        if (!u) out.println("axis: @USERPASS handle password");
+        else if (pw.length() < 4) out.println("axis: a password needs 4 or more characters");
+        else {
+            u->salt = axis::bbs::makeSalt(hwRandom);
+            u->hash = axis::bbs::hashPassword(u->salt, pw.c_str());
+            saveUsers();
+            logEvent(String("sysop: password changed for ") + u->handle.c_str());
+            out.printf("axis: password set for %s\n", u->handle.c_str());
+        }
+    } else if (cmd.startsWith("@SYSOPPASS ")) {  // "@SYSOPPASS secret" sets the sysop account's password (4+ characters, as the wizard)
         String pw = cmd.substring(11);
-        if (pw.length() < 6) {
-            out.println("axis: @SYSOPPASS needs 6 or more characters");
+        if (pw.length() < 4) {
+            out.println("axis: @SYSOPPASS needs 4 or more characters");
         } else {
             cfg.sysopSalt = axis::bbs::makeSalt(hwRandom);
             cfg.sysopHash = axis::bbs::hashPassword(cfg.sysopSalt, pw.c_str());
