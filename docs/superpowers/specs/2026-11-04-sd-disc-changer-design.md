@@ -134,6 +134,10 @@ code as a build option.
   - If it is this BBS's system card (it carries a system id the BBS writes), anything that changed on
     the backup while it was out (new messages, door saves) is copied back first, then the main
     switches back to it.
+  - **The upload folders are combined (Rev):** files uploaded to the backup card while the main's
+    card was out are added to the main's upload area, descriptions included. My call: if both sides
+    have a file of the same name with different contents, both are kept (the incoming one gets a
+    numbered name) so no upload is ever lost. This applies whichever card becomes the system card.
   - If it is a blank card or a card with no `/msgs`, the system data is copied onto it from the
     backup, and it becomes the system card.
   - If it holds another BBS's `/msgs` (a different system id), it is not adopted. It's treated as a
