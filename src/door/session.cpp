@@ -79,7 +79,12 @@ bool DoorSession::load() {
     if (cfg_.dropFile != DropFile::None) {
         bool        sys = cfg_.dropFile == DropFile::DoorSys;
         std::string body = sys ? makeDoorSys(cfg_.caller) : makeDorinfo(cfg_.caller);
-        int         dh = fs_.open(sys ? "DOOR.SYS" : "DORINFO1.DEF", 2, true, true);
+        std::string name = sys ? "DOOR.SYS" : "DORINFO1.DEF";
+        if (!cfg_.dropDir.empty()) {
+            fs_.mkdir(cfg_.dropDir);  // (already there is fine)
+            name = cfg_.dropDir + "\\" + name;
+        }
+        int dh = fs_.open(name, 2, true, true);
         if (dh >= 0) {
             fs_.write(dh, body.data(), (int)body.size());
             fs_.close(dh);

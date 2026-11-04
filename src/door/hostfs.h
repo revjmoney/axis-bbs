@@ -44,12 +44,14 @@ public:
     virtual ~HostFs() = default;
 };
 
-// Byte-range locks (INT 21h 5Ch), shared by every node on a board (and later the cluster).
+// Byte-range locks (INT 21h 5Ch), shared by every node on a board; a cluster follower's door asks
+// the main's table instead (cluster/doorfs.h), so a door played on two boards keeps its files whole.
 class LockTable {
 public:
-    bool lock(int key, uint32_t off, uint32_t len, int owner);    // false if any locked range overlaps
-    bool unlock(int key, uint32_t off, uint32_t len, int owner);  // false unless that exact lock exists
-    void releaseOwner(int owner);
+    virtual bool lock(int key, uint32_t off, uint32_t len, int owner);    // false if any locked range overlaps
+    virtual bool unlock(int key, uint32_t off, uint32_t len, int owner);  // false unless that exact lock exists
+    virtual void releaseOwner(int owner);
+    virtual ~LockTable() = default;
 
 private:
     struct Lock {

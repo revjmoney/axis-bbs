@@ -41,6 +41,7 @@ struct DoorConfig {
     std::vector<std::pair<uint8_t*, size_t>> arenas;  // host memory lent for pages first (counts in ramBudget)
     std::function<void()> onOutOfMemory;          // told the moment a page can't be had (diagnostics)
     DropFile              dropFile = DropFile::None;  // written into the door folder before start
+    std::string           dropDir;                    // "" = the door folder; "NODE3" = a folder per node (multinode)
     CallerInfo            caller;
     std::function<uint64_t()> clockMs;     // default: steady clock
     std::function<void(uint32_t)> sleepMs; // default: this thread sleeps

@@ -79,7 +79,7 @@ TEST_CASE("config has LORD as the default door") {
     CHECK(c.doors[1].id == "blackjack");
     CHECK(c.doors[2].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
     CHECK(c.doors[3].exe == "*DOSSHELL");  // the built-in DOS Prompt
-    CHECK(c.doors[0].args == "1 /DREW");
+    CHECK(c.doors[0].args == "%N /DREW");  // %N: the node number (each node its own LORD node file)
 }
 
 TEST_CASE("config doors round trip") {

@@ -24,6 +24,7 @@
 #include "bbs/password.h"
 #include "bbs/rotatelog.h"
 #include "bbs/setupportal.h"
+#include "cluster/doorfs.h"
 #include "cluster/relay.h"
 #include "cluster/remotefiles.h"
 #include "bbs/config.h"
@@ -94,13 +95,17 @@ static void ledBegin() {
 
 static axis::bbs::UserSync                      userSync;     // which users still need to go over the link
 static std::map<int, std::unique_ptr<axis::cluster::FileServer>> fileServers;  // main: one per follower
+static std::map<int, std::unique_ptr<axis::cluster::DoorFsServer>> doorServers;
+static bool servedRequest = false;  // the main answered a follower this loop turn
+static uint32_t lastServedMs = 0;  // main: a follower's door files
 static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string& req, std::string& reply) {
     return cluster && cluster->request(req, reply);
 });
 static Mode                                     afterPick = Mode::Normal;
 static size_t                                   pendingSeen = 0;
 // the door the caller is in, if any (the screen copy is freed meanwhile)
-static std::unique_ptr<axis::PosixHostFs>       doorFs;
+static std::unique_ptr<axis::door::HostFs>      doorFs;     // the door's folder: here, or the main's over the link
+static std::unique_ptr<axis::door::LockTable>   doorRemoteLocks;  // a follower's door locks the main's records
 static std::unique_ptr<FlashImageSource>        doorImage;
 static std::unique_ptr<axis::door::DoorSession> door;
 static axis::door::LockTable                    doorLocks;
@@ -751,12 +756,44 @@ static void startDoor() {
         return;
     }
     std::string dir = std::string(storageRoot()) + "/doors/" + d.id;
-    doorFs.reset(new axis::PosixHostFs(dir));
+    int         me = sessionNumber(curSession);
+    bool        remote = !storageHasSd() && cluster && cluster->role() == axis::cluster::Role::Follower;
+    axis::door::LockTable* locks = &doorLocks;
+    if (remote) {  // no door files here: the main's, over the link (cluster/doorfs.h)
+        auto ask = [](const std::string& req, std::string& reply) { return cluster && cluster->request(req, reply, 8000); };
+        auto* rfs = new axis::cluster::RemoteHostFs(ask, d.id);
+        doorFs.reset(rfs);
+        doorRemoteLocks.reset(new axis::cluster::RemoteLockTable(ask, rfs));  // a lock drops cached reads
+        locks = doorRemoteLocks.get();
+        dir = "main:" + dir;
+    } else {
+        doorFs.reset(new axis::PosixHostFs(dir));
+    }
     doorImage.reset(new FlashImageSource(d.id.c_str()));
     axis::door::DoorConfig c;
     c.dir = dir;
     c.exe = d.exe;
-    c.args = d.args;
+    c.args = axis::cluster::doorArgs(d.args, me);
+    if (d.args.find("%N") != std::string::npos && me != 1) {  // a multinode door (LORD): this node's own drop folder
+        c.dropDir = "NODE" + std::to_string(me);
+        axis::door::FileInfo fi;
+        std::string          nodeDat = "NODE" + std::to_string(me) + ".DAT";
+        if (!doorFs->stat(nodeDat, fi) && doorFs->stat("NODE1.DAT", fi) && fi.size < 4096) {  // LORD's node file, made once
+            std::string one(fi.size, '\0');
+            int         h = doorFs->open("NODE1.DAT", 0, false, false);
+            if (h >= 0 && doorFs->read(h, &one[0], (int)one.size()) == (int)one.size()) {
+                doorFs->close(h);
+                std::string n = axis::cluster::lordNodeFile(one, me);
+                int         w = doorFs->open(nodeDat, 1, true, true);
+                if (w >= 0) {
+                    doorFs->write(w, n.data(), (int)n.size());
+                    doorFs->close(w);
+                }
+            } else if (h >= 0) {
+                doorFs->close(h);
+            }
+        }
+    }
     c.localMode = false;
     c.imageSource = doorImage.get();
     c.arenas.emplace_back(lentRam, lentBytes);  // the screen copy becomes the door's first pages
@@ -800,7 +837,7 @@ static void startDoor() {
     Serial.printf("axis: door %s for %s, byte heap %u + %u lent from the screen + %u instruction RAM\n", d.id.c_str(),
                   node->handle().c_str(), heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)lentBytes, (unsigned)iramBytes);
     logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
-    door.reset(new axis::door::DoorSession(c, *doorFs, doorLocks, *line, sessionNumber(curSession)));
+    door.reset(new axis::door::DoorSession(c, *doorFs, *locks, *line, me));
 }
 
 // The unzipper's working state (~12 KB), from the heap only while a ZIP is open; its 32 KB window
@@ -840,7 +877,8 @@ static void finishDoor() {
     door.reset();
     doorImage.reset();
     doorFs.reset();
-    doorLocks.releaseOwner(sessionNumber(curSession));
+    (doorRemoteLocks ? *doorRemoteLocks : doorLocks).releaseOwner(sessionNumber(curSession));
+    doorRemoteLocks.reset();
     busySlot = -1;
     heap_caps_free(doorIram);
     doorIram = nullptr;
@@ -1008,11 +1046,30 @@ static void startCluster() {
         }
     };
     cluster->onRequest = [](int nodeNum, const std::string& req) {
+        servedRequest = true;  // a follower waits on this: no nap this turn
+        lastServedMs = millis();
+        if (!req.empty() && req[0] == 'H') {  // a follower's door, on this board's door folders
+            auto& ds = doorServers[nodeNum];
+            if (!ds)
+                ds.reset(new axis::cluster::DoorFsServer(
+                    [](const std::string& id) {
+                        return std::unique_ptr<axis::door::HostFs>(new axis::PosixHostFs(std::string(storageRoot()) + "/doors/" + id));
+                    },
+                    doorLocks));
+            return ds->handle(req);
+        }
         auto& srv = fileServers[nodeNum];
         if (!srv) srv.reset(new axis::cluster::FileServer(sdFiles));
         return srv->handle(req);
     };
-    cluster->onNodeGone = [](int nodeNum) { fileServers.erase(nodeNum); };  // its unfinished uploads go too
+    cluster->onNodeGone = [](int nodeNum) {  // its unfinished uploads go, its door's files close, its locks free
+        fileServers.erase(nodeNum);
+        auto it = doorServers.find(nodeNum);
+        if (it != doorServers.end()) {
+            it->second->drop();
+            doorServers.erase(it);
+        }
+    };  // its unfinished uploads go too
     cluster->onNumber = [](int n) {
         Preferences p;
         p.begin("clu", false);
@@ -1219,6 +1276,11 @@ void setup() {
     if (!configMount()) Serial.println("axis: internal flash filesystem failed to mount");
     cfg = configLoad();
     sessions.resize(cfg.setupDone ? (size_t)cfg.sessions : 1);  // callers at once (setup takes one)
+    for (auto& d : cfg.doors)  // LORD as a multinode door: each node its own node file and drop folder
+        if (d.id == "lord" && d.args == "1 /DREW") {
+            d.args = "%N /DREW";
+            configSave(cfg);
+        }
     users.parse(flashRead("/users.dat"));
     userSync.changed(users);  // what we have counts as sent: only new changes go over the link
     for (auto& l : eventFile.tail(40)) events.add(l);  // the Logs screen picks up where it left off
@@ -1369,7 +1431,7 @@ static void serviceSession(int i) {
         return;
     }
     if (door && busySlot == i) {  // the door owns the caller's line; the BBS waits
-        bool running = door->step(30);
+        bool running = door->step(millis() - lastServedMs < 100 ? 8 : 30);  // short slices while a follower's door is asking us
         if (line) line->flush();  // whatever the door drew this slice
         if (!running) finishDoor();
         return;
@@ -1483,5 +1545,6 @@ void loop() {
         if (mode == Mode::Normal) screenDirty = true;
     }
     if (screenDirty) drawScreen();
-    delay(5);
+    if (!servedRequest && !door) delay(5);  // no nap while a door runs (it sleeps itself when idle) or a follower waits
+    servedRequest = false;
 }

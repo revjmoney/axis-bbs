@@ -229,11 +229,12 @@ bool PosixHostFs::find(const std::string& dosPattern, uint8_t attr, door::FindSt
 int PosixHostFs::fileKey(int h) {
     auto it = open_.find(h);
     if (it == open_.end()) return -1;
-    std::string k = lower(it->second.path);  // the resolver gives every handle on a file the same path
-    for (size_t i = 0; i < keys_.size(); i++)
-        if (keys_[i] == k) return (int)i;
-    keys_.push_back(k);
-    return (int)keys_.size() - 1;
+    // the file's full path, hashed: the same number for the same file in every PosixHostFs (the main's
+    // own door and a follower's door served over the link lock the same records)
+    std::string k = lower(root_ + "/" + it->second.path);
+    uint32_t    hash = 2166136261u;  // FNV-1a
+    for (char c : k) hash = (hash ^ (uint8_t)c) * 16777619u;
+    return (int)(hash & 0x7FFFFFFF);
 }
 
 bool PosixHostFs::fileTime(int h, uint16_t& dosDate, uint16_t& dosTime) {

@@ -43,7 +43,6 @@ private:
     };
     std::string              root_, cwd_;
     std::map<int, Open>      open_;
-    std::vector<std::string> keys_;
     int                      next_ = 1;
 };
 

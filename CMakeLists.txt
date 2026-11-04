@@ -34,6 +34,7 @@ add_library(axiscore STATIC
     src/cluster/protocol.cpp
     src/cluster/remotefiles.cpp
     src/cluster/relay.cpp
+    src/cluster/doorfs.cpp
     src/cluster/cluster.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
@@ -98,7 +99,8 @@ add_executable(axis_tests
     tests/test_wifipicker.cpp
     tests/test_cluster.cpp
     tests/test_remotefiles.cpp
-    tests/test_relay.cpp)
+    tests/test_relay.cpp
+    tests/test_doorfs.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)
