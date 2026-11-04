@@ -42,6 +42,7 @@ add_library(axiscore STATIC
     src/cluster/protocol.cpp
     src/cluster/remotefiles.cpp
     src/cluster/pooledlib.cpp
+    src/cluster/mirrorjob.cpp
     src/cluster/relay.cpp
     src/cluster/doorfs.cpp
     src/cluster/cluster.cpp

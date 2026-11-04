@@ -5,6 +5,7 @@
 #include <string>
 
 #include "doctest.h"
+#include "cluster/mirrorjob.h"
 #include "cluster/pooledlib.h"
 
 using namespace axis::bbs;
@@ -20,7 +21,8 @@ struct Card : FileLibrary {
     };
     std::map<std::string, std::vector<F>> areas;
     bool                                  down = false;
-    int                                   opens = 0, lists = 0;
+    int                                   opens = 0, lists = 0, writes = 0;
+    size_t                                biggestWrite = 0;
 
     F* find(const std::string& a, const std::string& n) {
         for (F& f : areas[a])
@@ -53,6 +55,8 @@ struct Card : FileLibrary {
         std::string a, n, data;
         bool        write(const uint8_t* p, size_t k) override {
             if (card->down) return false;
+            card->writes++;
+            if (k > card->biggestWrite) card->biggestWrite = k;
             data.append((const char*)p, k);
             return true;
         }
@@ -269,4 +273,110 @@ TEST_CASE("pool: with no cards at all nothing is there and uploads are refused")
     CHECK_FALSE(lib.open("cnc", "A.ZIP"));
     CHECK_FALSE(lib.create("cnc", "A.ZIP"));
     CHECK_FALSE(lib.describe("cnc", "A.ZIP", "x"));
+}
+
+// The mirror: files in a mirrored area held by one live card get a copy on a second card.
+namespace {
+struct Mirror : Pool {
+    std::vector<std::string> log;
+    MirrorJob                job{lib, [] { return std::vector<std::string>{"cnc"}; }};
+    uint32_t                 now = 1000;
+    Mirror() {
+        freeLocal = 2u << 20;  // a target keeps a spare megabyte
+        freeB = 4u << 20;
+        freeC = 3u << 20;
+        job.onEvent = [this](const std::string& e) { log.push_back(e); };
+    }
+    int steps(int n) {  // run up to n steps, return how many it took to finish a copy (0: none)
+        uint32_t before = job.copied();
+        for (int i = 1; i <= n; i++) {
+            job.step(now += 10);
+            if (job.copied() != before) return i;
+        }
+        return 0;
+    }
+};
+std::string bytes(size_t n) {
+    std::string s(n, 'x');
+    for (size_t i = 0; i < n; i++) s[i] = (char)(i * 7 + i / 251);
+    return s;
+}
+}  // namespace
+
+TEST_CASE("mirror: a file only one card holds is copied, byte for byte, to the card with the most room") {
+    Mirror m;
+    m.haveC = true;
+    m.local.add("cnc", "ONE.ZIP", bytes(5000), "a lonely file");
+    m.local.add("cnc", "BOTH.ZIP", "x");
+    m.b.add("cnc", "BOTH.ZIP", "x");
+    m.local.add("text", "OTHER.TXT", "not a mirrored area");
+    REQUIRE(m.steps(50));
+    REQUIRE(m.b.find("cnc", "ONE.ZIP"));  // b has 2000 free, c 500
+    CHECK(m.b.find("cnc", "ONE.ZIP")->data == bytes(5000));
+    CHECK(m.b.find("cnc", "ONE.ZIP")->desc == "a lonely file");  // its description goes with it
+    CHECK_FALSE(m.c.find("cnc", "ONE.ZIP"));
+    CHECK(m.b.areas["cnc"].size() == 2);  // BOTH.ZIP was already on two cards
+    CHECK(m.b.areas["text"].empty());
+    REQUIRE(m.log.size() == 1);
+    CHECK(m.log[0] == "mirror: copied ONE.ZIP to node 2");
+    CHECK(m.steps(50) == 0);  // nothing left to do
+    CHECK(m.job.copied() == 1);
+}
+
+TEST_CASE("mirror: a copy goes a piece at a time and shows only when it is whole") {
+    Mirror m;
+    m.b.add("cnc", "BIG.ZIP", bytes(5000));
+    m.freeLocal = 1ull << 30;
+    int took = m.steps(50);
+    REQUIRE(took);
+    CHECK(took >= 3);  // 5000 bytes in 2 KB pieces, one per step
+    CHECK(m.local.writes == 3);
+    CHECK(m.local.biggestWrite <= MirrorJob::kChunk);
+    CHECK(m.local.find("cnc", "BIG.ZIP")->data == bytes(5000));
+    CHECK(m.log.back() == "mirror: copied BIG.ZIP to this board");
+}
+
+TEST_CASE("mirror: no copy before it is whole, and a board leaving mid-copy throws it away to try again later") {
+    Mirror m;
+    m.local.add("cnc", "BIG.ZIP", bytes(9000));
+    for (int i = 0; i < 20 && m.b.writes == 0; i++) m.job.step(m.now += 10);
+    REQUIRE(m.job.copying());
+    CHECK_FALSE(m.b.find("cnc", "BIG.ZIP"));  // not shown half written
+    m.aliveB = false;  // board b leaves
+    m.job.step(m.now += 10);
+    CHECK_FALSE(m.job.copying());
+    CHECK_FALSE(m.b.find("cnc", "BIG.ZIP"));
+    CHECK(m.job.failed() == 1);
+    REQUIRE_FALSE(m.log.empty());
+    CHECK(m.log.back().find("BIG.ZIP") != std::string::npos);
+    m.aliveB = true;  // it comes back: the next pass copies the file again
+    CHECK(m.steps(100) == 0);  // not straight away: it rests between passes
+    m.now += MirrorJob::kRestMs;
+    REQUIRE(m.steps(100));
+    CHECK(m.b.find("cnc", "BIG.ZIP")->data == bytes(9000));
+}
+
+TEST_CASE("mirror: a target whose writes start failing (its link just went) is dropped the same way") {
+    Mirror m;
+    m.local.add("cnc", "BIG.ZIP", bytes(9000));
+    for (int i = 0; i < 20 && m.b.writes == 0; i++) m.job.step(m.now += 10);
+    REQUIRE(m.job.copying());
+    m.b.down = true;
+    m.job.step(m.now += 10);
+    CHECK_FALSE(m.job.copying());
+    CHECK(m.job.failed() == 1);
+    m.b.down = false;
+    CHECK_FALSE(m.b.find("cnc", "BIG.ZIP"));
+}
+
+TEST_CASE("mirror: with no other card that has room, nothing is copied and nothing breaks") {
+    Mirror m;
+    m.local.add("cnc", "ONE.ZIP", bytes(100));
+    m.freeB = 1000;  // less than the spare a target must keep
+    CHECK(m.steps(50) == 0);
+    CHECK(m.b.areas["cnc"].empty());
+    m.aliveB = false;  // only one live card
+    CHECK(m.steps(50) == 0);
+    CHECK(m.job.failed() == 0);
+    CHECK_FALSE(m.job.state().empty());
 }
