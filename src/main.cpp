@@ -18,6 +18,8 @@
 
 #include <memory>
 
+#include "bbs/announce.h"
+#include "platform/cyd/web.h"
 #include "bbs/ansiviewer.h"
 #include "bbs/dosshell.h"
 #include "bbs/ansiterm.h"
@@ -163,6 +165,16 @@ static bool asFollower();
 // The sysop's own screens for the theme (MATRIX.ANS, MAIN.ANS): from the card on the main, 7 KB at
 // most, cut at the SAUCE record; a board without the card asks the main once and keeps the answer,
 // so every node looks and keys the same. The settings arriving (a theme change) forget them.
+// Scene news for Discord. TLS needs about 45 KB of heap, more than a busy CYD main has, so the
+// posting is done by whichever board holds the webhook (set it on a headless node): a follower
+// hands its news to the main, the main sends it to every board, and the board with the webhook posts.
+constexpr int kAnnounceKind = 21, kAnnounceAllKind = 22;
+static void announceOut(const std::string& line) {
+    if (!cluster) web::announce(String("**") + cfg.bbsName.c_str() + "** " + line.c_str());
+    else if (asFollower()) cluster->send("", kAnnounceKind, 0, line);
+    else cluster->send("", kAnnounceAllKind, 0, line);
+}
+
 static std::map<std::string, std::string> artCache;
 static std::string themeArtLocal(const std::string& name) {
     std::string s;
@@ -292,6 +304,7 @@ static String heapText() {
            String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024) + " KB]";
 }
 
+static void announceOut(const std::string& line);
 static void logEvent(const String& what) {
     time_t now = time(nullptr);
     char   stamp[8] = "--:--";
@@ -299,6 +312,8 @@ static void logEvent(const String& what) {
     events.add(std::string(stamp) + " " + what.c_str());
     if (eventFileReady) eventFile.append(std::string(stamp) + " " + what.c_str());
     Serial.printf("axis: %s\n", what.c_str());
+    std::string a = axis::bbs::announceLine(what.c_str());  // scene news for the Discord channel
+    if (!a.empty()) announceOut(a);
 }
 
 static void saveUsers() {
@@ -1349,6 +1364,14 @@ static void startCluster() {
         screenDirty = true;
     };
     cluster->onChat = [](const axis::cluster::ChatLine& l) {
+        if (l.kind == kAnnounceKind) {  // a follower's scene news: the main passes it to every board
+            if (!asFollower()) cluster->send("", kAnnounceAllKind, 0, l.text);
+            return;
+        }
+        if (l.kind == kAnnounceAllKind) {  // the board holding the webhook posts it
+            web::announce(String("**") + cfg.bbsName.c_str() + "** " + l.text.c_str());
+            return;
+        }
         if (l.page) {
             pageText = String(l.handle.c_str()) + ": " + l.text.c_str();
             pageAtMs = millis();
@@ -1674,6 +1697,17 @@ static void handleSerial() {
                 saveUsers();  // and on to every board
                 Serial.printf("axis: added %s\n", u.handle.c_str());
             }
+        } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
+            Serial.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
+        } else if (cmd.startsWith("@DDNS")) {  // "@DDNS domain|host|key|secret": GoDaddy dynamic DNS; alone: off
+            Serial.println(web::setDdns(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: ddns saved" : "axis: @DDNS domain|host|key|secret");
+        } else if (cmd == "@WEBPING") {
+            Serial.printf("axis: webping %s\n", web::ping().c_str());
+        } else if (cmd == "@WEB") {
+            Serial.printf("axis: web: %s\n", web::status().c_str());
+        } else if (cmd == "@WEBTEST") {
+            web::announce(String("**") + cfg.bbsName.c_str() + "** is online. Telnet in and feed the scene.");
+            Serial.println("axis: test announcement queued");
         } else if (cmd == "@LED") {  // what the LED is showing and why (bench)
             ledReport = true;
         } else if (cmd == "@LOG") {  // the event log, newest last (bench)
@@ -1770,6 +1804,7 @@ void setup() {
     screenPush();
     storageInit();
     if (!configMount()) Serial.println("axis: internal flash filesystem failed to mount");
+    web::begin();
     cfg = configLoad();
     sessions.resize(cfg.setupDone ? (size_t)cfg.sessions : 1);  // callers at once (setup takes one)
     for (auto& d : cfg.doors)  // LORD as a multinode door: each node its own node file and drop folder
