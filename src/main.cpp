@@ -1814,6 +1814,194 @@ static void handleTap(int x, int y) {
     }
 }
 
+// Every @ command, for the serial console and the sysop control panel alike (one code path, so
+// the same command always does the same thing). Replies go to `out`.
+static void runCommand(const String& cmd, Print& out) {
+    if (cmd.startsWith("@TAP ")) {
+        int sp = cmd.indexOf(' ', 5);
+        tapX = cmd.substring(5, sp).toInt();
+        tapY = cmd.substring(sp + 1).toInt();
+    } else if (cmd == "@DOORSTATE") {  // the running door, for a door that seems stuck (bench)
+        if (!door) out.println("axis: no door running");
+        else
+            out.printf("axis: door result %d, %lu instructions, carrier %d, pool %u/%u pages, %s\n", (int)door->result(),
+                          (unsigned long)door->instructions(), busySlot >= 0 && sessionLine((size_t)busySlot) ? (int)sessionLine((size_t)busySlot)->carrier() : -1, (unsigned)door->poolPages(),
+                          (unsigned)door->poolBudget(), door->debugState().c_str());
+    } else if (cmd == "@NODES") {  // the cluster as this board sees it (bench)
+        if (!cluster) out.println("axis: no cluster");
+        else
+            for (auto& n : cluster->nodes())
+                out.printf("axis: node %d ip %s handle '%s' activity '%s'%s\n", n.number, IPAddress(n.ip).toString().c_str(),
+                              n.handle.c_str(), n.activity.c_str(), n.number == cluster->nodeNumber() ? " (this board)" : "");
+    } else if (cmd == "@CARDS") {  // the SD cards in the pool: free space, up or down (bench)
+        if (storageHasSd()) out.printf("axis: card on this board, %u MB free\n", (unsigned)(storageFreeBytes(true) >> 20));
+        else out.println("axis: no SD card on this board");
+        if (cluster && cluster->role() == axis::cluster::Role::Main)
+            for (auto& c : cluster->cardBoards())
+                out.printf("axis: card on %s (%s, ip %s), %u MB free, %s\n", cardLabel(c.id).c_str(), c.id.c_str(),
+                              IPAddress(c.ip).toString().c_str(), (unsigned)(c.freeBytes >> 20), c.alive ? "up" : "DOWN");
+        else if (cluster)
+            out.println("axis: only the main pools the cards (@CARDS there)");
+    } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
+        std::string areas;
+        for (auto& a : cfg.areas)
+            if (a.mirror) areas += (areas.empty() ? "" : " ") + a.id;
+        out.printf("axis: mirrored areas: %s\n", areas.empty() ? "none (add |m to an areaN line)" : areas.c_str());
+#if AXIS_SD_POOL
+        if (!cluster || cluster->role() != axis::cluster::Role::Main) out.println("axis: only the main runs the mirror");
+        else out.printf("axis: mirror %s\n", mirrorJob.state().c_str());
+#else
+        out.println("axis: pool and mirror are not in this build (AXIS_SD_POOL)");
+#endif
+    } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
+        axis::bbs::User* u = users.find(cmd.substring(7).c_str());
+        if (!u) out.println("axis: no user by that handle");
+        else {
+            u->security = axis::bbs::kSysopSecurity;
+            u->status = axis::bbs::User::Status::Validated;
+            logEvent(String("sysop: ") + u->handle.c_str() + " is now a sysop (serial)");
+            saveUsers();
+            out.printf("axis: %s is now a sysop\n", u->handle.c_str());
+        }
+    } else if (cmd.startsWith("@ADDUSER ")) {  // "@ADDUSER handle|location|password": a validated caller (security 20)
+        String a = cmd.substring(9);
+        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
+        if (b1 <= 0 || b2 < 0 || a.length() - b2 - 1 < 6) {
+            out.println("axis: @ADDUSER handle|location|password (6+ characters)");
+        } else if (users.find(a.substring(0, b1).c_str())) {
+            out.println("axis: that handle is taken");
+        } else {
+            axis::bbs::User u;
+            u.handle = a.substring(0, b1).c_str();
+            u.location = a.substring(b1 + 1, b2).c_str();
+            u.salt = axis::bbs::makeSalt(hwRandom);
+            u.hash = axis::bbs::hashPassword(u.salt, a.substring(b2 + 1).c_str());
+            u.status = axis::bbs::User::Status::Validated;
+            u.security = 20;
+            u.created = unixNow();
+            users.add(u);
+            logEvent(String("sysop: added ") + u.handle.c_str() + " (serial)");
+            saveUsers();  // and on to every board
+            out.printf("axis: added %s\n", u.handle.c_str());
+        }
+    } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
+        out.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
+    } else if (cmd.startsWith("@DDNS")) {  // "@DDNS domain|host|key|secret": GoDaddy dynamic DNS; alone: off
+        out.println(web::setDdns(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: ddns saved" : "axis: @DDNS domain|host|key|secret");
+    } else if (cmd == "@NOIPNOW") {  // bench: update No-IP right now
+        web::noipNow();
+        out.printf("axis: web: %s\n", web::status().c_str());
+    } else if (cmd.startsWith("@NOIP")) {  // "@NOIP host|username|password": No-IP dynamic DNS; alone: off
+        out.println(web::setNoip(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: noip saved" : "axis: @NOIP host|username|password");
+    } else if (cmd == "@LOGCLEAR") {  // wipe the event log (screen, flash file, its old copy) and the page shown on the WFC
+        events = axis::bbs::EventLog();
+        ::remove("/littlefs/events.log");
+        ::remove("/littlefs/events.old");
+        pageText = "";
+        screenDirty = true;
+        out.println("axis: event log cleared");
+    } else if (cmd == "@WEBPING") {
+        out.printf("axis: webping %s\n", web::ping().c_str());
+    } else if (cmd == "@WEB") {
+        out.printf("axis: web: %s\n", web::status().c_str());
+    } else if (cmd == "@WEBTEST") {
+        web::announce(String("**") + cfg.bbsName.c_str() + "** is online. Telnet in and feed the scene.");
+        out.println("axis: test announcement queued");
+    } else if (cmd == "@LED") {  // what the LED is showing and why (bench)
+        ledReport = true;
+    } else if (cmd == "@LOG") {  // the event log, newest last (bench)
+        for (auto& l : events.lines()) out.printf("@LOG %s\n", l.c_str());
+        out.println("@LOG END");
+    } else if (cmd == "@SHOT") {
+        shotDoneMs = millis();
+        screenShot([] {  // the cluster keeps its heartbeat while the screen streams out
+            if (cluster) cluster->tick(millis());
+        });
+        shotDoneMs = millis();  // (the loop's stall check comes next: this one was on purpose)
+    } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
+        SD.end();
+        storageInit();
+        screenDirty = true;
+    } else if (cmd == "@SDFORMAT FORMAT") {  // bench trigger for the sysop SD tool
+        if (callersOnline()) {
+            out.println("axis: sd format refused, a caller is online");
+        } else {
+            String result;
+            bool   ok = storageFormatSd(result);
+            out.printf("axis: sd format %s: %s\n", ok ? "ok" : "FAILED", result.c_str());
+            screenDirty = true;
+        }
+    } else if (cmd.startsWith("@DOORLS ")) {  // list a door's folder the way the door sees it
+        std::string           dir = std::string(storageRoot()) + "/doors/" + cmd.substring(8).c_str();
+        axis::PosixHostFs     fs(dir);
+        axis::door::FindState st;
+        fs.find("*.*", 0x10, st);
+        out.printf("axis: %s: %u entries\n", dir.c_str(), (unsigned)st.matches.size());
+        for (auto& f : st.matches)
+            out.printf("axis:   %-12s %8u%s\n", f.name83.c_str(), (unsigned)f.size, f.attr & 0x10 ? " <DIR>" : "");
+    } else if (cmd.startsWith("@DOORCHECK ")) {  // "@DOORCHECK lord [force]": cache LORD.EXE in flash
+        String id = cmd.substring(11);
+        bool   force = id.endsWith(" force");
+        if (force) id = id.substring(0, id.length() - 6);
+        String exe = id + ".EXE";
+        exe.toUpperCase();
+        axis::PosixHostFs fs(std::string(storageRoot()) + "/doors/" + id.c_str());
+        FlashImageSource  src(id.c_str(), force);
+        axis::door::MzInfo mz;
+        size_t             len = 0;
+        uint32_t           t0 = millis();
+        const uint8_t*     img = src.image(fs, exe.c_str(), axis::door::kLoadSeg, mz, len);
+        if (img)
+            out.printf("axis: door %s ok: %u bytes %s in %lu ms, key %08lx, heap %u\n", id.c_str(), (unsigned)len,
+                          src.rewrote() ? "written" : "already cached", (unsigned long)(millis() - t0),
+                          (unsigned long)src.key(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        else
+            out.printf("axis: door %s FAILED: %s\n", id.c_str(), src.error());
+    } else if (cmd.startsWith("@SET ") && cmd.indexOf('=') > 5) {  // "@SET location=Myrtle Beach, SC"
+        String kv = cmd.substring(5);
+        cfg = axis::bbs::parseConfig(axis::bbs::formatConfig(cfg) + kv.c_str() + "\n");  // the later line wins
+        bool ok = configSave(cfg);
+        logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
+        if (cluster) cluster->shareSettings();
+        screenDirty = true;
+    } else if (cmd.startsWith("@NUP")) {  // "@NUP secret": the new user password asked before Apply; alone, anyone can apply
+        String pw = cmd.length() > 5 ? cmd.substring(5) : String();
+        cfg.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
+        cfg.nupHash = pw.length() ? axis::bbs::hashPassword(cfg.nupSalt, pw.c_str()) : std::string();
+        bool ok = configSave(cfg);
+        if (cluster) cluster->shareSettings();  // every board asks the same one
+        logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
+    } else if (cmd.startsWith("@DOSPASS")) {  // "@DOSPASS secret" sets the DOS Prompt password; alone, disables it
+        String pw = cmd.length() > 9 ? cmd.substring(9) : String();
+        cfg.dosSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
+        cfg.dosHash = pw.length() ? axis::bbs::hashPassword(cfg.dosSalt, pw.c_str()) : std::string();
+        bool ok = configSave(cfg);
+        logEvent(String("sysop: DOS prompt password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
+    } else if (cmd.startsWith("@RUMOR ")) {  // "@RUMOR text": add a rumor to the board's list (the main keeps them)
+        sharedListAdd("rumors", cmd.substring(7).c_str());
+        out.println("axis: rumor added");
+    } else if (cmd.startsWith("@SYSOPPASS ")) {  // "@SYSOPPASS secret" sets the sysop account's password (6+ characters)
+        String pw = cmd.substring(11);
+        if (pw.length() < 6) {
+            out.println("axis: @SYSOPPASS needs 6 or more characters");
+        } else {
+            cfg.sysopSalt = axis::bbs::makeSalt(hwRandom);
+            cfg.sysopHash = axis::bbs::hashPassword(cfg.sysopSalt, pw.c_str());
+            bool ok = configSave(cfg);
+            if (cluster) cluster->shareSettings();  // every board takes the same sysop login
+            logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
+        }
+    } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
+        startPicker(mode == Mode::WifiPick ? afterPick : mode);
+    } else if (&out == &Serial && serialFileCommand(cmd)) {  // @PUT @LS @RM @MKDIR @BAUD (tools/sdput.py)
+    } else if (cmd == "@RESETSETUP") {
+        configErase();
+        out.println("axis: settings erased, restarting into setup");
+        delay(100);
+        ESP.restart();
+    }
+}
+
 static void handleSerial() {
     static String cmd;
     while (Serial.available()) {
@@ -1822,189 +2010,7 @@ static void handleSerial() {
             if (cmd.length() < 160) cmd += c;
             continue;
         }
-        if (cmd.startsWith("@TAP ")) {
-            int sp = cmd.indexOf(' ', 5);
-            tapX = cmd.substring(5, sp).toInt();
-            tapY = cmd.substring(sp + 1).toInt();
-        } else if (cmd == "@DOORSTATE") {  // the running door, for a door that seems stuck (bench)
-            if (!door) Serial.println("axis: no door running");
-            else
-                Serial.printf("axis: door result %d, %lu instructions, carrier %d, pool %u/%u pages, %s\n", (int)door->result(),
-                              (unsigned long)door->instructions(), busySlot >= 0 && sessionLine((size_t)busySlot) ? (int)sessionLine((size_t)busySlot)->carrier() : -1, (unsigned)door->poolPages(),
-                              (unsigned)door->poolBudget(), door->debugState().c_str());
-        } else if (cmd == "@NODES") {  // the cluster as this board sees it (bench)
-            if (!cluster) Serial.println("axis: no cluster");
-            else
-                for (auto& n : cluster->nodes())
-                    Serial.printf("axis: node %d ip %s handle '%s' activity '%s'%s\n", n.number, IPAddress(n.ip).toString().c_str(),
-                                  n.handle.c_str(), n.activity.c_str(), n.number == cluster->nodeNumber() ? " (this board)" : "");
-        } else if (cmd == "@CARDS") {  // the SD cards in the pool: free space, up or down (bench)
-            if (storageHasSd()) Serial.printf("axis: card on this board, %u MB free\n", (unsigned)(storageFreeBytes(true) >> 20));
-            else Serial.println("axis: no SD card on this board");
-            if (cluster && cluster->role() == axis::cluster::Role::Main)
-                for (auto& c : cluster->cardBoards())
-                    Serial.printf("axis: card on %s (%s, ip %s), %u MB free, %s\n", cardLabel(c.id).c_str(), c.id.c_str(),
-                                  IPAddress(c.ip).toString().c_str(), (unsigned)(c.freeBytes >> 20), c.alive ? "up" : "DOWN");
-            else if (cluster)
-                Serial.println("axis: only the main pools the cards (@CARDS there)");
-        } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
-            std::string areas;
-            for (auto& a : cfg.areas)
-                if (a.mirror) areas += (areas.empty() ? "" : " ") + a.id;
-            Serial.printf("axis: mirrored areas: %s\n", areas.empty() ? "none (add |m to an areaN line)" : areas.c_str());
-#if AXIS_SD_POOL
-            if (!cluster || cluster->role() != axis::cluster::Role::Main) Serial.println("axis: only the main runs the mirror");
-            else Serial.printf("axis: mirror %s\n", mirrorJob.state().c_str());
-#else
-            Serial.println("axis: pool and mirror are not in this build (AXIS_SD_POOL)");
-#endif
-        } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
-            axis::bbs::User* u = users.find(cmd.substring(7).c_str());
-            if (!u) Serial.println("axis: no user by that handle");
-            else {
-                u->security = axis::bbs::kSysopSecurity;
-                u->status = axis::bbs::User::Status::Validated;
-                logEvent(String("sysop: ") + u->handle.c_str() + " is now a sysop (serial)");
-                saveUsers();
-                Serial.printf("axis: %s is now a sysop\n", u->handle.c_str());
-            }
-        } else if (cmd.startsWith("@ADDUSER ")) {  // "@ADDUSER handle|location|password": a validated caller (security 20)
-            String a = cmd.substring(9);
-            int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
-            if (b1 <= 0 || b2 < 0 || a.length() - b2 - 1 < 6) {
-                Serial.println("axis: @ADDUSER handle|location|password (6+ characters)");
-            } else if (users.find(a.substring(0, b1).c_str())) {
-                Serial.println("axis: that handle is taken");
-            } else {
-                axis::bbs::User u;
-                u.handle = a.substring(0, b1).c_str();
-                u.location = a.substring(b1 + 1, b2).c_str();
-                u.salt = axis::bbs::makeSalt(hwRandom);
-                u.hash = axis::bbs::hashPassword(u.salt, a.substring(b2 + 1).c_str());
-                u.status = axis::bbs::User::Status::Validated;
-                u.security = 20;
-                u.created = unixNow();
-                users.add(u);
-                logEvent(String("sysop: added ") + u.handle.c_str() + " (serial)");
-                saveUsers();  // and on to every board
-                Serial.printf("axis: added %s\n", u.handle.c_str());
-            }
-        } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
-            Serial.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
-        } else if (cmd.startsWith("@DDNS")) {  // "@DDNS domain|host|key|secret": GoDaddy dynamic DNS; alone: off
-            Serial.println(web::setDdns(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: ddns saved" : "axis: @DDNS domain|host|key|secret");
-        } else if (cmd == "@NOIPNOW") {  // bench: update No-IP right now
-            web::noipNow();
-            Serial.printf("axis: web: %s\n", web::status().c_str());
-        } else if (cmd.startsWith("@NOIP")) {  // "@NOIP host|username|password": No-IP dynamic DNS; alone: off
-            Serial.println(web::setNoip(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: noip saved" : "axis: @NOIP host|username|password");
-        } else if (cmd == "@LOGCLEAR") {  // wipe the event log (screen, flash file, its old copy) and the page shown on the WFC
-            events = axis::bbs::EventLog();
-            ::remove("/littlefs/events.log");
-            ::remove("/littlefs/events.old");
-            pageText = "";
-            screenDirty = true;
-            Serial.println("axis: event log cleared");
-        } else if (cmd == "@WEBPING") {
-            Serial.printf("axis: webping %s\n", web::ping().c_str());
-        } else if (cmd == "@WEB") {
-            Serial.printf("axis: web: %s\n", web::status().c_str());
-        } else if (cmd == "@WEBTEST") {
-            web::announce(String("**") + cfg.bbsName.c_str() + "** is online. Telnet in and feed the scene.");
-            Serial.println("axis: test announcement queued");
-        } else if (cmd == "@LED") {  // what the LED is showing and why (bench)
-            ledReport = true;
-        } else if (cmd == "@LOG") {  // the event log, newest last (bench)
-            for (auto& l : events.lines()) Serial.printf("@LOG %s\n", l.c_str());
-            Serial.println("@LOG END");
-        } else if (cmd == "@SHOT") {
-            shotDoneMs = millis();
-            screenShot([] {  // the cluster keeps its heartbeat while the screen streams out
-                if (cluster) cluster->tick(millis());
-            });
-            shotDoneMs = millis();  // (the loop's stall check comes next: this one was on purpose)
-        } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
-            SD.end();
-            storageInit();
-            screenDirty = true;
-        } else if (cmd == "@SDFORMAT FORMAT") {  // bench trigger for the sysop SD tool
-            if (callersOnline()) {
-                Serial.println("axis: sd format refused, a caller is online");
-            } else {
-                String result;
-                bool   ok = storageFormatSd(result);
-                Serial.printf("axis: sd format %s: %s\n", ok ? "ok" : "FAILED", result.c_str());
-                screenDirty = true;
-            }
-        } else if (cmd.startsWith("@DOORLS ")) {  // list a door's folder the way the door sees it
-            std::string           dir = std::string(storageRoot()) + "/doors/" + cmd.substring(8).c_str();
-            axis::PosixHostFs     fs(dir);
-            axis::door::FindState st;
-            fs.find("*.*", 0x10, st);
-            Serial.printf("axis: %s: %u entries\n", dir.c_str(), (unsigned)st.matches.size());
-            for (auto& f : st.matches)
-                Serial.printf("axis:   %-12s %8u%s\n", f.name83.c_str(), (unsigned)f.size, f.attr & 0x10 ? " <DIR>" : "");
-        } else if (cmd.startsWith("@DOORCHECK ")) {  // "@DOORCHECK lord [force]": cache LORD.EXE in flash
-            String id = cmd.substring(11);
-            bool   force = id.endsWith(" force");
-            if (force) id = id.substring(0, id.length() - 6);
-            String exe = id + ".EXE";
-            exe.toUpperCase();
-            axis::PosixHostFs fs(std::string(storageRoot()) + "/doors/" + id.c_str());
-            FlashImageSource  src(id.c_str(), force);
-            axis::door::MzInfo mz;
-            size_t             len = 0;
-            uint32_t           t0 = millis();
-            const uint8_t*     img = src.image(fs, exe.c_str(), axis::door::kLoadSeg, mz, len);
-            if (img)
-                Serial.printf("axis: door %s ok: %u bytes %s in %lu ms, key %08lx, heap %u\n", id.c_str(), (unsigned)len,
-                              src.rewrote() ? "written" : "already cached", (unsigned long)(millis() - t0),
-                              (unsigned long)src.key(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-            else
-                Serial.printf("axis: door %s FAILED: %s\n", id.c_str(), src.error());
-        } else if (cmd.startsWith("@SET ") && cmd.indexOf('=') > 5) {  // "@SET location=Myrtle Beach, SC"
-            String kv = cmd.substring(5);
-            cfg = axis::bbs::parseConfig(axis::bbs::formatConfig(cfg) + kv.c_str() + "\n");  // the later line wins
-            bool ok = configSave(cfg);
-            logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
-            if (cluster) cluster->shareSettings();
-            screenDirty = true;
-        } else if (cmd.startsWith("@NUP")) {  // "@NUP secret": the new user password asked before Apply; alone, anyone can apply
-            String pw = cmd.length() > 5 ? cmd.substring(5) : String();
-            cfg.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
-            cfg.nupHash = pw.length() ? axis::bbs::hashPassword(cfg.nupSalt, pw.c_str()) : std::string();
-            bool ok = configSave(cfg);
-            if (cluster) cluster->shareSettings();  // every board asks the same one
-            logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
-        } else if (cmd.startsWith("@DOSPASS")) {  // "@DOSPASS secret" sets the DOS Prompt password; alone, disables it
-            String pw = cmd.length() > 9 ? cmd.substring(9) : String();
-            cfg.dosSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
-            cfg.dosHash = pw.length() ? axis::bbs::hashPassword(cfg.dosSalt, pw.c_str()) : std::string();
-            bool ok = configSave(cfg);
-            logEvent(String("sysop: DOS prompt password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
-        } else if (cmd.startsWith("@RUMOR ")) {  // "@RUMOR text": add a rumor to the board's list (the main keeps them)
-            sharedListAdd("rumors", cmd.substring(7).c_str());
-            Serial.println("axis: rumor added");
-        } else if (cmd.startsWith("@SYSOPPASS ")) {  // "@SYSOPPASS secret" sets the sysop account's password (6+ characters)
-            String pw = cmd.substring(11);
-            if (pw.length() < 6) {
-                Serial.println("axis: @SYSOPPASS needs 6 or more characters");
-            } else {
-                cfg.sysopSalt = axis::bbs::makeSalt(hwRandom);
-                cfg.sysopHash = axis::bbs::hashPassword(cfg.sysopSalt, pw.c_str());
-                bool ok = configSave(cfg);
-                if (cluster) cluster->shareSettings();  // every board takes the same sysop login
-                logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
-            }
-        } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
-            startPicker(mode == Mode::WifiPick ? afterPick : mode);
-        } else if (serialFileCommand(cmd)) {  // @PUT @LS @RM @MKDIR @BAUD (tools/sdput.py)
-        } else if (cmd == "@RESETSETUP") {
-            configErase();
-            Serial.println("axis: settings erased, restarting into setup");
-            delay(100);
-            ESP.restart();
-        }
+        runCommand(cmd, Serial);
         cmd = "";
     }
 }
