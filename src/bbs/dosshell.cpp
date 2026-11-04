@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdio>
 
+#include "bbs/archive.h"
 #include "bbs/password.h"
 #include "bbs/version.h"
 
@@ -85,12 +86,49 @@ bool DosShell::step() {
     if (!line_.carrier()) return false;
     while (st_ != St::Done && line_.available() > 0) {
         int c = line_.read();
+        if (st_ == St::More) {  // a page is up: Q stops, any other key shows the next
+            if ((c | 0x20) == 'q') {
+                fs_.close(moreH_);
+                moreH_ = -1;
+                moreBuf_.clear();
+                st_ = St::Prompt;
+                send("\r\n\r\n");
+                prompt();
+            } else {
+                send("\r\x1b[K");
+                moreNext();
+            }
+            continue;
+        }
+        if (st_ == St::Prompt && esc_ == 1) {
+            esc_ = c == '[' || c == 'O' ? 2 : 0;
+            continue;
+        }
+        if (st_ == St::Prompt && esc_ == 2) {  // up / down through the history, F3 the last command
+            esc_ = 0;
+            if (c == 'A' && histAt_ > 0) recall(history_[--histAt_]);
+            else if (c == 'B' && histAt_ + 1 < history_.size()) recall(history_[++histAt_]);
+            else if (c == 'B') {
+                histAt_ = history_.size();
+                recall("");
+            } else if (c == 'R' && !history_.empty()) recall(history_.back());
+            continue;
+        }
+        if (st_ == St::Prompt && c == 0x1b) {
+            esc_ = 1;
+            continue;
+        }
         if (c == '\r') {
             std::string t = typed_;
             typed_.clear();
             send("\r\n");
             if (st_ == St::Password) password(t);
-            else command(t);
+            else {
+                if (!t.empty() && (history_.empty() || history_.back() != t)) history_.push_back(t);
+                if (history_.size() > 20) history_.erase(history_.begin());
+                histAt_ = history_.size();
+                command(t);
+            }
         } else if (c == 8 || c == 127) {
             if (!typed_.empty()) {
                 typed_.pop_back();
@@ -131,6 +169,103 @@ void DosShell::password(const std::string& typed) {
     }
 }
 
+void DosShell::recall(const std::string& cmd) {
+    for (size_t i = 0; i < typed_.size(); i++) send("\b \b");
+    typed_ = cmd;
+    send(cmd);
+}
+
+void DosShell::moreNext() {  // up to 22 lines, then "-- More --" (or the end of the file)
+    int lines = 0;
+    for (;;) {
+        size_t nl;
+        while (lines < 22 && (nl = moreBuf_.find('\n')) != std::string::npos) {
+            send(moreBuf_.substr(0, nl + 1));
+            moreBuf_.erase(0, nl + 1);
+            lines++;
+        }
+        if (lines >= 22) {
+            send("-- More -- (any key, Q stops)");
+            return;
+        }
+        char buf[256];
+        int  n = fs_.read(moreH_, buf, sizeof buf);
+        if (n <= 0) break;
+        moreBuf_.append(buf, (size_t)n);
+    }
+    send(moreBuf_);
+    moreBuf_.clear();
+    fs_.close(moreH_);
+    moreH_ = -1;
+    st_ = St::Prompt;
+    send("\r\n\r\n");
+    prompt();
+}
+
+void DosShell::tree(const std::string& dir, const std::string& lead) {
+    door::FindState st;
+    fs_.find(inDir(dir, "*.*"), 0x10, st);
+    std::vector<std::string> dirs;
+    for (auto& f : st.matches)
+        if ((f.attr & 0x10) && f.name83 != "." && f.name83 != "..") dirs.push_back(f.name83);
+    for (size_t i = 0; i < dirs.size(); i++) {
+        bool last = i + 1 == dirs.size();
+        send(lead + (last ? "\xc0\xc4\xc4\xc4" : "\xc3\xc4\xc4\xc4") + dirs[i] + "\r\n");
+        tree(dir + (dir.empty() ? "" : "\\") + dirs[i], lead + (last ? "    " : "\xb3   "));
+    }
+}
+
+namespace {
+struct ShellFile : RandomFile {  // a sandbox file for the archive lister
+    door::HostFs& fs;
+    int           h;
+    uint32_t      bytes;
+    ShellFile(door::HostFs& f, int handle) : fs(f), h(handle) {
+        int64_t end = fs.seek(h, 0, 2);
+        bytes = end > 0 ? (uint32_t)end : 0;
+    }
+    ~ShellFile() override { fs.close(h); }
+    uint32_t size() const override { return bytes; }
+    bool     readAt(uint32_t off, uint8_t* buf, size_t n) override {
+        if ((uint64_t)off + n > bytes || fs.seek(h, off, 0) != (int64_t)off) return false;
+        return fs.read(h, buf, (int)n) == (int)n;
+    }
+};
+}  // namespace
+
+void DosShell::listArc(const std::string& arg) {
+    std::string p;
+    if (arg.empty()) {
+        send("Required parameter missing\r\n");
+        return;
+    }
+    if (!joinPath(fs_.cwd(), arg, p) || p.empty()) {
+        send("Invalid path\r\n");
+        return;
+    }
+    int h = fs_.open("\\" + p, 0, false, false);
+    if (h < 0) {
+        error(-h);
+        return;
+    }
+    ShellFile   f(fs_, h);
+    ArchiveInfo a = listArchive(p, f);
+    if (a.kind.empty()) {
+        send(upper(arg) + " is not an archive this board knows (ZIP, RAR, ARJ, TAR, GZ)\r\n");
+        return;
+    }
+    char     row[128];
+    uint64_t total = 0;
+    send(" " + a.kind + " " + upper(arg) + "\r\n\r\n  Length   Packed  Method    Name\r\n  ------   ------  ------    ----\r\n");
+    for (const ArchiveEntry& e : a.entries) {
+        std::snprintf(row, sizeof row, "%8lu %8lu  %-8.8s  %s\r\n", (unsigned long)e.size, (unsigned long)e.packed, e.method.c_str(), e.name.c_str());
+        send(row);
+        total += e.size;
+    }
+    std::snprintf(row, sizeof row, "  ------\r\n%8llu  %u files\r\n", (unsigned long long)total, (unsigned)a.entries.size());
+    send(row);
+}
+
 void DosShell::prompt() { send("C:\\" + fs_.cwd() + ">"); }
 
 void DosShell::error(int code) {
@@ -157,8 +292,10 @@ void DosShell::command(const std::string& typed) {
         st_ = St::Done;
         return;
     } else if (cmd == "HELP" || cmd == "?") {
-        send("DIR [path]   CD [dir]   MD dir   RD dir   TYPE file   COPY from to\r\n"
-             "DEL file     REN old new   CLS   VER   ECHO text   EXIT\r\n");
+        send("DIR [path]   CD [dir]   MD dir   RD dir   TYPE file   MORE file   COPY from to\r\n"
+             "DEL file     REN old new   TREE   DATE   TIME   CLS   VER   ECHO text   EXIT\r\n"
+             "PKUNZIP -V file (or LIST file): what's inside a ZIP, RAR, ARJ, TAR or GZ\r\n"
+             "Up arrow: the commands before (DOSKEY), F3: the last one\r\n");
     } else if (cmd == "VER") {
         send(std::string("\r\n") + kAxisSoftware + " " + kAxisVersion + " DOS sandbox\r\n");
     } else if (cmd == "CLS") {
@@ -167,6 +304,29 @@ void DosShell::command(const std::string& typed) {
         size_t p = typed.find_first_not_of(" \t");
         p = typed.find_first_of(" \t", p);
         send((p == std::string::npos ? std::string() : typed.substr(p + 1)) + "\r\n");
+    } else if (cmd == "DATE" || cmd == "TIME") {
+        std::string t = cfg_.timeText ? cfg_.timeText() : "";
+        send("Current " + std::string(cmd == "DATE" ? "date and time" : "time") + " is " + (t.empty() ? "unknown (the clock isn't set)" : t) + "\r\n");
+    } else if (cmd == "TREE") {
+        send("Folder PATH listing\r\nC:\\" + fs_.cwd() + "\r\n");
+        tree(fs_.cwd(), "");
+    } else if (cmd == "PKUNZIP" || cmd == "LIST" || cmd == "ARJ" || cmd == "UNRAR") {
+        std::string f = cmd == "LIST" ? a : (upper(a) == "-V" || upper(a) == "L" || upper(a) == "V") ? b : "";
+        if (f.empty()) send(cmd == "LIST" ? "Required parameter missing\r\n" : "Only listing works here: " + cmd + (cmd == "PKUNZIP" ? " -V" : " L") + " file\r\n");
+        else listArc(f);
+    } else if (cmd == "MORE") {
+        std::string p;
+        if (a.empty()) send("Required parameter missing\r\n");
+        else if (!joinPath(fs_.cwd(), a, p) || p.empty()) send("Invalid path\r\n");
+        else if ((moreH_ = fs_.open("\\" + p, 0, false, false)) < 0) {
+            error(-moreH_);
+            moreH_ = -1;
+        } else {
+            st_ = St::More;
+            moreBuf_.clear();
+            moreNext();
+            return;
+        }
     } else if (cmd == "DIR") {
         dir(a);
     } else if (cmd == "CD" || cmd == "CHDIR") {

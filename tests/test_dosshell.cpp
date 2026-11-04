@@ -186,3 +186,63 @@ TEST_CASE("an unknown command says so") {
     std::string out = r.run("frobnicate\r");
     CHECK(out.find("Bad command or file name") != std::string::npos);
 }
+
+TEST_CASE("MORE pages a long file and Q stops it") {
+    Rig r;
+    {
+        std::ofstream f(r.box / "LONG.TXT");
+        for (int i = 1; i <= 60; i++) f << "line " << i << "\r\n";
+    }
+    r.in();
+    std::string out = r.run("more long.txt\r");
+    CHECK(out.find("line 1\r") != std::string::npos);
+    CHECK(out.find("line 30") == std::string::npos);  // a screen at a time
+    CHECK(out.find("More") != std::string::npos);
+    out = r.run(" ");
+    CHECK(out.find("line 30") != std::string::npos);
+    out = r.run("q");
+    CHECK(out.find("line 60") == std::string::npos);
+    CHECK(out.find("C:\\>") != std::string::npos);  // back at the prompt
+}
+
+TEST_CASE("TREE draws the sandbox's folders") {
+    Rig r;
+    fs::create_directories(r.box / "GAMES" / "LORD");
+    fs::create_directories(r.box / "ART");
+    r.in();
+    std::string out = r.run("tree\r");
+    CHECK(out.find("GAMES") != std::string::npos);
+    CHECK(out.find("LORD") != std::string::npos);
+    CHECK(out.find("ART") != std::string::npos);
+    CHECK(out.find("BBS") == std::string::npos);  // never outside the sandbox
+}
+
+TEST_CASE("the up arrow brings back the last command, like DOSKEY") {
+    Rig r;
+    r.in();
+    r.run("echo first\r");
+    r.run("echo second\r");
+    std::string out = r.run("\x1b[A");
+    CHECK(out.find("echo second") != std::string::npos);
+    out = r.run("\x1b[A");
+    CHECK(out.find("echo first") != std::string::npos);
+    out = r.run("\r");
+    CHECK(out.find("first\r\n") != std::string::npos);
+}
+
+TEST_CASE("PKUNZIP -V (or LIST) shows what's inside an archive in the sandbox") {
+    Rig r;
+    {  // a tiny stored ZIP: one file, HI.TXT, "hi"
+        const unsigned char z[] = {0x50, 0x4b, 0x03, 0x04, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xac, 0x2a, 0x93, 0xd8, 2, 0, 0, 0, 2, 0, 0, 0, 6, 0, 0, 0,
+                                   'H', 'I', '.', 'T', 'X', 'T', 'h', 'i', 0x50, 0x4b, 0x01, 0x02, 0x14, 0, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                   0xac, 0x2a, 0x93, 0xd8, 2, 0, 0, 0, 2, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                   'H', 'I', '.', 'T', 'X', 'T', 0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 1, 0, 1, 0, 0x34, 0, 0, 0, 0x26, 0, 0, 0, 0, 0};
+        std::ofstream f(r.box / "PACK.ZIP", std::ios::binary);
+        f.write((const char*)z, sizeof z);
+    }
+    r.in();
+    std::string out = r.run("pkunzip -v pack.zip\r");
+    CHECK(out.find("HI.TXT") != std::string::npos);
+    CHECK(out.find("ZIP") != std::string::npos);
+    CHECK(r.run("list readme.txt\r").find("not an archive") != std::string::npos);
+}

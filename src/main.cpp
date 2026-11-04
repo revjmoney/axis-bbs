@@ -1134,6 +1134,7 @@ static void startDoor() {
         c.salt = cfg.dosSalt;
         c.hash = cfg.dosHash;
         c.clockMs = [] { return (uint32_t)millis(); };
+        c.timeText = [] { return sysInfo().timeText; };
         dosShell.reset(new axis::bbs::DosShell(*dosFs, *line, dosGate, c));
         dosShell->begin();
         line->flush();
@@ -1757,6 +1758,13 @@ static void handleSerial() {
             Serial.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
         } else if (cmd.startsWith("@DDNS")) {  // "@DDNS domain|host|key|secret": GoDaddy dynamic DNS; alone: off
             Serial.println(web::setDdns(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: ddns saved" : "axis: @DDNS domain|host|key|secret");
+        } else if (cmd == "@LOGCLEAR") {  // wipe the event log (screen, flash file, its old copy) and the page shown on the WFC
+            events = axis::bbs::EventLog();
+            ::remove("/littlefs/events.log");
+            ::remove("/littlefs/events.old");
+            pageText = "";
+            screenDirty = true;
+            Serial.println("axis: event log cleared");
         } else if (cmd == "@WEBPING") {
             Serial.printf("axis: webping %s\n", web::ping().c_str());
         } else if (cmd == "@WEB") {

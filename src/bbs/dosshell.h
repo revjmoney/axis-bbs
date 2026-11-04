@@ -25,6 +25,7 @@ struct DosShellConfig {
     std::string               salt, hash;  // the door password (password.h); empty = door disabled
     uint64_t                  quotaBytes = 16u * 1024 * 1024;  // the sandbox can't grow past this
     std::function<uint32_t()> clockMs;
+    std::function<std::string()> timeText;  // for DATE and TIME ("" = unknown)
 };
 
 class DosShell {
@@ -38,7 +39,7 @@ public:
     std::vector<std::string>& events() { return events_; }  // for the board's log; the caller takes them
 
 private:
-    enum class St { Password, Prompt, Done };
+    enum class St { Password, Prompt, More, Done };
     void     send(const std::string& s) { line_.write((const uint8_t*)s.data(), s.size()); }
     void     prompt();
     void     password(const std::string& typed);
@@ -57,6 +58,15 @@ private:
     St                       st_ = St::Done;
     int                      tries_ = 0;
     std::string              typed_;
+    std::vector<std::string> history_;          // DOSKEY: the commands typed, newest last
+    size_t                   histAt_ = 0;
+    int                      esc_ = 0;          // an arrow key's ESC sequence so far
+    int                      moreH_ = -1;       // MORE: the open file
+    std::string              moreBuf_;          // what's read but not shown yet
+    void                     moreNext();
+    void                     tree(const std::string& dir, const std::string& lead);
+    void                     listArc(const std::string& arg);
+    void                     recall(const std::string& cmd);
     std::vector<std::string> events_;
 };
 
