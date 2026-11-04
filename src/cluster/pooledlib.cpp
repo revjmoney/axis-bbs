@@ -3,7 +3,6 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "cluster/pooledlib.h"
 
-#include <algorithm>
 #include <cctype>
 
 namespace axis::cluster {
@@ -21,6 +20,12 @@ bool sameName(const std::string& a, const std::string& b) {
     return true;
 }
 bool usable(const PoolCard& c) { return c.alive && c.files; }
+// a handful of cards: a plain insertion sort that keeps equal ones in order (smaller than std::stable_sort)
+template <class Before>
+void sortCards(std::vector<PoolCard*>& v, Before before) {
+    for (size_t i = 1; i < v.size(); i++)
+        for (size_t j = i; j > 0 && before(v[j], v[j - 1]); j--) std::swap(v[j], v[j - 1]);
+}
 }  // namespace
 
 std::vector<bbs::FileEntry> PooledFileLibrary::locate(const std::string& areaId, const std::vector<PoolCard>& cards,
@@ -102,7 +107,7 @@ std::vector<PoolCard*> PooledFileLibrary::order(std::vector<PoolCard>& cs, const
     std::vector<PoolCard*> v;
     for (PoolCard& c : cs)
         if (usable(c)) v.push_back(&c);
-    std::stable_sort(v.begin(), v.end(), [&](PoolCard* a, PoolCard* b) { return rank(*a) < rank(*b); });
+    sortCards(v, [&](PoolCard* a, PoolCard* b) { return rank(*a) < rank(*b); });
     return v;
 }
 
@@ -134,7 +139,7 @@ std::unique_ptr<bbs::WriteFile> PooledFileLibrary::create(const std::string& are
     std::vector<PoolCard*> v;
     for (PoolCard& c : cs)
         if (usable(c)) v.push_back(&c);
-    std::stable_sort(v.begin(), v.end(), [](PoolCard* a, PoolCard* b) { return a->freeBytes > b->freeBytes; });  // the roomiest first
+    sortCards(v, [](PoolCard* a, PoolCard* b) { return a->freeBytes > b->freeBytes; });  // the roomiest first
     for (PoolCard* c : v)
         if (auto w = c->files->create(areaId, name)) {
             placed(areaId, name, c->id);
