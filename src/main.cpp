@@ -30,6 +30,8 @@
 #include "bbs/theme.h"
 #include "bbs/setupportal.h"
 #include "cluster/doorfs.h"
+#include "cluster/mirrorjob.h"
+#include "cluster/pooledlib.h"
 #include "cluster/relay.h"
 #include "cluster/remotefiles.h"
 #include "bbs/config.h"
@@ -246,6 +248,42 @@ static uint32_t lastServedMs = 0;  // main: a follower's door files
 static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string& req, std::string& reply) {
     return cluster && cluster->request(req, reply);
 });
+
+// SD card clustering (cluster/pooledlib.h, mirrorjob.h): on the main, this board's card and every
+// card follower's as one library, and the mirrored areas copied onto a second card in the background.
+// A follower with a card answers the main's requests for it (cardServer).
+static std::map<std::string, std::unique_ptr<axis::cluster::RemoteFileLibrary>> cardFiles;  // main: one per card board
+static std::unique_ptr<axis::cluster::FileServer> cardServer;  // follower with a card: the main's requests
+static std::string cardLabel(const std::string& id) {  // "node 2" (its lowest node), or its id when it is gone
+    int low = 0;
+    if (cluster)
+        for (auto& n : cluster->nodes())
+            if (n.id == id && (!low || n.number < low)) low = n.number;
+    return low ? "node " + std::to_string(low) : "board " + id;
+}
+static std::vector<axis::cluster::PoolCard> poolCards() {
+    std::vector<axis::cluster::PoolCard> v;
+    if (storageHasSd()) v.push_back({"local", "this board", &sdFiles, storageFreeBytes(), true});
+    if (!cluster || cluster->role() != axis::cluster::Role::Main) return v;
+    for (auto& c : cluster->cardBoards()) {
+        auto& lib = cardFiles[c.id];
+        if (!lib) {
+            std::string id = c.id;
+            lib.reset(new axis::cluster::RemoteFileLibrary([id](const std::string& req, std::string& reply) {
+                return cluster && cluster->requestTo(id, req, reply, 2500);
+            }));
+        }
+        v.push_back({c.id, cardLabel(c.id), lib.get(), c.freeBytes, c.alive});
+    }
+    return v;
+}
+static axis::cluster::PooledFileLibrary pooledFiles(poolCards);
+static axis::cluster::MirrorJob         mirrorJob(pooledFiles, [] {
+    std::vector<std::string> v;
+    for (auto& a : cfg.areas)
+        if (a.mirror) v.push_back(a.id);
+    return v;
+});
 static Mode                                     afterPick = Mode::Normal;
 static size_t                                   pendingSeen = 0;
 // the door the caller is in, if any (the screen copy is freed meanwhile)
@@ -388,9 +426,12 @@ static axis::bbs::MessageStore& callerMessages() {
     return *localMsgs;
 }
 
+// A follower (card or not) sees the main's library, which is every card pooled; the main pools its
+// own card with its card followers'; a board on its own has just its card.
 static axis::bbs::FileLibrary& callerFiles() {
-    if (storageHasSd() || !cluster || cluster->role() != axis::cluster::Role::Follower) return sdFiles;
-    return remoteFiles;
+    if (asFollower()) return remoteFiles;
+    if (cluster && cluster->role() == axis::cluster::Role::Main && !cluster->cardBoards().empty()) return pooledFiles;
+    return sdFiles;
 }
 
 static uint32_t unixNow() {
@@ -1438,6 +1479,7 @@ static void startCluster() {
     if (cluster) return;
     clusterNet.begin();
     cluster.reset(new axis::cluster::Cluster(clusterNet, WiFi.macAddress().c_str()));
+    mirrorJob.onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };  // "mirror: copied X to node 2"
     cluster->onEvent = [](const std::string& e) {
         logEvent(String("cluster: ") + e.c_str() + heapText());
         if (e.rfind("MAIN NODE LOST", 0) == 0) mainLostAtMs = millis();
@@ -1502,6 +1544,7 @@ static void startCluster() {
     };
     cluster->setSlots((int)sessions.size());
     cluster->setHasFiles(storageHasSd());  // the board with the SD card should be main
+    cluster->setFreeBytes(storageFreeBytes(true));  // and the main pools every card by its room
     cluster->clockMs = [] { return (uint32_t)millis(); };
     cluster->sleepMs = [](uint32_t ms) { delay(ms); };
     cluster->allUsers = [] {
@@ -1569,9 +1612,18 @@ static void startCluster() {
             return ds->handle(req);
         }
         auto& srv = fileServers[nodeNum];
-        if (!srv) srv.reset(new axis::cluster::FileServer(sdFiles));
+        if (!srv) srv.reset(new axis::cluster::FileServer(pooledFiles));  // (just this card when it is the only one)
         return srv->handle(req);
     };
+    cluster->onMainRequest = [](const std::string& req) {  // a follower with a card: the main asks for its files
+        servedRequest = true;
+        if (!storageHasSd()) return std::string("0");
+        if (!cardServer) cardServer.reset(new axis::cluster::FileServer(sdFiles));
+        std::string reply = cardServer->handle(req);
+        if (!req.empty() && (req[0] == 'F' || req[0] == 'X')) cluster->setFreeBytes(storageFreeBytes(true));  // the main picks cards by room
+        return reply;
+    };
+    cluster->onMainGone = [] { cardServer.reset(); };  // its half-done uploads and mirror copies are thrown away
     cluster->onNodeGone = [](int nodeNum) {  // its unfinished uploads go, its door's files close, its locks free
         fileServers.erase(nodeNum);
         auto it = doorServers.find(nodeNum);
@@ -1767,6 +1819,22 @@ static void handleSerial() {
                 for (auto& n : cluster->nodes())
                     Serial.printf("axis: node %d ip %s handle '%s' activity '%s'%s\n", n.number, IPAddress(n.ip).toString().c_str(),
                                   n.handle.c_str(), n.activity.c_str(), n.number == cluster->nodeNumber() ? " (this board)" : "");
+        } else if (cmd == "@CARDS") {  // the SD cards in the pool: free space, up or down (bench)
+            if (storageHasSd()) Serial.printf("axis: card on this board, %u MB free\n", (unsigned)(storageFreeBytes(true) >> 20));
+            else Serial.println("axis: no SD card on this board");
+            if (cluster && cluster->role() == axis::cluster::Role::Main)
+                for (auto& c : cluster->cardBoards())
+                    Serial.printf("axis: card on %s (%s, ip %s), %u MB free, %s\n", cardLabel(c.id).c_str(), c.id.c_str(),
+                                  IPAddress(c.ip).toString().c_str(), (unsigned)(c.freeBytes >> 20), c.alive ? "up" : "DOWN");
+            else if (cluster)
+                Serial.println("axis: only the main pools the cards (@CARDS there)");
+        } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
+            std::string areas;
+            for (auto& a : cfg.areas)
+                if (a.mirror) areas += (areas.empty() ? "" : " ") + a.id;
+            Serial.printf("axis: mirrored areas: %s\n", areas.empty() ? "none (add |m to an areaN line)" : areas.c_str());
+            if (!cluster || cluster->role() != axis::cluster::Role::Main) Serial.println("axis: only the main runs the mirror");
+            else Serial.printf("axis: mirror %s\n", mirrorJob.state().c_str());
         } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
             axis::bbs::User* u = users.find(cmd.substring(7).c_str());
             if (!u) Serial.println("axis: no user by that handle");
@@ -2208,6 +2276,16 @@ void loop() {
         if (localNode->wantsHangup()) endLocal();
     }
     pumpPassing();  // callers passed to other nodes, every turn (doors and transfers included)
+    if (cluster) {
+        static uint32_t lastFree = 0;  // a card follower keeps the main told of its room
+        if (storageHasSd() && millis() - lastFree > 30000u) {
+            lastFree = millis();
+            cluster->setFreeBytes(storageFreeBytes());
+        }
+        bool uploading = false;  // a follower's caller mid-upload: the mirror waits (an upload may be rezipped)
+        for (auto& f : fileServers) uploading = uploading || (f.second && f.second->openUploads());
+        if (cluster->role() == axis::cluster::Role::Main && busySlot < 0 && !uploading) mirrorJob.step(millis());
+    }
     ledUpdate();
     if (server.hasClient()) answer(server.available());
     for (size_t i = 0; i < sessions.size(); i++) {

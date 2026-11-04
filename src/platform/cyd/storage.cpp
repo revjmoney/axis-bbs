@@ -40,6 +40,17 @@ void storageInit() {
     Serial.printf("axis: storage: %s\n", summary.c_str());
 }
 
+uint64_t storageFreeBytes(bool fresh) {
+    static uint64_t bytes = 0;
+    static uint32_t at = 0;
+    if (!haveSd) return 0;
+    if (fresh || !at || millis() - at > 30000) {
+        bytes = SD.totalBytes() - SD.usedBytes();
+        at = millis() | 1;
+    }
+    return bytes;
+}
+
 // The SD library registers the card as FatFs drive "0:" (the only FatFs drive on this board).
 // Unmount the filesystem, write a new FAT32 volume over the whole card, then mount it again.
 bool storageFormatSd(String& result) {
