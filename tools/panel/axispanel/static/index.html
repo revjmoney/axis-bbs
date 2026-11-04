@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIS Sysop Panel</title>
+<link rel="stylesheet" href="/static/panel.css">
+</head>
+<body>
+<header class="bar">
+  <span class="brand">&#9608; AXIS <small>SYSOP PANEL</small></span>
+  <nav id="tabs">
+    <button data-tab="nodes" class="on"><b>N</b>odes</button>
+    <button data-tab="users"><b>U</b>sers</button>
+    <button data-tab="settings"><b>S</b>ettings</button>
+    <button data-tab="lists"><b>L</b>ists</button>
+    <button data-tab="system">s<b>Y</b>stem</button>
+  </nav>
+  <span id="link" class="dim">offline</span>
+</header>
+
+<section id="login" class="win">
+  <h2>[ SYSOP LOGIN ]</h2>
+  <form id="loginform">
+    <label>Handle <input id="handle" autocomplete="username" required></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Login</button>
+    <p id="loginmsg" class="warn"></p>
+  </form>
+</section>
+
+<main id="app" hidden>
+  <section id="tab-nodes" class="tab">
+    <div id="boards" class="grid"></div>
+    <div class="win"><h2>[ BROADCAST ]</h2>
+      <form id="bcast"><input id="bcasttext" placeholder="message to every caller on every board"><button>Send</button></form>
+    </div>
+  </section>
+
+  <section id="tab-users" class="tab" hidden>
+    <div class="win"><h2>[ USERS ]</h2><table id="users"></table></div>
+    <div class="win" id="userdetail" hidden></div>
+  </section>
+
+  <section id="tab-settings" class="tab" hidden>
+    <div class="win"><h2>[ BBS SETTINGS ]</h2>
+      <p class="dim">Saved on the main and shared to every board. Passwords are set below, never shown.</p>
+      <form id="settings"></form>
+    </div>
+    <div class="win"><h2>[ PASSWORDS ]</h2>
+      <form id="pw">
+        <label>Sysop password <input id="sysoppw" type="password" minlength="4"></label><button data-pw="sysop">Set</button>
+        <label>New user password (NUP) <input id="nup" type="password"></label><button data-pw="nup">Set</button><button data-pw="nupoff" class="ghost">Clear NUP</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="tab-lists" class="tab" hidden>
+    <div class="grid">
+      <div class="win"><h2>[ RUMORS ]</h2><form id="rumor"><input id="rumortext" placeholder="add a rumor"><button>Add</button></form><pre id="list-rumors"></pre></div>
+      <div class="win"><h2>[ ONELINERS ]</h2><pre id="list-liners"></pre></div>
+      <div class="win"><h2>[ BBS LIST ]</h2><pre id="list-bbslist"></pre></div>
+      <div class="win"><h2>[ VOTING BOOTH ]</h2><pre id="list-votes"></pre></div>
+    </div>
+  </section>
+
+  <section id="tab-system" class="tab" hidden>
+    <div id="system" class="grid"></div>
+    <div class="win"><h2>[ EVENT LOG ]</h2><pre id="events"></pre></div>
+  </section>
+</main>
+<footer class="status"><span id="who"></span><span id="clock"></span></footer>
+<script src="/static/panel.js"></script>
+</body>
+</html>

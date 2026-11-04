@@ -1,0 +1,40 @@
+@font-face { font-family: "AxisVGA"; src: url("/static/AxisVGA.woff2") format("woff2"); font-display: swap; }
+:root {
+  --c0: #000000; --c1: #0000AA; --c3: #00AAAA; --c4: #AA0000; --c6: #AA5500; --c7: #AAAAAA;
+  --c8: #555555; --c10: #55FF55; --c11: #55FFFF; --c12: #FF5555; --c14: #FFFF55; --c15: #FFFFFF;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--c0); color: var(--c7); font: 16px/1.25 "AxisVGA", "Consolas", monospace; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px max(12px, env(safe-area-inset-left, 0px)); background: #111; border-bottom: 1px solid var(--c6); position: sticky; top: 0; z-index: 2; }
+.brand { color: var(--c14); }
+.brand small { color: var(--c8); }
+nav { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+button, input, select { font: inherit; }
+button { background: #222; color: var(--c15); border: 1px solid var(--c6); padding: 4px 10px; cursor: pointer; }
+button b { color: var(--c14); font-weight: normal; }
+button.on, button:hover { background: var(--c6); color: var(--c0); }
+button.ghost { border-color: var(--c8); color: var(--c7); }
+button.danger { border-color: var(--c12); color: var(--c12); }
+input, select { background: var(--c0); color: var(--c15); border: 1px solid var(--c8); padding: 4px 6px; min-width: 0; }
+main, #login { padding: 12px max(12px, env(safe-area-inset-left, 0px)); }
+.win { border: 1px solid var(--c3); padding: 10px; margin: 0 0 12px; background: #050505; min-width: 0; }
+.win h2 { margin: -10px -10px 8px; padding: 2px 10px; font-size: 1em; font-weight: normal; color: var(--c0); background: var(--c3); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.node { border-left: 3px solid var(--c8); padding: 4px 8px; margin: 6px 0; }
+.node.busy { border-color: var(--c10); }
+.node .who { color: var(--c15); }
+.node .acts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.dim { color: var(--c8); }
+.warn { color: var(--c12); }
+.ok { color: var(--c10); }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow: auto; color: var(--c7); }
+table { width: 100%; border-collapse: collapse; }
+td, th { text-align: left; padding: 2px 6px; border-bottom: 1px solid #222; }
+tr.pick { cursor: pointer; }
+tr.pick:hover { background: #222; }
+form label { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: 4px 0; flex-wrap: wrap; }
+form#settings label input { flex: 1; max-width: 60%; }
+#login form { max-width: 360px; }
+.status { position: sticky; bottom: 0; display: flex; justify-content: space-between; padding: 2px 12px; background: var(--c1); color: var(--c15); }
+.tag { color: var(--c14); }
