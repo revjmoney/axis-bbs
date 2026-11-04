@@ -90,20 +90,21 @@ static bool                                     ledReport = false;  // @LED: pri
 // The RGB LED (GPIO 4 red, 16 green, 17 blue, lit when low) on LEDC channels the backlight
 // (channel 7) doesn't share a timer with.
 #ifdef AXIS_LEDRING
-// Rev's eight-light ring (his esp32-led-controller board): reds and greens alternating round it,
-// each through 470 ohms to ground, lit when high. GPIO 12 is a boot strap pin; the LED keeps it low.
-static const uint8_t kRingPins[8] = {23, 22, 19, 18, 12, 14, 25, 33};
+// Rev's LED board (his esp32-led-controller: nine 10 mm LEDs on a terminal breakout, each through
+// 470 ohms to ground, lit when high). Rev wants them all dark: every output pin that could carry one
+// is held low, the board's blue LED (GPIO 2) included. GPIO 12 is a boot strap pin; low is safe.
+static const uint8_t kDarkPins[] = {23, 22, 19, 18, 12, 14, 25, 33, 26, 27, 32, 13, 15, 16, 17, 21, 4, 5, 2};
 #endif
 
 static void ledBegin() {
 #ifdef AXIS_LEDRING
-    for (int i = 0; i < 8; i++) {
-        ledcSetup(i, 5000, 8);
-        ledcAttachPin(kRingPins[i], i);
-        ledcWrite(i, 0);
+    for (uint8_t p : kDarkPins) {
+        pinMode(p, OUTPUT);
+        digitalWrite(p, LOW);
     }
+    return;
 #endif
-#ifdef AXIS_HEADLESS
+#if defined(AXIS_HEADLESS)
     ledcSetup(8, 5000, 8);  // a plain ESP32 board: one blue LED on GPIO 2, lit when high
     ledcAttachPin(2, 8);
     ledcWrite(8, 0);
@@ -2080,9 +2081,7 @@ static void ledUpdate() {
                       in.pendingUsers, in.doorRunning, in.transfer, in.chat, in.paged, in.mainLost, c.r, c.g, c.b);
     }
 #ifdef AXIS_LEDRING
-    uint8_t ring[8];
-    axis::bbs::ledRing(in, millis(), ring);
-    for (int i = 0; i < 8; i++) ledcWrite(i, ring[i]);
+    return;  // Rev: no lights on the ring board (every LED pin held low in ledBegin)
 #endif
 #ifdef AXIS_HEADLESS
     ledcWrite(8, c.r > c.g ? (c.r > c.b ? c.r : c.b) : (c.g > c.b ? c.g : c.b));  // one LED: the pattern, as brightness
