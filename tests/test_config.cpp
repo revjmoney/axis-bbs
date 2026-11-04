@@ -187,3 +187,15 @@ TEST_CASE("the theme setting is axis unless it says oblivion, and survives a sav
     CHECK(parseConfig(formatConfig(c)).theme == "oblivion");
     CHECK(mergeSettings(parseConfig(""), formatConfig(c)).theme == "oblivion");  // one look for the whole cluster
 }
+
+TEST_CASE("an area can need a security level: id|name|level, kept when saved") {
+    BbsConfig c = parseConfig("area1=axis|Axis\narea2=zero|Zero Day|150\nmsgarea1=general|General\nmsgarea2=elite|Elite Talk|100\n");
+    REQUIRE(c.areas.size() == 2);
+    CHECK(c.areas[0].minSecurity == 0);
+    CHECK(c.areas[1].minSecurity == 150);
+    CHECK(c.msgAreas[1].minSecurity == 100);
+    BbsConfig back = parseConfig(formatConfig(c));
+    CHECK(back.areas[1].minSecurity == 150);
+    CHECK(back.areas[1].name == "Zero Day");
+    CHECK(back.msgAreas[1].minSecurity == 100);
+}

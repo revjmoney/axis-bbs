@@ -65,3 +65,34 @@ TEST_CASE("a lost main shows yellow") {
     in.mainLost = true;
     CHECK(shows(in, 1, 1, 0));
 }
+
+TEST_CASE("an eight light ring: an idle comet goes round, a door lights only the reds, a page strobes the reds") {
+    LedInputs idle;
+    uint8_t   a[8], b[8];
+    ledRing(idle, 0, a);
+    ledRing(idle, 600, b);
+    int headA = 0, headB = 0;
+    for (int i = 0; i < 8; i++) {
+        if (a[i] > a[headA]) headA = i;
+        if (b[i] > b[headB]) headB = i;
+    }
+    CHECK(a[headA] == 255);
+    CHECK(headA != headB);  // it moved round the ring
+    LedInputs door;
+    door.doorRunning = true;
+    door.callers = 1;
+    for (uint32_t t = 0; t < 3000; t += 70) {
+        ledRing(door, t, a);
+        for (int i = 1; i < 8; i += 2) CHECK(a[i] == 0);  // odd places are the greens: dark
+    }
+    LedInputs paged;
+    paged.paged = true;
+    bool on = false, off = false;
+    for (uint32_t t = 0; t < 1000; t += 25) {
+        ledRing(paged, t, a);
+        on = on || (a[0] == 255 && a[2] == 255 && a[4] == 255 && a[6] == 255);
+        off = off || (a[0] == 0 && a[2] == 0);
+    }
+    CHECK(on);
+    CHECK(off);
+}

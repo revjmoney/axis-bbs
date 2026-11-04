@@ -73,6 +73,11 @@ public:
     // from flash, instead of through takeOutput(): a copy of them needs more heap than a busy board has.
     // the Oblivion look's screens from the card (MATRIX.ANS, MAIN.ANS): their text, or "" for the stock screen
     void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
+    // the last callers list ("handle|node|time|location" lines, oldest first) and adding this call to it
+    void        setLastCallers(std::function<std::vector<std::string>()> get, std::function<void(const std::string&)> add) {
+        callersGet_ = std::move(get);
+        callersAdd_ = std::move(add);
+    }
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
     void        begin(uint32_t nowMs);
     void        beginLocal(uint32_t nowMs);  // the sysop at the board itself: logged in as sysop, no splash
@@ -120,10 +125,16 @@ private:
     std::function<void(const char*, size_t)> direct_;
     std::function<std::string(const std::string&)> art_;
     std::function<void(int, int, const std::string&)> send_;
+    std::function<std::vector<std::string>()> callersGet_;
+    std::function<void(const std::string&)>   callersAdd_;
+    void                      showLastCallers();
     bool                      available_ = true;
     char                      mnAsk_ = 0;          // MultiNode: the command waiting for a node number / text
     int                       mnTo_ = 0, splitWith_ = 0, splitAsk_ = 0;  // the node asked, in split chat with, asking us
     int                       splitRow_[2] = {2, 14}, splitCol_[2] = {1, 1};  // split chat cursors: their half, mine
+    std::vector<FileArea>     myAreas_, myMsgAreas_;  // the areas this caller's security level opens
+    int                       securityLevel() const;  // the sysop 255, a caller their account's, no accounts 0
+    std::vector<FileArea>     openTo(const std::vector<FileArea>& all) const;
     std::string               splitHandle_;        // who is asking us
     std::vector<std::string>  notes_;              // notes that came while a door or transfer had the screen
     void                      showMultiNode();

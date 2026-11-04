@@ -85,7 +85,20 @@ static bool                                     ledReport = false;  // @LED: pri
 
 // The RGB LED (GPIO 4 red, 16 green, 17 blue, lit when low) on LEDC channels the backlight
 // (channel 7) doesn't share a timer with.
+#ifdef AXIS_LEDRING
+// Rev's eight-light ring (his esp32-led-controller board): reds and greens alternating round it,
+// each through 470 ohms to ground, lit when high. GPIO 12 is a boot strap pin; the LED keeps it low.
+static const uint8_t kRingPins[8] = {23, 22, 19, 18, 12, 14, 25, 33};
+#endif
+
 static void ledBegin() {
+#ifdef AXIS_LEDRING
+    for (int i = 0; i < 8; i++) {
+        ledcSetup(i, 5000, 8);
+        ledcAttachPin(kRingPins[i], i);
+        ledcWrite(i, 0);
+    }
+#endif
 #ifdef AXIS_HEADLESS
     ledcSetup(8, 5000, 8);  // a plain ESP32 board: one blue LED on GPIO 2, lit when high
     ledcAttachPin(2, 8);
@@ -485,7 +498,16 @@ static void drawWfc() {
     if (sessions.size() < 4) {  // a free row: the system ticker (what used to fill this screen), scrolling
         uint32_t up = millis() / 1000;
         snprintf(b, sizeof b, "up %lud %luh %lum", (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24), (unsigned long)(up / 60 % 60));
-        String tick = dialName() + ":" + String(cfg.telnetPort) + "  " + WiFi.localIP().toString() + "  " + String(wifiSsid()) + " " +
+        String others;  // the other boards' nodes (headless ones too): who's on, where
+        if (cluster)
+            for (auto& n : cluster->nodes()) {
+                bool mine = false;
+                for (int k : cluster->numbers()) mine = mine || k == n.number;
+                if (mine) continue;
+                others += "n" + String(n.number) + " " + (n.handle.empty() ? String("free") : String(n.handle.c_str()) + " " + n.activity.c_str()) + "  ";
+            }
+        String tick = (others.length() ? "other nodes: " + others + "\xb3 " : String()) + dialName() + ":" + String(cfg.telnetPort) + "  " +
+                      WiFi.localIP().toString() + "  " + String(wifiSsid()) + " " +
                       String(WiFi.RSSI()) + " dBm  " + (storageHasSd() ? "SD " + String(cfg.areas.size()) + " areas" : String("no SD")) + "  " +
                       b + "  " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) + " KB free  calls " + String(callsToday) +
                       " last " + lastCaller + "  " + cfg.location.c_str();
@@ -1734,6 +1756,11 @@ static void ledUpdate() {
         Serial.printf("axis: led callers %d pending %d door %d transfer %d chat %d paged %d lost %d -> rgb %u %u %u\n", in.callers,
                       in.pendingUsers, in.doorRunning, in.transfer, in.chat, in.paged, in.mainLost, c.r, c.g, c.b);
     }
+#ifdef AXIS_LEDRING
+    uint8_t ring[8];
+    axis::bbs::ledRing(in, millis(), ring);
+    for (int i = 0; i < 8; i++) ledcWrite(i, ring[i]);
+#endif
 #ifdef AXIS_HEADLESS
     ledcWrite(8, c.r > c.g ? (c.r > c.b ? c.r : c.b) : (c.g > c.b ? c.g : c.b));  // one LED: the pattern, as brightness
 #else

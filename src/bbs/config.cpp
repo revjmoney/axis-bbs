@@ -57,6 +57,10 @@ std::vector<FileArea> defaultFileAreas() {
             {"music-other", "Music: Other"}};
 }
 
+namespace {
+bool areaFrom(const std::string& v, FileArea& a);
+}  // namespace
+
 BbsConfig parseConfig(const std::string& ini) {
     BbsConfig              c;
     c.loginSplash = true;  // on unless the settings say login_splash=0
@@ -107,11 +111,9 @@ BbsConfig parseConfig(const std::string& ini) {
                 listed.push_back(d);
             }
         } else if (k.rfind("msgarea", 0) == 0 && k.size() > 7 && std::isdigit((unsigned char)k[7])) {
-            size_t bar = v.find('|');
-            if (bar != std::string::npos && bar > 0) msgAreas[std::atoi(k.c_str() + 7)] = {v.substr(0, bar), v.substr(bar + 1)};
+            if (FileArea a; areaFrom(v, a)) msgAreas[std::atoi(k.c_str() + 7)] = a;
         } else if (k.rfind("area", 0) == 0 && k.size() > 4 && std::isdigit((unsigned char)k[4])) {
-            size_t bar = v.find('|');
-            if (bar != std::string::npos && bar > 0) areas[std::atoi(k.c_str() + 4)] = {v.substr(0, bar), v.substr(bar + 1)};
+            if (FileArea a; areaFrom(v, a)) areas[std::atoi(k.c_str() + 4)] = a;
         } else c.unknown.emplace_back(k, v);
     }
     if (listed.empty()) listed = c.doors;  // none in the file: keep the default list
@@ -129,6 +131,20 @@ BbsConfig parseConfig(const std::string& ini) {
     }
     return c;
 }
+
+namespace {
+bool areaFrom(const std::string& v, FileArea& a) {  // "id|name" or "id|name|level"
+    size_t bar = v.find('|');
+    if (bar == std::string::npos || bar == 0) return false;
+    size_t bar2 = v.find('|', bar + 1);
+    a.id = v.substr(0, bar);
+    a.name = v.substr(bar + 1, bar2 == std::string::npos ? std::string::npos : bar2 - bar - 1);
+    a.minSecurity = bar2 == std::string::npos ? 0 : std::atoi(v.c_str() + bar2 + 1);
+    return true;
+}
+}  // namespace
+
+std::string areaText(const FileArea& a) { return a.id + "|" + a.name + (a.minSecurity ? "|" + std::to_string(a.minSecurity) : ""); }
 
 BbsConfig mergeSettings(const BbsConfig& mine, const std::string& mainIni) {
     BbsConfig c = parseConfig(mainIni);
@@ -166,9 +182,9 @@ std::string formatConfig(const BbsConfig& c) {
         kv(("door" + std::to_string(i + 1)).c_str(), d.id + "|" + d.name + "|" + d.exe + "|" + d.args + "|" + d.drop);
     }
     for (size_t i = 0; i < c.areas.size(); i++)
-        kv(("area" + std::to_string(i + 1)).c_str(), c.areas[i].id + "|" + c.areas[i].name);
+        kv(("area" + std::to_string(i + 1)).c_str(), areaText(c.areas[i]));
     for (size_t i = 0; i < c.msgAreas.size(); i++)
-        kv(("msgarea" + std::to_string(i + 1)).c_str(), c.msgAreas[i].id + "|" + c.msgAreas[i].name);
+        kv(("msgarea" + std::to_string(i + 1)).c_str(), areaText(c.msgAreas[i]));
     for (auto& u : c.unknown) kv(u.first.c_str(), u.second);
     kv("setup_done", c.setupDone ? "1" : "0");
     return s;

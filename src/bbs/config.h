@@ -14,8 +14,12 @@ struct DoorEntry {
 };
 
 // A file area. Its files live in /files/<id>/ on the SD card.
+struct FileArea;
+std::string areaText(const FileArea& a);  // "id|name" or "id|name|level", as the settings keep it
+
 struct FileArea {
     std::string id, name;
+    int         minSecurity = 0;  // callers below this level don't see the area ("areaN=id|name|level")
 };
 
 std::vector<FileArea> defaultFileAreas();  // Rev's list (design spec, file areas table)

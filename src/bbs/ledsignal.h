@@ -26,4 +26,10 @@ struct LedInputs {
 
 Rgb ledColor(const LedInputs& in, uint32_t nowMs);
 
+// Eight single-colour lights in a ring (a headless node's status ring), red at even places and
+// green at odd ones, as brightness 0-255: a comet goes round (faster with callers on; reds only
+// while a door runs, greens only for a transfer, two comets for chat), new users flash the greens,
+// a page strobes the reds, a lost main pulses them slowly.
+void ledRing(const LedInputs& in, uint32_t nowMs, uint8_t out[8]);
+
 }  // namespace axis::bbs

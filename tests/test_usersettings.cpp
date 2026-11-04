@@ -17,11 +17,17 @@ SysInfo     info() { return SysInfo{}; }
 uint32_t    rng() { return 0x5A5A5A5Au; }
 std::string plain(const std::string& s) { return std::regex_replace(s, std::regex("\x1b\\[[0-9;]*[A-Za-z]"), ""); }
 
+struct NoFiles : FileLibrary {
+    std::vector<FileEntry> list(const std::string&) override { return {}; }
+    bool read(const std::string&, const std::string&, std::string&, size_t) override { return false; }
+};
+
 struct Rig {
+    NoFiles   files;
     UserStore users;
     int       saves = 0;
     Node      node;
-    explicit Rig(BbsConfig c = BbsConfig()) : node(1, info, c) {
+    explicit Rig(BbsConfig c = BbsConfig()) : node(1, info, c, &files) {
         User u;
         u.handle = "Kid Chips";
         u.salt = makeSalt(rng);
@@ -133,4 +139,46 @@ TEST_CASE("the tagline signs the caller's posts") {
         CHECK(m.body.find("chips fly") != std::string::npos);
     }
     std::filesystem::remove_all(d);
+}
+
+TEST_CASE("areas above a caller's security level don't show up for them, but do for the sysop") {
+    BbsConfig c;
+    c.areas = {{"axis", "Axis Firmware"}, {"zero", "Zero Day", 150}};
+    c.msgAreas = {{"general", "General Chatter"}, {"elite", "Elite Talk", 100}};
+    Rig         r(c);  // Kid Chips: security 10
+    std::string files = r.type("f");
+    CHECK(files.find("Axis Firmware") != std::string::npos);
+    CHECK(files.find("Zero Day") == std::string::npos);
+    r.me().security = 200;
+    r.type("\r");
+    CHECK(r.type("f").find("Zero Day") != std::string::npos);
+}
+
+TEST_CASE("each login goes on the last callers list, and [L] shows the newest first") {
+    std::vector<std::string> calls = {"Old Timer|2|2026-11-03 21:10|Conway, SC"};
+    BbsConfig                c;
+    UserStore                users;
+    User                     u;
+    u.handle = "Kid Chips";
+    u.salt = makeSalt(rng);
+    u.hash = hashPassword(u.salt, "oldpass1");
+    u.status = User::Status::Validated;
+    u.location = "Myrtle Beach, SC";
+    users.add(u);
+    Node n(3, info, c);
+    n.setAccounts(&users, [] {}, rng, [] { return 1800000000u; });
+    n.setLastCallers([&] { return calls; }, [&](const std::string& l) { calls.push_back(l); });
+    n.begin(0);
+    n.input((const uint8_t*)"Kid Chips\roldpass1\r", 19, 1000);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[1].find("Kid Chips|3|") == 0);
+    CHECK(calls[1].find("Myrtle Beach, SC") != std::string::npos);
+    n.takeOutput();
+    n.input((const uint8_t*)"l", 1, 1000);
+    std::string out = plain(n.takeOutput());
+    size_t      kid = out.find("Kid Chips"), old = out.find("Old Timer");
+    REQUIRE(kid != std::string::npos);
+    REQUIRE(old != std::string::npos);
+    CHECK(kid < old);  // newest first
+    CHECK(out.find("Conway, SC") != std::string::npos);
 }

@@ -103,6 +103,10 @@ void Node::setAccounts(UserStore* users, std::function<void()> save, uint32_t (*
 
 void Node::loggedIn() {
     state_ = State::Menu;
+    if (callersAdd_) {
+        const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+        callersAdd_(handle_ + "|" + std::to_string(node_) + "|" + info_().timeText + "|" + (u ? u->location : cfg_.location));
+    }
     out_ += "\r\n\r\n   ";
     out_ += theme::TEXT;
     out_ += "Welcome back, ";
@@ -462,6 +466,7 @@ void Node::showMainMenu() {
                                        {"[P]", "page the sysop"},
                                        {"[U] [O]", "your account and tagline, oneliners"},
                                        {"[N]", "multinode: notes, broadcasts, split chat"},
+                                       {"[L]", "last callers"},
                                        {"[I] [C]", "system info, credits"},
                                        {"[G]", "goodbye"}});
     prompt();
@@ -761,7 +766,7 @@ void Node::key(char c) {
     }
     if (state_ != State::Menu) return;
     if (o2() && o2Keys_ && c != '?') {  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
-        static const char from[] = "abcefgklmorstxy+=./", to[] = "utmpgguwmdoiffuuncg";
+        static const char from[] = "abcefgklmorstwxy+=./", to[] = "utmpgguwmdoiflfuuncg";
         const char*       hit = std::strchr(from, (char)(c | 0x20));
         if (!hit || !*hit) {
             out_ += std::string("\r\n   ") + AMBER + "Not on this board yet." + theme::TEXT;
@@ -830,7 +835,8 @@ void Node::key(char c) {
                 break;
             }
             state_ = State::Files;
-            browser_.reset(new FileBrowser(cfg_.areas, *files_, out_));
+            myAreas_ = openTo(cfg_.areas);
+            browser_.reset(new FileBrowser(myAreas_, *files_, out_));
             browser_->setDownloadGate([this]() -> std::string {
                 User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
                 if (!u || mayDownload(*u)) return "";
@@ -849,7 +855,8 @@ void Node::key(char c) {
                 break;
             }
             state_ = State::Messages;
-            msgs_.reset(new MessageReader(cfg_.msgAreas, *msgStore_, out_, handle_, u ? u->lastRead : lastRead_,
+            myMsgAreas_ = openTo(cfg_.msgAreas);
+            msgs_.reset(new MessageReader(myMsgAreas_, *msgStore_, out_, handle_, u ? u->lastRead : lastRead_,
                                           [this] { return info_().timeText; }));
             msgs_->setTagline(tagline());
             msgs_->begin();
@@ -871,6 +878,9 @@ void Node::key(char c) {
         }
         case 'n':
             showMultiNode();
+            break;
+        case 'l':
+            showLastCallers();
             break;
         case 'o':
             if (linersGet_) menuOrLiners();
@@ -1116,6 +1126,29 @@ void Node::multiKey(char c) {
     }
 }
 
+void Node::showLastCallers() {
+    std::vector<std::string> all = callersGet_ ? callersGet_() : std::vector<std::string>{};
+    out_ += "\r\n\r\n   " + theme::fade("LAST CALLERS") + "\r\n";
+    out_ += std::string("   ") + theme::DGREY + std::string(70, '\xc4') + "\r\n";
+    if (all.empty()) out_ += std::string("   ") + theme::TEXT + "(nobody yet)\r\n";
+    int shown = 0;
+    for (size_t i = all.size(); i-- > 0 && shown < 12; shown++) {  // newest first
+        std::string f[4];
+        size_t      pos = 0;
+        for (int k = 0; k < 4; k++) {
+            size_t bar = k < 3 ? all[i].find('|', pos) : std::string::npos;
+            f[k] = all[i].substr(pos, bar == std::string::npos ? std::string::npos : bar - pos);
+            if (bar == std::string::npos) break;
+            pos = bar + 1;
+        }
+        char b[200];
+        std::snprintf(b, sizeof b, "   %s%-22.22s %snode %-3s %s%-17.17s %s%.24s\r\n", theme::WHITE, f[0].c_str(), theme::DGREY, f[1].c_str(), theme::TEXT,
+                      f[2].c_str(), theme::ORANGE, f[3].c_str());
+        out_ += b;
+    }
+    showMenu();
+}
+
 void Node::showNotes() {
     for (const std::string& n : notes_) out_ += "\r\n" + n;
     notes_.clear();
@@ -1231,6 +1264,20 @@ void Node::splitKey(char c) {
     if (c == '\n') return;
     splitPut(1, c);
     if (send_) send_(kSplitKey, splitWith_, std::string(1, c));
+}
+
+int Node::securityLevel() const {
+    if (sysop_) return 255;
+    const User* u = users_ ? users_->byId(userId_) : nullptr;
+    return u ? u->security : 0;
+}
+
+std::vector<FileArea> Node::openTo(const std::vector<FileArea>& all) const {
+    std::vector<FileArea> v;
+    int                   level = securityLevel();
+    for (const FileArea& a : all)
+        if (a.minSecurity <= level) v.push_back(a);
+    return v;
 }
 
 std::string Node::tagline() const {
