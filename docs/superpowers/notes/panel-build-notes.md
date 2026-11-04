@@ -17,3 +17,12 @@ PC unit tests run per task; board flashing and live checks wait for the end.
 - Rev (mid-build): set sysop and user passwords on the touchscreen; then he'll set everything to 1234 himself (Claude doesn't type passwords). Add @USERPASS handle pw + a SET PASSWORD button on the touch sysop menu (touchkeyboard) + a panel control.
 - Touch passwords done: SET PASS on a user's ACCESS screen, SYSOP PW on SYSTEM; OK runs @USERPASS/@SYSOPPASS (4+ chars). @SYSOPPASS minimum lowered 6 -> 4 to match the wizard (so Rev can use 1234). Not tried on the screen yet.
 - Task 5 done: panel port 2326 (pumpPanel in main.cpp), one client, EVT on every logEvent, STAT every 5 s. cyd 95.8%, headless 96.9% (62 KB left in the app partition; the ~96% line is soft, but headless is the tightest: watch it, -Os on UI files is the next lever). Not run on a board yet.
+- Task 6 done: tools/panel/axispanel (discovery, board, hub), 5 pytest cases.
+- Rev: removed the auto-validation paragraph from docs.html and FEATURES.md (text only; behavior unchanged). Pushed.
+- Task 7 done: tools/panel web UI + tray + run.py. 8 pytest cases. UI not opened in a browser yet (end-of-build testing).
+
+## Status at the end of part 1's build (2026-11-04)
+- Built and committed: Tasks 1 to 7 (flash option, runCommand, panel protocol, sysop commands, panel port, app core, web UI + tray), plus touch passwords, @USERPASS, NUP, and the doc text removal.
+- PC tests: firmware 501/501, panel app 8/8.
+- Flash: cyd 95.8%, headless 96.9%.
+- NOT flashed to the boards yet; nothing in part 1 tried live. Next: flash all three boards, then the live checks listed at the top, then docs (Task 8 Step 4).
