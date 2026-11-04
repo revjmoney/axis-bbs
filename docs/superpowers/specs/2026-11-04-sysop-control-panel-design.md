@@ -80,6 +80,39 @@ board's serial console. The panel pulls them together and builds itself from wha
 - Never put Rev's WiFi name, the test board's public hostname or port, or any password in the repo
   or in screenshots.
 
+## Console login: both modes (Rev)
+
+- **New sysop session:** a fresh sysop login on the chosen board, like the CYD LOCAL button. It takes
+  a free caller slot (on headless boards too, which have no LOCAL button), shows up as a node on the
+  wall and in `@NODES`, and is refused with a clear message when the board has no free slot.
+- **Break in:** take over a caller's live session, classic sysop style: the sysop sees that node's
+  screen and their keystrokes go into the session as if the caller typed them, while the caller keeps
+  seeing everything. The caller is told the sysop has broken in, and told again when the sysop leaves.
+
+My calls: one panel console per node at a time; the CYD LOCAL button and a panel session can run at
+the same time (they are different slots); break-in is logged in the event log.
+
+## Calls settled after the builder check (Claude's, Rev can overrule)
+
+- **Flash room first.** The panel's firmware side waits for the disc changer plan's Task 1
+  (`AXIS_SD_POOL` off by default, about 22 KB back); size-heavy UI code may also move to `-Os`. No
+  feature is dropped to make room.
+- **Controls the boards don't have yet** (add time, force into teleconference, sysop chat with a
+  caller, answer a page) are added to the firmware as small actions that the panel and a matching
+  serial `@` command both call, so the anti-goal (same control, same result) holds. Add time lasts
+  for this call only. Force into teleconference works as the existing Oblivion/2 `[F]` does
+  (no refusal). Sysop chat uses the existing split-screen chat. Kick is the existing CYD kick.
+- **Login:** the config sysop password (`@SYSOPPASS`) or the handle and password of any user at
+  security 255; the event log names which sysop did what. The board checks a nonce challenge
+  against the stored hash.
+- **Always on:** a tray app first (it runs while Rev is logged into Windows); built so it can move
+  to a Windows service or an always-on machine later.
+- **When the PC link falls behind,** a tile drops data and resyncs with a full-screen snapshot.
+  Callers are never slowed down. Output is copied for the panel at the socket-write level (some
+  output goes from flash straight to the caller).
+- **Settings and user changes** go to the current main, which shares them as `@SET` does.
+- **"Callers today" and "door use"** are counted by the PC app from the event stream.
+
 ## Left to the builder
 
 - The PC app's language and UI toolkit (it must run on Windows 11 and serve the panel to a phone
