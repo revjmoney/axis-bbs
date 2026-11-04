@@ -160,3 +160,15 @@ TEST_CASE("with the link down the follower's file areas are just empty, not brok
     CHECK_FALSE(r.remote.open("ansi", "README.TXT"));
     CHECK_FALSE(r.remote.create("ansi", "X.ZIP"));
 }
+
+TEST_CASE("a huge area's listing stops short of the link's frame limit instead of breaking the link") {
+    Rig r;
+    for (int i = 0; i < 400; i++)
+        r.sd.areas["big"]["FILE" + std::to_string(1000 + i) + ".ZIP"] = "x";
+    for (auto& f : r.sd.areas["big"]) r.sd.desc["big/" + f.first] = std::string(40, 'd');
+    auto v = r.remote.list("big");
+    CHECK(r.biggest < 8 * 1024 - 64);  // room for the frame's own fields
+    CHECK(v.size() > 50);              // as many as fit
+    CHECK(v.size() < 400);
+    CHECK(v.back().desc == std::string(40, 'd'));  // and the last one whole
+}

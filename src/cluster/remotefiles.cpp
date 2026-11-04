@@ -39,7 +39,11 @@ std::string FileServer::handle(const std::string& req) {
     switch (op) {
         case 'L': {  // list: name, size, description per line
             std::string out;
-            for (auto& e : lib_.list(arg(0))) out += e.name + kSep + std::to_string(e.size) + kSep + e.desc + kSep + std::to_string(e.date) + "\n";
+            for (auto& e : lib_.list(arg(0))) {
+                std::string line = e.name + kSep + std::to_string(e.size) + kSep + e.desc + kSep + std::to_string(e.date) + "\n";
+                if (out.size() + line.size() > kListMax) break;  // too many for one frame: the rest are left off
+                out += line;
+            }
             return ok(out);
         }
         case 'R': {  // read a small file whole

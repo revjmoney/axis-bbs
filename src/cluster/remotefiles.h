@@ -19,6 +19,7 @@ namespace axis::cluster {
 class FileServer {
 public:
     static constexpr size_t kChunk = 2048;
+    static constexpr size_t kListMax = 7 * 1024;  // an area listing stops here: a link frame is 8 KB at most
 
     explicit FileServer(bbs::FileLibrary& lib) : lib_(lib) {}
     std::string handle(const std::string& request);

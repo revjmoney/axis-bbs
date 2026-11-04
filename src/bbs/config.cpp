@@ -144,6 +144,8 @@ bool areaFrom(const std::string& v, FileArea& a) {  // "id|name", "id|name|level
     a.name = v.substr(bar + 1, bar2 == std::string::npos ? std::string::npos : bar2 - bar - 1);
     a.minSecurity = bar2 == std::string::npos ? 0 : std::atoi(v.c_str() + bar2 + 1);
     a.mirror = bar3 != std::string::npos && (v[bar3 + 1] == 'm' || v[bar3 + 1] == 'M');
+    if (bar2 != std::string::npos && bar3 == std::string::npos && (v.substr(bar2 + 1) == "m" || v.substr(bar2 + 1) == "M"))
+        a.mirror = true;  // "id|name|m": mirrored, no level
     return true;
 }
 }  // namespace

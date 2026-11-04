@@ -221,3 +221,11 @@ TEST_CASE("an area can be mirrored onto two SD cards: id|name|level|m, kept when
     CHECK(back.areas[1].minSecurity == 150);
     CHECK_FALSE(back.areas[2].mirror);
 }
+
+TEST_CASE("a mirrored area with no level: id|name|m") {
+    BbsConfig c = parseConfig("area1=axis|Axis|m\n");
+    REQUIRE(c.areas.size() == 1);
+    CHECK(c.areas[0].mirror);
+    CHECK(c.areas[0].minSecurity == 0);
+    CHECK(c.areas[0].name == "Axis");
+}
