@@ -3,6 +3,7 @@
 // The caller's Files menu: pick an area, page through its files, view text files. The Node hands
 // it every key while the caller is in Files and returns to its own menu when it is done.
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -13,13 +14,18 @@
 namespace axis::bbs {
 
 class FileBrowser {
+    std::function<std::string()> gate_;
+
 public:
     static constexpr int kPerPage = 15, kViewLines = 20;
     static constexpr size_t kMaxView = 64 * 1024;
 
     FileBrowser(const std::vector<FileArea>& areas, FileLibrary& lib, std::string& out)
         : areas_(areas), lib_(lib), out_(out) {}
+    // downloads and viewing: "" = allowed, else why not (a new caller uploads something first)
+    void setDownloadGate(std::function<std::string()> gate) { gate_ = std::move(gate); }
     void begin();       // show the area list
+    std::string where() const;  // "area list" or the open area's name, for the sysop's activity screen
     bool key(char c);   // false once the caller leaves Files
     // a download or upload the caller asked for: the host runs it, then calls transferDone
     bool                   wantsTransfer() const { return st_ == St::Transfer; }

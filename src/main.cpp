@@ -23,6 +23,7 @@
 #include "bbs/ledsignal.h"
 #include "bbs/password.h"
 #include "bbs/rotatelog.h"
+#include "bbs/theme.h"
 #include "bbs/setupportal.h"
 #include "cluster/doorfs.h"
 #include "cluster/relay.h"
@@ -97,6 +98,29 @@ static axis::bbs::UserSync                      userSync;     // which users sti
 static std::map<int, std::unique_ptr<axis::cluster::FileServer>> fileServers;  // main: one per follower
 static std::map<int, std::unique_ptr<axis::cluster::DoorFsServer>> doorServers;
 static bool servedRequest = false;  // the main answered a follower this loop turn
+static uint32_t shotDoneMs = 0;      // the last @SHOT (it stalls the loop ~13 s on purpose)
+
+// The oneliner wall: the newest 20, in internal flash on the main; followers read and post over the link.
+static std::vector<std::string> oneLiners;
+static void linersLoad() {
+    std::string text = flashRead("/oneliners.txt");
+    oneLiners.clear();
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t e = text.find('\n', pos);
+        if (e == std::string::npos) e = text.size();
+        if (e > pos) oneLiners.push_back(text.substr(pos, e - pos));
+        pos = e + 1;
+    }
+}
+static void linersAddLocal(const std::string& line) {
+    oneLiners.push_back(line.substr(0, 100));
+    while (oneLiners.size() > 20) oneLiners.erase(oneLiners.begin());
+    std::string text;
+    for (auto& l : oneLiners) text += l + "\n";
+    flashWrite("/oneliners.txt", text);
+}
+static bool asFollower();
 static uint32_t lastServedMs = 0;  // main: a follower's door files
 static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string& req, std::string& reply) {
     return cluster && cluster->request(req, reply);
@@ -222,6 +246,8 @@ static void saveUsers() {
     screenDirty = true;
 }
 
+static bool asFollower() { return cluster && cluster->role() == axis::cluster::Role::Follower; }
+
 static axis::bbs::FileLibrary& callerFiles() {
     if (storageHasSd() || !cluster || cluster->role() != axis::cluster::Role::Follower) return sdFiles;
     return remoteFiles;
@@ -282,13 +308,37 @@ static void bigButton(int y, const char* label, uint16_t color) {
 // Waiting-for-caller screen: the drippy ANSI from art/wfc.ans with live status in its panel.
 static AnsiScreen wfc;
 static BigText    panel;
+// The waiting-for-caller screen: the board's activity at a glance. Blinking status lights, one
+// line per node on this board (tap one for its details), the newest events, a battery spot.
+static int detailSession = -1;  // the node detail screen is up for this session (-1: the WFC)
+
+static String sessionLineText(size_t i) {  // "Spindle Kid  files: ANSI Packs  12m", or waiting
+    axis::bbs::Node* n = sessionNode(i);
+    if (!n) return "waiting for a caller";
+    uint32_t since = (int)i == curSession ? callStartMs : sessions[i].startMs;
+    uint32_t m = (millis() - since) / 60000;
+    String   who = n->handle().empty() ? String("(new caller)") : String(n->handle().c_str());
+    return who + "  " + n->activityText().c_str() + "  " + String(m) + "m";
+}
+
+static void drawBattery() {  // top right: a battery outline; "?" until a sensor (a divider to GPIO35) is fitted
+    const int x = 288, y = 2;
+    scr.drawRect(x, y, 26, 12, pal::DARKGREY);
+    scr.fillRect(x + 26, y + 3, 3, 6, pal::DARKGREY);
+    scr.setFont(&fonts::Font0);
+    scr.setTextDatum(textdatum_t::top_left);
+    scr.setTextColor(pal::DARKGREY, pal::BLACK);
+    scr.drawString("?", x + 10, y + 2);
+}
+
 static void drawWfc() {
     wfc.load(kWfcArt);
     wfc.render(scr, 8);  // the compact drippy logo in small cells: the top 64 pixels
-    // the live panel in full-size 8x16 text: 11 rows fill the bottom 176 pixels
-    const uint8_t F = 0x06, K = 0x07, V = 0x0F;  // Rev's scheme: orange frame, light grey labels, white values
+    drawBattery();
+    const uint8_t F = 0x06, K = 0x07, V = 0x0F, DIMC = 0x08;
     const int     rows = 11, last = rows - 1;
-    char          b[48];
+    char          b[64];
+    bool          blink = (millis() / 500) % 2;
     panel.clear(K);
     panel.fill(0, 0, 40, 0xCD, F);
     panel.fill(last, 0, 40, 0xCD, F);
@@ -300,8 +350,7 @@ static void drawWfc() {
         panel.text(r, 0, "\xba", F);
         panel.text(r, 39, "\xba", F);
     }
-    if (callersOnline()) panel.text(0, 2, callersOnline() > 1 ? "\xb5 CALLERS ONLINE \xc6" : "\xb5 CALLER ONLINE \xc6", 0x0F);
-    else panel.text(0, 2, "\xb5 WAITING FOR CALLER \xc6", 0x0F);
+    panel.text(0, 2, callersOnline() ? "\xb5 ACTIVITY \xc6" : "\xb5 WAITING FOR CALLER \xc6", V);
     {
         bool   main = !cluster || cluster->role() == axis::cluster::Role::Main;
         String nums;  // "node 2+3": every node (session) this board serves
@@ -310,54 +359,124 @@ static void drawWfc() {
         else
             for (size_t i = 0; i < sessions.size(); i++) nums += (i ? "+" : "") + String((int)i + 1);
         snprintf(b, sizeof b, "\xb5 node %s \xc6", nums.c_str());
-        panel.text(0, 39 - (int)strlen(b), b, main ? 0x06 : 0x08);
+        panel.text(0, 39 - (int)strlen(b), b, main ? F : DIMC);
+    }
+    // the status lights: steady = on, blinking = busy, dim = off
+    bool anyDoor = door || viewer || dosShell, anyXfer = job != nullptr;
+    if (cluster && cluster->nodes().size() > 1)
+        for (auto& n : cluster->nodes()) {
+            anyDoor = anyDoor || n.activity == "Doors";
+            anyXfer = anyXfer || n.activity == "Transfer";
+        }
+    bool paged = pageText.length() && millis() - pageAtMs < 60000;
+    struct Light {
+        const char* name;
+        uint8_t     on;
+        bool        lit, busy;
+    } lights[] = {
+        {"NET", 0x0A, WiFi.status() == WL_CONNECTED, callersOnline() > 0},
+        {"LINK", 0x0B, cluster && cluster->nodes().size() > 1, cluster && cluster->role() == axis::cluster::Role::Main},
+        {"SD", 0x06, storageHasSd(), anyXfer},
+        {"CALL", 0x0F, callersOnline() > 0, callersOnline() > 0},
+        {"DOOR", 0x04, anyDoor, anyDoor},
+        {"PAGE", 0x0D, paged, paged},
+    };
+    int col = 2;
+    for (auto& l : lights) {
+        bool show = l.lit && (!l.busy || blink);
+        panel.text(1, col, "\xfe", show ? l.on : (l.lit ? DIMC : 0x08));
+        panel.text(1, col + 1, l.name, l.lit ? K : DIMC);
+        col += 2 + (int)strlen(l.name) + 1;
+    }
+    panel.fill(2, 1, 38, 0xC4, DIMC);
+    // one line per node on this board
+    for (size_t i = 0; i < sessions.size() && i < 4; i++) {
+        int    r = 3 + (int)i;
+        String t = sessionLineText(i);
+        int num = cluster && i < cluster->numbers().size() ? cluster->numbers()[i] : (int)i + 1;
+        snprintf(b, sizeof b, "%2d", num);
+        panel.text(r, 2, b, F);
+        panel.text(r, 5, axis::bbs::theme::marquee(t.c_str(), 33, millis()).c_str(), sessionNode(i) ? V : DIMC);
+    }
+    if (sessions.size() < 4) {  // a free row: the system ticker (what used to fill this screen), scrolling
+        uint32_t up = millis() / 1000;
+        snprintf(b, sizeof b, "up %lud %luh %lum", (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24), (unsigned long)(up / 60 % 60));
+        String tick = dialName() + ":" + String(cfg.telnetPort) + "  " + WiFi.localIP().toString() + "  " + String(wifiSsid()) + " " +
+                      String(WiFi.RSSI()) + " dBm  " + (storageHasSd() ? "SD " + String(cfg.areas.size()) + " areas" : String("no SD")) + "  " +
+                      b + "  " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) + " KB free  calls " + String(callsToday) +
+                      " last " + lastCaller + "  " + cfg.location.c_str();
+        panel.text(6, 2, axis::bbs::theme::marquee(tick.c_str(), 37, millis()).c_str(), DIMC);
+    }
+    // the newest events
+    panel.fill(7, 1, 38, 0xC4, DIMC);
+    const auto& ev = events.lines();
+    for (int k = 0; k < 2; k++) {
+        if ((int)ev.size() - 1 - k < 0) break;
+        const std::string& e = ev[ev.size() - 1 - k];
+        panel.text(9 - k, 2, axis::bbs::theme::marquee(e, 37, millis()).c_str(), k == 0 ? K : DIMC);
+    }
+    if (paged) {  // a page for the sysop takes the event lines' place
+        panel.text(8, 2, "PAGE ", 0x0C);
+        panel.text(8, 7, axis::bbs::theme::marquee(pageText.c_str(), 31, millis()).c_str(), V);
     }
     if (users.pending()) {  // applications waiting for the sysop
         snprintf(b, sizeof b, "\xb5 %u NEW USER%s \xc6", (unsigned)users.pending(), users.pending() == 1 ? "" : "S");
-        panel.text(last, 39 - (int)strlen(b), b, 0x06);
+        panel.text(last, 39 - (int)strlen(b), b, blink ? 0x0A : F);
     } else {
-        panel.text(last, 23, "\xb5 tap: sysop \xc6", 0x08);
-    }
-    auto line = [&](int r, const char* label, const String& value) {
-        panel.text(r, 2, label, K);
-        panel.text(r, 9, value.substring(0, 29).c_str(), V);
-    };
-    uint32_t up = millis() / 1000;
-    snprintf(b, sizeof b, "%lud %luh %lum", (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24),
-             (unsigned long)(up / 60 % 60));
-    line(1, "dial", dialName() + ":" + String(cfg.telnetPort));
-    line(2, "ip", WiFi.localIP().toString());
-    line(3, "wifi", String(wifiSsid()) + " " + String(WiFi.RSSI()) + " dBm");
-    line(4, "store", storageHasSd() ? "SD card, " + String(cfg.areas.size()) + " file areas" : "internal flash");
-    if (cluster && cluster->nodes().size() > 1) {  // the cluster: who is main, and every node
-        String all;
-        for (auto& n : cluster->nodes()) all += String(n.number) + (n.handle.empty() ? "" : "*") + " ";
-        line(5, "nodes", String(cluster->role() == axis::cluster::Role::Main ? "main: " : "joined: ") + all);
-    } else {
-        line(5, "doors", String(cfg.doors.size()) + ": " + (cfg.doors.empty() ? String("") : String(cfg.doors[0].name.c_str())));
-    }
-    line(6, "calls", String(callsToday) + "  last " + lastCaller);
-    line(7, "up", String(b) + "  " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) + " KB free");
-    if (pageText.length() && millis() - pageAtMs < 60000) {  // a caller paged the sysop
-        panel.text(8, 2, "PAGE", 0x0C);
-        panel.text(8, 9, pageText.substring(0, 29).c_str(), 0x0F);
-    } else {
-        line(8, "from", cfg.location.c_str());
-    }
-    axis::bbs::Node* first = nullptr;  // the first session with a caller, and how many more
-    uint32_t         firstMs = 0;
-    for (size_t i = 0; i < sessions.size() && !first; i++)
-        if ((first = sessionNode(i))) firstMs = (int)i == curSession ? callStartMs : sessions[i].startMs;
-    if (first) {
-        snprintf(b, sizeof b, "%s  %lus%s", first->handle().empty() ? "(logging in)" : first->handle().c_str(),
-                 (unsigned long)((millis() - firstMs) / 1000), callersOnline() > 1 ? (" +" + String(callersOnline() - 1)).c_str() : "");
-        panel.text(9, 2, "online", K);
-        panel.text(9, 9, b, 0x06);
-    } else {
-        String now = timeText();  // "2026-11-03 21:40", or "clock not set" before the first time sync
-        line(9, "sysop", String(cfg.sysopHandle.c_str()) + (now[4] == '-' ? "   " + now.substring(11) : String("")));
+        String now = timeText();
+        snprintf(b, sizeof b, "\xb5 %s \xc6", now[4] == '-' ? now.substring(11).c_str() : "tap: sysop");
+        panel.text(last, 39 - (int)strlen(b), b, DIMC);
     }
     panel.render(scr, 64, rows);
+}
+
+// A node's details (tap its line on the WFC): who, where, how long, and a KICK for the sysop.
+static void drawNodeDetail(int i) {
+    scr.fillScreen(pal::BLACK);
+    axis::bbs::Node* n = sessionNode((size_t)i);
+    WifiStream*      l = sessionLine((size_t)i);
+    int num = cluster && (size_t)i < cluster->numbers().size() ? cluster->numbers()[(size_t)i] : i + 1;
+    BigText t;
+    t.clear(0x07);
+    char b[64];
+    snprintf(b, sizeof b, "NODE %d", num);
+    t.text(0, 1, b, 0x0F);
+    t.fill(1, 1, 38, 0xC4, 0x06);
+    auto row = [&](int r, const char* k, const String& v) {
+        t.text(r, 1, k, 0x07);
+        t.text(r, 10, axis::bbs::theme::marquee(v.c_str(), 29, millis()).c_str(), 0x0F);
+    };
+    if (!n || !l) {
+        row(3, "caller", "nobody: waiting for a call");
+    } else {
+        uint32_t since = i == curSession ? callStartMs : sessions[(size_t)i].startMs;
+        uint32_t secs = (millis() - since) / 1000;
+        row(2, "caller", n->handle().empty() ? String("(new caller)") : String(n->handle().c_str()));
+        row(3, "doing", n->activityText().c_str());
+        snprintf(b, sizeof b, "%lum %02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
+        row(4, "online", b);
+        row(5, "from", l->remoteIP().toString());
+        row(6, "sysop", n->isSysop() ? "yes" : "no");
+        if (axis::bbs::User* u = users.find(n->handle())) {
+            row(7, "calls", String(u->calls));
+            row(8, "up/down", String(u->uploads / 1024) + " KB / " + String(u->downloads / 1024) + " KB");
+        }
+    }
+    t.render(scr, 0, 13);
+    scr.setFont(&fonts::Font2);
+    scr.setTextDatum(textdatum_t::middle_center);
+    scr.fillRoundRect(8, 204, 100, 30, 6, pal::DIM);
+    scr.drawRoundRect(8, 204, 100, 30, 6, pal::ORANGE);
+    scr.setTextColor(pal::WHITE, pal::DIM);
+    scr.drawString("BACK", 58, 219);
+    if (n && l) {
+        scr.fillRoundRect(212, 204, 100, 30, 6, pal::ORANGE);
+        scr.drawRoundRect(212, 204, 100, 30, 6, pal::WHITE);
+        scr.setTextColor(pal::BLACK, pal::ORANGE);
+        scr.drawString("KICK", 262, 219);
+    }
+    scr.setTextDatum(textdatum_t::top_left);
+    scr.setFont(&fonts::Font0);
 }
 
 // The sysop menu: drippy title, the screen's text in big VGA cells, then the touch buttons.
@@ -522,6 +641,8 @@ static void drawScreen() {
         bigButton(156, "BACK", pal::DIM);
     } else if (sysop.isOpen()) {
         drawSysop();
+    } else if (detailSession >= 0) {
+        drawNodeDetail(detailSession);
     } else {
         drawWfc();
     }
@@ -687,6 +808,30 @@ static void answerIn(WiFiClient incoming) {
                         v.push_back({sessionNumber((int)i), sessionNode(i) ? sessionNode(i)->handle() : "", sessionNode(i) ? "Online" : ""});
                 }
                 return v;
+            });
+        node->setOneLiners(
+            [] {  // the wall: here on the main, over the link on a follower
+                if (!asFollower()) return oneLiners;
+                std::vector<std::string> v;
+                std::string              reply;
+                if (cluster->request("O", reply, 3000) && !reply.empty() && reply[0] == '1') {
+                    size_t pos = 1;
+                    while (pos < reply.size()) {
+                        size_t e = reply.find('\n', pos);
+                        if (e == std::string::npos) e = reply.size();
+                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
+                        pos = e + 1;
+                    }
+                }
+                return v;
+            },
+            [](const std::string& line) {
+                logEvent(("oneliner: " + line).c_str());
+                if (!asFollower()) linersAddLocal(line);
+                else {
+                    std::string reply;
+                    cluster->request(std::string("P\x1f") + line, reply, 3000);
+                }
             });
         node->setDirect([](const char* p, size_t n) {  // the login art, from flash in 1 KB pieces
             if (line) line->write((const uint8_t*)p, n);
@@ -975,6 +1120,15 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
         if (ok && u->security < 20) u->security = 20;
         logEvent(String("sysop: ") + (ok ? "validated " : "denied ") + u->handle.c_str());
         saveUsers();
+    } else if (a == A::ToggleFiles || a == A::ToggleMessages || a == A::ToggleDoors || a == A::ToggleFreeDownloads) {
+        axis::bbs::User* u = users.byId(sysop.selectedUser());
+        if (!u) return;
+        bool& f = a == A::ToggleFiles ? u->permFiles : a == A::ToggleMessages ? u->permMessages : a == A::ToggleDoors ? u->permDoors
+                                                                                                         : u->freeDownloads;
+        f = !f;
+        logEvent(String("sysop: ") + u->handle.c_str() + (a == A::ToggleFiles ? " files " : a == A::ToggleMessages ? " messages "
+                                                           : a == A::ToggleDoors ? " doors " : " free downloads ") + (f ? "on" : "off"));
+        saveUsers();  // and on to every board
     } else if (a == A::RerunSetup) {  // nothing changes until the wizard saves
         logEvent("sysop: setup again");
         newSetupPin();
@@ -1048,6 +1202,15 @@ static void startCluster() {
     cluster->onRequest = [](int nodeNum, const std::string& req) {
         servedRequest = true;  // a follower waits on this: no nap this turn
         lastServedMs = millis();
+        if (req == "O") {  // the oneliner wall
+            std::string out = "1";
+            for (auto& l : oneLiners) out += l + "\n";
+            return out;
+        }
+        if (req.rfind("P\x1f", 0) == 0) {
+            linersAddLocal(req.substr(2));
+            return std::string("1");
+        }
         if (!req.empty() && req[0] == 'H') {  // a follower's door, on this board's door folders
             auto& ds = doorServers[nodeNum];
             if (!ds)
@@ -1139,10 +1302,28 @@ static void handleTap(int x, int y) {
         screenDirty = true;
         return;
     }
-    if (mode == Mode::Normal) {  // any tap on the WFC opens the sysop menu
-        if (!sysop.isOpen()) sysop.open();
-        else sysopAction(sysop.tap(x, y));
+    if (mode == Mode::Normal) {
         screenDirty = true;
+        if (sysop.isOpen()) {
+            sysopAction(sysop.tap(x, y));
+            return;
+        }
+        if (detailSession >= 0) {  // the node detail screen: BACK, or KICK the caller
+            if (y >= 204 && x < 108) detailSession = -1;
+            else if (y >= 204 && x >= 212 && sessionLine((size_t)detailSession)) {
+                axis::bbs::Node* n = sessionNode((size_t)detailSession);
+                logEvent(String("sysop: kicked ") + (n && !n->handle().empty() ? n->handle().c_str() : "a caller"));
+                sessionLine((size_t)detailSession)->hangUp();  // the session's turn sees the carrier gone and cleans up
+                detailSession = -1;
+            }
+            return;
+        }
+        int row = (y - 64) / 16;  // a node's line on the WFC (panel rows 3..6 start at y = 64)
+        if (y >= 64 && row >= 3 && row < 3 + (int)sessions.size() && row < 7) {
+            detailSession = row - 3;
+            return;
+        }
+        sysop.open();  // anywhere else: the sysop menu
         return;
     }
     bool top = y >= 92 && y < 144, bottom = y >= 156 && y < 208;
@@ -1187,9 +1368,11 @@ static void handleSerial() {
             for (auto& l : events.lines()) Serial.printf("@LOG %s\n", l.c_str());
             Serial.println("@LOG END");
         } else if (cmd == "@SHOT") {
+            shotDoneMs = millis();
             screenShot([] {  // the cluster keeps its heartbeat while the screen streams out
                 if (cluster) cluster->tick(millis());
             });
+            shotDoneMs = millis();  // (the loop's stall check comes next: this one was on purpose)
         } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
             SD.end();
             storageInit();
@@ -1282,6 +1465,7 @@ void setup() {
             configSave(cfg);
         }
     users.parse(flashRead("/users.dat"));
+    linersLoad();
     userSync.changed(users);  // what we have counts as sent: only new changes go over the link
     for (auto& l : eventFile.tail(40)) events.add(l);  // the Logs screen picks up where it left off
     eventFileReady = true;
@@ -1475,7 +1659,8 @@ static void serviceSession(int i) {
 
 void loop() {
     static uint32_t lastLoop = millis();
-    if (millis() - lastLoop > 2000) logEvent("loop stalled " + String(millis() - lastLoop) + " ms");
+    if (millis() - lastLoop > 2000 && millis() - shotDoneMs > 1000)  // (a bench screenshot stalls on purpose)
+        logEvent("loop stalled " + String(millis() - lastLoop) + " ms");
     lastLoop = millis();
     handleSerial();
 #ifdef AXIS_HEADLESS
@@ -1540,7 +1725,7 @@ void loop() {
         unbindSession();
     }
     static uint32_t lastTick = 0;  // keep the clock and the time-online count moving
-    if (millis() - lastTick > (callersOnline() ? 1000u : 15000u)) {
+    if (millis() - lastTick > 300u) {  // the status lights blink, long lines scroll, the times tick
         lastTick = millis();
         if (mode == Mode::Normal) screenDirty = true;
     }

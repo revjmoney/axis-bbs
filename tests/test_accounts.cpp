@@ -202,3 +202,88 @@ TEST_CASE("the sysop logs in with the sysop password from setup") {
     CHECK(r.node.state() == Node::State::Menu);
     CHECK(r.node.isSysop());
 }
+
+namespace {
+// a validated caller logged in, with the file areas on a pretend store
+struct FileLib : FileLibrary {
+    std::vector<FileEntry> list(const std::string&) override { return {{"AXISFLSH.ZIP", 1000, "flash me"}, {"README.TXT", 5, "hi"}}; }
+    bool read(const std::string&, const std::string&, std::string& out, size_t) override {
+        out = "hello";
+        return true;
+    }
+};
+struct PermRig {
+    FileLib   lib;
+    UserStore users;
+    BbsConfig cfg;
+    Node      node{1, info, cfg, &lib};
+    explicit PermRig(void (*setup)(User&) = nullptr) {
+        User u = validUser("Spindle Kid", "secret99", User::Status::Validated);
+        if (setup) setup(u);
+        users.add(u);
+        node.setAccounts(&users, [] {}, rng, [] { return 1800000000u; });
+        node.begin(0);
+        node.takeOutput();
+        type("Spindle Kid\rsecret99\r");
+    }
+    std::string type(const std::string& s) {
+        node.input((const uint8_t*)s.data(), s.size(), 1000);
+        return plain(node.takeOutput());
+    }
+};
+}  // namespace
+
+TEST_CASE("a new caller browses the files but can't download until they upload something") {
+    PermRig     r;
+    std::string out = r.type("f1\r");
+    CHECK(out.find("AXISFLSH.ZIP") != std::string::npos);  // the list is open
+    out = r.type("d");
+    out += r.type("AXISFLSH.ZIP\r");
+    CHECK(out.find("upload") != std::string::npos);
+    CHECK(r.node.state() != Node::State::Transfer);
+    out = r.type("v");
+    out += r.type("README.TXT\r");
+    CHECK(out.find("hello") == std::string::npos);
+}
+
+TEST_CASE("after an upload, downloads open up") {
+    PermRig r([](User& u) { u.uploads = 5000; });
+    r.type("f1\r");
+    r.type("d");
+    r.type("AXISFLSH.ZIP\r");
+    r.type("z");
+    CHECK(r.node.state() == Node::State::Transfer);
+}
+
+TEST_CASE("the sysop can let a caller download without uploading first") {
+    PermRig r([](User& u) { u.freeDownloads = true; });
+    r.type("f1\r");
+    r.type("d");
+    r.type("AXISFLSH.ZIP\r");
+    r.type("z");
+    CHECK(r.node.state() == Node::State::Transfer);
+}
+
+TEST_CASE("a caller without file or door permission is told so at the menu") {
+    PermRig r([](User& u) {
+        u.permFiles = false;
+        u.permDoors = false;
+    });
+    std::string out = r.type("f");
+    CHECK(out.find("file areas are closed") != std::string::npos);
+    CHECK(r.node.state() == Node::State::Menu);
+    out = r.type("d");
+    CHECK(out.find("doors are closed") != std::string::npos);
+    CHECK(r.node.state() == Node::State::Menu);
+}
+
+TEST_CASE("a finished transfer counts toward the caller's uploads and downloads") {
+    PermRig r([](User& u) { u.freeDownloads = true; });
+    r.type("f1\r");
+    r.type("d");
+    r.type("AXISFLSH.ZIP\r");
+    r.type("z");
+    REQUIRE(r.node.state() == Node::State::Transfer);
+    r.node.transferDone(true, 1000, 100, "", 2000);
+    CHECK(r.users.find("Spindle Kid")->downloads == 1000);
+}

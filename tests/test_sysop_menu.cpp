@@ -195,3 +195,31 @@ TEST_CASE("deny also returns the caller's id") {
     CHECK(a == SysopMenu::Action::DenyUser);
     CHECK(m.selectedUser() == 2);
 }
+
+TEST_CASE("a caller's ACCESS screen shows their permissions and toggles each one") {
+    SysopMenu m;
+    SysopData d = withUsers();
+    m.open();
+    tapButton(m, "USERS");
+    m.lines(d);
+    m.tap(100, 32 + 8);
+    tapButton(m, "ACCESS");
+    CHECK(m.screen() == SysopMenu::Screen::Access);
+    std::string all;
+    for (auto& l : m.lines(d)) all += l + "\n";
+    CHECK(all.find("files") != std::string::npos);
+    CHECK(all.find("doors") != std::string::npos);
+    CHECK(all.find("downloads") != std::string::npos);
+    SysopMenu::Action a = SysopMenu::Action::None;
+    tapButton(m, "FILES", &a);
+    CHECK(a == SysopMenu::Action::ToggleFiles);
+    tapButton(m, "MSGS", &a);
+    CHECK(a == SysopMenu::Action::ToggleMessages);
+    tapButton(m, "DOORS", &a);
+    CHECK(a == SysopMenu::Action::ToggleDoors);
+    tapButton(m, "FREE DL", &a);
+    CHECK(a == SysopMenu::Action::ToggleFreeDownloads);
+    CHECK(m.selectedUser() == 2);
+    tapButton(m, "BACK");
+    CHECK(m.screen() == SysopMenu::Screen::UserDetail);
+}

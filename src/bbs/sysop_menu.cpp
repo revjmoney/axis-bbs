@@ -53,10 +53,16 @@ std::vector<SysopMenu::Button> SysopMenu::buttons() const {
         default:
             b.push_back({"BACK", 8, 204, 90, 30});
             if (screen_ == Screen::UserDetail) {
-                b.back().w = 70;
-                b.push_back({"VALIDATE", 84, 204, 86, 30});
-                b.push_back({"DENY", 176, 204, 60, 30, true});
-                b.push_back({"MORE", 242, 204, 70, 30});
+                b.back().w = 58;
+                b.push_back({"VALIDATE", 70, 204, 80, 30});
+                b.push_back({"DENY", 154, 204, 50, 30, true});
+                b.push_back({"ACCESS", 208, 204, 64, 30});
+                b.push_back({"MORE", 276, 204, 36, 30});
+                break;
+            }
+            if (screen_ == Screen::Access) {  // one toggle beside each permission's line
+                const char* t[4] = {"FILES", "MSGS", "DOORS", "FREE DL"};
+                for (int i = 0; i < 4; i++) b.push_back({t[i], 208, 30 + i * 48, 104, 30});  // beside lines 0, 3, 6, 9
                 break;
             }
             if (screen_ == Screen::Files || screen_ == Screen::Logs || screen_ == Screen::Users) b.push_back({"MORE", 222, 204, 90, 30});
@@ -83,7 +89,12 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
                 if (b.label == kSections[i]) go(kSectionScreens[i]);
             return Action::None;
         }
-        if (b.label == "BACK") go(screen_ == Screen::UserDetail ? Screen::Users : Screen::Main);
+        if (b.label == "BACK") go(screen_ == Screen::UserDetail ? Screen::Users : screen_ == Screen::Access ? Screen::UserDetail : Screen::Main);
+        else if (b.label == "ACCESS") go(Screen::Access);
+        else if (b.label == "FILES") return Action::ToggleFiles;
+        else if (b.label == "MSGS") return Action::ToggleMessages;
+        else if (b.label == "DOORS") return Action::ToggleDoors;
+        else if (b.label == "FREE DL") return Action::ToggleFreeDownloads;
         else if (b.label == "VALIDATE") return Action::ValidateUser;
         else if (b.label == "DENY") return Action::DenyUser;
         else if (b.label == "MORE") page_++;
@@ -112,6 +123,7 @@ std::string SysopMenu::title() const {
         case Screen::Setup: return "BBS SETUP";
         case Screen::Users: return "USERS";
         case Screen::UserDetail: return "CALLER";
+        case Screen::Access: return "ACCESS";
         case Screen::Files: return "FILE AREAS";
         case Screen::Messages: return "MESSAGES";
         case Screen::Logs: return "LOGS";
@@ -180,6 +192,21 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
                     v = v.size() > (size_t)kLineChars ? "  " + v.substr(kLineChars) : "";
                 }
             }
+            break;
+        }
+        case Screen::Access: {  // lines 0, 3, 6, 9 sit beside the toggles (48 px apart, 16 px lines)
+            const User* u = nullptr;
+            for (auto& x : d.users.all())
+                if (x.id == user_) u = &x;
+            if (!u) {
+                all.push_back("That caller is gone.");
+                break;
+            }
+            auto onOff = [](bool v) { return std::string(v ? "on" : "OFF"); };
+            all = {u->handle, row("files", onOff(u->permFiles)), "", "", row("messages", onOff(u->permMessages)), "", "",
+                   row("doors", onOff(u->permDoors)), "", "", row("downloads", u->freeDownloads ? "free" : u->uploads ? "earned" : "need an upload")};
+            all.erase(all.begin());  // (the handle is in the title bar's place)
+            all.resize(10);
             break;
         }
         case Screen::Files:

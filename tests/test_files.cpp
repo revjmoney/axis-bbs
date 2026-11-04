@@ -272,3 +272,17 @@ TEST_CASE("[I] on a file that isn't an archive shows what is known about it") {
     type(n, "inope.zip\r");
     CHECK(plain(n.takeOutput()).find("No file by that name") != std::string::npos);
 }
+
+TEST_CASE("a node says where its caller is, for the sysop's activity screen") {
+    FakeLibrary lib = library();
+    Node        n = inFiles(lib);
+    CHECK(n.activityText() == "main menu");
+    type(n, "f");
+    CHECK(n.activityText() == "files: area list");
+    type(n, "2\r");
+    CHECK(n.activityText() == "files: Text Files");
+    type(n, "d");
+    type(n, "LIST1.TXT\r");
+    type(n, "z");
+    CHECK(n.activityText() == "downloading LIST1.TXT");
+}

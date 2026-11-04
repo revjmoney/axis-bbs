@@ -43,6 +43,15 @@ std::string key(const std::string& letter, const std::string& rest) {
     return std::string(DGREY) + "[" + KEY + letter + DGREY + "]" + TEXT + rest;
 }
 
+std::string marquee(const std::string& text, size_t width, uint32_t ms) {
+    if (text.size() <= width) return text;
+    const uint32_t step = 300, hold = 5;  // steps paused at each end
+    uint32_t       span = (uint32_t)(text.size() - width), cycle = span + 2 * hold;
+    uint32_t       at = (ms / step) % cycle;
+    uint32_t       off = at < hold ? 0 : at < hold + span ? at - hold : span;
+    return text.substr(off, width);
+}
+
 std::string window(const std::string& title, const std::vector<std::pair<std::string, std::string>>& rows, int width) {
     const int   inner = width - 2;  // between the side walls
     std::string s;

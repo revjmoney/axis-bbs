@@ -106,7 +106,32 @@ void Node::loggedIn() {
     out_ += theme::TEXT;
     out_ += "Welcome back, ";
     out_ += theme::WHITE + handle_ + theme::TEXT + (sysop_ ? ". " + std::string(theme::ORANGE) + "Sysop access." : ".");
-    showMenu();
+    menuOrLiners();
+}
+
+void Node::menuOrLiners() {
+    if (!linersGet_) {
+        state_ = State::Menu;
+        showMenu();
+        return;
+    }
+    std::vector<std::string> wall = linersGet_();
+    out_ += "\r\n\r\n   ";
+    out_ += theme::fade("ONELINERS");
+    out_ += std::string("\r\n   ") + theme::DGREY + std::string(60, '\xc4') + "\r\n";
+    size_t from = wall.size() > 10 ? wall.size() - 10 : 0;  // the newest ten
+    if (wall.empty()) out_ += std::string("   ") + theme::TEXT + "(nothing yet: be the first)\r\n";
+    for (size_t i = from; i < wall.size(); i++) {
+        const std::string& l = wall[i];
+        size_t             c = l.find(": ");
+        out_ += "   ";
+        if (c != std::string::npos)
+            out_ += std::string(theme::ORANGE) + l.substr(0, c) + theme::DGREY + ": " + theme::WHITE + l.substr(c + 2) + "\r\n";
+        else
+            out_ += std::string(theme::WHITE) + l + "\r\n";
+    }
+    out_ += std::string("\r\n   ") + theme::TEXT + "Add a oneliner? " + theme::ORANGE + "[y/N]" + theme::TEXT + ": ";
+    state_ = State::OneLinerAsk;
 }
 
 void Node::showPending() {
@@ -250,7 +275,7 @@ void Node::key(char c) {
                 out_ += DIM;
                 out_ += "   Welcome, ";
                 out_ += HI + handle_ + DIM + ".";
-                showMenu();
+                menuOrLiners();
                 return;
             }
             auto same = [](const std::string& a, const std::string& b) {
@@ -436,6 +461,35 @@ void Node::key(char c) {
         lineKey(c);
         return;
     }
+    if (state_ == State::OneLinerAsk) {
+        if ((c | 0x20) == 'y') {
+            out_ += std::string("y\r\n   ") + theme::ORANGE + "> " + theme::WHITE;
+            line_.clear();
+            state_ = State::OneLiner;
+        } else {
+            state_ = State::Menu;
+            showMenu();
+        }
+        return;
+    }
+    if (state_ == State::OneLiner) {
+        if (c == '\r') {
+            if (!line_.empty() && linersAdd_) linersAdd_(handle_ + ": " + line_);
+            line_.clear();
+            state_ = State::Menu;
+            out_ += "\r\n";
+            showMenu();
+        } else if (c == 8 || c == 127) {
+            if (!line_.empty()) {
+                line_.pop_back();
+                out_ += "\b \b";
+            }
+        } else if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && line_.size() < 60) {
+            line_ += c;
+            out_ += c;
+        }
+        return;
+    }
     if (state_ != State::Menu) return;
     switch (c | 0x20) {  // either case
         case 't':
@@ -482,11 +536,30 @@ void Node::key(char c) {
                 showMenu();
                 break;
             }
+            if (User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr; u && !u->permFiles) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += "The file areas are closed to your account. Page the sysop if that's wrong.";
+                showMenu();
+                break;
+            }
             state_ = State::Files;
             browser_.reset(new FileBrowser(cfg_.areas, *files_, out_));
+            browser_->setDownloadGate([this]() -> std::string {
+                User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+                if (!u || mayDownload(*u)) return "";
+                return "Downloads open up once you've uploaded something: [U]pload first. Keep the scene alive.";
+            });
             browser_->begin();
             break;
         case 'd':
+            if (User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr; u && !u->permDoors) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += "The doors are closed to your account. Page the sysop if that's wrong.";
+                showMenu();
+                break;
+            }
             showDoors();
             break;
         case 'i': {
@@ -573,8 +646,34 @@ void Node::chatIn(int node, const std::string& handle, const std::string& text, 
 void Node::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t nowMs) {
     if (state_ != State::Transfer) return;
     lastInput_ = nowMs;
+    if (User* u = ok && users_ && !sysop_ ? users_->byId(userId_) : nullptr) {  // ratios: what they gave, what they took
+        (browser_->transfer().upload ? u->uploads : u->downloads) += bytes;
+        if (saveUsers_) saveUsers_();
+    }
     browser_->transferDone(ok, bytes, ms, note, 0);
     state_ = State::Files;
+}
+
+std::string Node::activityText() const {
+    switch (state_) {
+        case State::Splash:
+        case State::Login:
+        case State::Password: return "logging in";
+        case State::ApplyAsk:
+        case State::Applying: return "new user application";
+        case State::Pending: return "waiting to be validated";
+        case State::OneLinerAsk:
+        case State::OneLiner: return "oneliners";
+        case State::Menu: return "main menu";
+        case State::Doors: return "door menu";
+        case State::InDoor: return "in " + door().name;
+        case State::Files: return "files: " + (browser_ ? browser_->where() : std::string("area list"));
+        case State::Transfer: return browser_ ? std::string(transfer().upload ? "uploading " : "downloading ") + transfer().name : "transfer";
+        case State::Chat: return "teleconference";
+        case State::Paging: return "paging the sysop";
+        case State::Done: return "leaving";
+    }
+    return "online";
 }
 
 void Node::poll(uint32_t nowMs) {  // the idle timer covers the application and the pending screen too

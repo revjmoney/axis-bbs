@@ -103,3 +103,30 @@ TEST_CASE("a record received from elsewhere is not sent back out again") {
     sync.received(formatUser(s.upsert(in)));
     CHECK(sync.changed(s).empty());
 }
+
+TEST_CASE("a user's permissions survive a save: files, messages, doors, free downloads") {
+    UserStore s;
+    User      u;
+    u.handle = "Lathe Lord";
+    CHECK(u.permFiles);
+    CHECK(u.permMessages);
+    CHECK(u.permDoors);
+    CHECK_FALSE(u.freeDownloads);
+    u.permDoors = false;
+    u.freeDownloads = true;
+    u.uploads = 12;
+    s.add(u);
+    UserStore t;
+    t.parse(s.format());
+    const User& b = t.all()[0];
+    CHECK(b.permFiles);
+    CHECK_FALSE(b.permDoors);
+    CHECK(b.freeDownloads);
+    CHECK(mayDownload(b));
+    User fresh;
+    CHECK_FALSE(mayDownload(fresh));  // nothing uploaded yet
+    fresh.uploads = 1;
+    CHECK(mayDownload(fresh));
+    fresh.permFiles = false;
+    CHECK_FALSE(mayDownload(fresh));
+}

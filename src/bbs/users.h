@@ -20,6 +20,9 @@ struct User {
     int         security = 10;
     uint32_t    calls = 0, created = 0, lastCall = 0;  // unix time (0 = clock not set)
     uint32_t    uploads = 0, downloads = 0;            // bytes
+    // what the caller may use (the sysop sets these on the CYD); downloads also need an upload
+    // first, unless freeDownloads
+    bool        permFiles = true, permMessages = true, permDoors = true, freeDownloads = false;
     std::vector<std::pair<std::string, std::string>> answers;  // the application: question, answer
 };
 
@@ -40,6 +43,8 @@ private:
 };
 
 const char* statusName(User::Status s);  // "pending", "validated", "denied"
+// may download (and read) files: file permission, and something uploaded first (or let off by the sysop)
+inline bool mayDownload(const User& u) { return u.permFiles && (u.freeDownloads || u.uploads > 0); }
 
 // One user as a users.dat block, for the cluster link. The handle is a user's identity across
 // boards; ids are each board's own.

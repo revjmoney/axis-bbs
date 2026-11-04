@@ -365,3 +365,56 @@ TEST_CASE("the splash hands over to the welcome by itself when it's done") {
     CHECK(n.state() == Node::State::Login);
     CHECK(plain(n.takeOutput()).find("Handle:") != std::string::npos);
 }
+
+namespace {
+struct LinerRig {
+    std::vector<std::string> wall = {"Rev: welcome to the underground", "Spindle Kid: 6061 or bust"};
+    Node                     n = loggedInWithLiners();
+    Node loggedInWithLiners() {
+        Node n(1, info);
+        n.setOneLiners([this] { return wall; }, [this](const std::string& l) { wall.push_back(l); });
+        n.begin(0);
+        type(n, "Rev\r");
+        return n;
+    }
+};
+}  // namespace
+
+TEST_CASE("after login the oneliners show and the caller may add one") {
+    LinerRig    r;
+    std::string out = plain(r.n.takeOutput());
+    CHECK(out.find("ONELINERS") != std::string::npos);
+    CHECK(out.find("6061 or bust") != std::string::npos);
+    CHECK(r.n.state() == Node::State::OneLinerAsk);
+    type(r.n, "y");
+    CHECK(r.n.state() == Node::State::OneLiner);
+    type(r.n, "first post from the shop\r");
+    CHECK(r.wall.back() == "Rev: first post from the shop");
+    CHECK(r.n.state() == Node::State::Menu);
+}
+
+TEST_CASE("a caller can skip the oneliners, and an empty line adds nothing") {
+    LinerRig r;
+    r.n.takeOutput();
+    type(r.n, "n");
+    CHECK(r.n.state() == Node::State::Menu);
+    LinerRig e;
+    type(e.n, "y\r");
+    CHECK(e.wall.size() == 2);
+    CHECK(e.n.state() == Node::State::Menu);
+}
+
+TEST_CASE("without a oneliner wall the caller goes straight to the menu") {
+    Node n = loggedIn();
+    CHECK(n.state() == Node::State::Menu);
+}
+
+TEST_CASE("activity text follows the caller from login to a door and chat") {
+    Node n(1, info);
+    n.begin(0);
+    CHECK(n.activityText() == "logging in");
+    type(n, "Rev\r");
+    CHECK(n.activityText() == "main menu");
+    type(n, "d1\r");
+    CHECK(n.activityText().rfind("in Legend of the Red Dragon", 0) == 0);
+}

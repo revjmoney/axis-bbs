@@ -56,3 +56,21 @@ TEST_CASE("theme colours are black, grey, orange and white only") {
         rest = m.suffix();
     }
 }
+
+TEST_CASE("a line that fits stays put; a long one scrolls through, pausing at each end") {
+    using axis::bbs::theme::marquee;
+    CHECK(marquee("short", 10, 0) == "short");
+    CHECK(marquee("short", 10, 99999) == "short");
+    std::string longLine = "0123456789ABCDEFGHIJ";  // 20 into 10
+    CHECK(marquee(longLine, 10, 0) == "0123456789");      // starts at the start
+    CHECK(marquee(longLine, 10, 600) == "0123456789");    // and waits a moment
+    bool sawEnd = false, sawMiddle = false;
+    for (uint32_t t = 0; t < 20000; t += 100) {
+        std::string w = marquee(longLine, 10, t);
+        CHECK(w.size() == 10);
+        sawEnd = sawEnd || w == "ABCDEFGHIJ";
+        sawMiddle = sawMiddle || w == "56789ABCDE";
+    }
+    CHECK(sawEnd);
+    CHECK(sawMiddle);
+}

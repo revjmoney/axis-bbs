@@ -31,7 +31,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Login, Password, ApplyAsk, Applying, Pending, Menu, Doors, InDoor, Files, Transfer, Chat, Paging, Done };
+    enum class State { Splash, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Doors, InDoor, Files, Transfer, Chat, Paging, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -50,6 +50,11 @@ public:
         say_ = std::move(say);
         who_ = std::move(who);
     }
+    // the oneliner wall: get() the newest lines ("handle: text"), add() one; shown after login
+    void setOneLiners(std::function<std::vector<std::string>()> get, std::function<void(const std::string&)> add) {
+        linersGet_ = std::move(get);
+        linersAdd_ = std::move(add);
+    }
     // a line said on any node (this one's own lines come back this way too, so all see one order)
     void chatIn(int node, const std::string& handle, const std::string& text, bool page);
     // Big fixed screens (the login art) go straight to the caller through this, a piece at a time
@@ -61,6 +66,7 @@ public:
     std::string takeOutput();
     bool        wantsHangup() const { return state_ == State::Done; }
     State       state() const { return state_; }
+    std::string activityText() const;  // what the caller is doing, in a few words ("files: ANSI Packs")
     const std::string& handle() const { return handle_; }
     // the door the caller picked ("" unless InDoor); the host runs it, then calls resumeAfterDoor
     std::string      doorRequested() const { return state_ == State::InDoor ? cfg_.doors[door_].id : ""; }
@@ -79,11 +85,14 @@ private:
     void pendingMenu();
     void prompt();
     void showWelcome();
+    void menuOrLiners();  // after login: the oneliner wall if there is one, then the menu
     void lineKey(char c);
     std::unique_ptr<Splash> splash_;  // the RotatoCAM splash, before the welcome  // line input for the teleconference and pages
     int                       node_;
     std::function<void(const std::string&, bool)> say_;
     std::function<std::vector<WhoLine>()>        who_;
+    std::function<std::vector<std::string>()>    linersGet_;
+    std::function<void(const std::string&)>      linersAdd_;
     std::function<SysInfo()>  info_;
     BbsConfig                 cfg_;
     State                     state_ = State::Login;

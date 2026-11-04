@@ -62,6 +62,10 @@ void UserStore::parse(const std::string& text) {
         else if (k == "last_call") u->lastCall = n;
         else if (k == "uploads") u->uploads = n;
         else if (k == "downloads") u->downloads = n;
+        else if (k == "perm_files") u->permFiles = n != 0;
+        else if (k == "perm_msgs") u->permMessages = n != 0;
+        else if (k == "perm_doors") u->permDoors = n != 0;
+        else if (k == "free_dl") u->freeDownloads = n != 0;
         else if (k.rfind("q.", 0) == 0) {  // q.<question>=answer
             u->answers.emplace_back(k.substr(2), v);
         }
@@ -93,6 +97,10 @@ std::string formatUser(const User& u) {
         kv("last_call", std::to_string(u.lastCall));
         kv("uploads", std::to_string(u.uploads));
         kv("downloads", std::to_string(u.downloads));
+        kv("perm_files", u.permFiles ? "1" : "0");
+        kv("perm_msgs", u.permMessages ? "1" : "0");
+        kv("perm_doors", u.permDoors ? "1" : "0");
+        kv("free_dl", u.freeDownloads ? "1" : "0");
         for (auto& a : u.answers) {
             std::string q = oneLine(a.first);
             for (char& c : q)

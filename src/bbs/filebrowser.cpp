@@ -103,6 +103,10 @@ void FileBrowser::showPage() {
     listPrompt();
 }
 
+std::string FileBrowser::where() const {
+    return st_ == St::Areas || area_ >= areas_.size() ? "area list" : areas_[area_].name;
+}
+
 void FileBrowser::listPrompt() {
     out_ += "\r\n   ";
     out_ += theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
@@ -360,6 +364,13 @@ bool FileBrowser::key(char c) {
             } else {
                 std::string name = line_;
                 line_.clear();
+                if (std::string why = gate_ ? gate_() : std::string(); !why.empty()) {
+                    out_ += AMBER;
+                    out_ += "   " + why + "\r\n";
+                    st_ = St::List;
+                    listPrompt();
+                    return true;
+                }
                 view(name);
             }
             return true;
@@ -375,6 +386,13 @@ bool FileBrowser::key(char c) {
                     out_ += AMBER;
                     out_ += "   No file by that name in this area.\r\n";
                 }
+                st_ = St::List;
+                listPrompt();
+                return true;
+            }
+            if (std::string why = gate_ ? gate_() : std::string(); !why.empty()) {
+                out_ += AMBER;
+                out_ += "   " + why + "\r\n";
                 st_ = St::List;
                 listPrompt();
                 return true;
