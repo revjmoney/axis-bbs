@@ -31,6 +31,7 @@
 #include "bbs/setupportal.h"
 #include "cluster/doorfs.h"
 #include "door/screenmirror.h"
+#include "bbs/panelproto.h"
 #include "cluster/mirrorjob.h"
 #include "cluster/pooledlib.h"
 #include "cluster/relay.h"
@@ -72,6 +73,12 @@ static axis::bbs::BbsConfig cfg;
 static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
+// The sysop control panel (tools/panel): one LAN connection on port 2326 (bbs/panelproto.h)
+static WiFiServer           panelServer(2326);
+static WiFiClient           panelClient;
+static std::unique_ptr<axis::bbs::PanelSession> panelSession;
+static String               panelLine;
+static uint32_t             panelStatMs = 0;
 static std::unique_ptr<WifiStream>              line;  // the caller, when one is online
 static axis::bbs::SysopMenu                     sysop;   // the touchscreen sysop menu (a tap on the WFC)
 static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
@@ -400,6 +407,8 @@ static void logEvent(const String& what) {
     events.add(std::string(stamp) + " " + what.c_str());
     if (eventFileReady) eventFile.append(std::string(stamp) + " " + what.c_str());
     Serial.printf("axis: %s\n", what.c_str());
+    if (panelSession && panelSession->authed() && panelClient.connected())  // the control panel's event feed
+        panelClient.print(String("EVT ") + stamp + " " + what + "\n");
     std::string a = axis::bbs::announceLine(what.c_str());  // scene news for the Discord channel
     if (!a.empty()) announceOut(a);
 }
@@ -954,6 +963,8 @@ static void applyNetwork() {
     server.end();
     server.begin(cfg.telnetPort);
     server.setNoDelay(true);
+    panelServer.begin();
+    panelServer.setNoDelay(true);
     Serial.printf("axis: listening on %s:%d, byte heap %u, largest %u\n", dialName().c_str(), cfg.telnetPort,
                   heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
@@ -1863,6 +1874,64 @@ static void handleTap(int x, int y) {
 
 // Every @ command, for the serial console and the sysop control panel alike (one code path, so
 // the same command always does the same thing). Replies go to `out`.
+static void runCommand(const String& cmd, Print& out);
+
+// The control panel's connection: login, commands through runCommand, STAT every 5 s.
+static void pumpPanel() {
+    if (panelServer.hasClient()) {
+        WiFiClient c = panelServer.available();
+        if (panelClient.connected()) {  // one panel at a time
+            c.print("BUSY\n");
+            c.stop();
+        } else {
+            panelClient = c;
+            char nonce[17];
+            snprintf(nonce, sizeof nonce, "%08lx%08lx", (unsigned long)hwRandom(), (unsigned long)hwRandom());
+            panelSession.reset(new axis::bbs::PanelSession(cfg, users, nonce));
+            panelSession->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
+            panelSession->run = [](const std::string& c) {
+                String out;
+                struct Sink : Print {
+                    String& s;
+                    explicit Sink(String& r) : s(r) {}
+                    size_t write(uint8_t b) override { s += (char)b; return 1; }
+                } sink(out);
+                runCommand(String(c.c_str()), sink);
+                return std::string(out.c_str());
+            };
+            panelLine = "";
+            panelClient.print(panelSession->greeting().c_str());
+        }
+    }
+    if (!panelSession) return;
+    if (!panelClient.connected()) {
+        panelSession.reset();
+        return;
+    }
+    while (panelClient.available()) {
+        char ch = (char)panelClient.read();
+        if (ch == '\r') continue;
+        if (ch != '\n') {
+            if (panelLine.length() < 400) panelLine += ch;
+            continue;
+        }
+        std::string reply = panelSession->line(panelLine.c_str());
+        panelLine = "";
+        if (!reply.empty()) panelClient.write((const uint8_t*)reply.data(), reply.size());
+        if (panelSession->closed()) {
+            panelClient.stop();
+            panelSession.reset();
+            return;
+        }
+    }
+    if (panelSession->authed() && millis() - panelStatMs > 5000) {
+        panelStatMs = millis();
+        std::string s = panelSession->run("@STATUS");
+        if (!s.empty() && s.back() == '\n') s.pop_back();
+        panelClient.print(("STAT " + s + "\n").c_str());
+    }
+}
+
 static void runCommand(const String& cmd, Print& out) {
     if (cmd.startsWith("@TAP ")) {
         int sp = cmd.indexOf(' ', 5);
@@ -2483,6 +2552,7 @@ void loop() {
     }
     ledUpdate();
     if (server.hasClient()) answer(server.available());
+    pumpPanel();
     for (size_t i = 0; i < sessions.size(); i++) {
         bindSession((int)i);
         serviceSession((int)i);
