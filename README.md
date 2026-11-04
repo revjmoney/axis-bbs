@@ -4,7 +4,7 @@
 
 The software behind **AXIS UNDERGROUND CNC**. Made by Rev. J. Money, the maker of [RotatoCAM](https://rotatocam.com).
 
-[Website](https://revjmoney.github.io/axis-bbs/) · [Docs / Wiki](https://revjmoney.github.io/axis-bbs/docs.html) · [Buy one](https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/) · [RotatoCAM](https://rotatocam.com) · [jmscnc.com](https://jmscnc.com)
+[Website](https://revjmoney.github.io/axis-bbs/) · [Docs / Wiki](https://revjmoney.github.io/axis-bbs/docs.html) · [Buy one](https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/) · [On jmscnc.com](https://jmscnc.com/axis-bbs/) · [RotatoCAM](https://rotatocam.com) · [jmscnc.com](https://jmscnc.com)
 
 <p align="center"><img src="site/media/splash.gif" alt="The animated RotatoCAM ANSI splash a caller sees on connect" width="640"></p>
 
