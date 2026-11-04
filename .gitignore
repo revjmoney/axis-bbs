@@ -22,3 +22,8 @@ pio.log
 ph.log
 phr.log
 .claude/
+
+# environment and secret files
+.env
+.env.*
+*.env
