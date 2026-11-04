@@ -25,7 +25,7 @@ struct SysopData {  // what the screens show, gathered by the firmware when draw
 class SysopMenu {
 public:
     enum class Screen { Main, Setup, Users, UserDetail, Access, Files, Messages, Logs, System, ConfirmFormat };
-    enum class Action { None, Close, FormatSd, Restart, RerunSetup, ValidateUser, DenyUser, ToggleFiles, ToggleMessages, ToggleDoors, ToggleFreeDownloads, ToggleSysop };
+    enum class Action { None, Close, FormatSd, Restart, RerunSetup, ValidateUser, DenyUser, ToggleFiles, ToggleMessages, ToggleDoors, ToggleFreeDownloads, ToggleSysop, CycleTheme };
     struct Button {
         std::string label;
         int         x, y, w, h;

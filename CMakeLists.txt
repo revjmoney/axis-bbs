@@ -20,6 +20,7 @@ add_library(axiscore STATIC
     src/bbs/zipreader.cpp
     src/bbs/ansiterm.cpp
     src/bbs/archive.cpp
+    src/bbs/usersettings.cpp
     src/bbs/ansiviewer.cpp
     src/bbs/rotatelog.cpp
     src/bbs/dosshell.cpp
@@ -90,6 +91,8 @@ add_executable(axis_tests
     tests/test_zip.cpp
     tests/test_ansiterm.cpp
     tests/test_archive.cpp
+    tests/test_usersettings.cpp
+    tests/test_oblivion.cpp
     tests/test_ansiview.cpp
     tests/test_rotatelog.cpp
     tests/test_dosshell.cpp

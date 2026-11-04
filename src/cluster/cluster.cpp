@@ -352,6 +352,12 @@ bool Cluster::request(const std::string& req, std::string& reply, uint32_t timeo
     return replied_;
 }
 
+void Cluster::shareSettings() {
+    if (role_ != Role::Main || !settings) return;
+    std::string f = frame(Frame::Settings, {settings()});
+    for (Link& l : links_) net_.send(l.id, f);
+}
+
 void Cluster::sendUser(const std::string& record) {
     std::string f = frame(Frame::UserChange, {record});
     if (role_ == Role::Main)

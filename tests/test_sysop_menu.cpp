@@ -226,3 +226,16 @@ TEST_CASE("a caller's ACCESS screen shows their permissions and toggles each one
     tapButton(m, "BACK");
     CHECK(m.screen() == SysopMenu::Screen::UserDetail);
 }
+
+TEST_CASE("BBS SETUP shows the theme and its THEME button asks to switch it") {
+    SysopMenu m;
+    m.open();
+    tapButton(m, "BBS SETUP");
+    std::string all;
+    for (auto& l : m.lines(data())) all += l + "\n";
+    CHECK(all.find("theme") != std::string::npos);
+    CHECK(all.find("axis") != std::string::npos);
+    SysopMenu::Action a = SysopMenu::Action::None;
+    tapButton(m, "THEME", &a);
+    CHECK(a == SysopMenu::Action::CycleTheme);
+}

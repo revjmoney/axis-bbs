@@ -15,10 +15,10 @@ namespace {
 const char* const CLS = "\x1b[0m\x1b[2J\x1b[H";
 const char* const DIM = "\x1b[0;37m";
 const char* const HI = "\x1b[1;37m";
-const char* const CYAN = "\x1b[0;33m";
+#define CYAN theme::ORANGE  // the theme's accent colour
 const char* const YEL = "\x1b[1;37m";
 const char* const MAG = "\x1b[1;30m";
-const char* const AMBER = "\x1b[0;33m";
+#define AMBER theme::ORANGE
 
 std::string ext(const std::string& n) {
     size_t dot = n.rfind('.');

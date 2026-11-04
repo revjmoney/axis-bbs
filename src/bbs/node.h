@@ -17,6 +17,7 @@
 #include "bbs/newuser.h"
 #include "bbs/splash.h"
 #include "bbs/users.h"
+#include "bbs/usersettings.h"
 #include "bbs/version.h"
 
 namespace axis::bbs {
@@ -32,7 +33,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -62,6 +63,8 @@ public:
     void chatIn(int node, const std::string& handle, const std::string& text, bool page);
     // Big fixed screens (the login art) go straight to the caller through this, a piece at a time
     // from flash, instead of through takeOutput(): a copy of them needs more heap than a busy board has.
+    // the Oblivion look's screens from the card (MATRIX.ANS, MAIN.ANS): their text, or "" for the stock screen
+    void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
     void        begin(uint32_t nowMs);
     void        beginLocal(uint32_t nowMs);  // the sysop at the board itself: logged in as sysop, no splash
@@ -70,6 +73,7 @@ public:
     std::string takeOutput();
     bool        wantsHangup() const { return state_ == State::Done; }
     State       state() const { return state_; }
+    std::string tagline() const;       // the caller's tagline (signs their posts), "" if none
     std::string activityText() const;  // what the caller is doing, in a few words ("files: ANSI Packs")
     const std::string& handle() const { return handle_; }
     // the door the caller picked ("" unless InDoor); the host runs it, then calls resumeAfterDoor
@@ -99,12 +103,21 @@ private:
     std::function<std::vector<std::string>()>    linersGet_;
     MessageStore*                                msgStore_ = nullptr;
     std::unique_ptr<MessageReader>               msgs_;
+    std::unique_ptr<UserSettings>                settings_;
     std::map<std::string, int>                   lastRead_;  // without an account (tests, first builds)
     std::function<void(const std::string&)>      linersAdd_;
     std::function<SysInfo()>  info_;
     BbsConfig                 cfg_;
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
+    std::function<std::string(const std::string&)> art_;
+    int                       bar_ = 0, esc_ = 0;  // the matrix lightbar; an arrow key's ESC sequence so far
+    bool                      o2() const;
+    std::string               mci(const std::string& s) const;  // %UN %BN %SN %NN %DT %VN filled in, pipe colours to ANSI
+    void                      showMatrix();
+    void                      drawBarItem(int i, bool lit);
+    void                      matrixKey(char c);
+    void                      o2Prompt(const char* menu);
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
     size_t                    door_ = 0;

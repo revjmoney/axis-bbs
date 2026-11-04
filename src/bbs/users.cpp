@@ -55,6 +55,7 @@ void UserStore::parse(const std::string& text) {
         else if (k == "real_name") u->realName = v;
         else if (k == "location") u->location = v;
         else if (k == "email") u->email = v;
+        else if (k == "tagline") u->tagline = v;
         else if (k == "status") u->status = statusFrom(v);
         else if (k == "security") u->security = (int)n;
         else if (k == "calls") u->calls = n;
@@ -91,6 +92,7 @@ std::string formatUser(const User& u) {
         kv("real_name", u.realName);
         kv("location", u.location);
         kv("email", u.email);
+        kv("tagline", u.tagline);
         kv("status", statusName(u.status));
         kv("security", std::to_string(u.security));
         kv("calls", std::to_string(u.calls));

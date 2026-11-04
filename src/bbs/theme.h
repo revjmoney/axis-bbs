@@ -14,16 +14,30 @@ namespace axis::bbs::theme {
 
 constexpr const char* RESET = "\x1b[0m";
 constexpr const char* CLS = "\x1b[0m\x1b[2J\x1b[H";
-constexpr const char* TEXT = "\x1b[0;37m";    // plain text: light grey
-constexpr const char* LGREY = "\x1b[0;37m";
-constexpr const char* WHITE = "\x1b[1;37m";   // values, what you type
-constexpr const char* DGREY = "\x1b[1;30m";   // dim grey: frames, rules
-constexpr const char* ORANGE = "\x1b[0;33m";  // drips, keys, highlights
-constexpr const char* HOT = "\x1b[1;33m";     // bright orange-yellow: sparks, the odd glint
-constexpr const char* KEY = "\x1b[0;33m";     // menu hotkeys like [F]
+// The board's look (setting "theme"): Axis (above) or Oblivion, a dark grey and cyan rendition of
+// the stock Oblivion/2 screens: double-line boxes, spaced title bars, bright cyan hotkeys. One look
+// for the whole board; the colours below follow it.
+enum class Look { Axis, Oblivion };
+void        use(Look look);
+Look        look();
+Look        lookFrom(const std::string& name);  // "oblivion", else Axis
+const char* lookName(Look look);
+
+extern const char* TEXT;    // plain text: light grey
+extern const char* LGREY;
+extern const char* WHITE;   // values, what you type
+extern const char* DGREY;   // dim grey: frames, rules
+extern const char* ORANGE;  // the accent: drips, keys, highlights (cyan in the Oblivion look)
+extern const char* HOT;     // bright accent: sparks, the odd glint
+extern const char* KEY;     // menu hotkeys like [F]
+
+// Oblivion/2 pipe colours: |00 to |15 set the text colour (resetting the background), |16 to |23
+// the background. Anything else is left as it is.
+std::string pipes(const std::string& text);
 
 // a menu title as big drippy block letters (several lines, centred in 80 columns)
 std::string drip(const std::string& text);
+std::string titleBar(const std::string& text);  // the Oblivion look's title: a fading rule around "M E N U"
 // the part of `text` to show in `width` columns at time `ms`: as is if it fits, else scrolling
 // through a step every 300 ms with a 1.5 s pause at each end
 std::string marquee(const std::string& text, size_t width, uint32_t ms);

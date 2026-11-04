@@ -134,6 +134,7 @@ void MessageReader::startPost(bool reply) {
 void MessageReader::save() {
     draft_.date = now_ ? now_() : "";
     if (!draft_.body.empty() && draft_.body.back() == '\n') draft_.body.pop_back();
+    if (!tagline_.empty()) draft_.body += "\n\n... " + tagline_;
     int n = st_.post(areas_[area_].id, draft_);
     out_ += std::string("\r\n   ") + (n ? std::string(TEXT) + "Saved as #" + std::to_string(n) + "." : std::string(ORANGE) + "Couldn't save it, sorry.") + "\r\n";
     if (n) lastRead_[areas_[area_].id] = n > lastRead_[areas_[area_].id] ? n : lastRead_[areas_[area_].id];

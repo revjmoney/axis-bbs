@@ -66,7 +66,10 @@ std::vector<SysopMenu::Button> SysopMenu::buttons() const {
                 break;
             }
             if (screen_ == Screen::Files || screen_ == Screen::Logs || screen_ == Screen::Users) b.push_back({"MORE", 222, 204, 90, 30});
-            if (screen_ == Screen::Setup) b.push_back({"RUN SETUP", 192, 204, 120, 30, true});
+            if (screen_ == Screen::Setup) {
+                b.push_back({"THEME", 104, 204, 84, 30});
+                b.push_back({"RUN SETUP", 192, 204, 120, 30, true});
+            }
             if (screen_ == Screen::System) {
                 b.push_back({"FORMAT SD", 106, 204, 100, 30, true});
                 b.push_back({"RESTART", 214, 204, 98, 30});
@@ -106,6 +109,7 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
             return Action::FormatSd;
         } else if (b.label == "RESTART") return Action::Restart;
         else if (b.label == "RUN SETUP") return Action::RerunSetup;
+        else if (b.label == "THEME") return Action::CycleTheme;
         return Action::None;
     }
     if (screen_ == Screen::Users && x >= 8 && x < 312 && y >= 32 && y < 32 + kLinesPerPage * 16) {  // a caller's row
@@ -150,8 +154,8 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
             all.push_back(row("new user", "security " + std::to_string(c.newUserSecurity) + ", " +
                                               std::to_string(c.dailyMinutes) + " min/day"));
             all.push_back(row("idle", std::to_string(c.idleMinutes) + " min"));
+            all.push_back(row("theme", c.theme == "oblivion" ? "oblivion (stock O/2 look)" : "axis (drippy orange)"));
             all.push_back(row("doors", std::to_string(c.doors.size()) + (c.doors.empty() ? "" : " (" + c.doors[0].name + ")")));
-            all.push_back("RUN SETUP redoes it (over telnet/here)");
             break;
         case Screen::Users: {
             std::vector<const User*> order;  // pending first, then the rest; tap a row to open it

@@ -88,3 +88,34 @@ TEST_CASE("a drip banner is big block letters with drips hanging off, the same e
     for (size_t p; (p = plainRows.find("\r\n", start)) != std::string::npos; start = p + 2) CHECK(p - start < 80);
     CHECK(drip("MESSAGE AREAS") != drip("FILE AREAS"));
 }
+
+TEST_CASE("the Oblivion look swaps the palette for greys and cyans, and back") {
+    theme::use(theme::Look::Oblivion);
+    CHECK(std::string(theme::ORANGE) == "\x1b[0;36m");  // the accent: cyan
+    CHECK(std::string(theme::KEY) == "\x1b[1;36m");     // hotkeys: bright cyan
+    CHECK(theme::look() == theme::Look::Oblivion);
+    std::string w = theme::window("FILE INFO", {{"file", "PACK.ZIP"}});
+    CHECK(w.find("\xc9") != std::string::npos);  // a double-line box, no drips
+    CHECK(w.find("\xdf") == std::string::npos);
+    CHECK(visible(w).find("PACK.ZIP") != std::string::npos);
+    std::string d = visible(theme::drip("MENU"));
+    CHECK(d.find("M E N U") != std::string::npos);  // an Oblivion title bar, spaced letters
+    theme::use(theme::Look::Axis);
+    CHECK(std::string(theme::ORANGE) == "\x1b[0;33m");
+    CHECK(theme::window("X", {}).find("\xc9") == std::string::npos);
+}
+
+TEST_CASE("pipe codes become ANSI colours: |00 to |15 the text, |16 to |23 the background") {
+    CHECK(theme::pipes("|11Hi|08x") == "\x1b[0;1;36mHi\x1b[0;1;30mx");
+    CHECK(theme::pipes("|03a|07b|15c") == "\x1b[0;36ma\x1b[0;37mb\x1b[0;1;37mc");
+    CHECK(theme::pipes("|17blue") == "\x1b[44mblue");
+    CHECK(theme::pipes("100|% and |x stay") == "100|% and |x stay");
+}
+
+TEST_CASE("a theme name from the settings picks the look; anything unknown is the Axis look") {
+    CHECK(theme::lookFrom("oblivion") == theme::Look::Oblivion);
+    CHECK(theme::lookFrom("OBLIVION") == theme::Look::Oblivion);
+    CHECK(theme::lookFrom("axis") == theme::Look::Axis);
+    CHECK(theme::lookFrom("") == theme::Look::Axis);
+    CHECK(std::string(theme::lookName(theme::Look::Oblivion)) == "oblivion");
+}

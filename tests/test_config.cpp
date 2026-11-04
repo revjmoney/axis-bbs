@@ -179,3 +179,11 @@ TEST_CASE("the login splash is on unless the settings turn it off") {
     BbsConfig c = parseConfig("login_splash=0\n");
     CHECK_FALSE(parseConfig(formatConfig(c)).loginSplash);
 }
+
+TEST_CASE("the theme setting is axis unless it says oblivion, and survives a save") {
+    CHECK(parseConfig("").theme == "axis");
+    BbsConfig c = parseConfig("theme=oblivion\n");
+    CHECK(c.theme == "oblivion");
+    CHECK(parseConfig(formatConfig(c)).theme == "oblivion");
+    CHECK(mergeSettings(parseConfig(""), formatConfig(c)).theme == "oblivion");  // one look for the whole cluster
+}

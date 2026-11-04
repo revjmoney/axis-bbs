@@ -20,6 +20,7 @@ public:
     MessageReader(const std::vector<FileArea>& areas, MessageStore& store, std::string& out, std::string handle,
                   std::map<std::string, int>& lastRead, std::function<std::string()> now)
         : areas_(areas), st_(store), out_(out), handle_(std::move(handle)), lastRead_(lastRead), now_(std::move(now)) {}
+    void        setTagline(std::string t) { tagline_ = std::move(t); }  // signs each post
     void        begin();
     bool        key(char c);  // false once the caller leaves for the main menu
     std::string where() const;
@@ -38,6 +39,7 @@ private:
 
     const std::vector<FileArea>& areas_;
     MessageStore&                st_;
+    std::string                  tagline_;
     std::string&                 out_;
     std::string                  handle_;
     std::map<std::string, int>&  lastRead_;

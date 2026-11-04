@@ -17,7 +17,7 @@ constexpr int kSysopSecurity = 255;  // a user at this security level is a sysop
 struct User {
     enum class Status { Pending, Validated, Denied };
     int         id = 0;
-    std::string handle, salt, hash, realName, location, email;
+    std::string handle, salt, hash, realName, location, email, tagline;  // tagline: signs their posts
     Status      status = Status::Pending;
     int         security = 10;
     uint32_t    calls = 0, created = 0, lastCall = 0;  // unix time (0 = clock not set)
@@ -35,6 +35,7 @@ public:
     std::string format() const;
     User*       find(const std::string& handle);  // any case
     User*       byId(int id);
+    const User* byId(int id) const { return const_cast<UserStore*>(this)->byId(id); }
     User&       add(User u);  // gives it the next id
     User&       upsert(const User& u);  // by handle: replace (keeping this board's id) or add
     const std::vector<User>& all() const { return users_; }

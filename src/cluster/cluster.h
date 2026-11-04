@@ -70,6 +70,8 @@ public:
     bool request(const std::string& req, std::string& reply, uint32_t timeoutMs = 4000);
     // One user record (users.h formatUser): a follower sends it to the main, the main to every follower.
     void sendUser(const std::string& record);
+    // Main: the BBS settings changed (settings()), send them to every board now, not just at join.
+    void shareSettings();
 
     std::function<void(const ChatLine&)>    onChat;
     std::function<void(int)>                onNumber;  // a number to remember for next boot

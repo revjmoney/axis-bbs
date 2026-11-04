@@ -896,6 +896,17 @@ static void answerIn(WiFiClient incoming) {
                 return v;
             });
         node->setMessages(&callerMessages());
+        node->setArt([](const std::string& name) {  // the sysop's own screens for the theme, from the card (8 KB at most)
+            std::string s;
+            if (!storageHasSd()) return s;
+            if (FILE* f = fopen(("/sd/themes/" + cfg.theme + "/" + name).c_str(), "rb")) {
+                char b[512];
+                for (size_t n; s.size() < 8192 && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
+                fclose(f);
+            }
+            if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) s.resize(sauce);  // stop at the SAUCE record
+            return s;
+        });
         node->setOneLiners(
             [] {  // the wall: here on the main, over the link on a follower
                 if (!asFollower()) return oneLiners;
@@ -1225,6 +1236,12 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
         logEvent(String("sysop: ") + u->handle.c_str() + (a == A::ToggleFiles ? " files " : a == A::ToggleMessages ? " messages "
                                                            : a == A::ToggleDoors ? " doors " : " free downloads ") + (f ? "on" : "off"));
         saveUsers();  // and on to every board
+    } else if (a == A::CycleTheme) {  // the next caller sees it; every board gets it
+        cfg.theme = cfg.theme == "oblivion" ? "axis" : "oblivion";
+        bool ok = configSave(cfg);
+        logEvent(String("sysop: theme ") + cfg.theme.c_str() + (ok ? "" : " (SAVE FAILED)"));
+        if (cluster) cluster->shareSettings();
+        screenDirty = true;
     } else if (a == A::RerunSetup) {  // nothing changes until the wizard saves
         logEvent("sysop: setup again");
         newSetupPin();
@@ -1578,6 +1595,7 @@ static void handleSerial() {
             cfg = axis::bbs::parseConfig(axis::bbs::formatConfig(cfg) + kv.c_str() + "\n");  // the later line wins
             bool ok = configSave(cfg);
             logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
+            if (cluster) cluster->shareSettings();
             screenDirty = true;
         } else if (cmd.startsWith("@DOSPASS")) {  // "@DOSPASS secret" sets the DOS Prompt password; alone, disables it
             String pw = cmd.length() > 9 ? cmd.substring(9) : String();

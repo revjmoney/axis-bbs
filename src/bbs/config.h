@@ -29,6 +29,7 @@ struct BbsConfig {
     std::string ftnAddress = "99:1/0";
     int         newUserSecurity = 10, dailyMinutes = 60, idleMinutes = 5;
     int         sessions = 2;
+    std::string theme = "axis";  // the look: "axis" (drippy orange) or "oblivion" (stock Oblivion/2 style) ("theme")
     bool        loginSplash = false;  // Rev's RotatoCAM ANSI splash before the login screen ("login_splash", on unless 0)  // callers this board takes at once (1 to 4); doors and transfers one at a time
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors

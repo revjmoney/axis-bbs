@@ -59,6 +59,7 @@ uint32_t mix(uint32_t x) {  // a small hash: the same drips for the same title, 
 }  // namespace
 
 std::string drip(const std::string& text) {
+    if (look() == Look::Oblivion) return titleBar(text);
     // lay the letters out on a grid: 5 letter rows, then up to 3 rows of drips
     const int   kRows = 10;  // 5 letter rows, up to 5 of drips
     std::string grid[kRows];

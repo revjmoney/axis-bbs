@@ -19,9 +19,9 @@ const char* const CLS = "\x1b[0m\x1b[2J\x1b[H";
 const char* const RST = "\x1b[0m";
 const char* const DIM = "\x1b[0;37m";
 const char* const HI = "\x1b[1;37m";
-const char* const CYAN = "\x1b[0;33m";
-const char* const AMBER = "\x1b[0;33m";
-const char* const RED = "\x1b[0;33m";
+#define CYAN theme::ORANGE  // these follow the theme's accent colour
+#define AMBER theme::ORANGE
+#define RED theme::ORANGE
 
 std::string uptime(uint32_t sec);
 
@@ -158,6 +158,7 @@ void Node::pendingMenu() {
 
 void Node::begin(uint32_t nowMs) {
     lastInput_ = nowMs;
+    theme::use(theme::lookFrom(cfg_.theme));  // one look for the whole board: the setting decides
     if (cfg_.loginSplash) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
         state_ = State::Splash;
         splash_.reset(new Splash(nowMs));
@@ -169,12 +170,158 @@ void Node::begin(uint32_t nowMs) {
 
 void Node::beginLocal(uint32_t nowMs) {
     lastInput_ = nowMs;
+    theme::use(theme::lookFrom(cfg_.theme));
     handle_ = cfg_.sysopHandle.empty() ? "Sysop" : cfg_.sysopHandle;
     sysop_ = true;
     loggedIn();
 }
 
+bool Node::o2() const { return cfg_.theme == "oblivion"; }
+
+std::string Node::mci(const std::string& s) const {
+    std::string r;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            std::string code = s.substr(i + 1, 2), v;
+            bool        known = true;
+            if (code == "UN") v = handle_;
+            else if (code == "BN") v = cfg_.bbsName;
+            else if (code == "SN") v = cfg_.sysopHandle;
+            else if (code == "NN") v = std::to_string(node_);
+            else if (code == "DT" || code == "TM") v = info_().timeText;
+            else if (code == "VN") v = kAxisVersion;
+            else known = false;
+            if (known) {
+                r += v;
+                i += 2;
+                continue;
+            }
+        }
+        r += s[i];
+    }
+    return theme::pipes(r);
+}
+
+namespace {
+struct BarItem {
+    char        key;
+    const char* label;
+};
+const BarItem kMatrix[] = {{'L', "Login"}, {'A', "Apply"}, {'W', "Who's Online"}, {'G', "Goodbye"}};
+constexpr int kMatrixItems = 4, kMatrixRow = 11, kMatrixCol = 30;
+}  // namespace
+
+void Node::drawBarItem(int i, bool lit) {
+    char b[96];
+    std::snprintf(b, sizeof b, "\x1b[%d;%dH", kMatrixRow + i, kMatrixCol);
+    out_ += b;
+    if (lit) std::snprintf(b, sizeof b, "\x1b[0;1;37;44m  %c  %-16s", kMatrix[i].key, kMatrix[i].label);
+    else std::snprintf(b, sizeof b, "%s[%s%c%s] %s%-16s ", theme::DGREY, theme::KEY, kMatrix[i].key, theme::DGREY, theme::TEXT, kMatrix[i].label);
+    out_ += b;
+    out_ += theme::RESET;
+}
+
+// The Oblivion look's front door: the board's title bar (or MATRIX.ANS from the card), then a
+// lightbar over Login, Apply, Who's Online and Goodbye: arrows move it, Enter or a letter picks.
+void Node::showMatrix() {
+    state_ = State::Matrix;
+    esc_ = 0;
+    out_ += theme::CLS;
+    std::string art = art_ ? art_("MATRIX.ANS") : "";
+    if (!art.empty()) {
+        out_ += mci(art);
+    } else {
+        out_ += theme::titleBar(cfg_.bbsName.empty() ? "AXIS" : cfg_.bbsName);
+        SysInfo s = info_();
+        out_ += std::string("\r\n    ") + theme::DGREY + "node " + theme::WHITE + std::to_string(node_) + theme::DGREY + "  \xfa  " + theme::TEXT +
+                kAxisSoftware + theme::DGREY + "  \xfa  " + theme::TEXT + cfg_.location + "\r\n    " + theme::DGREY + "dial " + theme::HOT +
+                (cfg_.publicHost.empty() ? s.host : cfg_.publicHost) + theme::DGREY + "  \xfa  " + theme::TEXT + s.timeText + "\r\n";
+    }
+    for (int i = 0; i < kMatrixItems; i++) drawBarItem(i, i == bar_);
+    char b[64];
+    std::snprintf(b, sizeof b, "\x1b[%d;%dH", kMatrixRow + kMatrixItems + 2, kMatrixCol - 6);
+    out_ += b;
+    out_ += std::string(theme::DGREY) + "arrows move, " + theme::HOT + "Enter" + theme::DGREY + " picks, or press the letter" + theme::RESET;
+    std::snprintf(b, sizeof b, "\x1b[%d;1H", kMatrixRow + kMatrixItems + 4);
+    out_ += b;
+}
+
+void Node::matrixKey(char c) {
+    if (esc_ == 3) {  // after the who list: back to the matrix
+        esc_ = 0;
+        showMatrix();
+        return;
+    }
+    if (esc_ == 1) {
+        esc_ = c == '[' || c == 'O' ? 2 : 0;
+        return;
+    }
+    int pick = -1;
+    if (esc_ == 2) {
+        esc_ = 0;
+        int to = c == 'A' || c == 'D' ? bar_ - 1 : c == 'B' || c == 'C' ? bar_ + 1 : bar_;
+        to = (to + kMatrixItems) % kMatrixItems;
+        if (to != bar_) {
+            drawBarItem(bar_, false);
+            bar_ = to;
+            drawBarItem(bar_, true);
+            char b[24];
+            std::snprintf(b, sizeof b, "\x1b[%d;1H", kMatrixRow + kMatrixItems + 4);
+            out_ += b;
+        }
+        return;
+    }
+    if (c == 0x1b) {
+        esc_ = 1;
+        return;
+    }
+    if (c == '\r') pick = bar_;
+    for (int i = 0; i < kMatrixItems; i++)
+        if ((c & ~0x20) == kMatrix[i].key) pick = i;
+    if (pick < 0) return;
+    bar_ = pick;
+    switch (kMatrix[pick].key) {
+        case 'L':
+        case 'A':
+            state_ = State::Login;
+            if (kMatrix[pick].key == 'A')
+                out_ += std::string("   ") + theme::TEXT + "Pick the handle for your application (one nobody here uses).\r\n";
+            prompt();
+            break;
+        case 'W': {
+            out_ += std::string("   ") + theme::fade("WHO'S ONLINE") + "\r\n";
+            std::vector<WhoLine> all = who_ ? who_() : std::vector<WhoLine>{{node_, "", ""}};
+            for (const WhoLine& w : all)
+                out_ += std::string("   ") + theme::HOT + "node " + std::to_string(w.node) + "  " + theme::WHITE +
+                        (w.handle.empty() ? std::string(theme::DGREY) + "waiting for a caller" : w.handle + theme::TEXT + "  " + w.activity) + "\r\n";
+            out_ += std::string("   ") + theme::DGREY + "(press a key)" + theme::RESET;
+            esc_ = 3;  // the next key redraws the matrix
+            break;
+        }
+        default:
+            out_ += std::string("   ") + theme::HOT + "Later." + theme::RESET + "\r\n";
+            state_ = State::Done;
+            break;
+    }
+}
+
+void Node::o2Prompt(const char* menu) {  // ▄▀[Main Menu]▀▀[Node 1]▀ ▀ :
+    std::string m;
+    for (const char* p = menu; *p; p++) {
+        bool cap = p == menu || p[-1] == ' ';
+        m += cap ? theme::HOT : theme::ORANGE;
+        m += *p;
+    }
+    out_ += std::string("\r\n  ") + theme::HOT + "\xdc" + theme::ORANGE + "\xdf" + theme::DGREY + "[" + m + theme::DGREY + "]" + theme::ORANGE +
+            "\xdf\xdf" + theme::DGREY + "[" + theme::HOT + "N" + theme::ORANGE + "ode " + theme::WHITE + std::to_string(node_) + theme::DGREY + "]" +
+            theme::ORANGE + "\xdf " + theme::DGREY + "\xdf " + theme::TEXT + ": " + theme::WHITE;
+}
+
 void Node::showWelcome() {
+    if (o2()) {
+        showMatrix();
+        return;
+    }
     state_ = State::Login;
     if (direct_) {  // the art from flash, straight out; only the boxes are built here
         if (!out_.empty()) direct_(out_.data(), out_.size());
@@ -194,7 +341,8 @@ void Node::prompt() {
     } else if (state_ == State::Password) {
         out_ += "\r\n   " + theme::fade("Password") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Menu) {
-        out_ += "\r\n   " + theme::fade("Command") + theme::ORANGE + ": " + theme::WHITE;
+        if (o2()) o2Prompt("Main Menu");
+        else out_ += "\r\n   " + theme::fade("Command") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Doors) {
         out_ += DIM;
         out_ += "\r\n   Door number (Enter for the menu): ";
@@ -250,6 +398,28 @@ void Node::resumeAfterDoor(DoorEnd how, uint32_t nowMs) {
 void Node::showMainMenu() {
     state_ = State::Menu;
     out_ += theme::CLS;
+    if (o2()) {  // MAIN.ANS from the card, or the stock look: a title bar and a boxed two-column list
+        std::string art = art_ ? art_("MAIN.ANS") : "";
+        if (!art.empty()) {
+            out_ += mci(art);
+        } else {
+            static const BarItem items[] = {{'M', "Message Bases"}, {'F', "File Vaults"},    {'D', "Doors"},         {'T', "Teleconference"},
+                                            {'W', "Who's Online"},  {'O', "Oneliners"},      {'U', "User Settings"}, {'Y', "Yell for SysOp"},
+                                            {'I', "System Info"},   {'C', "Credits"},        {'G', "Goodbye"},       {'?', "This Menu"}};
+            out_ += theme::titleBar("Main Menu");
+            out_ += std::string("  ") + theme::ORANGE + "\xc9" + std::string(74, '\xcd') + "\xbb\r\n";
+            char b[160];
+            for (int r = 0; r < 6; r++) {
+                const BarItem &a = items[r * 2], &z = items[r * 2 + 1];
+                std::snprintf(b, sizeof b, "  %s\xba   %s[%s%c%s] %s%-28s%s[%s%c%s] %s%-28s       %s\xba\r\n", theme::ORANGE, theme::DGREY, theme::KEY, a.key,
+                              theme::DGREY, theme::TEXT, a.label, theme::DGREY, theme::KEY, z.key, theme::DGREY, theme::TEXT, z.label, theme::ORANGE);
+                out_ += b;
+            }
+            out_ += std::string("  ") + theme::ORANGE + "\xc8" + std::string(74, '\xcd') + "\xbc" + theme::TEXT;
+        }
+        prompt();
+        return;
+    }
     out_ += "\r\n" + theme::drip("MENU");
     out_ += theme::window("COMMANDS", {{"[F]", "file areas: browse, info, download, upload"},
                                        {"[M]", "message areas: read, post, reply"},
@@ -257,12 +427,18 @@ void Node::showMainMenu() {
                                        {"[T]", "teleconference with every node"},
                                        {"[W]", "who's online"},
                                        {"[P]", "page the sysop"},
+                                       {"[U] [O]", "your account and tagline, oneliners"},
                                        {"[I] [C]", "system info, credits"},
                                        {"[G]", "goodbye"}});
     prompt();
 }
 
 void Node::showMenu() {
+    if (o2()) {  // Oblivion style: just the prompt again; ? brings the menu back
+        out_ += "\r\n";
+        prompt();
+        return;
+    }
     out_ += "\r\n\r\n";
     out_ += DIM;
     out_ += "   ";
@@ -282,6 +458,10 @@ void Node::input(const uint8_t* p, size_t n, uint32_t nowMs) {
 void Node::key(char c) {
     if (state_ == State::Splash) {  // any key: on to the login screen (at the next poll)
         splash_.reset();
+        return;
+    }
+    if (state_ == State::Matrix) {
+        matrixKey(c);
         return;
     }
     if (state_ == State::Login) {
@@ -486,6 +666,12 @@ void Node::key(char c) {
         lineKey(c);
         return;
     }
+    if (state_ == State::Settings) {
+        if (settings_ && settings_->key(c)) return;
+        settings_.reset();
+        showMainMenu();
+        return;
+    }
     if (state_ == State::Messages) {
         if (msgs_ && msgs_->key(c)) return;
         msgs_.reset();
@@ -524,6 +710,7 @@ void Node::key(char c) {
     switch (c | 0x20) {  // either case
         case 't':
         case 'p':
+        case 'y':  // Oblivion's Yell for SysOp
             if (!say_) {
                 out_ += "\r\n\r\n   ";
                 out_ += AMBER;
@@ -601,9 +788,31 @@ void Node::key(char c) {
             state_ = State::Messages;
             msgs_.reset(new MessageReader(cfg_.msgAreas, *msgStore_, out_, handle_, u ? u->lastRead : lastRead_,
                                           [this] { return info_().timeText; }));
+            msgs_->setTagline(tagline());
             msgs_->begin();
             break;
         }
+        case 'u': {
+            User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+            if (!u) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += sysop_ && users_ ? "The sysop account lives in BBS SETUP on the board." : "Accounts are off on this board.";
+                showMenu();
+                break;
+            }
+            state_ = State::Settings;
+            settings_.reset(new UserSettings(*u, out_, saveUsers_, rng_));
+            settings_->begin();
+            break;
+        }
+        case 'o':
+            if (linersGet_) menuOrLiners();
+            else prompt();
+            break;
+        case '?':
+            showMainMenu();
+            break;
         case 'd':
             if (User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr; u && !u->permDoors) {
                 out_ += "\r\n\r\n   ";
@@ -705,9 +914,15 @@ void Node::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string&
     state_ = State::Files;
 }
 
+std::string Node::tagline() const {
+    const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+    return u ? u->tagline : "";
+}
+
 std::string Node::activityText() const {
     switch (state_) {
         case State::Splash:
+        case State::Matrix:
         case State::Login:
         case State::Password: return "logging in";
         case State::ApplyAsk:
@@ -723,6 +938,7 @@ std::string Node::activityText() const {
         case State::Transfer: return browser_ ? std::string(transfer().upload ? "uploading " : "downloading ") + transfer().name : "transfer";
         case State::Chat: return "teleconference";
         case State::Paging: return "paging the sysop";
+        case State::Settings: return "account settings";
         case State::Done: return "leaving";
     }
     return "online";
