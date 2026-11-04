@@ -659,3 +659,37 @@ TEST_CASE("while the main waits on a card board, other followers' frames wait fo
     run({&t.a, &t.c}, t.now, 100);
     CHECK(heardOnA == 1);
 }
+
+TEST_CASE("an older follower with an SD card (no free space in its Hello) is not put in the pool") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a");
+    uint32_t now = 0;
+    a.c->setHasFiles(true);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    FakeNet old;  // speaks the old Hello: id, number, replica, SD, ip, sessions
+    old.lan = &lan;
+    old.ip = 104;
+    lan.nets.push_back(&old);
+    int link = old.connect(101);
+    REQUIRE(link >= 0);
+    old.send(link, frame(Frame::Hello, {"board-old", "0", "1", "1", "104", "1"}));
+    run({&a}, now, 200);
+    CHECK(a.c->nodes().size() == 2);  // it joined
+    CHECK(a.c->cardBoards().empty());  // but it would never answer the main's questions
+}
+
+TEST_CASE("a card board that stops answering is marked down at once, and up again when it is heard from") {
+    CardBoards t;
+    t.a.c->clockMs = [&t] { return t.now; };
+    t.a.c->sleepMs = [&t](uint32_t ms) { t.now += ms ? ms : 1; };  // b is frozen (lost power, no FIN yet)
+    std::string reply;
+    CHECK_FALSE(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 1000));
+    REQUIRE(t.a.c->cardBoards().size() == 1);
+    CHECK_FALSE(t.a.c->cardBoards()[0].alive);
+    uint32_t start = t.now;
+    CHECK_FALSE(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 1000));  // no second wait
+    CHECK(t.now == start);
+    run({&t.a, &t.b, &t.c}, t.now, 11000);  // b wakes up: it tells the main about its card now and then
+    CHECK(t.a.c->cardBoards()[0].alive);
+}

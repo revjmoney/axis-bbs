@@ -153,6 +153,7 @@ private:
     };
     std::vector<Held>     held_;  // what arrived meanwhile, for the next tick (by link id)
     uint64_t              freeBytes_ = 0;
+    uint32_t              lastCard_ = 0;  // follower: the last CardInfo sent
     struct Card {
         uint32_t ip = 0;
         uint64_t freeBytes = 0;

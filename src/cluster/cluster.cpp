@@ -11,6 +11,7 @@ namespace axis::cluster {
 
 namespace {
 constexpr uint32_t kListenMs = 3000, kBeatMs = 1000, kLostMs = 5000, kAnnounceMs = 2000, kAskMs = 1000;
+constexpr uint32_t kCardMs = 10000;      // a follower with a card tells the main about it this often (it is alive)
 constexpr uint32_t kTidyIdleMs = 10000;  // every node idle this long: the main renumbers itself to node 1
 std::string num(uint32_t v) { return std::to_string(v); }
 std::string num64(uint64_t v) { return std::to_string((unsigned long long)v); }
@@ -235,6 +236,10 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
     }
     std::vector<std::string> f = fields(body);
     if (role_ == Role::Main) {
+        if (!l.board.empty()) {  // heard from: a card marked down by a request that timed out is back
+            auto c = cards_.find(l.board);
+            if (c != cards_.end()) c->second.alive = true;
+        }
         if (t == Frame::Hello && f.size() >= 2) {
             int              want = (int)toU(f[1]), sessions = f.size() >= 6 ? (int)toU(f[5]) : 1;
             uint32_t         ip = f.size() >= 5 ? toU(f[4]) : 0;  // where a busy main can pass it a caller
@@ -282,7 +287,8 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
             if (settings) net_.send(l.id, frame(Frame::Settings, {settings()}));
             if (allUsers)  // its replica of the user base
                 for (const std::string& rec : allUsers()) net_.send(l.id, frame(Frame::UserChange, {rec}));
-            if (f.size() >= 4 && f[3] == "1") cards_[f[0]] = {ip, f.size() >= 7 ? toU64(f[6]) : 0, true};  // a card for the pool
+            // a card for the pool; only from a board that sends its free space (it answers MainReq: older ones never would)
+            if (f.size() >= 7 && f[3] == "1") cards_[f[0]] = {ip, toU64(f[6]), true};
             else cards_.erase(f[0]);
             if (!hasFiles_ && f.size() >= 4 && f[3] == "1") {  // the file areas live on its card: it should be main
                 event("node " + num((uint32_t)give) + " has the SD card: handing main to it");
@@ -382,7 +388,8 @@ bool Cluster::requestTo(const std::string& boardId, const std::string& req, std:
     int target = -1;
     for (const Link& l : links_)
         if (l.board == boardId) target = l.id;
-    if (target < 0) return false;
+    auto card = cards_.find(boardId);
+    if (target < 0 || (card != cards_.end() && !card->second.alive)) return false;
     uint32_t id = nextReq_++, start = clockMs();
     if (!net_.send(target, frame(Frame::MainReq, {num(id), req}))) return false;
     bool done = false;
@@ -417,6 +424,7 @@ bool Cluster::requestTo(const std::string& boardId, const std::string& req, std:
         if (!any) sleepMs(1);
     }
     inRequest_ = false;
+    if (!done && card != cards_.end()) card->second.alive = false;  // silent (lost power, no FIN yet): skip it until it is heard from
     return done;
 }
 
@@ -545,6 +553,10 @@ void Cluster::tick(uint32_t now) {
             }
             break;
         case Role::Follower:
+            if (hasFiles_ && !links_.empty() && now - lastCard_ >= kCardMs) {
+                lastCard_ = now;
+                net_.send(links_[0].id, frame(Frame::CardInfo, {"1", num64(freeBytes_)}));
+            }
             if (now - lastBeat_ > kLostMs || links_.empty()) {  // the main is gone
                 int lowest = 0;  // the lowest node on a surviving board (the lost main's sessions don't count)
                 for (const NodeInfo& n : nodes_)
