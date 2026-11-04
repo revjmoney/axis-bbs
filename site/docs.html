@@ -28,6 +28,7 @@
       <a href="docs.html" aria-current="page"><span class="hk">D</span>ocs</a>
       <a class="hide-sm" href="https://github.com/revjmoney/axis-bbs"><span class="hk">G</span>itHub</a>
       <a class="hide-sm" href="https://rotatocam.com">RotatoCAM</a>
+      <a class="nav-coffee" href="https://buymeacoffee.com/revjmoney"><span class="blinky" aria-hidden="true">&#9608;</span> Buy me a coffee</a>
       <a class="nav-buy" href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/"><span class="hk">B</span>uy one</a>
     </nav>
   </div>
@@ -608,7 +609,7 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
 
 <article class="topic" id="multinode" data-group="Multinode" aria-labelledby="multinode-title">
 <header class="topic-head"><div class="eyebrow">Multinode</div><h2 id="multinode-title">Nodes and clustering</h2><dl class="msghead"><dt>Topic</dt><dd>Nodes and clustering</dd><dt>Area</dt><dd>Multinode</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>17 of 34</dd></dl></header>
-<div class="lead"><div class="lead-text"><p class="lede">Several callers per board, and boards that join into one BBS.</p><p>One board takes several callers at once, and several boards on one LAN join into one BBS with shared users, settings, files, messages and lists. Each caller slot is a <strong>node</strong>.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen showing node 1+2, status lights and the system ticker" loading="lazy" width="640" height="480"></div></a><figcaption>The main board serving nodes 1 and 2</figcaption></figure></div></div>
+<div class="lead"><div class="lead-text"><p class="lede">Several callers per board, and boards that join into one BBS.</p><p>One board takes several callers at once, and several boards on one LAN join into one BBS with shared users, settings, files, messages and lists. Each caller slot is a <strong>node</strong>.</p><figure class="family"><a class="lb" href="media/cluster-family.jpg"><img src="media/cluster-family.jpg" alt="The AXIS cluster family: two CYD boards and a headless ESP32 on a terminal breakout, seven nodes of one BBS" loading="lazy" width="900" height="1200"></a><figcaption>The cluster family: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headless ESP32 on a breakout (nodes 5 to 7). Seven nodes, one BBS.</figcaption></figure></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen showing node 1+2, status lights and the system ticker" loading="lazy" width="640" height="480"></div></a><figcaption>The main board serving nodes 1 and 2</figcaption></figure></div></div>
 <details class="sub" id="sessions" open><summary>Sessions per board</summary><div class="sub-body"><p><code>sessions</code> sets how many callers a board takes at once: 1 to 4, default 2 on a CYD (a headless node defaults to 3). Each session is its own node number; the activity screen shows them as, for example, <code>node 1+2</code>. Doors and file transfers share one memory slot per board, so only one session per board can be in a door or a transfer at a time. Everything else (menus, messages, chat, browsing) runs side by side.</p></div></details>
 <details class="sub" id="cluster"><summary>How boards join</summary><div class="sub-body"><p>Flash another board, put it on the same network, and it finds the others by itself (mDNS service <code>_axisbbs._tcp</code> plus UDP broadcast). There is nothing to configure.</p>
   <ul>
@@ -1146,11 +1147,13 @@ build/axis_tests</code></pre>
           <li><a href="https://github.com/revjmoney/axis-bbs">GitHub source</a></li>
           <li><a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Buy a ready-to-plug-in unit</a></li>
           <li><a href="docs.html">Docs / Wiki</a></li>
+          <li><a class="coffee" href="https://buymeacoffee.com/revjmoney">Buy me a coffee</a></li>
         </ul>
       </div>
     </div>
     <p class="fineprint">Copyright (C) 2026 Rev. J. Money. GPL-3.0-or-later with an attribution term: keep the credit "Rev. J. Money, rotatocam.com, jmscnc.com".</p>
-    <p class="fineprint">Text face: the IBM VGA 8x16 glyphs as packaged by VileR (int10h.org), CC BY-SA 4.0, built into a webfont from the board's own font table.</p>
+    <p class="fineprint coffee-line"><a href="https://buymeacoffee.com/revjmoney"><span class="blinky" aria-hidden="true">&#9608;</span> Like the board? Buy Rev a coffee</a></p>
+<p class="fineprint">Text face: the IBM VGA 8x16 glyphs as packaged by VileR (int10h.org), CC BY-SA 4.0, built into a webfont from the board's own font table.</p>
   </div>
 </footer>
 <div class="statusbar">

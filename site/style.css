@@ -179,6 +179,12 @@ pre code { background: none; border: 0; padding: 0; color: inherit; font-size: 1
 }
 .site-nav a:hover, .site-nav a[aria-current="page"] { color: var(--bright); background: var(--blue); }
 .site-nav a.nav-buy { color: var(--c0); background: var(--brown); }
+.site-nav a.nav-coffee { color: var(--yellow, #ffff55); }
+.blinky { animation: blink 1s steps(1) infinite; color: var(--yellow, #ffff55); }
+.coffee-line a { color: var(--yellow, #ffff55); }
+.family { margin: 12px 0 0; max-width: 420px; }
+.family img { display: block; width: 100%; height: auto; border: 1px solid var(--grey); }
+.family figcaption { font-size: 0.9em; margin-top: 4px; }
 .site-nav a.nav-buy .hk { color: var(--bright); }
 .site-nav a.nav-buy .hk::before, .site-nav a.nav-buy .hk::after { color: var(--c0); }
 .site-nav a.nav-buy:hover { background: var(--blue); color: var(--bright); }

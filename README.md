@@ -4,9 +4,15 @@
 
 The software behind **AXIS UNDERGROUND CNC**. Made by Rev. J. Money, the maker of [RotatoCAM](https://rotatocam.com).
 
-[Website](https://revjmoney.github.io/axis-bbs/) · [Docs / Wiki](https://revjmoney.github.io/axis-bbs/docs.html) · [Buy one](https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/) · [On jmscnc.com](https://jmscnc.com/axis-bbs/) · [RotatoCAM](https://rotatocam.com) · [jmscnc.com](https://jmscnc.com)
+**[Buy me a coffee](https://buymeacoffee.com/revjmoney)** · [Website](https://revjmoney.github.io/axis-bbs/) · [Docs / Wiki](https://revjmoney.github.io/axis-bbs/docs.html) · [Buy one](https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/) · [On jmscnc.com](https://jmscnc.com/axis-bbs/) · [RotatoCAM](https://rotatocam.com) · [jmscnc.com](https://jmscnc.com)
 
 <p align="center"><img src="site/media/splash.gif" alt="The animated RotatoCAM ANSI splash a caller sees on connect" width="640"></p>
+
+## The cluster family
+
+<p align="center"><img src="site/media/cluster-family.jpg" alt="Two CYD boards and a headless ESP32 on a terminal breakout running as one seven-node BBS" width="420"></p>
+
+Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headless ESP32 on a breakout (nodes 5 to 7). Seven nodes, one BBS.
 
 ## Get one
 
@@ -74,6 +80,8 @@ More: [hardware and building](https://revjmoney.github.io/axis-bbs/docs.html#har
 ## Credits
 
 Axis Micro BBS Firmware and the AXIS UNDERGROUND CNC board are created by **Rev. J. Money**: [rotatocam.com](https://rotatocam.com) and [jmscnc.com](https://jmscnc.com).
+
+If the board makes you smile, [buy me a coffee](https://buymeacoffee.com/revjmoney).
 
 ## License
 
