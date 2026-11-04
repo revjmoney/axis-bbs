@@ -53,6 +53,9 @@ const std::vector<SetupWizard::Field>& SetupWizard::fields() const {
         {"location", "Location", "city, state", false, true},
         {"board_name", "Board name on the LAN", "callers dial <name>.local", false, false},
         {"public_host", "Public hostname", "optional, for later internet access", false, true},
+        {"noip_host", "No-IP update hostname", "optional: your host, or all.ddnskey.com for a DDNS key", false, true},
+        {"noip_user", "No-IP username", "your noip.com login or DDNS key username", false, true},
+        {"noip_pass", "No-IP password", "your noip.com password or DDNS key password", true, true},
         {"telnet_port", "Telnet port", "23 is standard", false, false},
         {"timezone", "Timezone", "number from the list", false, false},
         {"ftn_address", "FidoNet address", "99:1/0 is a private test zone", false, false},
@@ -123,6 +126,13 @@ void SetupWizard::set(const std::string& k, const std::string& v) {
     else if (k == "location") cfg_.location = v;
     else if (k == "board_name") cfg_.boardName = v;
     else if (k == "public_host") cfg_.publicHost = v;
+    else if (k == "noip_host") {
+        noip_.host = v;
+        // callers dial the No-IP name, unless it is a DDNS key's "update every host" name
+        bool keyName = v.size() >= 11 && v.compare(v.size() - 11, 11, "ddnskey.com") == 0;
+        if (cfg_.publicHost.empty() && !keyName) cfg_.publicHost = v;
+    } else if (k == "noip_user") noip_.user = v;
+    else if (k == "noip_pass") noip_.pass = v;
     else if (k == "telnet_port") cfg_.telnetPort = n;
     else if (k == "timezone") cfg_.timezone = allDigits(v) ? tzNames()[n - 1] : v;
     else if (k == "ftn_address") cfg_.ftnAddress = v;
@@ -214,6 +224,7 @@ void SetupWizard::summary() {
     row("Location    ", cfg_.location);
     row("Callers dial ", cfg_.boardName + ".local:" + std::to_string(cfg_.telnetPort) +
                              (cfg_.publicHost.empty() ? "" : "  or " + cfg_.publicHost));
+    if (!noip_.host.empty()) row("Dynamic DNS ", noip_.host + " (No-IP, " + (noip_.user.empty() ? "no login yet" : noip_.user) + ")");
     row("Timezone    ", cfg_.timezone);
     row("FidoNet     ", cfg_.ftnAddress);
     row("New users   ", "security " + std::to_string(cfg_.newUserSecurity) + ", " +

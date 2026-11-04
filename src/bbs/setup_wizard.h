@@ -27,6 +27,12 @@ public:
     bool        finished() const { return finished_; }
     bool        cancelled() const { return cancelled_; }
     const BbsConfig& result() const { return cfg_; }
+    // optional No-IP dynamic DNS (kept out of the settings, which travel to every board: the board
+    // stores these in its own private storage)
+    struct NoIp {
+        std::string host, user, pass;
+    };
+    const NoIp& noip() const { return noip_; }
 
     const std::vector<Field>& fields() const;
     std::string defaultFor(const std::string& key) const;
@@ -45,6 +51,7 @@ private:
     size_t      step_ = 0;
     bool        atSummary_ = false, finished_ = false, cancelled_ = false;
     std::string out_, line_, pendingPassword_;
+    NoIp        noip_;
 };
 
 }  // namespace axis::bbs

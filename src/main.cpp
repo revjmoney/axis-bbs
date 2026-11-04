@@ -1338,6 +1338,8 @@ static void callerInput(const std::string& app) {
         if (wizard->finished()) {
             cfg = wizard->result();
             bool ok = configSave(cfg);
+            if (!wizard->noip().host.empty())  // the No-IP login stays in this board's own storage
+                web::setNoip(String(wizard->noip().host.c_str()) + "|" + wizard->noip().user.c_str() + "|" + wizard->noip().pass.c_str());
             logEvent(String("setup ") + (ok ? "saved" : "SAVE FAILED") + " over telnet");
             char b[220];
             snprintf(b, sizeof b,
@@ -1800,6 +1802,11 @@ static void handleSerial() {
             Serial.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
         } else if (cmd.startsWith("@DDNS")) {  // "@DDNS domain|host|key|secret": GoDaddy dynamic DNS; alone: off
             Serial.println(web::setDdns(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: ddns saved" : "axis: @DDNS domain|host|key|secret");
+        } else if (cmd == "@NOIPNOW") {  // bench: update No-IP right now
+            web::noipNow();
+            Serial.printf("axis: web: %s\n", web::status().c_str());
+        } else if (cmd.startsWith("@NOIP")) {  // "@NOIP host|username|password": No-IP dynamic DNS; alone: off
+            Serial.println(web::setNoip(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: noip saved" : "axis: @NOIP host|username|password");
         } else if (cmd == "@LOGCLEAR") {  // wipe the event log (screen, flash file, its old copy) and the page shown on the WFC
             events = axis::bbs::EventLog();
             ::remove("/littlefs/events.log");

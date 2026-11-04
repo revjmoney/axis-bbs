@@ -9,7 +9,7 @@ usage: python -I tools/make_web_roots.py
 import re
 import certifi
 
-WANT = ['GTS Root R1', 'GTS Root R4', 'Go Daddy Root Certificate Authority - G2']
+WANT = ['GTS Root R1', 'GTS Root R4', 'Go Daddy Root Certificate Authority - G2', 'DigiCert Global Root G2']
 text = open(certifi.where(), encoding='utf-8').read()
 blocks = re.findall(r'# Label: "([^"]+)"\n.*?(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)', text, re.S)
 found = {label: pem for label, pem in blocks if label in WANT}

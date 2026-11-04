@@ -18,7 +18,7 @@ static SetupWizard defaultsRun() {
     type(w, "Rev\r");
     type(w, "secret1\r");
     type(w, "secret1\r");
-    for (int i = 0; i < 11; i++) type(w, "\r");
+    for (int i = 0; i < 14; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions)
     return w;
 }
 
@@ -65,7 +65,7 @@ TEST_CASE("wizard password echo is stars and the summary hides it") {
     type(w, "abcd");
     CHECK(w.takeOutput() == "****");
     type(w, "\rabcd\r");
-    for (int i = 0; i < 11; i++) type(w, "\r");
+    for (int i = 0; i < 14; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions)
     CHECK(w.takeOutput().find("abcd") == std::string::npos);
 }
 
@@ -86,7 +86,7 @@ TEST_CASE("wizard password confirm mismatch restarts the password") {
     std::string out = w.takeOutput();
     CHECK(out.find("did not match") != std::string::npos);
     type(w, "good1\rgood1\r");
-    for (int i = 0; i < 11; i++) type(w, "\r");
+    for (int i = 0; i < 14; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions)
     type(w, "y");
     CHECK(checkPassword(w.result().sysopSalt, w.result().sysopHash, "good1"));
 }
@@ -114,8 +114,8 @@ TEST_CASE("wizard timezone by number") {
     SetupWizard w(BbsConfig{}, rng);
     w.begin();
     type(w, "Rev\rsecret1\rsecret1\r");
-    // real name, bbs name, location, board name, public host, port
-    for (int i = 0; i < 6; i++) type(w, "\r");
+    // real name, bbs name, location, board name, public host, 3 No-IP questions, port
+    for (int i = 0; i < 9; i++) type(w, "\r");
     CHECK(w.takeOutput().find("PACIFIC") != std::string::npos);  // the list is shown
     type(w, "5\r");
     for (int i = 0; i < 4; i++) type(w, "\r");
@@ -134,8 +134,49 @@ TEST_CASE("wizard N at the summary cancels and nothing is applied") {
 
 TEST_CASE("wizard set and fields support the touch path") {
     SetupWizard w(BbsConfig{}, rng);
-    CHECK(w.fields().size() == 14);
+    CHECK(w.fields().size() == 17);
     CHECK(w.defaultFor("bbs_name") == "Axis Underground CNC");
     w.set("bbs_name", "Shop BBS");
     CHECK(w.defaultFor("bbs_name") == "Shop BBS");
+}
+
+TEST_CASE("the wizard asks for optional No-IP dynamic DNS and keeps it out of the shared settings") {
+    SetupWizard w(BbsConfig{}, rng);
+    w.begin();
+    type(w, "Rev\rsecret1\rsecret1\r");
+    for (int i = 0; i < 4; i++) type(w, "\r");  // real name, BBS name, location, board name
+    type(w, "\r");                                // public hostname: empty, so the No-IP one becomes it
+    std::string out = w.takeOutput();
+    CHECK(out.find("No-IP") != std::string::npos);
+    type(w, "axisbbs.ddns.net\r");
+    type(w, "revjmoney\r");
+    type(w, "noippass1\r");
+    for (int i = 0; i < 6; i++) type(w, "\r");
+    out = w.takeOutput();
+    CHECK(out.find("axisbbs.ddns.net") != std::string::npos);  // in the summary
+    CHECK(out.find("noippass1") == std::string::npos);         // never echoed
+    type(w, "y");
+    REQUIRE(w.finished());
+    CHECK(w.noip().host == "axisbbs.ddns.net");
+    CHECK(w.noip().user == "revjmoney");
+    CHECK(w.noip().pass == "noippass1");
+    CHECK(w.result().publicHost == "axisbbs.ddns.net");
+    CHECK(formatConfig(w.result()).find("noippass1") == std::string::npos);  // the password never goes in axis.ini
+}
+
+TEST_CASE("a No-IP DDNS key updater name is never used as the public hostname") {
+    SetupWizard w(BbsConfig{}, rng);
+    w.set("public_host", "myboard.hopto.org");
+    w.set("noip_host", "all.ddnskey.com");
+    CHECK(w.result().publicHost == "myboard.hopto.org");
+    SetupWizard w2(BbsConfig{}, rng);
+    w2.set("noip_host", "all.ddnskey.com");
+    CHECK(w2.result().publicHost.empty());
+    CHECK(w2.noip().host == "all.ddnskey.com");
+}
+
+TEST_CASE("skipping the No-IP questions leaves dynamic DNS off") {
+    SetupWizard w = defaultsRun();
+    type(w, "y");
+    CHECK(w.noip().host.empty());
 }
