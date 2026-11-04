@@ -82,6 +82,7 @@ public:
     std::function<void(const std::string&)>       onSettings;  // follower: the main's settings arrived
     std::function<uint32_t()>                     clockMs;     // for request(): the time
     std::function<void(uint32_t)>                 sleepMs;     // and a short wait
+    std::function<bool()>                         busyHere;    // main: someone on this board the status doesn't show (the local console)
 
 private:
     struct Link {
@@ -98,6 +99,7 @@ private:
     void handleDatagram(const std::string& d, uint32_t from, uint32_t now);
     void handleFrame(Link& l, Frame t, const std::string& body, uint32_t now);
     void heartbeat();
+    void tidyNumbers(uint32_t now);  // main: once every node has sat idle a while, it is 1, 2 ... and the others follow
     void event(const std::string& e) {
         if (onEvent) onEvent(e);
     }
@@ -110,7 +112,7 @@ private:
     std::vector<std::pair<std::string, std::string>> status_{{"", ""}};  // per session: handle, activity
     Role                  role_ = Role::Off;
     int                   number_ = 0, wantNumber_ = 0, lastMain_ = 0;
-    uint32_t              epoch_ = 0, mainIp_ = 0, since_ = 0, lastBeat_ = 0, lastAnnounce_ = 0, minEpoch_ = 0;
+    uint32_t              epoch_ = 0, mainIp_ = 0, since_ = 0, lastBeat_ = 0, lastAnnounce_ = 0, minEpoch_ = 0, idleSince_ = 0;
     uint32_t              listenMs_ = 3000;  // how long discovery waits for a main before becoming one
     bool                  hasFiles_ = false, yield_ = false;  // yield_: the main handed over, act at the end of tick()
     uint32_t              nextReq_ = 1;

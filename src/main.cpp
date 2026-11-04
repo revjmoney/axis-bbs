@@ -1337,6 +1337,7 @@ static void startCluster() {
             doorServers.erase(it);
         }
     };  // its unfinished uploads go too
+    cluster->busyHere = [] { return localNode != nullptr; };  // the sysop at the board's own screen
     cluster->onNumber = [](int n) {
         Preferences p;
         p.begin("clu", false);

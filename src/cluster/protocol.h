@@ -27,6 +27,7 @@ enum class Frame : uint8_t {
     FileResp = 9,   // main -> follower: request id, ok, data
     Yield = 10,     // main -> follower: you have the SD card, be main (this one has none)
     Settings = 11,  // main -> follower: the BBS settings (axis.ini text), so the cluster is one BBS
+    Renumber = 12,  // main -> follower: your node numbers now (nobody was on a call: the main took node 1)
 };
 
 std::string              frame(Frame type, const std::vector<std::string>& fields);

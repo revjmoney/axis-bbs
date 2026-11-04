@@ -287,6 +287,50 @@ TEST_CASE("a main without an SD card hands over to a board that has one") {
     CHECK(b.c->role() == Role::Main);
 }
 
+TEST_CASE("the SD board takes node 1 back once nobody is on a call, and the others renumber after it") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    int      savedA = 0, savedB = 0;
+    a.c->onNumber = [&](int n) { savedA = n; };
+    b.c->onNumber = [&](int n) { savedB = n; };
+    b.c->setHasFiles(true);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    a.c->setStatus("Rev", "Menu");  // a caller on node 1: numbers can't move under them
+    b.c->start(now);
+    run({&a, &b}, now, 30000);
+    REQUIRE(b.c->role() == Role::Main);
+    CHECK(b.c->nodeNumber() == 2);
+    CHECK(a.c->nodeNumber() == 1);
+    a.c->setStatus("", "");  // they hung up
+    run({&a, &b}, now, 15000);
+    CHECK(b.c->nodeNumber() == 1);
+    CHECK(a.c->nodeNumber() == 2);
+    CHECK(savedB == 1);  // remembered for the next boot
+    CHECK(savedA == 2);
+    REQUIRE(a.c->nodes().size() == 2);
+    for (const NodeInfo& n : a.c->nodes()) CHECK(n.number == (n.id == "board-b" ? 1 : 2));  // every board agrees
+    a.c->setStatus("Kid", "Menu");  // and the new numbers carry the callers
+    run({&a, &b}, now, 2000);
+    for (const NodeInfo& n : b.c->nodes())
+        if (n.number == 2) CHECK(n.handle == "Kid");
+}
+
+TEST_CASE("node numbers with a gap close up when the board is idle") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now, 4);  // it was node 4 last time and asks for it back
+    run({&a, &b}, now, 3000);
+    CHECK(b.c->nodeNumber() == 4);
+    run({&a, &b}, now, 15000);
+    CHECK(a.c->nodeNumber() == 1);
+    CHECK(b.c->nodeNumber() == 2);
+}
+
 TEST_CASE("two boards that both lack an SD card don't hand over back and forth") {
     TwoBoards t;
     run({&t.a, &t.b}, t.now, 8000);

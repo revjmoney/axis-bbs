@@ -5,11 +5,13 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <map>
 
 namespace axis::cluster {
 
 namespace {
 constexpr uint32_t kListenMs = 3000, kBeatMs = 1000, kLostMs = 5000, kAnnounceMs = 2000, kAskMs = 1000;
+constexpr uint32_t kTidyIdleMs = 10000;  // every node idle this long: the main renumbers itself to node 1
 std::string num(uint32_t v) { return std::to_string(v); }
 uint32_t    toU(const std::string& s) { return (uint32_t)std::strtoul(s.c_str(), nullptr, 10); }
 }  // namespace
@@ -107,6 +109,55 @@ void Cluster::heartbeat() {
     std::string b = frame(Frame::Heartbeat, f);
     for (Link& l : links_)
         if (!net_.send(l.id, b)) event("heartbeat to node " + num((uint32_t)l.node) + " failed");
+}
+
+void Cluster::tidyNumbers(uint32_t now) {
+    bool busy = busyHere && busyHere();
+    for (const NodeInfo& n : nodes_) busy = busy || !n.handle.empty() || !n.activity.empty();
+    if (busy || links_.size() > 8) {
+        idleSince_ = 0;
+        return;
+    }
+    if (!idleSince_) idleSince_ = now ? now : 1;
+    if (now - idleSince_ < kTidyIdleMs) return;
+    // this board first, then each other board in the order of its lowest number now
+    std::vector<std::pair<int, Link*>> order;
+    for (Link& l : links_) {
+        if (l.board.empty()) continue;
+        int low = 0;
+        for (const NodeInfo& n : nodes_)
+            if (n.id == l.board && (!low || n.number < low)) low = n.number;
+        if (low) order.push_back({low, &l});
+    }
+    std::sort(order.begin(), order.end(), [](const std::pair<int, Link*>& x, const std::pair<int, Link*>& y) { return x.first < y.first; });
+    std::map<int, int> to;  // old number -> new
+    int                next = 1;
+    for (int n : numbers_) to[n] = next++;
+    for (auto& o : order) {
+        std::vector<int> theirs;
+        for (const NodeInfo& n : nodes_)
+            if (n.id == o.second->board) theirs.push_back(n.number);
+        std::sort(theirs.begin(), theirs.end());
+        for (int n : theirs) to[n] = next++;
+    }
+    bool same = true;
+    for (auto& m : to) same = same && m.first == m.second;
+    if (same) return;
+    for (NodeInfo& n : nodes_)
+        if (to.count(n.number)) n.number = to[n.number];
+    std::sort(nodes_.begin(), nodes_.end(), [](const NodeInfo& x, const NodeInfo& y) { return x.number < y.number; });
+    for (int& n : numbers_) n = to[n];
+    number_ = numbers_[0];
+    if (onNumber) onNumber(number_);
+    for (auto& o : order) {
+        std::vector<std::string> nums;
+        for (const NodeInfo& n : nodes_)
+            if (n.id == o.second->board) nums.push_back(num((uint32_t)n.number));
+        o.second->node = (int)toU(nums[0]);
+        net_.send(o.second->id, frame(Frame::Renumber, nums));
+    }
+    event("nobody on: renumbered, this board is node " + num((uint32_t)number_));
+    heartbeat();
 }
 
 void Cluster::handleDatagram(const std::string& d, uint32_t from, uint32_t now) {
@@ -259,6 +310,15 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
         if (onUser) onUser(body);
     } else if (t == Frame::Settings) {
         if (onSettings) onSettings(body);
+    } else if (t == Frame::Renumber && !f.empty() && role_ == Role::Follower) {
+        numbers_.clear();
+        for (const std::string& n : f) numbers_.push_back((int)toU(n));
+        number_ = wantNumber_ = numbers_[0];
+        status_.resize(numbers_.size());
+        if (onNumber) onNumber(number_);
+        std::string all;
+        for (size_t i = 0; i < numbers_.size(); i++) all += (i ? "+" : "") + num((uint32_t)numbers_[i]);
+        event("renumbered by the main: now node " + all);
     } else if (t == Frame::Yield && role_ == Role::Follower) {
         yield_ = true;  // not here: becoming main closes the link we are reading
     } else if (t == Frame::FileResp) {
@@ -365,6 +425,7 @@ void Cluster::tick(uint32_t now) {
                 lastBeat_ = now;
                 if (NodeInfo* me = node(number_)) me->ip = net_.myIp();
                 heartbeat();
+                tidyNumbers(now);
             }
             if (now - lastAnnounce_ >= kAnnounceMs) {
                 lastAnnounce_ = now;
