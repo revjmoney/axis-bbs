@@ -40,6 +40,14 @@ backed by a new AXIS artpack in that style.
    most 3/16 of an 80x25 screen (4 rows). Delivered as `.ANS` files for the iniquity theme folder and
    packed as `AXIS-02.ZIP` in ANSI Packs.
 
+5. **Fill out the other two themes with more ANSI (Rev).** The axis look (drippy orange) and the
+   oblivion look (grey and cyan, pack #1 style) each get the same set of screens as goal 4: main menu,
+   message bases, file areas, doors, multinode/chat, user settings, who's online and last callers,
+   rumors/oneliners/voting, logoff. Same 3/16 title rule and fade-to-center text, each in its own
+   colours. The oblivion screens go in `/sd/themes/oblivion/`, the axis ones in `/sd/themes/axis/`,
+   and each set is also packed for ANSI Packs (`AXIS-03.ZIP` axis, more screens added to `AXIS-01.ZIP`
+   for oblivion).
+
 ## Non-goals and anti-goals
 
 - No art, logos or text copied from Iniquity, diode or any artpack. Same style, our own drawing.
