@@ -61,6 +61,7 @@ Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headle
    git clone https://github.com/revjmoney/axis-bbs.git
    cd axis-bbs
    pio run -e cyd -t upload --upload-port COM5
+   (The firmware builds on ESP-IDF with Arduino as a component; the first build downloads ESP-IDF.)
    ```
 
 2. **WiFi:** pick your 2.4 GHz network on the touch picker.

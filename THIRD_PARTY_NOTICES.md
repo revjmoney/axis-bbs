@@ -22,3 +22,14 @@ Axis Micro BBS Firmware includes these third-party components, each under its ow
 ## IBM VGA 8x16 font (site web font)
 
 `site/fonts/AxisVGA.woff2` is built by `tools/art/make_vga_webfont.py` from `third_party/vga_font/font8x16.h`: the IBM VGA 8x16 glyphs as packaged by VileR in The Ultimate Oldschool PC Font Pack (https://int10h.org/oldschool-pc-fonts/), licensed CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). The web font is shared under the same license.
+
+## ViSiON/3 BBS (design reference)
+
+The menu system, menu fields, command names, access strings, art codes and login flow follow ViSiON/3
+(https://github.com/ViSiON-3/vision-3-bbs), a recreation of ViSiON/2, MIT licensed. AXIS's code is its own C++;
+no ViSiON/3 art is used. `tools/menus/v3import.py` reads ViSiON/3's menu files to seed AXIS menus.
+
+## SD library (patched)
+
+`lib/SD` is Arduino-ESP32 2.0.17's SD library (Apache-2.0, Espressif Systems), with a fix in `sd_diskio.cpp`:
+`sdcard_uninit` released its SPI lock after freeing the card (a use-after-free that crashes without heap poisoning).

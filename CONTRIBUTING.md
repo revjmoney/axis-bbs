@@ -50,6 +50,10 @@ pio run -e headless
 cd tools/panel && python -m pytest -q
 ```
 
+The firmware is built on **ESP-IDF 4.4.7 with Arduino as a component** (PlatformIO `framework = arduino, espidf`,
+settings in `sdkconfig.defaults`). The first build downloads ESP-IDF and takes a while. The root `CMakeLists.txt`
+serves both builds: under PlatformIO it is the ESP-IDF project, on the PC it builds the tests (`CMakeLists.pc.txt`).
+
 After a change to `partitions.csv`, do a full upload (never `-t nobuild`) or the board boot-loops on the old table.
 
 ## Pull request guidelines
