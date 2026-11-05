@@ -1151,6 +1151,7 @@ static void answerIn(WiFiClient incoming) {
         });
         node->setMessages(&callerMessages());
         node->setArt([](const std::string& name) { return themeArt(name); });
+        axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
         node->setOneLiners(
             [] {  // the wall: here on the main, over the link on a follower
                 if (!asFollower()) return oneLiners;
@@ -1535,7 +1536,7 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
         pwFor = a == A::SetSysopPassword ? 0 : sysop.selectedUser();
         pwKb.reset("new password, then OK", true);
     } else if (a == A::CycleTheme) {  // the next caller sees it; every board gets it
-        cfg.theme = cfg.theme == "oblivion" ? "axis" : "oblivion";
+        cfg.theme = cfg.theme == "axis" ? "oblivion" : cfg.theme == "oblivion" ? "iniquity" : "axis";
         bool ok = configSave(cfg);
         logEvent(String("sysop: theme ") + cfg.theme.c_str() + (ok ? "" : " (SAVE FAILED)"));
         if (cluster) cluster->shareSettings();

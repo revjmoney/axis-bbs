@@ -6,6 +6,7 @@
 // terminals show as VGA orange; the CYD panel uses real orange.
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,7 +18,7 @@ constexpr const char* CLS = "\x1b[0m\x1b[2J\x1b[H";
 // The board's look (setting "theme"): Axis (above) or Oblivion, a dark grey and cyan rendition of
 // the stock Oblivion/2 screens: double-line boxes, spaced title bars, bright cyan hotkeys. One look
 // for the whole board; the colours below follow it.
-enum class Look { Axis, Oblivion };
+enum class Look { Axis, Oblivion, Iniquity };
 void        use(Look look);
 Look        look();
 Look        lookFrom(const std::string& name);  // "oblivion", else Axis
@@ -37,6 +38,9 @@ std::string pipes(const std::string& text);
 
 // a menu title as big drippy block letters (several lines, centred in 80 columns)
 std::string drip(const std::string& text);
+// The theme's header screens from the card: drip("DOORS") shows DOORS.ANS when the theme folder has it
+void setArt(std::function<std::string(const std::string&)> art);
+std::string artFor(const std::string& title);  // "" when there is none
 std::string titleBar(const std::string& text);  // the Oblivion look's title: a fading rule around "M E N U"
 // the part of `text` to show in `width` columns at time `ms`: as is if it fits, else scrolling
 // through a step every 300 ms with a 1.5 s pause at each end

@@ -161,7 +161,7 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
                                               std::to_string(c.dailyMinutes) + " min/day"));
             all.push_back(row("idle", std::to_string(c.idleMinutes) + " min"));
             all.push_back(row("NUP", c.nupHash.empty() ? "none (anyone can apply)" : "set (asked before Apply)"));
-            all.push_back(row("theme", c.theme == "oblivion" ? "oblivion (stock O/2 look)" : "axis (drippy orange)"));
+            all.push_back(row("theme", c.theme == "oblivion" ? "oblivion (grey and cyan)" : c.theme == "iniquity" ? "iniquity (green and grey)" : "axis (drippy orange)"));
             all.push_back(row("doors", std::to_string(c.doors.size()) + (c.doors.empty() ? "" : " (" + c.doors[0].name + ")")));
             break;
         case Screen::Users: {

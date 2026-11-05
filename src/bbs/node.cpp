@@ -198,7 +198,7 @@ void Node::beginLocal(uint32_t nowMs) {
     loggedIn();
 }
 
-bool Node::o2() const { return cfg_.theme == "oblivion"; }
+bool Node::o2() const { return cfg_.theme == "oblivion" || cfg_.theme == "iniquity"; }  // (iniquity: the same layout, in green and grey)
 
 std::string Node::mci(const std::string& s) const {
     std::string r;
@@ -488,6 +488,11 @@ void Node::showMainMenu() {
             out_ += std::string("  ") + theme::ORANGE + "\xc8" + std::string(74, '\xcd') + "\xbc" + theme::TEXT;
         }
         rumorLine();
+        prompt();
+        return;
+    }
+    if (std::string art = art_ ? art_("MAIN.ANS") : ""; !art.empty()) {  // the axis look's own main menu screen
+        out_ += mci(art);
         prompt();
         return;
     }

@@ -72,10 +72,23 @@ std::string o2Window(const std::string& title, const std::vector<std::pair<std::
 
 void use(Look l) {
     look_ = l;
-    bool o2 = l == Look::Oblivion;
-    ORANGE = o2 ? "\x1b[0;36m" : "\x1b[0;33m";
-    HOT = o2 ? "\x1b[1;36m" : "\x1b[1;33m";
-    KEY = o2 ? "\x1b[1;36m" : "\x1b[0;33m";
+    bool o2 = l == Look::Oblivion, inq = l == Look::Iniquity;
+    ORANGE = inq ? "\x1b[0;32m" : o2 ? "\x1b[0;36m" : "\x1b[0;33m";
+    HOT = inq ? "\x1b[1;32m" : o2 ? "\x1b[1;36m" : "\x1b[1;33m";
+    KEY = inq ? "\x1b[1;32m" : o2 ? "\x1b[1;36m" : "\x1b[0;33m";
+}
+
+static std::function<std::string(const std::string&)> art_;
+void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
+std::string artFor(const std::string& title) {
+    if (!art_) return "";
+    std::string name;  // "BBS LIST" -> BBSLIST.ANS (letters only, 8 at most)
+    for (char c : title)
+        if (std::isalnum((unsigned char)c) && name.size() < 8) name += (char)std::toupper((unsigned char)c);
+    if (name.empty()) return "";
+    std::string a = art_(name + ".ANS");
+    if (!a.empty() && a.back() != '\n') a += "\r\n";
+    return a;
 }
 
 Look look() { return look_; }
@@ -83,10 +96,10 @@ Look look() { return look_; }
 Look lookFrom(const std::string& name) {
     std::string n;
     for (char c : name) n += (char)(c | 0x20);
-    return n == "oblivion" ? Look::Oblivion : Look::Axis;
+    return n == "oblivion" ? Look::Oblivion : n == "iniquity" ? Look::Iniquity : Look::Axis;
 }
 
-const char* lookName(Look l) { return l == Look::Oblivion ? "oblivion" : "axis"; }
+const char* lookName(Look l) { return l == Look::Oblivion ? "oblivion" : l == Look::Iniquity ? "iniquity" : "axis"; }
 
 std::string pipes(const std::string& text) {
     static const char ansi[8] = {'0', '4', '2', '6', '1', '5', '3', '7'};  // DOS colour order to ANSI
@@ -115,7 +128,8 @@ std::string pipes(const std::string& text) {
     return s;
 }
 
-// Each word fades on its own, centred: white at both ends, light grey, grey in the middle.
+// Each word fades on its own toward its centre: dark at both ends, brighter, brightest in the
+// middle (the Iniquity look in greens).
 std::string fade(const std::string& text) {
     std::string s;
     size_t      i = 0;
@@ -132,7 +146,11 @@ std::string fade(const std::string& text) {
         for (size_t k = 0; k < len; k++) {
             // edge: 0 at either end of the word, 1 in its middle
             double      edge = (double)(k < len - 1 - k ? k : len - 1 - k) / ((len - 1) / 2.0 > 0 ? (len - 1) / 2.0 : 1);
-            const char* c = len < 3 || edge < 0.34 ? WHITE : edge < 0.75 ? LGREY : DGREY;
+            bool        inq = look_ == Look::Iniquity;
+            const char* c = len < 3 ? (inq ? "\x1b[1;32m" : WHITE)
+                            : edge < 0.34 ? (inq ? "\x1b[0;32m" : DGREY)
+                            : edge < 0.75 ? (inq ? "\x1b[1;32m" : LGREY)
+                                          : WHITE;
             if (c != last) s += c;
             last = c;
             s += text[k + i];
@@ -156,7 +174,7 @@ std::string marquee(const std::string& text, size_t width, uint32_t ms) {
 }
 
 std::string window(const std::string& title, const std::vector<std::pair<std::string, std::string>>& rows, int width) {
-    if (look_ == Look::Oblivion) return o2Window(title, rows, width);
+    if (look_ != Look::Axis) return o2Window(title, rows, width);
     const int   inner = width - 2;  // between the side walls
     std::string s;
     s.reserve((rows.size() + 4) * (size_t)(width + 64));  // one block, not doubling: a busy board has little heap

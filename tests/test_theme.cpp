@@ -12,16 +12,16 @@ namespace {
 std::string visible(const std::string& s) { return std::regex_replace(s, std::regex("\x1b\\[[0-9;]*m"), ""); }
 }  // namespace
 
-TEST_CASE("fade text keeps the letters and fades each word from white edges to a grey middle") {
+TEST_CASE("fade text keeps the letters and fades each word from dark edges to a bright middle") {
     std::string f = theme::fade("UNDERGROUND");
     CHECK(visible(f) == "UNDERGROUND");
-    // one pass across the word: white, light grey, grey, light grey, white (no repeating pattern)
+    // one pass across the word: grey, light grey, white, light grey, grey (no repeating pattern)
     std::string order;
     for (size_t at = 0; (at = f.find("\x1b[", at)) != std::string::npos; at++) {
         std::string code = f.substr(at, f.find('m', at) - at + 1);
         order += code == theme::WHITE ? "W" : code == theme::LGREY ? "L" : code == theme::DGREY ? "G" : "";
     }
-    CHECK(order.substr(0, 5) == "WLGLW");
+    CHECK(order.substr(0, 5) == "GLWLG");
     CHECK(theme::fade("ok AXIS").find("ok") != std::string::npos);  // short words stay white and readable
 }
 
@@ -118,4 +118,19 @@ TEST_CASE("a theme name from the settings picks the look; anything unknown is th
     CHECK(theme::lookFrom("axis") == theme::Look::Axis);
     CHECK(theme::lookFrom("") == theme::Look::Axis);
     CHECK(std::string(theme::lookName(theme::Look::Oblivion)) == "oblivion");
+}
+
+TEST_CASE("the iniquity look fades in greens and is named in the settings") {
+    theme::use(theme::lookFrom("iniquity"));
+    CHECK(theme::look() == theme::Look::Iniquity);
+    CHECK(std::string(theme::lookName(theme::Look::Iniquity)) == "iniquity");
+    CHECK(theme::fade("UNDERGROUND").find("[0;32m") != std::string::npos);  // dark green at the ends
+    theme::use(theme::Look::Axis);
+}
+
+TEST_CASE("a section title uses the theme's header screen when the card has one") {
+    theme::setArt([](const std::string& name) { return name == "BBSLIST.ANS" ? std::string("<bbs list art>") : std::string(); });
+    CHECK(theme::drip("BBS LIST").find("<bbs list art>") != std::string::npos);
+    CHECK(theme::drip("DOORS").find("<bbs list art>") == std::string::npos);  // none for doors: the stock title
+    theme::setArt(nullptr);
 }
