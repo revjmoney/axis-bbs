@@ -7,6 +7,7 @@
 
 #include "doctest.h"
 #include "bbs/node.h"
+#include "bbs/theme.h"
 #include "bbs/password.h"
 #include "bbs/users.h"
 
@@ -224,4 +225,14 @@ TEST_CASE("The board's local logon: straight to the main menu as sysop, no login
     CHECK(r.n.isSysop());
     CHECK(out.find("Welcome back") == std::string::npos);
     CHECK(out.find("one rumor") != std::string::npos);  // the main menu, with its rumor
+}
+
+TEST_CASE("a theme's section header art gets its codes filled in (%BN board name, %NN node, %UN handle)") {
+    Rig r;
+    theme::setArt([](const std::string& name) { return name == "DOORS.ANS" ? std::string("%BN node %NN for %UN") : std::string(); });
+    r.login();
+    std::string out = r.type("d");
+    theme::setArt(nullptr);
+    CHECK(out.find("Axis Underground CNC node 1 for Rev") != std::string::npos);
+    CHECK(out.find("%BN") == std::string::npos);
 }

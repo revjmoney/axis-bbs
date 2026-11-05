@@ -119,6 +119,10 @@ public:
     void transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::string& note, uint32_t nowMs);
 
 private:
+    struct MciScope {  // the theme's header art gets this node's codes while it is in scope
+        explicit MciScope(Node& n);
+        ~MciScope();
+    };
     void key(char c);
     void showMenu();
     void showMainMenu();  // the full-screen menu: the drippy MENU banner and every command
