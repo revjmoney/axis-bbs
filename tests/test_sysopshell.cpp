@@ -134,3 +134,22 @@ TEST_CASE("arrow keys move the lightbar") {
     r.type("\x1b[B\x1b[B\r");  // down twice: Message bases
     CHECK(r.ranCmd("@MSGAREAS"));
 }
+
+TEST_CASE("on the board (40 columns, 7 a page) tapping under the list turns the page, and wraps back to the first") {
+    Rig r;
+    SysopShell board{r.out, [&r](const std::string& c) {
+                         auto it = r.replies.find(c);
+                         return it == r.replies.end() ? std::string("axis: ok\n") : it->second;
+                     },
+                     40};
+    board.begin();
+    board.key('1');  // Users
+    board.key('3');  // Kid (after "Add a user" and Rev)
+    r.out.clear();
+    board.tapRow(11);  // the page line under the list
+    CHECK(plain(r.out).find("Set password") != std::string::npos);  // item 8: page 2
+    r.out.clear();
+    board.tapRow(11);
+    board.tapRow(11);
+    CHECK(plain(r.out).find("Real name") != std::string::npos);  // back to page 1
+}

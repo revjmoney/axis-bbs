@@ -155,7 +155,8 @@ void SysopShell::draw() {
     size_t pages = (l.items.size() + page_() - 1) / page_();
     out_ += "\r\n   ";
     if (!note_.empty()) out_ += std::string(theme::HOT) + fit(note_, 70) + theme::TEXT + "\r\n   ";
-    if (pages > 1) out_ += std::string(theme::DGREY) + "page " + std::to_string(page + 1) + "/" + std::to_string(pages) + "  " + theme::key("N", "/") + theme::key("P", "  ");
+    if (pages > 1 && cols_ < 80) out_ += std::string(theme::DGREY) + "page " + std::to_string(page + 1) + "/" + std::to_string(pages) + " (tap: more)  ";  // the board: no N key
+    else if (pages > 1) out_ += std::string(theme::DGREY) + "page " + std::to_string(page + 1) + "/" + std::to_string(pages) + "  " + theme::key("N", "/") + theme::key("P", "  ");
     out_ += theme::key("Enter", " pick  ") + theme::key("Q", " back") + " ";
 }
 
@@ -266,6 +267,13 @@ void SysopShell::tapRow(int row) {
         return;
     }
     int idx = row - top;
+    if (idx >= (int)page_()) {  // under the list (the page line): the next page, round to the first (no N key on the board)
+        size_t next = (l.at / page_() + 1) * page_();
+        l.at = next < l.items.size() ? next : 0;
+        note_.clear();
+        draw();
+        return;
+    }
     if (idx >= 0 && idx < (int)page_()) {
         size_t at = (l.at / page_()) * page_() + (size_t)idx;
         if (at < l.items.size()) {
