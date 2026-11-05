@@ -108,6 +108,7 @@ add_executable(axis_tests
     tests/test_menurunner.cpp
     tests/test_node_menus.cpp
     tests/test_loginseq.cpp
+    tests/test_node_login.cpp
     tests/test_fossil.cpp
     tests/test_dropfile.cpp
     tests/test_lord_telnet.cpp

@@ -36,7 +36,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, SysopMenu, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, SysopMenu, PreLogon, CheckAccess, ApplyBar, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -154,6 +154,17 @@ private:
     std::function<void(const char*, size_t)> direct_;
     std::function<std::string(const std::string&)> art_;
     std::unique_ptr<MenuRunner>                    menu_;
+    MenuRunner::Loader                             menuLoad_;
+    bool                                           frontDoor_ = false;  // ViSiON/3's front door (PDMATRIX) is running
+    bool                                           backToMatrix_ = false;  // a key after check access: the matrix again
+    int                                            wanders_ = 0;        // matrix picks without logging in (10, then goodbye)
+    int                                            loginAt_[2][2] = {};  // LOGIN.ANS |{P} and |{O}: row, column (0: none)
+    std::unique_ptr<YesNoBar>                      applyBar_;
+    bool                                           showFrontDoor();
+    void                                           frontKey(char c);
+    void                                           showPrelogon();
+    void                                           showLoginScreen();
+    void                                           showArt(const std::string& file);
     std::string                                    menuName_ = "MAIN";
     bool                                           builtin_ = false;  // the menu files failed: the built-in menu this call
     bool                                           enterMenu(const std::string& name);

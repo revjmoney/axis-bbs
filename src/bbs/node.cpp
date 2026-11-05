@@ -239,6 +239,7 @@ char v3Command(const std::string& f) {
 
 void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
     menu_.reset();
+    menuLoad_ = load;
     builtin_ = false;
     if (!load || load("MAIN.MNU").empty()) return;
     menu_.reset(new MenuRunner(
@@ -295,6 +296,87 @@ bool Node::enterMenu(const std::string& name) {
         return true;
     }
     return false;
+}
+
+// ---- ViSiON/3's front door: the pre-login matrix, pre-logon art, the LOGIN screen, check access, apply
+
+void Node::showArt(const std::string& file) {  // a menu-file screen through the art codes
+    std::string a = menuLoad_ ? menuLoad_(file) : "";
+    if (!a.empty()) expandArt(a, menuWho(), [this](const std::string& k) { return menuValue(k); }, [this](const char* d, size_t n) { out_.append(d, n); });
+}
+
+bool Node::showFrontDoor() {
+    if (!menu_ || builtin_ || !menu_->enter("PDMATRIX", AcsUser{0, ""})) return false;
+    state_ = State::Matrix;
+    frontDoor_ = true;
+    return true;
+}
+
+void Node::showPrelogon() {  // a random PRELOGON1..9.ANS (else PRELOGON.ANS), then a key
+    std::vector<std::string> have;
+    for (int i = 1; i <= 9; i++)
+        if (menuLoad_ && !menuLoad_("PRELOGON" + std::to_string(i) + ".ANS").empty()) have.push_back("PRELOGON" + std::to_string(i) + ".ANS");
+    if (have.empty() && menuLoad_ && !menuLoad_("PRELOGON.ANS").empty()) have.push_back("PRELOGON.ANS");
+    if (have.empty()) {
+        showLoginScreen();
+        return;
+    }
+    out_ += theme::CLS;
+    showArt(have[rng_ ? rng_() % have.size() : 0]);
+    out_ += std::string("\x1b[0m\r\n   ") + theme::DGREY + "(press a key)" + theme::RESET;
+    state_ = State::PreLogon;
+}
+
+void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the handle and password go
+    std::string a = menuLoad_ ? menuLoad_("LOGIN.ANS") : "";
+    loginAt_[0][0] = loginAt_[1][0] = 0;
+    if (a.find("|{") != std::string::npos) {
+        std::string drawn = expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); });
+        std::unique_ptr<AnsiTerm> t(new AnsiTerm());
+        t->feed(drawn);
+        for (int r = 0; r < AnsiTerm::kRows; r++)
+            for (int c = 0; c + 3 < AnsiTerm::kCols; c++)
+                if (t->cell(r, c).ch == '|' && t->cell(r, c + 1).ch == '{' && t->cell(r, c + 3).ch == '}') {
+                    int which = t->cell(r, c + 2).ch == 'P' ? 0 : t->cell(r, c + 2).ch == 'O' ? 1 : -1;
+                    if (which >= 0) loginAt_[which][0] = r + 1, loginAt_[which][1] = c + 1;
+                }
+        for (const char* m : {"|{P}", "|{O}"})
+            for (size_t at; (at = a.find(m)) != std::string::npos;) a.replace(at, 4, "    ");
+    }
+    out_ += theme::CLS;
+    if (!a.empty()) expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); }, [this](const char* d, size_t n) { out_.append(d, n); });
+    out_ += "\x1b[0m\r\n";
+    state_ = State::Login;
+    prompt();
+}
+
+void Node::frontKey(char c) {
+    MenuAction a = menu_->key(c, lastInput_);
+    if (a.kind == MenuAction::None) return;
+    if (++wanders_ > 10) {  // ViSiON/3: ten picks without logging in, and the call ends
+        out_ += std::string("\r\n   ") + AMBER + "Too many tries." + theme::RESET + "\r\n";
+        state_ = State::Done;
+        return;
+    }
+    std::string v = a.kind == MenuAction::Run ? a.arg : a.kind == MenuAction::Logoff || a.kind == MenuAction::Quit ? "DISCONNECT" : "";
+    if (v == "LOGIN") {
+        frontDoor_ = false;
+        showPrelogon();
+    } else if (v == "NEWUSER") {
+        out_ += theme::CLS;
+        showArt("NEWUSER.ANS");
+        out_ += std::string("\x1b[0m\x1b[23;4H") + theme::TEXT + "Apply for access? ";
+        applyBar_.reset(new YesNoBar(22, 23, true));
+        out_ += applyBar_->draw();
+        state_ = State::ApplyBar;
+    } else if (v == "CHECKACCESS") {
+        line_.clear();
+        out_ += std::string("\x1b[0m\r\n\r\n   ") + theme::fade("Handle to check") + theme::ORANGE + ": " + theme::WHITE;
+        state_ = State::CheckAccess;
+    } else if (v == "DISCONNECT") {
+        out_ += std::string("\r\n   ") + theme::HOT + "Later." + theme::RESET + "\r\n";
+        state_ = State::Done;
+    }
 }
 
 bool Node::o2() const { return cfg_.theme == "oblivion" || cfg_.theme == "iniquity"; }  // (iniquity: the same layout, in green and grey)
@@ -472,6 +554,7 @@ void Node::o2Prompt(const char* menu) {  // ▄▀[Main Menu]▀▀[Node 1]▀ �
 }
 
 void Node::showWelcome() {
+    if (showFrontDoor()) return;
     if (o2()) {
         showMatrix();
         return;
@@ -490,7 +573,11 @@ void Node::showWelcome() {
 }
 
 void Node::prompt() {
-    if (state_ == State::Login) {
+    if (state_ == State::Login && loginAt_[0][0]) {
+        out_ += "\x1b[" + std::to_string(loginAt_[0][0]) + ";" + std::to_string(loginAt_[0][1]) + "H" + theme::WHITE;
+    } else if (state_ == State::Password && loginAt_[1][0]) {
+        out_ += "\x1b[" + std::to_string(loginAt_[1][0]) + ";" + std::to_string(loginAt_[1][1]) + "H" + theme::WHITE;
+    } else if (state_ == State::Login) {
         out_ += "   " + theme::fade("Handle") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Password) {
         out_ += "\r\n   " + theme::fade("Password") + theme::ORANGE + ": " + theme::WHITE;
@@ -697,7 +784,55 @@ void Node::key(char c) {
         return;
     }
     if (state_ == State::Matrix) {
-        matrixKey(c);
+        if (frontDoor_) frontKey(c);
+        else matrixKey(c);
+        return;
+    }
+    if (state_ == State::PreLogon) {  // any key: the LOGIN screen (after check access: the matrix again)
+        if (backToMatrix_) {
+            backToMatrix_ = false;
+            showFrontDoor();
+            return;
+        }
+        showLoginScreen();
+        return;
+    }
+    if (state_ == State::ApplyBar) {
+        int yes = applyBar_ ? applyBar_->key(c) : 0;
+        if (applyBar_) out_ += applyBar_->takeRedraw();
+        if (yes < 0) return;
+        applyBar_.reset();
+        if (yes) {
+            frontDoor_ = false;
+            out_ += std::string("\x1b[0m\r\n\r\n   ") + theme::TEXT + "Pick the handle for your application (one nobody here uses).\r\n";
+            state_ = State::Login;
+            prompt();
+        } else {
+            showFrontDoor();
+        }
+        return;
+    }
+    if (state_ == State::CheckAccess) {
+        if (c == '\r') {
+            std::string h = line_;
+            line_.clear();
+            if (h.empty()) {
+                showFrontDoor();
+                return;
+            }
+            const User* u = users_ ? users_->find(h) : nullptr;
+            const char* what = !u ? "no such user" : u->status == User::Status::Validated ? "validated" : u->status == User::Status::Denied ? "denied" : "waiting for the sysop";
+            out_ += std::string("\r\n   ") + theme::WHITE + h + theme::TEXT + ": " + theme::HOT + what + theme::RESET + "\r\n   " + theme::DGREY + "(press a key)" + theme::RESET;
+            state_ = State::PreLogon;  // a key to go on: back to the matrix
+            backToMatrix_ = true;
+            return;
+        }
+        if (c == '\b' || c == 0x7f) {
+            if (!line_.empty()) line_.pop_back(), out_ += "\b \b";
+        } else if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && line_.size() < kMaxHandle) {
+            line_ += c;
+            out_ += c;
+        }
         return;
     }
     if (state_ == State::Bulletin) {  // any key: on to the oneliners or the menu
@@ -2055,7 +2190,10 @@ std::string Node::activityText() const {
         case State::Splash:
         case State::Matrix:
         case State::Login:
-        case State::Password: return "logging in";
+        case State::Password:
+        case State::PreLogon:
+        case State::CheckAccess: return "logging in";
+        case State::ApplyBar: return "new user application";
         case State::ApplyAsk:
         case State::NupAsk:
         case State::Applying: return "new user application";
