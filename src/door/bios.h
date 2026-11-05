@@ -51,10 +51,12 @@ private:
     bool     service(int vector);
     bool     keyboard();
     uint16_t keyCode(int c) const;
+    int      nextKey(bool take);  // the next key as a BIOS code (terminal arrows -> scan codes), -1 if none
 
     Cpu&                     cpu_;
     GuestMemory&             mem_;
     ByteStream*              kb_ = nullptr;
+    int                      pendingKey_ = -1;  // a key already read from the line (for 01h peeks)
     std::function<bool(int)> services_;
     std::vector<uint8_t>     rom_;  // the stub page, served read-only
     bool                     idle_ = false, waiting_ = false;

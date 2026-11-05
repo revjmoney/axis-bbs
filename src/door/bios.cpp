@@ -151,10 +151,43 @@ uint16_t Bios::keyCode(int c) const {
     }
 }
 
+// A caller's terminal sends arrows and paging keys as ESC [ A, ESC [ 5 ~, ESC O A...: DOS programs want the
+// PC's scan codes (a lone ESC is still Escape)
+int Bios::nextKey(bool take) {
+    if (pendingKey_ < 0 && kb_) {
+        int c = kb_->read();
+        if (c >= 0) {
+            pendingKey_ = keyCode(c);
+            int p = c == 27 ? kb_->peek() : -1;
+            if (p == '[' || p == 'O') {
+                kb_->read();
+                int d = kb_->read();
+                switch (d) {
+                    case 'A': pendingKey_ = 0x4800; break;
+                    case 'B': pendingKey_ = 0x5000; break;
+                    case 'C': pendingKey_ = 0x4D00; break;
+                    case 'D': pendingKey_ = 0x4B00; break;
+                    case 'H': pendingKey_ = 0x4700; break;
+                    case 'F': pendingKey_ = 0x4F00; break;
+                    default:
+                        if (d >= '1' && d <= '6') {
+                            static const uint16_t tilde[] = {0x4700, 0x5200, 0x5300, 0x4F00, 0x4900, 0x5100};  // 1~ home .. 6~ page down
+                            pendingKey_ = tilde[d - '1'];
+                            if (kb_->peek() == '~') kb_->read();
+                        }
+                }
+            }
+        }
+    }
+    int k = pendingKey_;
+    if (take) pendingKey_ = -1;
+    return k;
+}
+
 bool Bios::keyboard() {
     uint8_t ah = cpu_.ah() & 0x0F;  // 10h-12h are the "enhanced" versions of 00h-02h
     if (ah == 0x00) {
-        int c = kb_ ? kb_->read() : -1;
+        int c = nextKey(true);
         if (c < 0) {
             waiting_ = true;
             idle_ = true;
@@ -162,14 +195,14 @@ bool Bios::keyboard() {
             cpu_.requestStop();  // nothing to do until a key arrives: give the slice back now
             return true;
         }
-        cpu_.setAx(keyCode(c));
+        cpu_.setAx((uint16_t)c);
         return true;
     }
     if (ah == 0x01) {
-        int c = kb_ ? kb_->peek() : -1;
+        int c = nextKey(false);
         if (c >= 0) {  // the waiting key, left in place for 00h to take
             cpu_.setZf(false);
-            cpu_.setAx(keyCode(c));
+            cpu_.setAx((uint16_t)c);
         } else {
             cpu_.setZf(true);
             idle_ = true;

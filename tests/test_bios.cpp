@@ -200,3 +200,17 @@ TEST_CASE("bios int16 01 reports the waiting key without taking it") {
     r.bios.dispatch(0x16);
     CHECK(r.cpu.al() == 'L');
 }
+
+TEST_CASE("bios int16 turns terminal arrow and paging keys into PC scan codes; a lone Escape stays Escape") {
+    Rig r;
+    r.kb.push("\x1b[A\x1b[B\x1b[C\x1b[D\x1b[H\x1b[F\x1b[5~\x1b[6~\x1b[3~\x1bOA\x1b" "x");
+    const uint16_t want[] = {0x4800, 0x5000, 0x4D00, 0x4B00, 0x4700, 0x4F00, 0x4900, 0x5100, 0x5300, 0x4800, 0x011B, 'x'};
+    for (uint16_t w : want) {
+        r.cpu.setAx(0x0100);  // peek first, as programs do
+        r.bios.dispatch(0x16);
+        CHECK(r.cpu.ax() == w);
+        r.cpu.setAx(0x0000);
+        r.bios.dispatch(0x16);
+        CHECK(r.cpu.ax() == w);
+    }
+}

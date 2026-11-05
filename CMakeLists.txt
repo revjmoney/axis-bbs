@@ -94,6 +94,7 @@ add_executable(axis_tests
     tests/test_bios.cpp
     tests/test_session.cpp
     tests/test_lord_local.cpp
+    tests/test_lordcfg_register.cpp
     tests/test_fossil.cpp
     tests/test_dropfile.cpp
     tests/test_lord_telnet.cpp
