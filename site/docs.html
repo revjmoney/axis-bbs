@@ -202,7 +202,7 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
 <div class="lead"><div class="lead-text"><p class="lede">The 6-digit setup PIN, the telnet wizard and your sysop account.</p><p>Once it is on your network, the board asks how you want to set the BBS up: <strong>ON THIS SCREEN</strong> or <strong>OVER TELNET</strong>.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/setup-pin.png"><div class="screen"><img src="media/setup-pin.png" alt="The CYD first-boot setup screen: telnet axis.local and a six digit setup PIN in big yellow numbers" loading="lazy" width="640" height="480"></div></a><figcaption>Setup over telnet: the one-time PIN</figcaption></figure></div></div>
 <div class="topic-body"><ul>
     <li><strong>Over telnet</strong> is the easy way: the screen shows <code>telnet axis.local</code>, the board's address, and a 6-digit <strong>setup PIN</strong>. Call in from a computer on the same network, type the PIN, and answer the wizard. Anyone who calls before setup is done only sees "This BBS is being set up" and a PIN prompt.</li>
-    <li><strong>On this screen</strong> is reserved for an on-screen wizard. In version 0.3 it only says the on-screen setup is coming in a later build and offers a way back, so use telnet.</li>
+    <li><strong>On this screen</strong> is reserved for an on-screen wizard. In version 0.4 it still only says the on-screen setup is coming in a later build and offers a way back, so use telnet.</li>
   </ul>
   <div class="figs">
     
@@ -317,22 +317,26 @@ telnet axis.local 23</code></pre>
 
 <article class="topic" id="themes" data-group="Callers" aria-labelledby="themes-title">
 <header class="topic-head"><div class="eyebrow">Callers</div><h2 id="themes-title">Themes</h2><dl class="msghead"><dt>Topic</dt><dd>Themes</dd><dt>Area</dt><dd>Callers</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>7 of 34</dd></dl></header>
-<div class="lead"><div class="lead-text"><p class="lede">The Axis and Oblivion looks, and the THEME button.</p><p>The whole board wears one of two looks, set by <code>theme</code>. Every caller on every node sees the same one.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/axis-files.png"><div class="screen"><img src="media/axis-files.png" alt="The file area list in the Axis look with a drippy FILES title and orange numbers" loading="lazy" width="640" height="424"></div></a><figcaption>Axis look</figcaption></figure></div></div>
+<div class="lead"><div class="lead-text"><p class="lede">The Axis, Oblivion and Iniquity looks, and the THEME button.</p><p>The whole board wears one of three looks, set by <code>theme</code>. Every caller on every node sees the same one.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/axis-files.png"><div class="screen"><img src="media/axis-files.png" alt="The file area list in the Axis look with a drippy FILES title and orange numbers" loading="lazy" width="640" height="424"></div></a><figcaption>Axis look</figcaption></figure></div></div>
 <div class="topic-body"><div class="table-wrap"><table>
     <thead><tr><th>Look</th><th><code>theme=</code></th><th>Style</th></tr></thead>
     <tbody>
       <tr><td>Axis (default)</td><td><code>axis</code></td><td>Black, grey, orange and white. Big half-block drippy titles with acid drips, headings that fade white to grey, keys in orange inside grey brackets, orange frames.</td></tr>
+      <tr><td>Iniquity</td><td><code>iniquity</code></td><td>Green and grey in the style of the 90s Iniquity BBS (our own drawing): grey block titles with bright green pixels set in them, thin <code>/--: :--\</code> frames, <code>[time: ..; date: ..]</code> status lines and text that fades from dark green at its ends to bright in its middle. Uses the Oblivion layout and keys.</td></tr>
       <tr><td>Oblivion</td><td><code>oblivion</code></td><td>Dark grey and cyan in the style of the stock Oblivion/2 screens (drawn from scratch, no O/2 art copied): the matrix front door with a lightbar, spaced title bars, double-line boxes, a boxed two-column main menu and the O/2 bracket prompt <code>[Main Menu][Node 1] :</code>.</td></tr>
     </tbody>
   </table></div>
+  <p>Each look has a full set of screens in its theme folder on the card (<code>/sd/themes/axis/</code>, <code>/oblivion/</code>, <code>/iniquity/</code>): a main menu, a matrix front door (oblivion and iniquity), and a header for every section (MSGS, FILES, DOORS, CHAT, WHO, NODES, ACCOUNT, EMAIL, ONELINER, BBSLIST, TOPTEN <code>.ANS</code>). A section shows its header screen when the card has one, its built-in title when it doesn't. The same screens are packed as <strong>AXIS-02.ZIP</strong> (iniquity), <strong>AXIS-03.ZIP</strong> (axis) and <strong>AXIS-04.ZIP</strong> (oblivion) in ANSI Packs. They are made by <code>tools/art/axis_packs.py</code>.</p>
   <div class="figs">
-    
+    <figure class="crt"><a class="lb" href="media/iniquity-main.png"><div class="screen"><img src="media/iniquity-main.png" alt="The Iniquity look main menu: grey AXIS block letters with green pixels, a green status line and a framed command list" loading="lazy" width="640" height="424"></div></a><figcaption>Iniquity look main menu</figcaption></figure>
+    <figure class="crt"><a class="lb" href="media/axis-main.png"><div class="screen"><img src="media/axis-main.png" alt="The Axis look main menu in yellow and orange" loading="lazy" width="640" height="424"></div></a><figcaption>Axis look main menu</figcaption></figure>
+    <figure class="crt cyan"><a class="lb" href="media/oblivion-main.png"><div class="screen"><img src="media/oblivion-main.png" alt="The Oblivion look main menu in cyan" loading="lazy" width="640" height="424"></div></a><figcaption>Oblivion look main menu</figcaption></figure>
     <figure class="crt cyan"><a class="lb" href="media/matrix.png"><div class="screen"><img src="media/matrix.png" alt="The Oblivion look front door built from the AXIS artpack screen with the login lightbar" loading="lazy" width="640" height="424"></div></a><figcaption>Oblivion look with the AXIS artpack</figcaption></figure>
   </div></div>
 <details class="sub" id="theme-switch" open><summary>Switching the look</summary><div class="sub-body"><ul>
-    <li>On the board: tap the activity screen, open <strong>BBS SETUP</strong> and tap <strong>THEME</strong>. Each tap flips between the two.</li>
-    <li>On the serial console: <code>@SET theme=oblivion</code> or <code>@SET theme=axis</code>.</li>
-    <li>In <code>/axis.ini</code>: <code>theme=oblivion</code>. Any value other than <code>oblivion</code> means <code>axis</code>.</li>
+    <li>On the board: tap the activity screen, open <strong>BBS SETUP</strong> and tap <strong>THEME</strong>. Each tap moves to the next look: axis, oblivion, iniquity.</li>
+    <li>On the serial console: <code>@SET theme=iniquity</code>, <code>theme=oblivion</code> or <code>theme=axis</code>.</li>
+    <li>In <code>/axis.ini</code>: <code>theme=oblivion</code>. Any value other than <code>oblivion</code> or <code>iniquity</code> means <code>axis</code>.</li>
   </ul>
   <p>The main board sends the change to every board in the cluster at once. The next screen each caller gets is in the new look.</p>
   <div class="figs one">
@@ -977,7 +981,7 @@ pio run -e headless-ring -t upload --upload-port COM7   # with the eight-light r
       <tr><td><code>idle_minutes</code></td><td>Idle logoff after this many minutes without a key.</td><td><code>5</code></td><td><code>idle_minutes=10</code></td></tr>
       <tr><td><code>sessions</code></td><td>Callers this board takes at once, 1 to 4. Kept per board. Restart to apply.</td><td><code>2</code> (headless: <code>3</code>)</td><td><code>sessions=3</code></td></tr>
       <tr><td><code>login_splash</code></td><td>The RotatoCAM ANSI splash before the login screen: on unless 0.</td><td><code>1</code></td><td><code>login_splash=0</code></td></tr>
-      <tr><td><code>theme</code></td><td>The look: <code>axis</code> or <code>oblivion</code> (anything else means axis).</td><td><code>axis</code></td><td><code>theme=oblivion</code></td></tr>
+      <tr><td><code>theme</code></td><td>The look: <code>axis</code>, <code>oblivion</code> or <code>iniquity</code> (anything else means axis).</td><td><code>axis</code></td><td><code>theme=oblivion</code></td></tr>
       <tr><td><code>ratio</code></td><td>Download ratio: callers may take up to ratio times what they uploaded, plus <code>free_kb</code>. 0 means no ratio.</td><td><code>0</code></td><td><code>ratio=3</code></td></tr>
       <tr><td><code>free_kb</code></td><td>A download allowance in KB on top of the ratio.</td><td><code>0</code></td><td><code>free_kb=512</code></td></tr>
       <tr><td><code>doorN</code></td><td>A door: <code>id|name|exe|args|drop</code>. See <a href="#door-settings">doors</a>.</td><td>LORD, Black Jack, ANSI viewer, DOS Prompt</td><td class="wrap"><code>door1=lord|Legend of the Red Dragon|LORD.EXE|%N /DREW|doorsys</code></td></tr>
@@ -1136,7 +1140,7 @@ build/axis_tests</code></pre>
     <div class="titleblock" role="contentinfo" aria-label="Title block">
       <div class="tb title wide"><span>Title</span><b>Axis Micro BBS Firmware</b></div>
       <div class="tb"><span>Part</span><b>AXIS-BBS</b></div>
-      <div class="tb"><span>Rev</span><b>0.3</b></div>
+      <div class="tb"><span>Rev</span><b>0.4</b></div>
       <div class="tb wide"><span>Drawn</span><b>Rev. J. Money, the maker of RotatoCAM</b></div>
       <div class="tb"><span>Scale</span><b>1:1</b></div>
       <div class="tb"><span>Sheet</span><b>1 OF 1</b></div>

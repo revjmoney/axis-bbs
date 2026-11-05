@@ -611,111 +611,195 @@ static void drawLocal() {
     localTerm->clean();
 }
 
-static void drawWfc() {
-    AnsiScreen::renderArt(scr, kWfcArt, kWfcRows);  // the compact drippy logo in small cells, from flash: the top 64 pixels
-    drawBattery();
-    const uint8_t F = 0x06, K = 0x07, V = 0x0F, DIMC = 0x08;
-    const int     rows = 11, last = rows - 1;
-    char          b[64];
-    bool          blink = (millis() / 500) % 2;
-    panel.clear(K);
-    panel.fill(0, 0, 40, 0xCD, F);
-    panel.fill(last, 0, 40, 0xCD, F);
-    panel.text(0, 0, "\xc9", F);
-    panel.text(0, 39, "\xbb", F);
-    panel.text(last, 0, "\xc8", F);
-    panel.text(last, 39, "\xbc", F);
-    for (int r = 1; r < last; r++) {
-        panel.text(r, 0, "\xba", F);
-        panel.text(r, 39, "\xba", F);
+// The waiting-for-caller screen, Iniquity style (docs/superpowers/specs/2026-11-04-iniquity-wfc-theme-design.md):
+// a title bar, a chunky AXIS logo (the top 3/16), a status line, then a lightbar menu box, a nodes box
+// for the whole cluster, a "today" box, the status lamps, the newest events and a footer. Every
+// caption fades from dark at its ends to bright in its middle.
+namespace wfc {
+constexpr int kMenuX = 0, kMenuY = 58, kMenuW = 118, kItemH = 14, kItems = 7;
+const char* const kItemsText[kItems] = {"f1 local logon", "f2 sysop menu", "f3 users", "f4 files", "f5 event log", "f6 bbs setup", "f7 system"};
+uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return palNearest(r, g, b); }  // (the screen copy is 16 palette colours)
+// text in one clean colour (Rev: a per-letter fade on this small screen looked like noise): words
+// that are numbers or values in white, everything else light grey; green for accents
+void fade(int x, int y, const char* s, bool green = false) {
+    size_t n = strlen(s), i = 0;
+    while (i < n) {
+        size_t j = i;
+        while (j < n && s[j] != ' ') j++;
+        bool value = i < n && (isdigit((unsigned char)s[i]) || s[i] == '(' || s[i] == '-');
+        scr.setTextColor(green ? rgb(85, 230, 85) : value ? rgb(255, 255, 255) : rgb(175, 175, 175));
+        for (size_t k = i; k < j; k++) scr.drawChar(s[k], x + (int)k * 6, y);
+        i = j + 1;
     }
-    panel.text(0, 2, callersOnline() ? "\xb5 ACTIVITY \xc6" : "\xb5 WAITING FOR CALLER \xc6", V);
-    {
-        bool   main = !cluster || cluster->role() == axis::cluster::Role::Main;
-        String nums;  // "node 2+3": every node (session) this board serves
-        if (cluster && !cluster->numbers().empty())
-            for (size_t i = 0; i < cluster->numbers().size(); i++) nums += (i ? "+" : "") + String(cluster->numbers()[i]);
-        else
-            for (size_t i = 0; i < sessions.size(); i++) nums += (i ? "+" : "") + String((int)i + 1);
-        snprintf(b, sizeof b, "\xb5 node %s \xc6", nums.c_str());
-        panel.text(0, 39 - (int)strlen(b), b, main ? F : DIMC);
+}
+void plain(int x, int y, const char* s, uint16_t c) {
+    scr.setTextColor(c);
+    scr.drawString(s, x, y);
+}
+// an Iniquity frame: "/--: label :--\" on top, "~" down the sides, "\---/" at the bottom
+void frame(int x, int y, int w, int h, const char* label) {
+    uint16_t g = rgb(0, 150, 0), d = rgb(70, 70, 70), hi = rgb(80, 230, 80);
+    scr.drawFastHLine(x + 6, y + 3, w - 12, g);
+    scr.drawFastHLine(x + 6, y + h - 4, w - 12, g);
+    for (int t = x + 14; t < x + w - 8; t += 30) scr.drawPixel(t, y + 3, hi);  // ticks along the top
+    plain(x, y, "/", g);
+    plain(x + w - 6, y, "\\", g);
+    plain(x, y + h - 8, "\\", g);
+    plain(x + w - 6, y + h - 8, "/", g);
+    for (int yy = y + 10; yy < y + h - 10; yy += 10) {
+        plain(x, yy, "~", d);
+        plain(x + w - 6, yy, "~", d);
     }
-    // the status lights: steady = on, blinking = busy, dim = off
-    bool anyDoor = door || viewer || dosShell, anyXfer = job != nullptr;
-    if (cluster && cluster->nodes().size() > 1)
-        for (auto& n : cluster->nodes()) {
-            anyDoor = anyDoor || n.activity == "Doors";
-            anyXfer = anyXfer || n.activity == "Transfer";
-        }
-    bool paged = pageText.length() && millis() - pageAtMs < 60000;
-    struct Light {
-        const char* name;
-        uint8_t     on;
-        bool        lit, busy;
-    } lights[] = {
-        {"NET", 0x0A, WiFi.status() == WL_CONNECTED, callersOnline() > 0},
-        {"LINK", 0x0B, cluster && cluster->nodes().size() > 1, cluster && cluster->role() == axis::cluster::Role::Main},
-        {"SD", 0x06, storageHasSd(), anyXfer},
-        {"CALL", 0x0F, callersOnline() > 0, callersOnline() > 0},
-        {"DOOR", 0x04, anyDoor, anyDoor},
-        {"PAGE", 0x0D, paged, paged},
-    };
-    int col = 2;
-    for (auto& l : lights) {
-        bool show = l.lit && (!l.busy || blink);
-        panel.text(1, col, "\xfe", show ? l.on : (l.lit ? DIMC : 0x08));
-        panel.text(1, col + 1, l.name, l.lit ? K : DIMC);
-        col += 2 + (int)strlen(l.name) + 1;
+    if (label && *label) {
+        int lx = x + 12, lw = (int)strlen(label) * 6;
+        scr.fillRect(lx - 2, y, lw + 28, 8, TFT_BLACK);
+        plain(lx, y, ":", g);
+        fade(lx + 12, y, label, true);
+        plain(lx + 12 + lw + 6, y, ":", g);
     }
-    panel.fill(2, 1, 38, 0xC4, DIMC);
-    // one line per node on this board
-    for (size_t i = 0; i < sessions.size() && i < 4; i++) {
-        int    r = 3 + (int)i;
-        String t = sessionLineText(i);
-        int num = cluster && i < cluster->numbers().size() ? cluster->numbers()[i] : (int)i + 1;
-        snprintf(b, sizeof b, "%2d", num);
-        panel.text(r, 2, b, F);
-        panel.text(r, 5, axis::bbs::theme::marquee(t.c_str(), 33, millis()).c_str(), sessionNode(i) ? V : DIMC);
-    }
-    if (sessions.size() < 4) {  // a free row: the system ticker (what used to fill this screen), scrolling
-        uint32_t up = millis() / 1000;
-        snprintf(b, sizeof b, "up %lud %luh %lum", (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24), (unsigned long)(up / 60 % 60));
-        String others;  // the other boards' nodes (headless ones too): who's on, where
-        if (cluster)
-            for (auto& n : cluster->nodes()) {
-                bool mine = false;
-                for (int k : cluster->numbers()) mine = mine || k == n.number;
-                if (mine) continue;
-                others += "n" + String(n.number) + " " + (n.handle.empty() ? String("free") : String(n.handle.c_str()) + " " + n.activity.c_str()) + "  ";
+}
+// the diode-style AXIS: chunky letters, cyan fading to blue, grey shade cells, a dark drop shadow
+void logo(int x0, int y0) {
+    static const char* const L[4][7] = {
+        {" #### ", "##  ##", "##  ##", "######", "##  ##", "##  ##", "##  ##"},
+        {"##  ##", "##  ##", " #### ", "  ##  ", " #### ", "##  ##", "##  ##"},
+        {"######", "  ##  ", "  ##  ", "  ##  ", "  ##  ", "  ##  ", "######"},
+        {" #####", "##    ", "##    ", " #### ", "    ##", "    ##", "##### "}};
+    const int px = 5, py = 4;  // 7 rows x 4 px = 28 px tall
+    const uint16_t ramp[7] = {rgb(170, 255, 255), rgb(85, 255, 255), rgb(0, 200, 220), rgb(0, 160, 210),
+                              rgb(40, 110, 220), rgb(30, 70, 200), rgb(20, 40, 160)};
+    for (int l = 0; l < 4; l++)
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 6; c++) {
+                if (L[l][r][c] != '#') continue;
+                int x = x0 + (l * 7 + c) * px, y = y0 + r * py;
+                scr.fillRect(x + 2, y + 2, px, py, rgb(30, 30, 50));  // the shadow, down and right
             }
-        String tick = (others.length() ? "other nodes: " + others + "\xb3 " : String()) + dialName() + ":" + String(cfg.telnetPort) + "  " +
-                      WiFi.localIP().toString() + "  " + String(wifiSsid()) + " " +
-                      String(WiFi.RSSI()) + " dBm  " + (storageHasSd() ? "SD " + String(cfg.areas.size()) + " areas" : String("no SD")) + "  " +
-                      b + "  " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) + " KB free  calls " + String(callsToday) +
-                      " last " + lastCaller + "  " + cfg.location.c_str();
-        panel.text(6, 2, axis::bbs::theme::marquee(tick.c_str(), 37, millis()).c_str(), DIMC);
+    for (int l = 0; l < 4; l++)
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 6; c++) {
+                if (L[l][r][c] != '#') continue;
+                int x = x0 + (l * 7 + c) * px, y = y0 + r * py;
+                bool edge = c == 5 || L[l][r][c + 1] != '#';
+                scr.fillRect(x, y, px, py, edge ? rgb(110, 110, 130) : ramp[r]);  // grey shade on right edges
+                if (((l * 13 + r * 7 + c * 3) % 11) == 0) scr.drawPixel(x + 1, y + 1, rgb(255, 255, 255));  // glints
+            }
+}
+}  // namespace wfc
+
+static void drawWfc() {
+    using namespace wfc;
+    scr.fillScreen(TFT_BLACK);
+    scr.setFont(&fonts::Font0);
+    scr.setTextDatum(textdatum_t::top_left);
+    char b[96];
+    bool blink = (millis() / 500) % 2;
+    bool main = !cluster || cluster->role() == axis::cluster::Role::Main;
+    String nums;
+    if (cluster && !cluster->numbers().empty())
+        for (size_t i = 0; i < cluster->numbers().size(); i++) nums += (i ? "+" : "") + String(cluster->numbers()[i]);
+    else
+        for (size_t i = 0; i < sessions.size(); i++) nums += (i ? "+" : "") + String((int)i + 1);
+    // title bar
+    snprintf(b, sizeof b, "axis micro bbs %s ; (c)2026 rev j money ; node %s", axis::bbs::kAxisVersion, nums.c_str());
+    plain(2, 0, "[", rgb(0, 150, 0));
+    fade(8, 0, b);
+    // the logo and its caption: y 10..44 (3/16 of the screen)
+    logo(4, 12);
+    fade(150, 14, "u n d e r g r o u n d");
+    fade(150, 24, "c   n   c", true);
+    fade(150, 34, main ? "main board" : "follower board");
+    // status line
+    String now = timeText();
+    String hm = now[4] == '-' ? now.substring(11, 16) : String("--:--"), ymd = now[4] == '-' ? now.substring(0, 10) : String("no clock");
+    snprintf(b, sizeof b, "time: %s   date: %s   event: %s", hm.c_str(), ymd.c_str(), callersOnline() ? "callers on" : "none");
+    plain(0, 47, "[", rgb(0, 150, 0));
+    fade(8, 47, b, true);
+    plain(314, 47, "]", rgb(0, 150, 0));
+    // the menu box (lightbar: the item under the last tap glows)
+    frame(kMenuX, kMenuY - 4, kMenuW, kItems * kItemH + 12, "axis");
+    for (int i = 0; i < kItems; i++) {
+        int y = kMenuY + 6 + i * kItemH;
+        if (i == 0 && !callersOnline()) scr.fillRect(kMenuX + 6, y - 2, kMenuW - 12, 11, rgb(0, 90, 0));  // the bar rests on local logon
+        String t = kItemsText[i];
+        if (i == 2 && users.pending()) t += " (" + String((unsigned)users.pending()) + "!)";
+        fade(kMenuX + 10, y, t.c_str(), true);
     }
-    // the newest events
-    panel.fill(7, 1, 38, 0xC4, DIMC);
+    // the nodes box: every node in the cluster
+    const int nx = 122, ny = 54, nw = 198;
+    std::vector<axis::cluster::NodeInfo> all;
+    if (cluster && cluster->nodes().size() > 0) all = cluster->nodes();
+    std::sort(all.begin(), all.end(), [](const axis::cluster::NodeInfo& a, const axis::cluster::NodeInfo& c) { return a.number < c.number; });
+    int shown = std::min((int)all.size(), 7);
+    frame(nx, ny, nw, 18 + std::max(shown, (int)sessions.size()) * 10, "nodes");
+    int row = 0;
+    if (all.empty())
+        for (size_t i = 0; i < sessions.size() && row < 7; i++, row++) {
+            snprintf(b, sizeof b, "%d %s", (int)i + 1, sessionNode(i) && !sessionNode(i)->handle().empty() ? sessionNode(i)->handle().c_str() : "waiting");
+            fade(nx + 10, ny + 10 + row * 10, b);
+        }
+    for (int k = 0; k < shown; k++, row++) {
+        const auto& n = all[(size_t)k];
+        snprintf(b, sizeof b, "%d", n.number);
+        plain(nx + 10, ny + 10 + row * 10, b, rgb(0, 200, 0));
+        snprintf(b, sizeof b, "%-.12s", n.handle.empty() ? "waiting" : n.handle.c_str());
+        fade(nx + 28, ny + 10 + row * 10, b);
+        snprintf(b, sizeof b, "%-.14s", n.handle.empty() ? IPAddress(n.ip).toString().c_str() : n.activity.c_str());
+        plain(nx + 110, ny + 10 + row * 10, b, rgb(110, 110, 110));
+    }
+    // the today box: counters and the board's health
+    int ty = ny + 22 + std::max(shown, (int)sessions.size()) * 10;
+    frame(nx, ty, nw, 240 - 24 - ty, "today");
+    uint32_t up = millis() / 1000;
+    snprintf(b, sizeof b, "calls %u   new users %u", (unsigned)callsToday, (unsigned)users.pending());
+    fade(nx + 10, ty + 10, b);
+    snprintf(b, sizeof b, "last %.20s", lastCaller.length() ? lastCaller.c_str() : "nobody yet");
+    fade(nx + 10, ty + 20, b);
+    snprintf(b, sizeof b, "heap %uk  up %luh%02lum  %d dbm", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024),
+             (unsigned long)(up / 3600), (unsigned long)(up / 60 % 60), (int)WiFi.RSSI());
+    if (ty + 30 < 240 - 32) fade(nx + 10, ty + 30, b);
+    if (storageHasSd()) snprintf(b, sizeof b, "sd %u mb free  %u areas", (unsigned)(storageFreeBytes() >> 20), (unsigned)cfg.areas.size());
+    else snprintf(b, sizeof b, "no sd card  %s:%d", dialName().c_str(), cfg.telnetPort);
+    if (ty + 40 < 240 - 32) fade(nx + 10, ty + 40, b);
+    // the status lamps under the menu: steady = on, blinking = busy, dark = off
+    bool anyDoor = door || viewer || dosShell, anyXfer = job != nullptr;
+    if (cluster)
+        for (auto& n : cluster->nodes()) anyDoor = anyDoor || n.activity == "Doors", anyXfer = anyXfer || n.activity == "Transfer";
+    bool paged = pageText.length() && millis() - pageAtMs < 60000;
+    struct Lamp {
+        const char* name;
+        uint16_t    on;
+        bool        lit, busy;
+    } lamps[] = {{"net", rgb(80, 255, 80), WiFi.status() == WL_CONNECTED, callersOnline() > 0},
+                 {"link", rgb(85, 255, 255), cluster && cluster->nodes().size() > 1, false},
+                 {"sd", rgb(255, 180, 0), storageHasSd(), anyXfer},
+                 {"call", rgb(255, 255, 255), callersOnline() > 0, callersOnline() > 0},
+                 {"door", rgb(255, 60, 60), anyDoor, anyDoor},
+                 {"page", rgb(255, 85, 255), paged, paged}};
+    int ly = kMenuY + kItems * kItemH + 12;
+    for (int i = 0; i < 6; i++) {
+        int x = 4 + (i % 3) * 38, y = ly + (i / 3) * 11;
+        bool show = lamps[i].lit && (!lamps[i].busy || blink);
+        scr.fillRect(x, y + 1, 5, 5, show ? lamps[i].on : rgb(50, 50, 50));
+        plain(x + 8, y, lamps[i].name, lamps[i].lit ? rgb(170, 170, 170) : rgb(70, 70, 70));
+    }
+    // the newest event (or a page for the sysop)
     const auto& ev = events.lines();
-    for (int k = 0; k < 2; k++) {
-        if ((int)ev.size() - 1 - k < 0) break;
-        const std::string& e = ev[ev.size() - 1 - k];
-        panel.text(9 - k, 2, axis::bbs::theme::marquee(e, 37, millis()).c_str(), k == 0 ? K : DIMC);
+    if (paged) {
+        plain(0, 218, "page", rgb(255, 85, 85));
+        fade(30, 218, axis::bbs::theme::marquee(pageText.c_str(), 48, millis()).c_str());
+    } else if (!ev.empty()) {
+        fade(0, 218, axis::bbs::theme::marquee(ev.back(), 53, millis()).c_str());
     }
-    if (paged) {  // a page for the sysop takes the event lines' place
-        panel.text(8, 2, "PAGE ", 0x0C);
-        panel.text(8, 7, axis::bbs::theme::marquee(pageText.c_str(), 31, millis()).c_str(), V);
-    }
-    if (users.pending()) {  // applications waiting for the sysop
-        snprintf(b, sizeof b, "\xb5 %u NEW USER%s \xc6", (unsigned)users.pending(), users.pending() == 1 ? "" : "S");
-        panel.text(last, 39 - (int)strlen(b), b, blink ? 0x0A : F);
+    // footer
+    scr.drawFastHLine(0, 228, 320, rgb(0, 120, 0));
+    if (users.pending()) {
+        snprintf(b, sizeof b, "%u new user%s waiting", (unsigned)users.pending(), users.pending() == 1 ? "" : "s");
+        plain(2, 231, b, blink ? rgb(80, 255, 80) : rgb(0, 150, 0));
     } else {
-        String now = timeText();
-        snprintf(b, sizeof b, "\xb5 %s \xc6", now[4] == '-' ? now.substring(11).c_str() : "tap: sysop");
-        panel.text(last, 39 - (int)strlen(b), b, DIMC);
+        fade(2, 231, "(release 11/04/26)", true);
     }
-    panel.render(scr, 64, rows);
+    fade(200, 231, "(c) jmscnc.com", true);
 }
 
 // A node's details (tap its line on the WFC): who, where, how long, and a KICK for the sysop.
@@ -1837,7 +1921,15 @@ static void handleTap(int x, int y) {
             sysopAction(sysop.tap(x, y));
             return;
         }
-        if (detailSession < 0 && x >= 272 && y >= 16 && y < 38) {  // LOCAL: the sysop logs in at the board
+        int item = x < wfc::kMenuW && y >= wfc::kMenuY && y < wfc::kMenuY + wfc::kItems * wfc::kItemH ? (y - wfc::kMenuY) / wfc::kItemH : -1;
+        if (detailSession < 0 && item > 0) {  // f2..f7: straight to that part of the sysop menu
+            using S = axis::bbs::SysopMenu::Screen;
+            static const S to[] = {S::Main, S::Main, S::Users, S::Files, S::Logs, S::Setup, S::System};
+            if (item == 1) sysop.open();
+            else sysop.openAt(to[item]);
+            return;
+        }
+        if (detailSession < 0 && item == 0) {  // f1 local logon: the sysop logs in at the board
             localTerm.reset(new axis::bbs::AnsiTerm());
             localScreen.reset(new AnsiScreen());
             localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,
@@ -1877,10 +1969,16 @@ static void handleTap(int x, int y) {
             }
             return;
         }
-        int row = (y - 64) / 16;  // a node's line on the WFC (panel rows 3..6 start at y = 64)
-        if (y >= 64 && row >= 3 && row < 3 + (int)sessions.size() && row < 7) {
-            detailSession = row - 3;
-            return;
+        if (x >= 122 && y >= 64 && y < 64 + 7 * 10) {  // a node line in the nodes box: its details, if it's on this board
+            int k = (y - 64) / 10;
+            std::vector<axis::cluster::NodeInfo> all = cluster ? cluster->nodes() : std::vector<axis::cluster::NodeInfo>();
+            std::sort(all.begin(), all.end(), [](const axis::cluster::NodeInfo& a, const axis::cluster::NodeInfo& c) { return a.number < c.number; });
+            int num = k < (int)all.size() ? all[(size_t)k].number : (all.empty() ? k + 1 : 0);
+            for (size_t i = 0; i < sessions.size(); i++)
+                if (sessionNumber((int)i) == num) {
+                    detailSession = (int)i;
+                    return;
+                }
         }
         sysop.open();  // anywhere else: the sysop menu
         return;

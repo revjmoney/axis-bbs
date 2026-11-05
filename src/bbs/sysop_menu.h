@@ -34,6 +34,7 @@ public:
     static constexpr int kLinesPerPage = 10, kLineChars = 38;
 
     void                open();
+    void                openAt(Screen s) { open(); go(s); }  // straight to a section (the WFC's menu)
     bool                isOpen() const { return open_; }
     Screen              screen() const { return screen_; }
     std::vector<Button> buttons() const;

@@ -48,3 +48,6 @@ Fixed during the pass:
 - LORDCFG.EXE was not on the card: uploaded to /sd/doors/lord (the card staging tool should copy it too).
 Learned: opening board 1's serial port (CH340) resets it; two "reboots" in the log were my own scripts, not crashes.
 Not tested by Claude (needs Rev): the NUP prompt (setting one means typing a password), the touchscreen SET PASS / SYSOP PW buttons (needs fingers), and the panel's look in a real browser on PC and phone.
+
+## Ideas parked (Rev, 2026-11-04)
+- A fourth look in the ViSiON/3 style (fire logo, two-column "(M) Messages Menu" lists, a blue rumor bar at the bottom). References: https://retroshed.us/vision-3-v3net/ and https://github.com/ViSiON-3/vision-3-bbs (a modern ViSiON/3 rewrite, multinode, the closest cousin to AXIS but on a PC; Rev: "almost exactly what we built but on the esp32").

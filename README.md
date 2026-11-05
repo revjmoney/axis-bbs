@@ -26,7 +26,7 @@ Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headle
 
 | Feature | What you get | Docs |
 |---|---|---|
-| Two looks | Drippy orange Axis, or an Oblivion/2 style with a lightbar front door; your own ANSI screens with pipe and MCI codes | [themes](https://revjmoney.github.io/axis-bbs/docs.html#themes) |
+| Three looks | Drippy orange Axis, an Oblivion/2 style with a lightbar front door, or green and grey Iniquity; full screen sets for each; your own ANSI screens with pipe and MCI codes | [themes](https://revjmoney.github.io/axis-bbs/docs.html#themes) |
 | File areas | FILES.BBS areas on SD, archive listings (ZIP, RAR, RAR 5, ARJ, TAR, GZIP), search, new files | [files](https://revjmoney.github.io/axis-bbs/docs.html#files) |
 | Transfers | ZMODEM, XMODEM, XMODEM-1K both ways; ZIP uploads CRC-checked; download gate and ratio | [transfers](https://revjmoney.github.io/axis-bbs/docs.html#transfers) |
 | Messages | Areas, quoted replies, taglines, new scan, private email | [messages](https://revjmoney.github.io/axis-bbs/docs.html#messages) |
