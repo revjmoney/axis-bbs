@@ -2879,8 +2879,7 @@ static void serviceSession(int i) {
     if (door && busySlot == i) {  // the door owns the caller's line; the BBS waits
         bool running = door->step(millis() - lastServedMs < 100 ? 8 : 30);  // short slices while a follower's door is asking us
         if (doorMirror && line) {  // a setup program: its screen, as ANSI
-            std::string a = doorMirror->update(door->textPage());
-            if (!a.empty()) line->write((const uint8_t*)a.data(), a.size());
+            doorMirror->update(door->textPage(), [&](const char* d, size_t n) { line->write((const uint8_t*)d, n); });
         }
         if (line) line->flush();  // whatever the door drew this slice
         if (!running) finishDoor();

@@ -5,6 +5,7 @@
 // the cells that changed. Characters go out as CP437 bytes, as the BBS sends everything else.
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,8 @@ namespace axis::door {
 class ScreenMirror {
 public:
     std::string update(const std::vector<uint8_t>& page);  // what to send for this frame ("" = no change)
+    // the same, handed out in pieces of at most 512 bytes (a whole busy screen is ~8 KB: too much for the main next to a door)
+    void update(const std::vector<uint8_t>& page, const std::function<void(const char*, size_t)>& emit);
     void        reset() { last_.clear(); }                 // the next frame is drawn whole
 
 private:

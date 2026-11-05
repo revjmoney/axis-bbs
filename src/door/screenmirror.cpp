@@ -18,9 +18,20 @@ std::string sgr(uint8_t a) {
 }  // namespace
 
 std::string ScreenMirror::update(const std::vector<uint8_t>& page) {
-    if (page.size() < (size_t)kCols * kRows * 2) return "";
+    std::string all;
+    update(page, [&all](const char* d, size_t n) { all.append(d, n); });
+    return all;
+}
+
+void ScreenMirror::update(const std::vector<uint8_t>& page, const std::function<void(const char*, size_t)>& emit) {
+    if (page.size() < (size_t)kCols * kRows * 2) return;
     std::string out;
-    bool        whole = last_.size() != page.size();
+    out.reserve(560);
+    auto flush = [&] {
+        if (!out.empty()) emit(out.data(), out.size());
+        out.clear();
+    };
+    bool whole = last_.size() != page.size();
     if (whole) out += "\x1b[0m\x1b[2J";
     int atRow = -1, atCol = -1, attr = -1;
     for (int r = 0; r < kRows; r++)
@@ -34,9 +45,10 @@ std::string ScreenMirror::update(const std::vector<uint8_t>& page) {
             if (a != attr) out += sgr(a), attr = a;
             out += (char)ch;
             atRow = r, atCol = c + 1;
+            if (out.size() >= 480) flush();  // a cell adds at most ~30 bytes: pieces stay under 512
         }
+    flush();
     last_ = page;
-    return out;
 }
 
 }  // namespace axis::door
