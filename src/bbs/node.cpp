@@ -207,6 +207,11 @@ void Node::beginLocalQuiet(uint32_t nowMs) {  // (the bulletin, oneliners and me
     state_ = State::Menu;
 }
 
+void Node::beginLocalMenu(uint32_t nowMs) {  // (the full login piles every screen into one string: more than the main can spare)
+    beginLocalQuiet(nowMs);
+    showMainMenu();
+}
+
 bool Node::o2() const { return cfg_.theme == "oblivion" || cfg_.theme == "iniquity"; }  // (iniquity: the same layout, in green and grey)
 
 std::string Node::mci(const std::string& s) const {
@@ -504,8 +509,11 @@ void Node::showMainMenu() {
     if (o2()) {  // MAIN.ANS from the card, or the stock look: a title bar and a boxed two-column list
         std::string art = art_ ? art_("MAIN.ANS") : "";
         o2Keys_ = !art.empty();
-        if (!art.empty()) {
-            out_ += mci(art);
+        if (!art.empty()) {  // one copy at a time, and the output sized once (with room for the rumor): the main has no 10 KB block
+            std::string m = mci(art);
+            std::string().swap(art);
+            out_.reserve(out_.size() + m.size() + 256);
+            out_ += m;
         } else {
             if (!cfg_.mainMenu.empty()) {  // the sysop's edited menu
                 out_ += theme::titleBar("Main Menu");
@@ -1394,7 +1402,7 @@ void Node::showLastCallers() {
 // ---- Oblivion/Iniquity extras: rumors, the BBS list, top ten
 
 void Node::rumorLine() {
-    std::vector<std::string> all = listGet_ ? listGet_("rumors") : std::vector<std::string>{};
+    std::vector<std::string> all = listGet_ ? listGet_("rumor") : std::vector<std::string>{};
     if (all.empty()) return;
     const std::string& r = all[(lastInput_ / 1000 + all.size() * 7 + node_) % all.size()];
     out_ += std::string("\r\n  ") + theme::DGREY + "rumor: " + theme::HOT + r.substr(0, 68) + theme::TEXT;

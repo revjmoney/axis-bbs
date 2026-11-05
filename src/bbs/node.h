@@ -96,6 +96,7 @@ public:
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
     void        begin(uint32_t nowMs);
     void        beginLocal(uint32_t nowMs);
+    void        beginLocalMenu(uint32_t nowMs);  // the board's local logon: sysop, straight to the main menu (one screen held at a time)
     void        beginLocalQuiet(uint32_t nowMs);  // the sysop at the board, no login screens (straight into the sysop menu)  // the sysop at the board itself: logged in as sysop, no splash
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);

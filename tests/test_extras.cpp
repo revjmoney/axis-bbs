@@ -38,6 +38,7 @@ struct Rig {
 TEST_CASE("[R]umors: add one anonymously, list them, and one shows over the main menu") {
     Rig r;
     r.lists["rumors"] = {"the sysop runs LORD on a chip the size of a stamp"};
+    r.lists["rumor"] = {"the sysop runs LORD on a chip the size of a stamp"};  // the menu asks for one line: the whole list costs the main too much RAM
     r.login();
     std::string menu = r.type("?");
     CHECK(menu.find("the sysop runs LORD") != std::string::npos);  // a rumor over the menu
@@ -212,4 +213,15 @@ TEST_CASE("a twit thinks they posted a oneliner and a rumor, but nobody else eve
     n.input((const uint8_t*)keys.data(), keys.size(), 0);
     CHECK(lists["rumors"].empty());
     CHECK(plain(n.takeOutput()).find("out there") != std::string::npos);  // as far as they know, it worked
+}
+
+TEST_CASE("The board's local logon: straight to the main menu as sysop, no login screens (they cost the main RAM)") {
+    Rig r;
+    r.lists["rumor"] = {"one rumor"};
+    r.n.beginLocalMenu(0);
+    std::string out = plain(r.n.takeOutput());
+    CHECK(r.n.state() == Node::State::Menu);
+    CHECK(r.n.isSysop());
+    CHECK(out.find("Welcome back") == std::string::npos);
+    CHECK(out.find("one rumor") != std::string::npos);  // the main menu, with its rumor
 }

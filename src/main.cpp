@@ -59,6 +59,7 @@
 #include "platform/cyd/serialfiles.h"
 #include "platform/cyd/storage.h"
 #include <SD.h>
+#include <LittleFS.h>
 #include "platform/cyd/wfc_art.h"
 #include "platform/cyd/wifi.h"
 #include "platform/cyd/wifistream.h"
@@ -183,16 +184,29 @@ static bool asFollower();
 
 // The board's small shared lists (rumors, the BBS list): 50 lines each in internal flash on the main.
 static bool listName(const std::string& n) { return n == "rumors" || n == "bbslist" || n == "votes" || n == "ballots"; }
-static std::vector<std::string> listLoad(const std::string& n) {
+// One random line of a list, read a line at a time (the main menu's rumor: the whole list is more than the main can spare then)
+static std::vector<std::string> listOne(const std::string& n) {
     std::vector<std::string> v;
     if (!listName(n)) return v;
-    std::string text = flashRead(("/list_" + n + ".txt").c_str());
-    for (size_t pos = 0; pos < text.size();) {
-        size_t e = text.find('\n', pos);
-        if (e == std::string::npos) e = text.size();
-        if (e > pos) v.push_back(text.substr(pos, e - pos));
-        pos = e + 1;
+    File     f = LittleFS.open(("/list_" + n + ".txt").c_str(), "r");
+    uint32_t seen = 0;
+    while (f && f.available()) {
+        String l = f.readStringUntil('\n');
+        if (l.length() && esp_random() % ++seen == 0) v.assign(1, l.c_str());
     }
+    if (f) f.close();
+    return v;
+}
+static std::vector<std::string> listLoad(const std::string& n) {
+    std::vector<std::string> v;
+    if (n == "rumor") return listOne("rumors");  // the main menu's one rumor
+    if (!listName(n)) return v;
+    File f = LittleFS.open(("/list_" + n + ".txt").c_str(), "r");  // a line at a time: one 8 KB block is more than the main can spare
+    while (f && f.available()) {
+        String l = f.readStringUntil('\n');
+        if (l.length()) v.push_back(l.c_str());
+    }
+    if (f) f.close();
     return v;
 }
 static void listAddLocal(const std::string& n, const std::string& line) {
@@ -1973,7 +1987,7 @@ static void handleTap(int x, int y) {
                     return v;
                 });
             if (item > 0) localNode->beginLocalQuiet(millis());  // f2..f7: straight into the sysop menu
-            else localNode->beginLocal(millis());
+            else localNode->beginLocalMenu(millis());
             logEvent(String("local sysop login: ") + localNode->handle().c_str());
             static const char* const walk[] = {nullptr, "", "1", "2", "61", "4", "6"};  // f2 top, f3 users, f4 files, f5 log, f6 settings, f7 system
             if (item > 0) {  // big letters: 40 columns, zoomed
