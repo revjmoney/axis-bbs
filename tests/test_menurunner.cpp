@@ -79,3 +79,11 @@ TEST_CASE("runner: G asks to log off, /G hangs up, DOOR: and auto-run commands")
     g.r.key('/');
     CHECK(g.r.key('G').kind == MenuAction::Quit);
 }
+
+TEST_CASE("runner: an arrow key on a menu with no lightbar runs nothing (it is not the A command)") {
+    Rig g;
+    g.fs = {{"MAIN.MNU", "cmd=A|GOTO:AREAS|*|0|\ncmd=B|GOTO:BBS|*|0|\n"}};
+    REQUIRE(g.r.enter("MAIN", AcsUser{10, ""}));
+    for (char c : std::string("\x1b[A\x1b[B\x1b[5~\x1bOA")) CHECK(g.r.key(c).kind == MenuAction::None);
+    CHECK(g.r.key('a').kind == MenuAction::Goto);  // the real key still works
+}

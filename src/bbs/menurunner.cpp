@@ -100,6 +100,20 @@ MenuAction MenuRunner::key(char c, uint32_t nowMs) {
         return run(def_.cmds[i]);
     }
     lastKeyMs_ = nowMs;
+    if (esc_) {  // a terminal key sequence with no lightbar to take it (ESC [ A, ESC [ 5 ~, ESC O A): swallowed whole
+        if (esc_ == 1 && (c == '[' || c == 'O')) {
+            esc_ = c == '[' ? 2 : 3;
+            return MenuAction{};
+        }
+        if (esc_ == 2 && ((c >= '0' && c <= '9') || c == ';')) return MenuAction{};
+        bool lone = esc_ == 1;
+        esc_ = 0;
+        if (!lone) return MenuAction{};  // the sequence's final byte
+    }
+    if (c == '\x1b' && (!bar_ || !typed_.empty())) {
+        esc_ = 1;
+        return MenuAction{};
+    }
     if (bar_ && typed_.empty() && (c == '\x1b' || bar_->midKey())) {
         bar_->key(c);
         emit(bar_->takeRedraw());

@@ -50,6 +50,7 @@ private:
     std::vector<size_t>       autos_;  // commands to auto-run before input
     std::set<std::string>     ranOnce_;
     uint32_t                  lastKeyMs_ = 0;
+    int                       esc_ = 0;  // inside a terminal key sequence that no lightbar takes
 };
 
 }  // namespace axis::bbs
