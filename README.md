@@ -8,6 +8,8 @@ The software behind **AXIS UNDERGROUND CNC**. Made by Rev. J. Money, the maker o
 
 <p align="center"><img src="site/media/splash.gif" alt="The animated RotatoCAM ANSI splash a caller sees on connect" width="640"></p>
 
+**Want to help?** Bug fixes, features, doors and ANSI art are all welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## The cluster family
 
 <p align="center"><img src="site/media/cluster-family.jpg" alt="Two CYD boards and a headless ESP32 on a terminal breakout running as one seven-node BBS" width="420"></p>
