@@ -616,9 +616,13 @@ static void drawLocal() {
                 for (int c = 0; c < 40; c++) tall.cells[r][c] = localScreen->cells[r][c];
             scr.fillRect(0, 0, 320, 200, pal::BLACK);
             tall.render(scr, 0, 12);
-        } else if (localZoom) {  // follow the cursor across the two halves
-            if (localTerm->col() >= localPan + 40) localPan = 40;
-            else if (localTerm->col() < localPan) localPan = 0;
+        } else if (localZoom) {  // follow the cursor across the two halves (once it moves: << and >> stick until then)
+            static int lastCol = -1;
+            if (localTerm->col() != lastCol) {
+                lastCol = localTerm->col();
+                if (lastCol >= localPan + 40) localPan = 40;
+                else if (lastCol < localPan) localPan = 0;
+            }
             localScreen->renderZoom(scr, axis::bbs::AnsiTerm::kRows, localPan);  // 200 pixels, 40 columns
         } else {
             localScreen->renderSharp(scr, axis::bbs::AnsiTerm::kRows);  // 200 pixels of the BBS, all 80 columns, crisp
@@ -626,7 +630,8 @@ static void drawLocal() {
         button(4, 206, 58, 30, "KEYS", false);
         button(66, 206, 58, 30, "ENTER", false);
         button(128, 206, 58, 30, localZoom ? "FULL" : "ZOOM", false);
-        button(190, 206, 58, 30, localPan ? "<<" : ">>", false);
+        if (!(localNode && localNode->state() == axis::bbs::Node::State::SysopMenu))  // (the sysop menu is 40 columns: nothing to pan)
+            button(190, 206, 58, 30, localPan ? "<<" : ">>", false);
         button(256, 206, 60, 30, "EXIT", true);
     }
     scr.setFont(&fonts::Font0);
