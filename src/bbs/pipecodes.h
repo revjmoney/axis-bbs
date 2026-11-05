@@ -3,7 +3,7 @@
 // ViSiON/3's art and prompt codes, turned into ANSI as the text streams out:
 //   |00..|15 foreground (DOS colours), |B0..|B15 background, |CL clear screen, |XYcc,rr move the cursor,
 //   |XX a two-letter placeholder (value("XX")), @XX####@ a placeholder padded to the field's width,
-//   {{ACS}}...{{/}} shown only to callers the access string allows, else blanked to the same width.
+//   %XX AXIS's own codes (the same values as |XX), {{ACS}}...{{/}} shown only to callers the access string allows, else blanked to the same width.
 #pragma once
 #include <cstddef>
 #include <functional>

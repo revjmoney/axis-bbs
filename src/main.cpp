@@ -2246,6 +2246,34 @@ static void runCommand(const String& cmd, Print& out) {
         int sp = cmd.indexOf(' ', 5);
         tapX = cmd.substring(5, sp).toInt();
         tapY = cmd.substring(sp + 1).toInt();
+    } else if (cmd.startsWith("@LKEY ")) {  // bench: keys into the local console ("\e" Esc, "\r" Enter, "\\" backslash)
+        if (!localNode) {
+            out.println("axis: no local console open");
+        } else {
+            std::string k;
+            for (int i = 6; i < (int)cmd.length(); i++) {
+                char c = cmd[i];
+                if (c == '\\' && i + 1 < (int)cmd.length()) {
+                    char n = cmd[++i];
+                    c = n == 'e' ? '\x1b' : n == 'r' ? '\r' : n;
+                }
+                k += c;
+            }
+            localNode->input((const uint8_t*)k.data(), k.size(), millis());
+            localFeed();
+            out.println("axis: done");
+        }
+    } else if (cmd == "@LSCREEN") {  // bench: the local console's 80x25 screen as text, one line per row
+        if (!localTerm) {
+            out.println("axis: no local console open");
+        } else {
+            for (int r = 0; r < axis::bbs::AnsiTerm::kRows; r++) {
+                char row[axis::bbs::AnsiTerm::kCols + 1];
+                for (int c = 0; c < axis::bbs::AnsiTerm::kCols; c++) row[c] = (char)localTerm->cell(r, c).ch;
+                row[axis::bbs::AnsiTerm::kCols] = 0;
+                out.printf("%02d|%s\n", r + 1, row);
+            }
+        }
     } else if (cmd == "@DOORSTATE") {  // the running door, for a door that seems stuck (bench)
         if (!door) out.println("axis: no door running");
         else

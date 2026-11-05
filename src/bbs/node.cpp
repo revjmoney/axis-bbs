@@ -243,11 +243,39 @@ void Node::setMenus(MenuRunner::Loader load) {
     if (!load || load("MAIN.MNU").empty()) return;
     menu_.reset(new MenuRunner(
         load, [this](const char* d, size_t n) { out_.append(d, n); },
-        [this](const std::string& k) {  // ViSiON/3's placeholders through ours (|UH is our %UN)
-            std::string code = "%" + (k == "UH" ? std::string("UN") : k), v = mci(code);
-            return v == code ? std::string() : v;
-        }));
+        [this](const std::string& k) { return menuValue(k); }));
 }
+
+// a placeholder's value: "%XX" are AXIS's own codes (as theme art has always used them), the rest ViSiON/3's names
+std::string Node::menuValue(const std::string& k) const {
+    if (!k.empty() && k[0] == '%') {
+        std::string v = mci(k);
+        return v == k ? std::string() : v;
+    }
+    const User* u = users_ ? users_->byId(userId_) : nullptr;
+    auto        num = [](long n) { return std::to_string(n); };
+    if (k == "UH" || k == "ALIAS" || k == "HANDLE") return handle_;
+    if (k == "NAME") return u ? u->realName : cfg_.sysopRealName;
+    if (k == "LEVEL") return num(sysop_ ? kSysopSecurity : u ? u->security : 0);
+    if (k == "GL") return u ? u->location : cfg_.location;
+    if (k == "CALLS") return u ? num((long)u->calls) : std::string("0");
+    if (k == "TL") {
+        int left = minutesLeft(lastInput_);
+        return left < 0 ? std::string("--") : num(left);
+    }
+    if (k == "NODE") return num(node_);
+    if (k == "MN") return menuName_;
+    if (k == "TIME" || k == "DATE") {
+        std::string t = info_().timeText;  // "2026-11-05 10:42"
+        size_t      sp = t.find(' ');
+        if (k == "TIME") return sp == std::string::npos ? t : t.substr(sp + 1);
+        return t.size() >= 10 ? t.substr(5, 2) + "/" + t.substr(8, 2) + "/" + t.substr(2, 2) : t;
+    }
+    if (k == "NEWUSERS") return "YES";  // AXIS always takes applications (an optional new user password guards them)
+    if (k == "BN") return cfg_.bbsName;
+    return "";  // |UN (a user note), |PV, areas and conferences: not on AXIS yet
+}
+
 
 AcsUser Node::menuWho() const {
     const User* u = users_ ? users_->byId(userId_) : nullptr;

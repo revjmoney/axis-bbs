@@ -1,0 +1,21 @@
+; from ViSiON/3 menus/v3 DOORSM (MIT); AXIS art is its own
+title=Doors
+clr=1
+prompt=1
+prompt1=|08[|07|TIME|08] |08[|15TL:|07|TL|08]|15 |07D|08o|15o|07r|08s |08-|15>|07 
+prompt2=
+fallback=
+acs=*
+pass=
+help=
+hotkey=0
+cmd=L|DOOR:lord|fD|0|Playing LORD
+cmd=B|DOOR:blackjack|fD|0|Playing Black Jack
+cmd=A|DOOR:ansiview|*|0|Viewing ANSI Packs
+cmd=S|DOOR:dos|s255|1|At the DOS prompt
+cmd=Q|GOTO:MAIN|*|0|
+cmd=G|LOGOFF|*|0|
+bar=4,10,96,7,L, (L)  Red Dragon (LORD)  
+bar=4,11,96,7,B, (B)  BBS Black Jack     
+bar=30,10,96,7,A, (A)  ANSI Pack Viewer   
+bar=30,11,96,7,Q, (Q)  Main Menu          

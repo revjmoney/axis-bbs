@@ -1,0 +1,20 @@
+; from ViSiON/3 menus/v3 RUMORM (MIT); AXIS art is its own
+title=Rumors
+clr=1
+prompt=1
+prompt1=|15Rumors
+prompt2=|08[|15Rumors|08] |07Command |08->|15 
+fallback=
+acs=*
+pass=
+help=
+hotkey=0
+cmd=L|RUN:RUMORSLIST|*|0|Listing Rumors
+cmd=A|RUN:RUMORSADD|*|0|Adding a Rumor
+cmd=N|RUN:RUMORSNEWSCAN|*|0|Rumors Newscan
+cmd=S|RUN:RUMORSSEARCH|*|0|Searching Rumors
+cmd=D|RUN:RUMORSDELETE|*|0|Deleting a Rumor
+cmd=*|RUN:RANDOMRUMOR|*|0|Random Rumor
+cmd=Q|GOTO:MAIN|*|0|
+cmd=G|RUN:MAINLOGOFF|*|0|Logging Off
+cmd=/G|RUN:IMMEDIATELOGOFF|*|0|Logging Off

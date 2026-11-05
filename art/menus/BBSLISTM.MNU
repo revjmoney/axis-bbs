@@ -1,0 +1,19 @@
+; from ViSiON/3 menus/v3 BBSLISTM (MIT); AXIS art is its own
+title=BBS Listings
+clr=1
+prompt=1
+prompt1=|15BBS Listings Directory
+prompt2=|08[|15BBS List|08] |07Command |08->|15 
+fallback=
+acs=*
+pass=
+help=
+hotkey=0
+cmd=L|RUN:BBSLIST|*|0|Viewing BBS Listings
+cmd=A|RUN:BBSLISTADD|*|0|Adding BBS Listing
+cmd=C|RUN:BBSLISTEDIT|*|0|Editing BBS Listing
+cmd=D|RUN:BBSLISTDELETE|S255|1|Deleting BBS Listing
+cmd=V|RUN:BBSLISTVERIFY|S255|1|Verifying BBS Listing
+cmd=Q|GOTO:MAIN|*|0|
+cmd=G|RUN:MAINLOGOFF|*|0|Logging Off
+cmd=/G|RUN:IMMEDIATELOGOFF|*|0|Logging Off
