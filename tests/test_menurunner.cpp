@@ -105,3 +105,13 @@ TEST_CASE("runner: art from a piece-by-piece loader comes out the same as the wh
     REQUIRE(pieces.r.enter("MAIN", AcsUser{10, ""}));
     CHECK(pieces.out == whole.out);
 }
+
+TEST_CASE("runner: pre-login verbs come back as Run actions") {
+    Rig g;
+    g.fs = {{"PDMATRIX.MNU", "cmd=J|LOGIN|*|0|\ncmd=D|DISCONNECT|*|0|\nbar=49,10,31,5,J,Journey onward.\n"}};
+    REQUIRE(g.r.enter("PDMATRIX", AcsUser{0, ""}));
+    MenuAction a = g.r.key('j');
+    CHECK(a.kind == MenuAction::Run);
+    CHECK(a.arg == "LOGIN");
+    CHECK(g.r.key('d').arg == "DISCONNECT");
+}
