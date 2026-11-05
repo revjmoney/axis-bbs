@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "bbs/config.h"
+#include "bbs/sysopshell.h"
 #include "bbs/email.h"
 #include "bbs/filebrowser.h"
 #include "bbs/filelib.h"
@@ -34,7 +35,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, SysopMenu, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -47,6 +48,10 @@ public:
     // accounts: without them anyone is let in by handle (the first builds, tests)
     void setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow);
     bool isSysop() const { return sysop_; }
+    // the in-BBS sysop menu (bbs/sysopshell.h): how it runs an @ command (on the main), and a touch on a screen row
+    void setSysopRun(std::function<std::string(const std::string&)> run) { sysopRun_ = std::move(run); }
+    void tapRow(int row);
+    void openSysopMenu(const std::string& keys = "");  // straight into the sysop menu (the WFC), walked to a layer by keys
     bool failedLogin() const { return failedLogin_; }  // the call ended on wrong passwords (for the per-address lockout)
     void addMinutes(int m) { if (callStart_) callStart_ += (uint32_t)m * 60000u; }  // the sysop gives more time (this call only)
     std::function<void(const std::string&)> onEvent;  // for the event log ("new user password: 3 wrong tries from X")
@@ -194,6 +199,8 @@ private:
     uint32_t                  lastInput_ = 0;
     size_t                    door_ = 0;
     std::vector<DoorEntry>    doorList_;  // what showDoors listed
+    std::function<std::string(const std::string&)> sysopRun_;
+    std::unique_ptr<SysopShell> shell_;
     uint32_t                  holdUntil_ = 0;  // after a wrong password, typing is ignored until then (2 s, then 4 s)
     bool                      failedLogin_ = false;
     UserStore*                users_ = nullptr;

@@ -406,6 +406,24 @@ void Node::prompt() {
     }
 }
 
+void Node::openSysopMenu(const std::string& keys) {
+    if (!sysop_ || !sysopRun_) return;
+    state_ = State::SysopMenu;
+    shell_.reset(new SysopShell(out_, sysopRun_));
+    shell_->begin();
+    for (char k : keys) shell_->key(k);
+}
+
+void Node::tapRow(int row) {
+    if (state_ == State::SysopMenu && shell_) {
+        shell_->tapRow(row);
+        if (!shell_->open()) {
+            shell_.reset();
+            showMainMenu();
+        }
+    }
+}
+
 std::string Node::editedMenu() const {  // the sysop's menu items in a window
     std::vector<std::pair<std::string, std::string>> rows;
     for (const MenuItem& m : cfg_.mainMenu)
@@ -569,6 +587,12 @@ void Node::key(char c) {
     if (state_ == State::Bulletin) {  // any key: on to the oneliners or the menu
         menuOrLiners();
         if (state_ == State::Bulletin) showMainMenu();
+        return;
+    }
+    if (state_ == State::SysopMenu) {
+        if (shell_ && shell_->key(c)) return;
+        shell_.reset();
+        showMainMenu();
         return;
     }
     if (state_ == State::UserEdit) {
@@ -1027,8 +1051,12 @@ void Node::key(char c) {
         case 'v':
             showVotes();
             break;
-        case '*':
-            if (sysop_ && users_) showUsers();
+        case '*':  // the sysop menu (the old user editor without a way to run commands)
+            if (sysop_ && sysopRun_) {
+                state_ = State::SysopMenu;
+                shell_.reset(new SysopShell(out_, sysopRun_));
+                shell_->begin();
+            } else if (sysop_ && users_) showUsers();
             else prompt();
             break;
         case 'l':
@@ -1892,6 +1920,7 @@ std::string Node::activityText() const {
         case State::Bulletin: return "bulletin";
         case State::Voting: return "voting booth";
         case State::UserEdit: return "user editor";
+        case State::SysopMenu: return "sysop menu";
         case State::Split: return "split-screen chat";
         case State::Done: return "leaving";
     }

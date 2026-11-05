@@ -76,7 +76,8 @@ static axis::bbs::BbsConfig cfg;
 static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
-static axis::bbs::LoginGuard loginGuard;  // an address with 3 failed calls in 10 min waits 5 min (more for repeats)
+static axis::bbs::LoginGuard loginGuard;
+static std::string sysopRun(const std::string& cmd);  // the in-BBS sysop menu runs its @ commands here  // an address with 3 failed calls in 10 min waits 5 min (more for repeats)
 // The sysop control panel (tools/panel): one LAN connection on port 2326 (bbs/panelproto.h)
 static WiFiServer           panelServer(2326);
 static WiFiClient           panelClient;
@@ -1202,6 +1203,7 @@ static void answerIn(WiFiClient incoming) {
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
         node->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
+        node->setSysopRun(sysopRun);
         node->setChat(
             [slot](const std::string& text, bool page) {  // through the main to every node (or just this board)
                 if (!node) return;
@@ -1739,6 +1741,7 @@ static void startCluster() {
             return out;
         }
         if (req.rfind("T\x1f", 0) == 0) return "1" + themeArtLocal(req.substr(2));  // a theme screen
+        if (req.rfind("C\x1f", 0) == 0) return "1" + sysopRun(req.substr(2));      // a sysop menu command from a follower
         if (req.rfind("Y\x1f", 0) == 0) {  // a shared list
             std::string out = "1";
             for (auto& l : listLoad(req.substr(2))) out += l + "\n";
@@ -1882,6 +1885,9 @@ static void handleTap(int x, int y) {
                     localKb.reset("type, then OK", false);
                     localKeys = false;
                 }
+            } else if (y < 200) {  // a tap on the screen: the line there (the sysop menu's items)
+                localNode->tapRow(y * axis::bbs::AnsiTerm::kRows / 200);
+                localFeed();
             } else if (y >= 206 && x < 64) {
                 localKeys = true;
             } else if (y >= 206 && x < 126) {
@@ -1922,20 +1928,14 @@ static void handleTap(int x, int y) {
             return;
         }
         int item = x < wfc::kMenuW && y >= wfc::kMenuY && y < wfc::kMenuY + wfc::kItems * wfc::kItemH ? (y - wfc::kMenuY) / wfc::kItemH : -1;
-        if (detailSession < 0 && item > 0) {  // f2..f7: straight to that part of the sysop menu
-            using S = axis::bbs::SysopMenu::Screen;
-            static const S to[] = {S::Main, S::Main, S::Users, S::Files, S::Logs, S::Setup, S::System};
-            if (item == 1) sysop.open();
-            else sysop.openAt(to[item]);
-            return;
-        }
-        if (detailSession < 0 && item == 0) {  // f1 local logon: the sysop logs in at the board
+        if (detailSession < 0 && item >= 0) {  // f1 local logon; f2..f7 the sysop menu (in the BBS, on the local console)
             localTerm.reset(new axis::bbs::AnsiTerm());
             localScreen.reset(new AnsiScreen());
             localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,
                                                 &callerFiles()));
             localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
             localNode->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
+            localNode->setSysopRun(sysopRun);
             localNode->setMessages(&callerMessages());
             localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
             localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
@@ -1956,6 +1956,8 @@ static void handleTap(int x, int y) {
                 });
             localNode->beginLocal(millis());
             logEvent(String("local sysop login: ") + localNode->handle().c_str());
+            static const char* const walk[] = {nullptr, "", "1", "2", "61", "4", "6"};  // f2 top, f3 users, f4 files, f5 log, f6 settings, f7 system
+            if (item > 0) localNode->openSysopMenu(walk[item]);
             localFeed();
             return;
         }
@@ -1980,7 +1982,7 @@ static void handleTap(int x, int y) {
                     return;
                 }
         }
-        sysop.open();  // anywhere else: the sysop menu
+        // anywhere else: nothing (the sysop menu is f2, inside the BBS)
         return;
     }
     bool top = y >= 92 && y < 144, bottom = y >= 156 && y < 208;
@@ -1998,6 +2000,22 @@ static void handleTap(int x, int y) {
 // Every @ command, for the serial console and the sysop control panel alike (one code path, so
 // the same command always does the same thing). Replies go to `out`.
 static void runCommand(const String& cmd, Print& out);
+
+// The in-BBS sysop menu's commands: run on the main (so a change is shared like @SET); a follower asks it.
+static std::string sysopRun(const std::string& cmd) {
+    if (cluster && cluster->role() == axis::cluster::Role::Follower) {
+        std::string reply;
+        return cluster->request("C\x1f" + cmd, reply, 8000) && !reply.empty() ? reply.substr(1) : std::string("axis: the main didn't answer\n");
+    }
+    String out;
+    struct Sink : Print {
+        String& s;
+        explicit Sink(String& r) : s(r) {}
+        size_t write(uint8_t b) override { s += (char)b; return 1; }
+    } sink(out);
+    runCommand(String(cmd.c_str()), sink);
+    return std::string(out.c_str());
+}
 
 // Copies of what callers are sent, for the panel's screen wall and console ("SCR <node> <base64>").
 static void panelTap(WifiStream* s, const uint8_t* p, size_t n) {
@@ -2591,6 +2609,11 @@ static void runCommand(const String& cmd, Print& out) {
             if (cluster) cluster->shareSettings();  // every board takes the same sysop login
             logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
         }
+    } else if (cmd == "@RESTART") {  // restart this board (the sysop menu's System layer)
+        logEvent("sysop: restart");
+        out.println("axis: restarting");
+        delay(300);
+        ESP.restart();
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
     } else if (&out == &Serial && serialFileCommand(cmd)) {  // @PUT @LS @RM @MKDIR @BAUD (tools/sdput.py)
