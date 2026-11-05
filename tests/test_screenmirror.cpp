@@ -82,3 +82,16 @@ TEST_CASE("LORDCFG's menu, registration included, comes through the mirror") {
     CHECK(scr.find("Register Lord") != std::string::npos);  // the menu is up
     CHECK(all.size() > 2000);                               // and it went out to the caller (drawn in pieces)
 }
+
+TEST_CASE("a busy full screen goes out in small pieces (the main can't hold one 8 KB string next to a door)") {
+    auto p = blank();
+    for (int r = 0; r < 25; r++)
+        for (int c = 0; c < 80; c++) p[(r * 80 + c) * 2] = (uint8_t)('A' + (r + c) % 26), p[(r * 80 + c) * 2 + 1] = (uint8_t)(0x10 + (c % 7));
+    ScreenMirror whole, pieces;
+    std::string  expect = whole.update(p), got;
+    size_t       biggest = 0, count = 0;
+    pieces.update(p, [&](const char* d, size_t n) { got.append(d, n), biggest = std::max(biggest, n), count++; });
+    CHECK(got == expect);
+    CHECK(biggest <= 512);
+    CHECK(count > 1);
+}

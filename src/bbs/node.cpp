@@ -179,6 +179,7 @@ void Node::pendingMenu() {
 }
 
 void Node::begin(uint32_t nowMs) {
+    MciScope mciScope(*this);
     lastInput_ = nowMs;
     theme::use(theme::lookFrom(cfg_.theme));  // one look for the whole board: the setting decides
     if (cfg_.loginSplash) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
@@ -191,6 +192,7 @@ void Node::begin(uint32_t nowMs) {
 }
 
 void Node::beginLocal(uint32_t nowMs) {
+    MciScope mciScope(*this);
     lastInput_ = nowMs;
     theme::use(theme::lookFrom(cfg_.theme));
     handle_ = cfg_.sysopHandle.empty() ? "Sysop" : cfg_.sysopHandle;
@@ -207,10 +209,15 @@ void Node::beginLocalQuiet(uint32_t nowMs) {  // (the bulletin, oneliners and me
     state_ = State::Menu;
 }
 
-void Node::beginLocalMenu(uint32_t nowMs) {  // (the full login piles every screen into one string: more than the main can spare)
+void Node::beginLocalMenu(uint32_t nowMs) {
+    MciScope mciScope(*this);  // (the full login piles every screen into one string: more than the main can spare)
     beginLocalQuiet(nowMs);
     showMainMenu();
 }
+
+// While this node works, the theme's header screens get its codes (one node runs at a time; cleared after)
+Node::MciScope::MciScope(Node& n) { theme::setMci([&n](const std::string& s) { return n.mci(s); }); }
+Node::MciScope::~MciScope() { theme::setMci(nullptr); }
 
 bool Node::o2() const { return cfg_.theme == "oblivion" || cfg_.theme == "iniquity"; }  // (iniquity: the same layout, in green and grey)
 
@@ -421,6 +428,7 @@ void Node::prompt() {
 }
 
 void Node::openSysopMenu(const std::string& keys, int cols) {
+    MciScope mciScope(*this);
     if (!sysop_ || !sysopRun_) return;
     state_ = State::SysopMenu;
     shell_.reset(new SysopShell(out_, sysopRun_, cols));
@@ -429,6 +437,7 @@ void Node::openSysopMenu(const std::string& keys, int cols) {
 }
 
 void Node::tapRow(int row) {
+    MciScope mciScope(*this);
     if (state_ == State::SysopMenu && shell_) {
         shell_->tapRow(row);
         if (!shell_->open()) {
@@ -586,6 +595,7 @@ void Node::showMenu() {
 }
 
 void Node::input(const uint8_t* p, size_t n, uint32_t nowMs) {
+    MciScope mciScope(*this);
     lastInput_ = nowMs;
     if (holdUntil_ && (int32_t)(nowMs - holdUntil_) < 0) return;  // a wrong password: slow the guessing down
     holdUntil_ = 0;
@@ -1220,6 +1230,7 @@ void Node::lineKey(char c) {
 }
 
 void Node::chatIn(int node, const std::string& handle, const std::string& text, bool page) {
+    MciScope mciScope(*this);
     if (state_ != State::Chat || page) return;  // pages are for the sysop's screens; others wait their turn
     out_ += "\r\x1b[K";  // over the half-typed line, then put it back below
     char b[48];
@@ -1945,6 +1956,7 @@ std::string Node::activityText() const {
 }
 
 void Node::poll(uint32_t nowMs) {
+    MciScope mciScope(*this);
     if (callStart_ && !sysop_ && cfg_.dailyMinutes > 0 && state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer) {
         uint32_t used = nowMs - callStart_, limit = (uint32_t)cfg_.dailyMinutes * 60000u;
         if (used >= limit) {

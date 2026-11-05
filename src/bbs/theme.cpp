@@ -78,7 +78,8 @@ void use(Look l) {
     KEY = inq ? "\x1b[1;32m" : o2 ? "\x1b[1;36m" : "\x1b[0;33m";
 }
 
-static std::function<std::string(const std::string&)> art_;
+static std::function<std::string(const std::string&)> art_, mci_;
+void setMci(std::function<std::string(const std::string&)> fill) { mci_ = std::move(fill); }
 void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
 std::string artFor(const std::string& title) {
     if (!art_) return "";
@@ -87,6 +88,7 @@ std::string artFor(const std::string& title) {
         if (std::isalnum((unsigned char)c) && name.size() < 8) name += (char)std::toupper((unsigned char)c);
     if (name.empty()) return "";
     std::string a = art_(name + ".ANS");
+    if (!a.empty() && mci_) a = mci_(a);
     if (!a.empty() && a.back() != '\n') a += "\r\n";
     return a;
 }

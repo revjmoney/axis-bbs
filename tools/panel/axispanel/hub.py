@@ -32,6 +32,8 @@ class Hub:
                 break
             await asyncio.sleep(0.5)
         results = [await self.connect(ip) for ip in list(self.links)]
+        if not any(results):
+            self.handle = self.password = None  # a wrong login is not kept (a remembered cookie checks it)
         return any(results)
 
     async def connect(self, ip):
