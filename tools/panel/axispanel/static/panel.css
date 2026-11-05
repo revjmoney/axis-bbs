@@ -1,25 +1,25 @@
 @font-face { font-family: "AxisVGA"; src: url("/static/AxisVGA.woff2") format("woff2"); font-display: swap; }
 :root {
   --c0: #000000; --c1: #0000AA; --c3: #00AAAA; --c4: #AA0000; --c6: #AA5500; --c7: #AAAAAA;
-  --c8: #555555; --c10: #55FF55; --c11: #55FFFF; --c12: #FF5555; --c14: #FFFF55; --c15: #FFFFFF;
+  --c8: #555555; --or: #FF8C1A; /* the BBS's orange (its light red) */ --c10: #55FF55; --c11: #55FFFF; --c12: #FF5555; --c14: #FFFF55; --c15: #FFFFFF;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--c0); color: var(--c7); font: 16px/1.25 "AxisVGA", "Consolas", monospace; }
-.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px max(12px, env(safe-area-inset-left, 0px)); background: #111; border-bottom: 1px solid var(--c6); position: sticky; top: 0; z-index: 2; }
-.brand { color: var(--c14); }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px max(12px, env(safe-area-inset-left, 0px)); background: #111; border-bottom: 1px solid var(--or); position: sticky; top: 0; z-index: 2; }
+.brand { color: var(--or); }
 .brand small { color: var(--c8); }
 nav { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
 button, input, select { font: inherit; }
-button { background: #222; color: var(--c15); border: 1px solid var(--c6); padding: 4px 10px; cursor: pointer; }
-button b { color: var(--c14); font-weight: normal; }
-button.on, button:hover { background: var(--c6); color: var(--c0); }
+button { background: #1a1a1a; color: var(--c15); border: 1px solid var(--or); padding: 4px 10px; cursor: pointer; }
+button b { color: var(--or); font-weight: normal; }
+button.on, button:hover { background: var(--or); color: var(--c0); }
 button.ghost { border-color: var(--c8); color: var(--c7); }
 button.danger { border-color: var(--c12); color: var(--c12); }
 input, select { background: var(--c0); color: var(--c15); border: 1px solid var(--c8); padding: 4px 6px; min-width: 0; }
 main, #login { padding: 12px max(12px, env(safe-area-inset-left, 0px)); }
-.win { border: 1px solid var(--c3); padding: 10px; margin: 0 0 12px; background: #050505; min-width: 0; }
-.win h2 { margin: -10px -10px 8px; padding: 2px 10px; font-size: 1em; font-weight: normal; color: var(--c0); background: var(--c3); }
+.win { border: 1px solid var(--c8); padding: 10px; margin: 0 0 12px; background: #050505; min-width: 0; }
+.win h2 { margin: -10px -10px 8px; padding: 2px 10px; font-size: 1em; font-weight: normal; color: var(--c0); background: linear-gradient(90deg, var(--c8), var(--c7) 30%, var(--c15) 50%, var(--c7) 70%, var(--c8)); }  /* the BBS's grey fade */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .node { border-left: 3px solid var(--c8); padding: 4px 8px; margin: 6px 0; }
 .node.busy { border-color: var(--c10); }
@@ -36,14 +36,17 @@ tr.pick:hover { background: #222; }
 form label { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: 4px 0; flex-wrap: wrap; }
 form#settings label input { flex: 1; max-width: 60%; }
 #login form { max-width: 360px; }
-.status { position: sticky; bottom: 0; display: flex; justify-content: space-between; padding: 2px 12px; background: var(--c1); color: var(--c15); }
-.tag { color: var(--c14); }
+.status { position: sticky; bottom: 0; display: flex; justify-content: space-between; padding: 2px 12px; background: #1a1a1a; color: var(--c7); border-top: 1px solid var(--or); }
+.tag { color: var(--or); }
 .wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
 .tile { border: 1px solid var(--c8); background: #000; cursor: pointer; min-width: 0; }
 .tile.on { border-color: var(--c10); }
-.tile .cap { padding: 2px 6px; background: #111; color: var(--c14); display: flex; justify-content: space-between; }
+.tile .cap { padding: 2px 6px; background: #111; color: var(--or); display: flex; justify-content: space-between; }
 .term { margin: 0; font: 8px/9px "AxisVGA", monospace; white-space: pre; overflow: hidden; color: #aaa; background: #000; max-height: none; }
 .term.big { font-size: clamp(7px, 1.15vw, 16px); line-height: 1.15; padding: 4px; outline: none; overflow-x: auto; }
 .term.big:focus { box-shadow: 0 0 0 1px var(--c10); }
 #conline { display: flex; gap: 6px; margin-top: 6px; } #conline input { flex: 1; }
 .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+label.check { justify-content: flex-start; } label.check input { min-width: 0; }
+.term.logo { margin: 0; padding: 8px max(12px, env(safe-area-inset-left, 0px)) 2px; font-size: min(16px, calc((100vw - 24px) / 40)); line-height: 1; overflow: hidden; background: var(--c0); }  /* 80 columns across, 8x16 cells */
+button.on b, button:hover b { color: var(--c0); }

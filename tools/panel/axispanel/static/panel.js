@@ -30,7 +30,8 @@
       authed = m.login;
       $('#loginmsg').textContent = authed ? '' : 'Wrong handle or password (or no board answered).';
       $('#login').hidden = authed; $('#app').hidden = !authed;
-      if (authed) { $('#who').textContent = $('#handle').value; refreshAll(); }
+      if (m.token) document.cookie = 'axis_panel=' + m.token + '; max-age=315360000; path=/; samesite=strict';  // remember me: ten years
+      if (authed) { $('#who').textContent = $('#handle').value || 'sysop'; refreshAll(); }
     }
     if (m.boards) { boards = m.boards; drawBoards(); }
     if (m.evt) { events.push(m.evt.board + '  ' + m.evt.line); events = events.slice(-300); $('#events').textContent = events.join('\n'); }
@@ -256,9 +257,16 @@
   });
   $('#loginform').addEventListener('submit', (e) => {
     e.preventDefault();
-    send({ login: { handle: $('#handle').value, password: $('#password').value } });
+    send({ login: { handle: $('#handle').value, password: $('#password').value, remember: $('#remember').checked } });
     $('#password').value = '';
   });
+  $('#logout').onclick = () => {  // forget this browser (and the kept login, once no browser is remembered)
+    const t = (document.cookie.match(/(?:^|; )axis_panel=([^;]*)/) || [])[1] || '';
+    document.cookie = 'axis_panel=; max-age=0; path=/';
+    authed = false; send({ logout: t });
+  };
+  const logo = new Term($('#logo'), 80, 8);  // the BBS's own drippy AXIS header, drawn like a caller sees it
+  fetch('/static/logo.ans').then((r) => r.arrayBuffer()).then((b) => { logo.feed(new Uint8Array(b)); logo.draw(); });
   function refreshAll() { loadNodes(); loadUsers(); }
   setInterval(() => { if (authed && !document.hidden) loadNodes(); }, 5000);
   setInterval(() => { $('#clock').textContent = new Date().toLocaleTimeString(); }, 1000);

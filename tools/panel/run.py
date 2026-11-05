@@ -11,6 +11,7 @@ from aiohttp import web
 
 from axispanel.discovery import Listener
 from axispanel.hub import Hub
+from axispanel.remember import Store
 from axispanel.web import PORT, make_app
 
 
@@ -31,7 +32,10 @@ async def main(args):
         hub.seen(ip)
     listener = Listener(hub.seen)
     await listener.start()
-    runner = web.AppRunner(make_app(hub))
+    store = Store()
+    if store.creds():  # remembered: log in to the boards right away, before any browser opens
+        asyncio.ensure_future(hub.login(*store.creds()))
+    runner = web.AppRunner(make_app(hub, store))
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', args.port).start()
     url = 'http://%s:%d/' % (lan_ip(), args.port)

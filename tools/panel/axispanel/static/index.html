@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/static/panel.css">
 </head>
 <body>
+<pre id="logo" class="term logo" aria-label="AXIS u.g. cnc sysop panel"></pre>
 <header class="bar">
   <span class="brand">&#9608; AXIS <small>SYSOP PANEL</small></span>
   <nav id="tabs">
@@ -19,6 +20,7 @@
     <button data-tab="system">s<b>Y</b>stem</button>
   </nav>
   <span id="link" class="dim">offline</span>
+  <button id="logout" class="ghost" title="Log out and forget this browser">Logout</button>
 </header>
 
 <section id="login" class="win">
@@ -26,6 +28,7 @@
   <form id="loginform">
     <label>Handle <input id="handle" autocomplete="username" required></label>
     <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+    <label class="check"><input id="remember" type="checkbox" checked> Remember me on this device</label>
     <button type="submit">Login</button>
     <p id="loginmsg" class="warn"></p>
   </form>

@@ -20,6 +20,10 @@ the tray (Open panel, Quit). Log in with your sysop handle and password, or any 
 - **Wall**: every node's screen, live (the boards only stream while the Wall or Console tab is open). Tap a tile to open it in the Console.
 - **Console**: open a new sysop session on any board (it takes a free node, headless boards too), or break in on a caller: you see their screen and type into it, and they're told when you break in and when you leave.
 - Every button runs the same `@` command you can type on a board's serial console.
-- Your password is used only to answer each board's login challenge; the app never saves it.
+- Your password is used only to answer each board's login challenge. With **Remember me** (on by default) the
+  browser keeps a random token cookie for ten years, and the app keeps your login on this PC sealed with
+  Windows DPAPI (only your Windows user can open it, in `%APPDATA%xispanelemember.json`), so the panel logs
+  in to the boards by itself, after a restart too. **Logout** forgets that browser; once no browser is
+  remembered, the kept login is deleted. Untick Remember me and nothing is saved.
 
 Tests: `cd tools/panel && python -m pytest -q`
