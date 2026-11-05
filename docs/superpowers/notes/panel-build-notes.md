@@ -51,3 +51,4 @@ Not tested by Claude (needs Rev): the NUP prompt (setting one means typing a pas
 
 ## Ideas parked (Rev, 2026-11-04)
 - A fourth look in the ViSiON/3 style (fire logo, two-column "(M) Messages Menu" lists, a blue rumor bar at the bottom). References: https://retroshed.us/vision-3-v3net/ and https://github.com/ViSiON-3/vision-3-bbs (a modern ViSiON/3 rewrite, multinode, the closest cousin to AXIS but on a PC; Rev: "almost exactly what we built but on the esp32").
+- 2026-11-05: partitions: app 0x1E0000 (1.875 MB), door 0x1F0000 size 0x60000 (384 KB, LORD 352 KB fits), LittleFS unchanged. cyd 94.1%, headless 95.2%. LORD rebuilds its flash image once.

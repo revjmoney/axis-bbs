@@ -2278,6 +2278,167 @@ static void runCommand(const String& cmd, Print& out) {
                    !cluster ? "solo" : cluster->role() == axis::cluster::Role::Main ? "main" : "follower", (int)sessions.size(), on,
                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                    (unsigned long)(millis() / 1000), (int)WiFi.RSSI(), (unsigned)(storageFreeBytes() >> 20), WiFi.localIP().toString().c_str());
+    } else if (cmd.startsWith("@UEDIT ")) {  // "@UEDIT handle|field|value": realname location email tagline security handle
+        String a = cmd.substring(7);
+        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
+        axis::bbs::User* u = b2 > 0 ? users.find(a.substring(0, b1).c_str()) : nullptr;
+        String f = b2 > 0 ? a.substring(b1 + 1, b2) : String(), v = b2 > 0 ? a.substring(b2 + 1) : String();
+        if (!u) out.println("axis: @UEDIT handle|field|value");
+        else {
+            if (f == "realname") u->realName = v.c_str();
+            else if (f == "location") u->location = v.c_str();
+            else if (f == "email") u->email = v.c_str();
+            else if (f == "tagline") u->tagline = v.c_str();
+            else if (f == "security") u->security = constrain((int)v.toInt(), 1, 255);
+            else if (f == "handle" && v.length() && !users.find(v.c_str())) u->handle = v.c_str();
+            else {
+                out.println("axis: fields: realname location email tagline security handle");
+                return;
+            }
+            saveUsers();
+            logEvent(String("sysop: edited ") + f + " of " + u->handle.c_str());
+            out.printf("axis: %s updated\n", u->handle.c_str());
+        }
+    } else if (cmd.startsWith("@UDEL ")) {  // "@UDEL handle": delete a caller's account
+        axis::bbs::User* u = users.find(cmd.substring(6).c_str());
+        if (!u) out.println("axis: no user by that handle");
+        else {
+            std::string h = u->handle;
+            auto& all = users.all();
+            for (size_t i = 0; i < all.size(); i++)
+                if (&all[i] == u) {
+                    all.erase(all.begin() + (long)i);
+                    break;
+                }
+            saveUsers();
+            logEvent(String("sysop: deleted user ") + h.c_str());
+            out.printf("axis: %s deleted\n", h.c_str());
+        }
+    } else if (cmd == "@AREAS" || cmd == "@MSGAREAS") {  // "N|id|name|level|m" per area
+        auto& v = cmd == "@AREAS" ? cfg.areas : cfg.msgAreas;
+        for (size_t i = 0; i < v.size(); i++)
+            out.printf("%u|%s|%s|%d|%s\n", (unsigned)i + 1, v[i].id.c_str(), v[i].name.c_str(), v[i].minSecurity, v[i].mirror ? "m" : "");
+    } else if (cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) {
+        // "@AREASET files|N|id|name|level" (N past the end adds), "@AREADEL msgs|N", "@AREAUP files|N" (moves it up one)
+        String a = cmd.substring(cmd.indexOf(' ') + 1);
+        std::vector<String> f;
+        for (int from = 0;;) {
+            int bar = a.indexOf('|', from);
+            f.push_back(bar < 0 ? a.substring(from) : a.substring(from, bar));
+            if (bar < 0) break;
+            from = bar + 1;
+        }
+        auto& v = f[0] == "msgs" ? cfg.msgAreas : cfg.areas;
+        int   n = f.size() > 1 ? (int)f[1].toInt() : 0;
+        bool  ok = n >= 1;
+        if (ok && cmd.startsWith("@AREASET ") && f.size() >= 4) {
+            axis::bbs::FileArea ar{f[2].c_str(), f[3].c_str(), f.size() > 4 ? (int)f[4].toInt() : 0};
+            if (n <= (int)v.size()) ar.mirror = v[(size_t)n - 1].mirror, v[(size_t)n - 1] = ar;
+            else v.push_back(ar);
+        } else if (ok && cmd.startsWith("@AREADEL ") && n <= (int)v.size()) {
+            v.erase(v.begin() + n - 1);
+        } else if (ok && cmd.startsWith("@AREAUP ") && n >= 2 && n <= (int)v.size()) {
+            std::swap(v[(size_t)n - 1], v[(size_t)n - 2]);
+        } else ok = false;
+        if (!ok) out.println("axis: @AREASET files|N|id|name|level, @AREADEL msgs|N, @AREAUP files|N");
+        else {
+            configSave(cfg);
+            if (cluster) cluster->shareSettings();
+            makeAreaFolders();
+            logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a);
+            out.println("axis: areas saved");
+        }
+    } else if (cmd.startsWith("@FILES ")) {  // "@FILES area": name|size|description per file
+        for (auto& e : callerFiles().list(cmd.substring(7).c_str())) out.printf("%s|%u|%s\n", e.name.c_str(), (unsigned)e.size, e.desc.c_str());
+    } else if (cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") || cmd.startsWith("@FDEL ") || cmd.startsWith("@FMV ")) {
+        // "@FDESC area|name|text", "@FREN area|old|new", "@FDEL area|name", "@FMV area|name|toarea"
+        String a = cmd.substring(cmd.indexOf(' ') + 1);
+        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
+        std::string area = b1 > 0 ? a.substring(0, b1).c_str() : "", name = b1 > 0 ? (b2 > 0 ? a.substring(b1 + 1, b2) : a.substring(b1 + 1)).c_str() : "",
+                    third = b2 > 0 ? a.substring(b2 + 1).c_str() : "";
+        bool ok = false;
+        if (cmd.startsWith("@FDESC ")) ok = callerFiles().describe(area, name, third);
+        else if (cmd.startsWith("@FREN ")) ok = !third.empty() && callerFiles().rename(area, name, third);
+        else if (cmd.startsWith("@FDEL ")) ok = callerFiles().remove(area, name);
+        else if (storageHasSd() && !third.empty() && name.find('/') == std::string::npos) {  // a move: same card, another folder
+            ok = ::rename(("/sd/files/" + area + "/" + name).c_str(), ("/sd/files/" + third + "/" + name).c_str()) == 0;
+            if (ok)
+                for (auto& e : callerFiles().list(third))
+                    if (e.name == name && e.desc.empty())
+                        for (auto& o : callerFiles().list(area))
+                            if (o.name == name) callerFiles().describe(third, name, o.desc);
+        }
+        logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + area.c_str() + " " + name.c_str() + (ok ? "" : " (failed)"));
+        out.println(ok ? "axis: done" : "axis: that didn't work");
+    } else if (cmd.startsWith("@POSTS ")) {  // "@POSTS area": num|from|subject|date per post (the newest 200)
+        for (auto& m : callerMessages().headers(cmd.substring(7).c_str()))
+            out.printf("%d|%s|%s|%s\n", m.num, m.from.c_str(), m.subject.c_str(), m.date.c_str());
+    } else if (cmd.startsWith("@POSTDEL ") || cmd.startsWith("@POSTMV ") || cmd.startsWith("@PURGE ")) {
+        // "@POSTDEL area|num", "@POSTMV area|num|toarea", "@PURGE area|days" (posts older than that)
+        String a = cmd.substring(cmd.indexOf(' ') + 1);
+        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
+        std::string area = b1 > 0 ? a.substring(0, b1).c_str() : "";
+        int         n = b1 > 0 ? (int)(b2 > 0 ? a.substring(b1 + 1, b2) : a.substring(b1 + 1)).toInt() : 0;
+        std::string to = b2 > 0 ? a.substring(b2 + 1).c_str() : "";
+        int         gone = 0;
+        if (cmd.startsWith("@POSTMV ")) {
+            axis::bbs::Message m;
+            if (!to.empty() && callerMessages().read(area, n, m) && callerMessages().post(to, m))
+                gone = callerMessages().drop(area, [n](const axis::bbs::Message& x) { return x.num == n; });
+        } else if (cmd.startsWith("@POSTDEL ")) {
+            gone = callerMessages().drop(area, [n](const axis::bbs::Message& x) { return x.num == n; });
+        } else {
+            time_t cut = time(nullptr) - (time_t)n * 86400;
+            char   stamp[16];
+            strftime(stamp, sizeof stamp, "%Y-%m-%d", localtime(&cut));
+            std::string before = stamp;
+            if (time(nullptr) > 1700000000 && n > 0)
+                gone = callerMessages().drop(area, [&](const axis::bbs::Message& x) { return x.date.substr(0, 10) < before; });
+        }
+        logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a + " (" + gone + ")");
+        out.printf("axis: %d post%s\n", gone, gone == 1 ? "" : "s");
+    } else if (cmd == "@MENU") {  // the main menu's items: N|key|name|command (empty: the built-in menu)
+        for (size_t i = 0; i < cfg.mainMenu.size(); i++)
+            out.printf("%u|%s|%s|%s\n", (unsigned)i + 1, cfg.mainMenu[i].key.c_str(), cfg.mainMenu[i].name.c_str(), cfg.mainMenu[i].cmd.c_str());
+    } else if (cmd == "@MENUCMDS") {  // what a menu item can run
+        for (auto& c : axis::bbs::menuCommands()) out.printf("%s|%c\n", c.first.c_str(), c.second);
+    } else if (cmd.startsWith("@MENUSET ") || cmd.startsWith("@MENUDEL ") || cmd.startsWith("@MENUUP ") || cmd == "@MENURESET" || cmd == "@MENUSTART") {
+        // "@MENUSET N|key|name|command" (N past the end adds), "@MENUDEL N", "@MENUUP N", "@MENURESET" (built-in again),
+        // "@MENUSTART" (an editable copy of the built-in menu)
+        auto&  v = cfg.mainMenu;
+        String a = cmd.indexOf(' ') > 0 ? cmd.substring(cmd.indexOf(' ') + 1) : String();
+        int    n = (int)a.toInt();
+        bool   ok = true;
+        if (cmd == "@MENURESET") v.clear();
+        else if (cmd == "@MENUSTART") {
+            static const char* const names[] = {"Message Bases", "File Areas", "Doors", "Teleconference", "Who's Online", "Page Sysop",
+                                                "Your Account", "Oneliners", "MultiNode", "Last Callers", "Private Email", "Scan New Msgs",
+                                                "Rumors", "BBS List", "Top Ten", "Voting Booth", "System Info", "Credits", "Goodbye", "Sysop Menu"};
+            v.clear();
+            size_t i = 0;
+            for (auto& c : axis::bbs::menuCommands()) v.push_back({std::string(1, c.second), names[i++ % 20], c.first});
+        } else if (cmd.startsWith("@MENUSET ")) {
+            int b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1), b3 = b2 < 0 ? -1 : a.indexOf('|', b2 + 1);
+            ok = n >= 1 && b3 > 0 && axis::bbs::menuCommandKey(a.substring(b3 + 1).c_str());
+            if (ok) {
+                axis::bbs::MenuItem m{a.substring(b1 + 1, b2).substring(0, 1).c_str(), a.substring(b2 + 1, b3).c_str(), a.substring(b3 + 1).c_str()};
+                if (n <= (int)v.size()) v[(size_t)n - 1] = m;
+                else v.push_back(m);
+            }
+        } else if (cmd.startsWith("@MENUDEL ")) {
+            ok = n >= 1 && n <= (int)v.size();
+            if (ok) v.erase(v.begin() + n - 1);
+        } else {
+            ok = n >= 2 && n <= (int)v.size();
+            if (ok) std::swap(v[(size_t)n - 1], v[(size_t)n - 2]);
+        }
+        if (!ok) out.println("axis: @MENUSET N|key|name|command, @MENUDEL N, @MENUUP N, @MENURESET, @MENUSTART");
+        else {
+            configSave(cfg);
+            if (cluster) cluster->shareSettings();
+            logEvent(String("sysop: ") + cmd.substring(1));
+            out.println("axis: menu saved");
+        }
     } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
         axis::bbs::User* u = users.find(cmd.substring(7).c_str());
         if (!u) out.println("axis: no user by that handle");
