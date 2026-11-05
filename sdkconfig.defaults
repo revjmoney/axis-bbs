@@ -54,3 +54,9 @@ CONFIG_FATFS_CODEPAGE_850=y
 CONFIG_FATFS_LFN_STACK=y
 CONFIG_FATFS_MAX_LFN=255
 CONFIG_FATFS_API_ENCODING_UTF_8=y
+
+# keep instruction RAM free: the 8086 door borrows ~36 KB of it for LORD (Arduino keeps these off too)
+# CONFIG_ESP32_WIFI_IRAM_OPT is not set
+# CONFIG_ESP32_WIFI_RX_IRAM_OPT is not set
+# CONFIG_SPI_MASTER_ISR_IN_IRAM is not set
+# CONFIG_SPI_SLAVE_ISR_IN_IRAM is not set
