@@ -3,6 +3,7 @@
 #include "bbs/lightbar.h"
 
 #include <cctype>
+#include <cstdlib>
 
 namespace axis::bbs {
 
@@ -71,6 +72,117 @@ int Lightbar::key(char c) {
     }
     for (int i = 0; i < n; i++)
         if (items_[(size_t)i].key.size() == 1 && std::toupper((unsigned char)items_[(size_t)i].key[0]) == std::toupper((unsigned char)c)) return at_ = i;
+    return -1;
+}
+
+ScrollList::ScrollList(int x, int y, int width, int height, int hi, int reg) : x_(x), y_(y), w_(width), h_(height < 1 ? 1 : height), hi_(hi), reg_(reg) {}
+
+void ScrollList::setItems(std::vector<std::string> items, size_t at) {
+    items_ = std::move(items);
+    at_ = top_ = 0;
+    typed_.clear();
+    escaped_ = false;
+    move((int)at);
+}
+
+void ScrollList::move(int to) {
+    int n = (int)items_.size();
+    if (n == 0) return;
+    at_ = to < 0 ? 0 : to >= n ? n - 1 : to;
+    if (at_ < top_) top_ = at_;
+    if (at_ >= top_ + h_) top_ = at_ - h_ + 1;
+}
+
+std::string ScrollList::row(int i) const {
+    std::string t = i < (int)items_.size() ? items_[(size_t)i] : "";
+    if ((int)t.size() > w_) t.resize((size_t)w_);
+    t.resize((size_t)w_, ' ');
+    return "\x1b[" + std::to_string(y_ + i - top_) + ";" + std::to_string(x_) + "H" + dosColour(i == at_ ? hi_ : reg_) + t + "\x1b[0m";
+}
+
+std::string ScrollList::draw() {
+    std::string s;
+    for (int i = top_; i < top_ + h_; i++) s += row(i);
+    shownAt_ = at_, shownTop_ = top_;
+    return s;
+}
+
+std::string ScrollList::takeRedraw() {
+    if (top_ != shownTop_) return draw();
+    if (at_ == shownAt_) return "";
+    std::string s = row(shownAt_) + row(at_);
+    shownAt_ = at_;
+    return s;
+}
+
+void ScrollList::keyTimeout() {
+    if (esc_ == 1) escaped_ = true;
+    esc_ = 0;
+}
+
+int ScrollList::key(char c) {
+    int n = (int)items_.size();
+    if (esc_ == 1) {
+        if (c == '[' || c == 'O') {
+            esc_ = 2;
+            return -1;
+        }
+        esc_ = 0, escaped_ = true;
+    } else if (esc_ == 2) {
+        esc_ = 0;
+        if (c >= '1' && c <= '6') {
+            esc_ = 3, escNum_ = c - '0';
+            return -1;
+        }
+        if (c == 'A') move(at_ - 1);
+        else if (c == 'B') move(at_ + 1);
+        else if (c == 'H') move(0);
+        else if (c == 'F') move(n - 1);
+        typed_.clear();
+        return -1;
+    } else if (esc_ == 3) {  // ESC [ n ~
+        esc_ = 0;
+        if (escNum_ == 5) move(at_ - h_);
+        else if (escNum_ == 6) move(at_ + h_);
+        else if (escNum_ == 1) move(0);
+        else if (escNum_ == 4) move(n - 1);
+        typed_.clear();
+        return -1;
+    }
+    if (c == '\x1b') {
+        esc_ = 1;
+        return -1;
+    }
+    if (n == 0) return -1;
+    if (c == '\r' || c == '\n') {
+        if (!typed_.empty()) {
+            int pick = std::atoi(typed_.c_str()) - 1;
+            typed_.clear();
+            if (pick < 0 || pick >= n) return -1;
+            move(pick);
+        }
+        return at_;
+    }
+    if (c >= '0' && c <= '9') {
+        typed_ += c;
+        int to = std::atoi(typed_.c_str()) - 1;
+        if (to >= 0 && to < n) move(to);
+        return -1;
+    }
+    if (c == 8 || c == 127) {
+        if (!typed_.empty()) typed_.pop_back();
+        return -1;
+    }
+    if (std::isalpha((unsigned char)c)) {  // the next item starting with that letter
+        typed_.clear();
+        for (int k = 1; k <= n; k++) {
+            int i = (at_ + k) % n;
+            if (!items_[(size_t)i].empty() && std::toupper((unsigned char)items_[(size_t)i][0]) == std::toupper((unsigned char)c)) {
+                move(i);
+                break;
+            }
+        }
+    }
     return -1;
 }
 

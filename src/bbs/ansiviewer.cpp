@@ -48,19 +48,17 @@ void AnsiViewer::begin() {
     else showPacks();
 }
 
+void AnsiViewer::showList(const std::string& title, const std::string& help) {
+    send(std::string(CLS) + "\r\n   " + theme::fade("A N S I   P A C K   V I E W E R") + DIM + "   " + title + "\r\n" + MAG + "   " +
+         std::string(70, '\xc4') + "\r\n" + list_.draw() + "\x1b[23;4H" + DIM + help + HI);
+}
+
 void AnsiViewer::showAreas() {  // which file area's packs (each one small enough for the main to list)
     st_ = St::Areas;
-    typed_.clear();
-    std::string s = CLS;
-    s += "\r\n   " + theme::fade("A N S I   P A C K   V I E W E R") + DIM + "   pick a file area\r\n";
-    s += std::string(MAG) + "   " + std::string(70, '\xc4') + "\r\n";
-    for (size_t i = 0; i < areas_.size(); i++) {
-        char b[120];
-        std::snprintf(b, sizeof b, "   %s[%2u]%s %s\r\n", CYAN, (unsigned)(i + 1), HI, areas_[i].second.c_str());
-        s += b;
-    }
-    s += std::string(DIM) + "\r\n   Area number (Enter or Q to leave): " + HI;
-    send(s);
+    std::vector<std::string> v;
+    for (auto& a : areas_) v.push_back(a.second);
+    list_.setItems(std::move(v), areaAt_);
+    showList("pick a file area", "arrows move  Enter opens  Esc or Q leaves");
 }
 
 bool AnsiViewer::number(char c, int& n) {
@@ -82,31 +80,21 @@ bool AnsiViewer::number(char c, int& n) {
 
 void AnsiViewer::showPacks() {
     st_ = St::Packs;
-    typed_.clear();
     zip_.reset();
     file_.reset();
     packs_.clear();
     for (auto& f : lib_.list(area_))
         if (ext(f.name) == "ZIP") packs_.push_back(f);
-    std::string s = CLS;
-    s += "\r\n   ";
-    s += theme::fade("A N S I   P A C K   V I E W E R");
-    s += DIM;
-    s += "   artpacks from the " + areaName_ + " file area\r\n";
-    s += MAG;
-    s += "   " + std::string(70, '\xc4') + "\r\n";
-    if (packs_.empty()) s += std::string(AMBER) + "   No packs in the area yet.\r\n";
-    for (size_t i = 0; i < packs_.size(); i++) {
-        char b[160];
-        std::string d = packs_[i].desc.size() > 44 ? packs_[i].desc.substr(0, 44) : packs_[i].desc;
-        std::snprintf(b, sizeof b, "   %s[%2u]%s %-13s%s%7s  %s\r\n", CYAN, (unsigned)(i + 1), HI, packs_[i].name.c_str(), DIM,
-                      fileSizeText(packs_[i].size).c_str(), d.c_str());
-        s += b;
+    std::vector<std::string> v;
+    for (auto& p : packs_) {
+        char        b[160];
+        std::string d = p.desc.size() > 48 ? p.desc.substr(0, 48) : p.desc;
+        std::snprintf(b, sizeof b, "%-13s %7s  %s", p.name.c_str(), fileSizeText(p.size).c_str(), d.c_str());
+        v.push_back(b);
     }
-    s += DIM;
-    s += "\r\n   Pack number (Enter or Q to leave): ";
-    s += HI;
-    send(s);
+    if (v.empty()) v.push_back("No packs in the area yet.");
+    list_.setItems(std::move(v), pack_ < packs_.size() ? pack_ : 0);
+    showList("artpacks from the " + areaName_ + " file area", "arrows move  Enter opens  number + Enter  Esc or Q back");
 }
 
 bool AnsiViewer::openPack(size_t i) {
@@ -148,46 +136,10 @@ int AnsiViewer::columns() const {
 
 void AnsiViewer::showPieces() {
     st_ = St::Pieces;
-    typed_.clear();
-    int per = perPage(), cols = columns(), width = cols == 3 ? 17 : 32;
-    int pages = ((int)pieces_.size() + per - 1) / per;
-    if (pages < 1) pages = 1;
-    page_ = (page_ % pages + pages) % pages;
-    char b[160];
-    std::string s = CLS;
-    std::snprintf(b, sizeof b, "\r\n   %s%s%s   %u pieces, page %d of %d\r\n", YEL, packs_[pack_].name.c_str(), DIM,
-                  (unsigned)pieces_.size(), page_ + 1, pages);
-    s += b;
-    s += MAG;
-    s += "   " + std::string(70, '\xc4') + "\r\n";
-    int first = page_ * per, rows = 18;
-    for (int r = 0; r < rows; r++) {
-        std::string row = "   ";
-        for (int c = 0; c < cols; c++) {
-            int i = first + c * rows + r;
-            if (i >= (int)pieces_.size()) continue;
-            std::string n = shownName((size_t)i).substr(0, (size_t)width - 1);
-            std::snprintf(b, sizeof b, "%s[%3d]%s %-*s", CYAN, i + 1, HI, width, n.c_str());
-            row += b;
-        }
-        if (row.size() > 3) s += row + "\r\n";
-    }
-    s += DIM;
-    s += "\r\n   Piece number, ";
-    s += CYAN;
-    s += "[N]";
-    s += DIM;
-    s += "ext page, ";
-    s += CYAN;
-    s += "[P]";
-    s += DIM;
-    s += "rev page, ";
-    s += CYAN;
-    s += "[Q]";
-    s += DIM;
-    s += "uit: ";
-    s += HI;
-    send(s);
+    std::vector<std::string> v;
+    for (size_t i = 0; i < pieces_.size(); i++) v.push_back(shownName(i));
+    list_.setItems(std::move(v), piece_ < pieces_.size() ? piece_ : 0);
+    showList(packs_[pack_].name + ", " + std::to_string(pieces_.size()) + " pieces", "arrows move  PgUp/PgDn  Enter views  Esc or Q back");
 }
 
 void AnsiViewer::showPiece(size_t i) {
@@ -275,48 +227,26 @@ bool AnsiViewer::key(char c) {
     int n = 0;
     switch (st_) {
         case St::Areas:
-            if ((c | 0x20) == 'q') return false;
-            if (!number(c, n)) return true;
-            if (n == 0) return false;
-            if (n <= (int)areas_.size()) {
-                area_ = areas_[(size_t)n - 1].first;
-                areaName_ = areas_[(size_t)n - 1].second;
-                showPacks();
-            } else showAreas();
-            return true;
         case St::Packs:
-            if ((c | 0x20) == 'q' && areas_.size() > 1) {  // back to the areas
-                showAreas();
-                return true;
-            }
-            if ((c | 0x20) == 'q') return false;
-            if (!number(c, n)) return true;
-            if (n == 0 && areas_.size() > 1) {
-                showAreas();
-                return true;
-            }
-            if (n == 0) return false;
-            if (n > (int)packs_.size() || !openPack((size_t)n - 1)) showPacks();
-            return true;
-        case St::Pieces:
-            if (typed_.empty() && (c | 0x20) == 'q') {
+        case St::Pieces: {
+            if ((c | 0x20) == 'q' && !list_.midKey()) return back();
+            int pick = list_.key(c);
+            send(list_.takeRedraw());
+            if (list_.escaped()) return back();
+            if (pick < 0) return true;
+            if (st_ == St::Areas) {
+                areaAt_ = (size_t)pick;
+                area_ = areas_[(size_t)pick].first;
+                areaName_ = areas_[(size_t)pick].second;
+                pack_ = 0;
                 showPacks();
-                return true;
+            } else if (st_ == St::Packs) {
+                if (packs_.empty() || !openPack((size_t)pick)) showPacks();
+            } else {
+                showPiece((size_t)pick);
             }
-            if (typed_.empty() && (c | 0x20) == 'n') {
-                page_++;
-                showPieces();
-                return true;
-            }
-            if (typed_.empty() && (c | 0x20) == 'p') {
-                page_--;
-                showPieces();
-                return true;
-            }
-            if (!number(c, n)) return true;
-            if (n >= 1 && n <= (int)pieces_.size()) showPiece((size_t)n - 1);
-            else showPieces();
             return true;
+        }
         case St::Playing:
             if ((c | 0x20) == 'q') {  // stop: back to the list of pieces
                 stream_.reset();
@@ -368,8 +298,28 @@ bool AnsiViewer::key(char c) {
     return true;
 }
 
+bool AnsiViewer::back() {
+    if (st_ == St::Pieces) {
+        showPacks();
+        return true;
+    }
+    if (st_ == St::Packs && areas_.size() > 1) {
+        showAreas();
+        return true;
+    }
+    return false;  // from the top list: leave the viewer
+}
+
+bool AnsiViewer::idle() {
+    if (!list_.midKey() || (st_ != St::Areas && st_ != St::Packs && st_ != St::Pieces)) return true;
+    list_.keyTimeout();
+    return list_.escaped() ? back() : true;
+}
+
 bool AnsiViewer::step() {
     if (!line_.carrier()) return false;
+    if (line_.available() <= 0 && ++quiet_ > 60 && !idle()) return false;  // ~300 ms of quiet
+    if (line_.available() > 0) quiet_ = 0;
     while (line_.available() > 0) {
         int c = line_.read();
         if (c < 0) break;

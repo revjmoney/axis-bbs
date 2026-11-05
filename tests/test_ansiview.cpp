@@ -210,3 +210,16 @@ TEST_CASE("pieces that all share a long name prefix are listed without it, in wi
     CHECK(out.find("ANSI_Star_Wars_K") == std::string::npos);
     CHECK(out.find("__BLOCKTRONICS") != std::string::npos);  // the odd one out keeps its name
 }
+
+TEST_CASE("the pack and piece lists are lightbars: Enter on the bar opens it, Esc goes back a level") {
+    Rig r;
+    r.v.begin();
+    r.run("");
+    std::string pieces = r.run("\r");  // the bar starts on the first (only) pack
+    CHECK(pieces.find("REV-AXIS.ANS") != std::string::npos);
+    r.line.push("\x1b");
+    r.running = r.v.step();
+    r.v.idle();  // the caller paused: a lone Esc
+    CHECK(r.run("").find("AXISTEST.ZIP") != std::string::npos);  // back on the pack list
+    CHECK(r.running);
+}

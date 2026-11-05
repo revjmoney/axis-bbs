@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "bbs/filelib.h"
+#include "bbs/lightbar.h"
 #include "bbs/zipreader.h"
 #include "door/bytestream.h"
 
@@ -28,6 +29,7 @@ public:
     void setAreas(std::vector<std::pair<std::string, std::string>> areas) { areas_ = std::move(areas); }
     void begin();  // show the packs (or the areas, when there are several)
     bool step();   // handle waiting keys; false once the caller leaves (or hangs up)
+    bool idle();   // the caller paused: a lone Esc on a list counts now; false if that left the viewer
 
 private:
     enum class St { Areas, Packs, Pieces, Playing, Shown };
@@ -47,6 +49,8 @@ private:
     uint32_t now() const { return clock_ ? clock_() : 0; }
     bool key(char c);
     bool number(char c, int& n);  // line input of a number; true on Enter with n set (0 = empty)
+    bool back();                  // Esc or Q on a list: up a level; false when that leaves the viewer
+    void showList(const std::string& title, const std::string& help);  // the header, the lightbar list, the help line
 
     FileLibrary&                 lib_;
     std::string                  area_, areaName_;
@@ -64,6 +68,9 @@ private:
     size_t                       piece_ = 0;
     int                          page_ = 0;
     std::string                  typed_;
+    ScrollList                   list_{4, 4, 74, 18};  // every list here is a lightbar: areas, packs, pieces
+    size_t                       areaAt_ = 0;
+    int                          quiet_ = 0;           // steps with no key (a lone Esc counts after a pause)
     // the piece playing: pulled out of the ZIP a part at a time
     std::unique_ptr<ZipReader::Stream> stream_;
     std::string                  chunk_;  // pulled but not sent yet
