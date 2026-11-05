@@ -57,7 +57,7 @@ SysopShell::SysopShell(std::string& out, Run run, int cols) : out_(out), run_(st
 // the theme's header art (80 columns) online; one bright title line on the board's 40-column screen
 std::string SysopShell::header(const std::string& title) const {
     if (cols_ >= 80) return theme::drip(title);
-    return std::string("\r\n ") + theme::HOT + title + theme::DGREY + " " + std::string((size_t)std::max(0, 36 - (int)title.size()), '\xc4') + theme::TEXT + "\r\n";
+    return std::string(" ") + theme::HOT + title + theme::DGREY + " " + std::string((size_t)std::max(0, 36 - (int)title.size()), '\xc4') + theme::TEXT + "\r\n";
 }
 
 std::vector<std::string> SysopShell::lines(const std::string& cmd) {
@@ -134,12 +134,12 @@ void SysopShell::draw() {
     out_ += " " + std::string(theme::DGREY) + fit(crumbs, (size_t)cols_ - 4) + theme::TEXT + "\r\n";
     if (!l.text.empty() || !l.build) {  // a read-only page
         size_t from = l.at;
-        for (size_t i = from; i < l.text.size() && i < from + kPage + 2; i++) out_ += "   " + std::string(theme::TEXT) + fit(l.text[i], 74) + "\r\n";
+        for (size_t i = from; i < l.text.size() && i < from + page_() + (cols_ >= 80 ? 2 : 1); i++) out_ += "   " + std::string(theme::TEXT) + fit(l.text[i], 74) + "\r\n";
         out_ += "\r\n   " + theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("Q", " back") + " ";
         return;
     }
-    size_t page = l.at / kPage, from = page * kPage;
-    for (size_t i = from; i < l.items.size() && i < from + kPage; i++) {
+    size_t page = l.at / page_(), from = page * page_();
+    for (size_t i = from; i < l.items.size() && i < from + page_(); i++) {
         const Item& it = l.items[i];
         bool        on = i == l.at;
         size_t      lw = cols_ >= 80 ? 30 : 21, vw = cols_ >= 80 ? 40 : (size_t)cols_ - 26;
@@ -152,7 +152,7 @@ void SysopShell::draw() {
         out_ += on ? std::string("\x1b[0;30;47m") : std::string(theme::WHITE);
         out_ += value + std::string(vw - value.size(), ' ') + "\x1b[0m\r\n";
     }
-    size_t pages = (l.items.size() + kPage - 1) / kPage;
+    size_t pages = (l.items.size() + page_() - 1) / page_();
     out_ += "\r\n   ";
     if (!note_.empty()) out_ += std::string(theme::HOT) + fit(note_, 70) + theme::TEXT + "\r\n   ";
     if (pages > 1) out_ += std::string(theme::DGREY) + "page " + std::to_string(page + 1) + "/" + std::to_string(pages) + "  " + theme::key("N", "/") + theme::key("P", "  ");
@@ -222,13 +222,13 @@ bool SysopShell::key(char c) {
     }
     char k = (char)(c | 0x20);
     if (!l.build) {  // a text page: N, P, Q
-        if (k == 'n' && l.at + kPage < n) l.at += kPage;
-        else if (k == 'p') l.at = l.at > kPage ? l.at - kPage : 0;
+        if (k == 'n' && l.at + page_() < n) l.at += page_();
+        else if (k == 'p') l.at = l.at > page_() ? l.at - page_() : 0;
         else if (k == 'q') pop();
         if (!layers_.empty()) draw();
         return open();
     }
-    size_t page = l.at / kPage;
+    size_t page = l.at / page_();
     if (k == 'q') {
         pop();
         return open();
@@ -242,12 +242,12 @@ bool SysopShell::key(char c) {
         }
         return open();
     }
-    if (k == 'n' && (page + 1) * kPage < n) l.at = (page + 1) * kPage;
-    else if (k == 'p' && page > 0) l.at = (page - 1) * kPage;
+    if (k == 'n' && (page + 1) * page_() < n) l.at = (page + 1) * page_();
+    else if (k == 'p' && page > 0) l.at = (page - 1) * page_();
     else {
         size_t idx = k >= '1' && k <= '9' ? (size_t)(k - '1') : k >= 'a' && k <= 'm' && k != 'n' ? (size_t)(9 + k - 'a') : 99;
-        if (idx < kPage && page * kPage + idx < n) {  // jump there and pick it
-            l.at = page * kPage + idx;
+        if (idx < page_() && page * page_() + idx < n) {  // jump there and pick it
+            l.at = page * page_() + idx;
             return key('\r');
         }
     }
@@ -266,8 +266,8 @@ void SysopShell::tapRow(int row) {
         return;
     }
     int idx = row - top;
-    if (idx >= 0 && idx < (int)kPage) {
-        size_t at = (l.at / kPage) * kPage + (size_t)idx;
+    if (idx >= 0 && idx < (int)page_()) {
+        size_t at = (l.at / page_()) * page_() + (size_t)idx;
         if (at < l.items.size()) {
             l.at = at;
             key('\r');

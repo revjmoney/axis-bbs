@@ -70,7 +70,7 @@ private:
     int                                    esc_ = 0;  // 1 after ESC, 2 after ESC [
     int                                    cols_ = 80;
     std::string                            header(const std::string& title) const;
-    static constexpr size_t kPage = 14;
+    size_t page_() const { return cols_ >= 80 ? 14 : 7; }  // items a page: 14 online, 7 on the board's 12-line screen
 };
 
 }  // namespace axis::bbs

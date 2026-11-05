@@ -595,7 +595,14 @@ static void drawLocal() {
                 const auto& cell = localTerm->cell(r, c);
                 localScreen->cells[r][c] = {cell.ch, cell.attr};
             }
-        if (localZoom) {  // follow the cursor across the two halves
+        if (localNode && localNode->state() == axis::bbs::Node::State::SysopMenu) {  // the sysop menu: tall letters, 40 x 12
+            static BigText tall;
+            tall.clear(0x07);
+            for (int r = 0; r < 12; r++)
+                for (int c = 0; c < 40; c++) tall.cells[r][c] = localScreen->cells[r][c];
+            scr.fillRect(0, 0, 320, 200, pal::BLACK);
+            tall.render(scr, 0, 12);
+        } else if (localZoom) {  // follow the cursor across the two halves
             if (localTerm->col() >= localPan + 40) localPan = 40;
             else if (localTerm->col() < localPan) localPan = 0;
             localScreen->renderZoom(scr, axis::bbs::AnsiTerm::kRows, localPan);  // 200 pixels, 40 columns
@@ -1886,7 +1893,8 @@ static void handleTap(int x, int y) {
                     localKeys = false;
                 }
             } else if (y < 200) {  // a tap on the screen: the line there (the sysop menu's items)
-                localNode->tapRow(y * axis::bbs::AnsiTerm::kRows / 200);
+                bool tallRows = localNode->state() == axis::bbs::Node::State::SysopMenu;  // 16-pixel lines there
+                localNode->tapRow(tallRows ? y / 16 : y * axis::bbs::AnsiTerm::kRows / 200);
                 localFeed();
             } else if (y >= 206 && x < 64) {
                 localKeys = true;
