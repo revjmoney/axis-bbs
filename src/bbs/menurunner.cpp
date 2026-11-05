@@ -46,6 +46,10 @@ void MenuRunner::redraw() {
     if (!art.empty()) expandArt(art, who_, value_, emit_);
     art = std::string();
     if (bar_) emit(bar_->draw());
+    prompt();
+}
+
+void MenuRunner::prompt() {
     if (def_.usePrompt && !def_.prompt1.empty()) emit("\r\n" + expandArt(def_.prompt1, who_, value_));
 }
 

@@ -21,6 +21,7 @@
 #include "bbs/users.h"
 #include "bbs/usersettings.h"
 #include "bbs/version.h"
+#include "bbs/menurunner.h"
 
 namespace axis::bbs {
 
@@ -82,6 +83,8 @@ public:
     // from flash, instead of through takeOutput(): a copy of them needs more heap than a busy board has.
     // the Oblivion look's screens from the card (MATRIX.ANS, MAIN.ANS): their text, or "" for the stock screen
     void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
+    // ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): with a MAIN.MNU they drive the main menu; without, the built-in one
+    void        setMenus(MenuRunner::Loader load);
     // the last callers list ("handle|node|time|location" lines, oldest first) and adding this call to it
     void        setLastCallers(std::function<std::vector<std::string>()> get, std::function<void(const std::string&)> add) {
         callersGet_ = std::move(get);
@@ -150,6 +153,11 @@ private:
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
     std::function<std::string(const std::string&)> art_;
+    std::unique_ptr<MenuRunner>                    menu_;
+    std::string                                    menuName_ = "MAIN";
+    bool                                           builtin_ = false;  // the menu files failed: the built-in menu this call
+    bool                                           enterMenu(const std::string& name);
+    AcsUser                                        menuWho() const;
     std::function<void(int, int, const std::string&)> send_;
     std::function<std::vector<std::string>()> callersGet_;
     std::function<void(const std::string&)>   callersAdd_;

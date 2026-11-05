@@ -219,6 +219,55 @@ void Node::beginLocalMenu(uint32_t nowMs) {
 Node::MciScope::MciScope(Node& n) { theme::setMci([&n](const std::string& s) { return n.mci(s); }); }
 Node::MciScope::~MciScope() { theme::setMci(nullptr); }
 
+// ---- ViSiON/3-style menu files
+
+namespace {
+// ViSiON/3's RUN: functions onto AXIS's own commands (the built-in menu's keys); 0 = not on AXIS yet
+char v3Command(const std::string& f) {
+    static const struct { const char* name; char key; } table[] = {
+        {"READMSGS", 'm'}, {"LISTMSGAR", 'm'}, {"SELECTMSGAREA", 'm'}, {"COMPOSEMSG", 'm'}, {"NEWSCAN", 's'},
+        {"LISTFILES", 'f'}, {"SELECTFILEAREA", 'f'}, {"DOWNLOADFILE", 'f'}, {"UPLOADFILE", 'f'}, {"SEARCH_FILES", 'f'},
+        {"FILE_NEWSCAN", 'f'}, {"CHAT", 'p'}, {"ONELINER", 'o'}, {"LISTUSERS", 'l'}, {"LASTCALLERS", 'w'},
+        {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RANDOMRUMOR", 'r'}, {"BBSLIST", 'b'}, {"VOTE", 'v'},
+        {"SHOWSTATS", 'i'}, {"SYSTEMSTATS", 'i'}, {"USERCONFIG", 'u'}, {"SENDPRIVMAIL", 'e'}, {"READPRIVMAIL", 'e'},
+        {"MAINLOGOFF", 'g'}};
+    for (const auto& t : table)
+        if (f == t.name) return t.key;
+    return 0;
+}
+}  // namespace
+
+void Node::setMenus(MenuRunner::Loader load) {
+    menu_.reset();
+    builtin_ = false;
+    if (!load || load("MAIN.MNU").empty()) return;
+    menu_.reset(new MenuRunner(
+        load, [this](const char* d, size_t n) { out_.append(d, n); },
+        [this](const std::string& k) {  // ViSiON/3's placeholders through ours (|UH is our %UN)
+            std::string code = "%" + (k == "UH" ? std::string("UN") : k), v = mci(code);
+            return v == code ? std::string() : v;
+        }));
+}
+
+AcsUser Node::menuWho() const {
+    const User* u = users_ ? users_->byId(userId_) : nullptr;
+    if (u) return acsFor(*u, sysop_);
+    return AcsUser{sysop_ ? kSysopSecurity : 10, "FMD"};
+}
+
+// a menu by name; else the current menu's fallback; else MAIN. false: none of them would load
+bool Node::enterMenu(const std::string& name) {
+    std::string fallback = menu_->def().fallback;
+    for (const std::string& n : {name, fallback, std::string("MAIN")}) {
+        if (n.empty() || !menu_->enter(n, menuWho())) continue;
+        menuName_ = n;
+        for (int i = 0; i < 8 && menu_->key(0).kind != MenuAction::None; i++) {
+        }  // auto-runs (sysop notices and such): not on AXIS yet
+        return true;
+    }
+    return false;
+}
+
 bool Node::o2() const { return cfg_.theme == "oblivion" || cfg_.theme == "iniquity"; }  // (iniquity: the same layout, in green and grey)
 
 std::string Node::mci(const std::string& s) const {
@@ -246,11 +295,11 @@ std::string Node::mci(const std::string& s) const {
 }
 
 namespace {
-struct BarItem {
+struct O2Item {
     char        key;
     const char* label;
 };
-const BarItem kMatrix[] = {{'L', "Login"}, {'A', "Apply"}, {'W', "Who's Online"}, {'G', "Goodbye"}};
+const O2Item kMatrix[] = {{'L', "Login"}, {'A', "Apply"}, {'W', "Who's Online"}, {'G', "Goodbye"}};
 constexpr int kMatrixItems = 4, kMatrixRow = 11, kMatrixCol = 30;
 }  // namespace
 
@@ -416,6 +465,9 @@ void Node::prompt() {
         out_ += "   " + theme::fade("Handle") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Password) {
         out_ += "\r\n   " + theme::fade("Password") + theme::ORANGE + ": " + theme::WHITE;
+    } else if (state_ == State::Menu && menu_ && !builtin_) {
+        showNotes();
+        menu_->prompt();
     } else if (state_ == State::Menu) {
         showNotes();
         if (o2()) o2Prompt("Main Menu");
@@ -514,6 +566,10 @@ void Node::resumeAfterDoor(DoorEnd how, uint32_t nowMs) {
 
 void Node::showMainMenu() {
     state_ = State::Menu;
+    if (menu_ && !builtin_) {
+        if (enterMenu(menuName_)) return;
+        builtin_ = true;  // the menu files are broken: the built-in menu for this call
+    }
     out_ += theme::CLS;
     if (o2()) {  // MAIN.ANS from the card, or the stock look: a title bar and a boxed two-column list
         std::string art = art_ ? art_("MAIN.ANS") : "";
@@ -531,14 +587,14 @@ void Node::showMainMenu() {
                 prompt();
                 return;
             }
-            static const BarItem items[] = {{'M', "Message Bases"}, {'F', "File Vaults"},    {'D', "Doors"},         {'T', "Teleconference"},
+            static const O2Item items[] = {{'M', "Message Bases"}, {'F', "File Vaults"},    {'D', "Doors"},         {'T', "Teleconference"},
                                             {'W', "Who's Online"},  {'O', "Oneliners"},      {'U', "User Settings"}, {'Y', "Yell for SysOp"},
                                             {'I', "System Info"},   {'C', "Credits"},        {'G', "Goodbye"},       {'N', "MultiNode"}};  // (R rumors, B BBS list, K top ten, E email, S scan work too)
             out_ += theme::titleBar("Main Menu");
             out_ += std::string("  ") + theme::ORANGE + "\xc9" + std::string(74, '\xcd') + "\xbb\r\n";
             char b[160];
             for (int r = 0; r < 6; r++) {
-                const BarItem &a = items[r * 2], &z = items[r * 2 + 1];
+                const O2Item &a = items[r * 2], &z = items[r * 2 + 1];
                 std::snprintf(b, sizeof b, "  %s\xba   %s[%s%c%s] %s%-28s%s[%s%c%s] %s%-28s       %s\xba\r\n", theme::ORANGE, theme::DGREY, theme::KEY, a.key,
                               theme::DGREY, theme::TEXT, a.label, theme::DGREY, theme::KEY, z.key, theme::DGREY, theme::TEXT, z.label, theme::ORANGE);
                 out_ += b;
@@ -578,6 +634,10 @@ void Node::showMainMenu() {
 }
 
 void Node::showMenu() {
+    if (menu_ && !builtin_) {
+        showMainMenu();
+        return;
+    }
     if (o2()) {  // Oblivion style: just the prompt again; ? brings the menu back
         out_ += "\r\n";
         prompt();
@@ -939,7 +999,48 @@ void Node::key(char c) {
         return;
     }
     if (state_ != State::Menu) return;
-    if (o2() && o2Keys_ && c != '?' && c != '*') {  // (? the menu, * the sysop's editor: the same in every look)  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
+    bool fromMenus = false;
+    if (menu_ && !builtin_) {
+        MenuAction a = menu_->key(c, lastInput_);
+        switch (a.kind) {
+            case MenuAction::None:
+                if (c == '?') menu_->redraw();
+                return;
+            case MenuAction::Goto:
+                if (!enterMenu(a.arg)) {
+                    builtin_ = true;
+                    showMainMenu();
+                }
+                return;
+            case MenuAction::Quit: state_ = State::Done; return;
+            case MenuAction::Logoff: c = 'g'; break;
+            case MenuAction::Door: {
+                int pick = -1;
+                for (size_t i = 0; i < cfg_.doors.size(); i++)
+                    if (cfg_.doors[i].id == a.arg) pick = (int)i;
+                const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+                if (pick < 0 || (u && !u->permDoors)) {
+                    out_ += std::string("\r\n   ") + AMBER + (pick < 0 ? "Coming soon to AXIS." : "The doors are closed to your account.") + theme::TEXT;
+                    menu_->prompt();
+                    return;
+                }
+                door_ = pick;
+                state_ = State::InDoor;
+                return;
+            }
+            case MenuAction::Run:
+                c = v3Command(a.arg);
+                if (!c) {
+                    out_ += std::string("\r\n   ") + AMBER + "Coming soon to AXIS." + theme::TEXT;
+                    menu_->prompt();
+                    return;
+                }
+                break;
+        }
+        fromMenus = true;
+    }
+    if (fromMenus) {
+    } else if (o2() && o2Keys_ && c != '?' && c != '*') {  // (? the menu, * the sysop's editor: the same in every look)  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
         static const char from[] = "abcefgklmorstvwxy+=./!-", to[] = "ubtepguwmdrifvlfuuncgsk";  // a account, c chat, e email, f feedback, l list users, o open doors, r rumors, t transfers, w recent callers ...
         const char*       hit = std::strchr(from, (char)(c | 0x20));
         if (!hit || !*hit) {
@@ -1957,6 +2058,7 @@ std::string Node::activityText() const {
 
 void Node::poll(uint32_t nowMs) {
     MciScope mciScope(*this);
+    if (menu_ && !builtin_ && state_ == State::Menu) menu_->tick(nowMs);  // a lone ESC on a lightbar: Esc after a pause
     if (callStart_ && !sysop_ && cfg_.dailyMinutes > 0 && state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer) {
         uint32_t used = nowMs - callStart_, limit = (uint32_t)cfg_.dailyMinutes * 60000u;
         if (used >= limit) {

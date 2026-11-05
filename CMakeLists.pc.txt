@@ -105,6 +105,7 @@ add_executable(axis_tests
     tests/test_menufile.cpp
     tests/test_lightbar.cpp
     tests/test_menurunner.cpp
+    tests/test_node_menus.cpp
     tests/test_fossil.cpp
     tests/test_dropfile.cpp
     tests/test_lord_telnet.cpp

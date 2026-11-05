@@ -31,6 +31,7 @@ public:
     MenuAction key(char c, uint32_t nowMs = 0);                     // key(0): the next auto-run, if any
     void       tick(uint32_t nowMs);                                // a lone ESC becomes Esc after a pause
     void       redraw();                                            // the menu again (after a command's screen)
+    void       prompt();                                            // just the prompt again
     const std::string& current() const { return name_; }
     const std::string& activity() const { return activity_; }
     const MenuDef&     def() const { return def_; }

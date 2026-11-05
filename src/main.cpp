@@ -254,6 +254,33 @@ static std::string themeArt(const std::string& name) {
     artCache[name] = art;
     return art;
 }
+// ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): this board's own /menus first (its SD card or flash),
+// then the main's over the cluster. Only the small .MNU files are cached; art is fetched each time it shows.
+static std::map<std::string, std::string> menuCache;
+static std::string menuFileLocal(const std::string& name) {
+    std::string s;
+    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return s;
+    if (FILE* f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb")) {
+        char b[512];
+        for (size_t n; s.size() < 8192 && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
+        fclose(f);
+    }
+    if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) s.resize(sauce);
+    if (s.size() > 8192) s.resize(8192);
+    return s;
+}
+static std::string menuFile(const std::string& name) {
+    std::string s = menuFileLocal(name);
+    if (!s.empty() || !asFollower()) return s;
+    bool mnu = name.size() > 4 && name.compare(name.size() - 4, 4, ".MNU") == 0;
+    if (mnu)
+        if (auto it = menuCache.find(name); it != menuCache.end()) return it->second;
+    std::string reply;
+    s = cluster->request(std::string("U\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1' ? reply.substr(1) : "";
+    if (mnu) menuCache[name] = s;
+    return s;
+}
+
 // The shared lists for the local console (callers use the same over their own node setup).
 static std::vector<std::string> sharedList(const std::string& n) {
     if (!asFollower()) return n == "callers" ? lastCallers : listLoad(n);
@@ -1263,6 +1290,7 @@ static void answerIn(WiFiClient incoming) {
         });
         node->setMessages(&callerMessages());
         node->setArt([](const std::string& name) { return themeArt(name); });
+        node->setMenus([](const std::string& name) { return menuFile(name); });
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
         node->setOneLiners(
             [] {  // the wall: here on the main, over the link on a follower
@@ -1777,6 +1805,7 @@ static void startCluster() {
             return out;
         }
         if (req.rfind("T\x1f", 0) == 0) return "1" + themeArtLocal(req.substr(2));  // a theme screen
+        if (req.rfind("U\x1f", 0) == 0) return "1" + menuFileLocal(req.substr(2));  // a menu file or its art
         if (req.rfind("C\x1f", 0) == 0) return "1" + sysopRun(req.substr(2));      // a sysop menu command from a follower
         if (req.rfind("Y\x1f", 0) == 0) {  // a shared list
             std::string out = "1";
@@ -1980,6 +2009,7 @@ static void handleTap(int x, int y) {
             localNode->setSysopRun(sysopRun);
             localNode->setMessages(&callerMessages());
             localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
+            localNode->setMenus([](const std::string& name) { return menuFile(name); });
             localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
             localNode->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
             localPan = 0;
