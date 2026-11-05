@@ -36,6 +36,7 @@ add_library(axiscore STATIC
     src/bbs/transferjob.cpp
     src/bbs/uploadproc.cpp
     src/bbs/users.cpp
+    src/bbs/acs.cpp
     src/bbs/newuser.cpp
     src/bbs/touchkeyboard.cpp
     src/bbs/wifipicker.cpp
@@ -95,6 +96,7 @@ add_executable(axis_tests
     tests/test_session.cpp
     tests/test_lord_local.cpp
     tests/test_lordcfg_register.cpp
+    tests/test_acs.cpp
     tests/test_fossil.cpp
     tests/test_dropfile.cpp
     tests/test_lord_telnet.cpp
