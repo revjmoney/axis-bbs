@@ -1961,6 +1961,11 @@ static void handleTap(int x, int y) {
         }
         int item = x < wfc::kMenuW && y >= wfc::kMenuY && y < wfc::kMenuY + wfc::kItems * wfc::kItemH ? (y - wfc::kMenuY) / wfc::kItemH : -1;
         if (detailSession < 0 && item >= 0) {  // f1 local logon; f2..f7 the sysop menu (in the BBS, on the local console)
+            // the local console needs ~35 KB; while the cluster reshuffles (a board restarting) the main can have far less
+            if (ESP.getFreeHeap() < 40000 || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 30000) {
+                logEvent("local logon: the board is busy, try again in a moment");
+                return;
+            }
             localTerm.reset(new axis::bbs::AnsiTerm());
             localScreen.reset(new AnsiScreen());
             localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,

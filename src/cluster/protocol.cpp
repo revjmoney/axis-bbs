@@ -10,16 +10,18 @@ constexpr char kSep = '\x1f';
 }
 
 std::string frame(Frame type, const std::vector<std::string>& f) {
-    std::string body;
-    for (size_t i = 0; i < f.size(); i++) {
-        if (i) body += kSep;
-        body += f[i];
-    }
-    uint32_t    n = (uint32_t)body.size() + 1;
+    size_t len = f.empty() ? 0 : f.size() - 1;  // one allocation, no body copy: the main joins a board on a fragmented heap
+    for (const std::string& s : f) len += s.size();
+    uint32_t    n = (uint32_t)len + 1;
     std::string out;
+    out.reserve(5 + len);
     for (int i = 0; i < 4; i++) out += (char)(n >> (8 * i));
     out += (char)type;
-    return out + body;
+    for (size_t i = 0; i < f.size(); i++) {
+        if (i) out += kSep;
+        out += f[i];
+    }
+    return out;
 }
 
 std::vector<std::string> fields(const std::string& body) {
