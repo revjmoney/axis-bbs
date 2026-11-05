@@ -52,7 +52,13 @@ bool inGroups(const std::string& k) {
 }
 }  // namespace
 
-SysopShell::SysopShell(std::string& out, Run run) : out_(out), run_(std::move(run)) {}
+SysopShell::SysopShell(std::string& out, Run run, int cols) : out_(out), run_(std::move(run)), cols_(cols) {}
+
+// the theme's header art (80 columns) online; one bright title line on the board's 40-column screen
+std::string SysopShell::header(const std::string& title) const {
+    if (cols_ >= 80) return theme::drip(title);
+    return std::string("\r\n ") + theme::HOT + title + theme::DGREY + " " + std::string((size_t)std::max(0, 36 - (int)title.size()), '\xc4') + theme::TEXT + "\r\n";
+}
 
 std::vector<std::string> SysopShell::lines(const std::string& cmd) {
     std::vector<std::string> v;
@@ -122,10 +128,10 @@ void SysopShell::draw() {
     if (layers_.empty()) return;
     Layer& l = layers_.back();
     out_ += theme::CLS;
-    out_ += theme::drip(l.title);
+    out_ += header(l.title);
     std::string crumbs;
     for (size_t i = 0; i < layers_.size(); i++) crumbs += (i ? " > " : "") + layers_[i].title;
-    out_ += "   " + std::string(theme::DGREY) + fit(crumbs, 74) + theme::TEXT + "\r\n";
+    out_ += " " + std::string(theme::DGREY) + fit(crumbs, (size_t)cols_ - 4) + theme::TEXT + "\r\n";
     if (!l.text.empty() || !l.build) {  // a read-only page
         size_t from = l.at;
         for (size_t i = from; i < l.text.size() && i < from + kPage + 2; i++) out_ += "   " + std::string(theme::TEXT) + fit(l.text[i], 74) + "\r\n";
@@ -136,14 +142,15 @@ void SysopShell::draw() {
     for (size_t i = from; i < l.items.size() && i < from + kPage; i++) {
         const Item& it = l.items[i];
         bool        on = i == l.at;
-        std::string label = fit(it.label, 30), value = fit(it.value, 40);
-        out_ += "  ";
+        size_t      lw = cols_ >= 80 ? 30 : 21, vw = cols_ >= 80 ? 40 : (size_t)cols_ - 26;
+        std::string label = fit(it.label, lw), value = fit(it.value, vw);
+        out_ += cols_ >= 80 ? "  " : "";
         out_ += on ? std::string("\x1b[0;30;47m") : std::string(theme::DGREY);
         out_ += std::string(" ") + keyFor(i - from) + " ";
         out_ += on ? std::string("\x1b[0;30;47m") : std::string(theme::TEXT);
-        out_ += label + std::string(31 - label.size(), ' ');
+        out_ += label + std::string(lw + 1 - label.size(), ' ');
         out_ += on ? std::string("\x1b[0;30;47m") : std::string(theme::WHITE);
-        out_ += value + std::string(40 - value.size(), ' ') + "\x1b[0m\r\n";
+        out_ += value + std::string(vw - value.size(), ' ') + "\x1b[0m\r\n";
     }
     size_t pages = (l.items.size() + kPage - 1) / kPage;
     out_ += "\r\n   ";
@@ -251,7 +258,7 @@ bool SysopShell::key(char c) {
 void SysopShell::tapRow(int row) {
     if (layers_.empty() || asking_) return;
     // the header is the title art or the built-in title; count its lines to find the list
-    std::string head = theme::drip(layers_.back().title);
+    std::string head = header(layers_.back().title);
     int         top = (int)std::count(head.begin(), head.end(), '\n') + 1;
     Layer&      l = layers_.back();
     if (!l.build) {

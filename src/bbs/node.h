@@ -51,7 +51,7 @@ public:
     // the in-BBS sysop menu (bbs/sysopshell.h): how it runs an @ command (on the main), and a touch on a screen row
     void setSysopRun(std::function<std::string(const std::string&)> run) { sysopRun_ = std::move(run); }
     void tapRow(int row);
-    void openSysopMenu(const std::string& keys = "");  // straight into the sysop menu (the WFC), walked to a layer by keys
+    void openSysopMenu(const std::string& keys = "", int cols = 80);  // straight into the sysop menu (the WFC), walked to a layer by keys
     bool failedLogin() const { return failedLogin_; }  // the call ended on wrong passwords (for the per-address lockout)
     void addMinutes(int m) { if (callStart_) callStart_ += (uint32_t)m * 60000u; }  // the sysop gives more time (this call only)
     std::function<void(const std::string&)> onEvent;  // for the event log ("new user password: 3 wrong tries from X")
@@ -95,7 +95,8 @@ public:
     }
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
     void        begin(uint32_t nowMs);
-    void        beginLocal(uint32_t nowMs);  // the sysop at the board itself: logged in as sysop, no splash
+    void        beginLocal(uint32_t nowMs);
+    void        beginLocalQuiet(uint32_t nowMs);  // the sysop at the board, no login screens (straight into the sysop menu)  // the sysop at the board itself: logged in as sysop, no splash
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);
     std::string takeOutput();

@@ -198,6 +198,15 @@ void Node::beginLocal(uint32_t nowMs) {
     loggedIn();
 }
 
+void Node::beginLocalQuiet(uint32_t nowMs) {  // (the bulletin, oneliners and menu art cost the main RAM it hasn't got)
+    lastInput_ = nowMs;
+    callStart_ = nowMs;
+    theme::use(theme::lookFrom(cfg_.theme));
+    handle_ = cfg_.sysopHandle.empty() ? "Sysop" : cfg_.sysopHandle;
+    sysop_ = true;
+    state_ = State::Menu;
+}
+
 bool Node::o2() const { return cfg_.theme == "oblivion" || cfg_.theme == "iniquity"; }  // (iniquity: the same layout, in green and grey)
 
 std::string Node::mci(const std::string& s) const {
@@ -406,10 +415,10 @@ void Node::prompt() {
     }
 }
 
-void Node::openSysopMenu(const std::string& keys) {
+void Node::openSysopMenu(const std::string& keys, int cols) {
     if (!sysop_ || !sysopRun_) return;
     state_ = State::SysopMenu;
-    shell_.reset(new SysopShell(out_, sysopRun_));
+    shell_.reset(new SysopShell(out_, sysopRun_, cols));
     shell_->begin();
     for (char k : keys) shell_->key(k);
 }

@@ -1954,10 +1954,14 @@ static void handleTap(int x, int y) {
                         for (auto& n : cluster->nodes()) v.push_back({n.number, n.handle, n.activity});
                     return v;
                 });
-            localNode->beginLocal(millis());
+            if (item > 0) localNode->beginLocalQuiet(millis());  // f2..f7: straight into the sysop menu
+            else localNode->beginLocal(millis());
             logEvent(String("local sysop login: ") + localNode->handle().c_str());
             static const char* const walk[] = {nullptr, "", "1", "2", "61", "4", "6"};  // f2 top, f3 users, f4 files, f5 log, f6 settings, f7 system
-            if (item > 0) localNode->openSysopMenu(walk[item]);
+            if (item > 0) {  // big letters: 40 columns, zoomed
+                localZoom = true;
+                localNode->openSysopMenu(walk[item], 40);
+            }
             localFeed();
             return;
         }

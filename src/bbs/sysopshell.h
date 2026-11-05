@@ -17,7 +17,7 @@ namespace axis::bbs {
 class SysopShell {
 public:
     using Run = std::function<std::string(const std::string&)>;  // "@USERS" -> its output
-    SysopShell(std::string& out, Run run);
+    SysopShell(std::string& out, Run run, int cols = 80);  // cols 40: the board's own screen in big letters
     void begin();
     bool key(char c);          // false once the sysop has left the top layer
     void tapRow(int row);      // a tap on that screen row (0 = the top line)
@@ -68,6 +68,8 @@ private:
     std::string                            question_, line_;
     std::function<void(const std::string&)> answer_;
     int                                    esc_ = 0;  // 1 after ESC, 2 after ESC [
+    int                                    cols_ = 80;
+    std::string                            header(const std::string& title) const;
     static constexpr size_t kPage = 14;
 };
 
