@@ -120,7 +120,8 @@ void Node::loggedIn() {
     out_ += theme::TEXT;
     out_ += "Welcome back, ";
     out_ += theme::WHITE + handle_ + theme::TEXT + (sysop_ ? ". " + std::string(theme::ORANGE) + "Sysop access." : ".");
-    menuOrLiners();
+    if (menu_ && !builtin_) startSequence();  // menu files: ViSiON/3's login sequence
+    else menuOrLiners();
 }
 
 void Node::menuOrLiners() {
@@ -377,6 +378,73 @@ void Node::frontKey(char c) {
         out_ += std::string("\r\n   ") + theme::HOT + "Later." + theme::RESET + "\r\n";
         state_ = State::Done;
     }
+}
+
+// ---- ViSiON/3's login sequence: LOGIN.SEQ (or the template), step by step, then MAIN
+
+void Node::startSequence() {
+    seq_ = parseLoginSeq(menuLoad_ ? menuLoad_("LOGIN.SEQ") : std::string());
+    seqAt_ = 0;
+    inSeq_ = true;
+    seqFast_ = seqPauseNext_ = false;
+    nextStep();
+}
+
+void Node::seqResume() {
+    if (seqPauseNext_) {
+        seqPauseNext_ = false;
+        out_ += std::string("\x1b[0m\r\n   ") + theme::DGREY + "(press a key)" + theme::RESET;
+        state_ = State::SeqPause;
+        return;
+    }
+    nextStep();
+}
+
+void Node::nextStep() {
+    while (inSeq_ && seqAt_ < seq_.size()) {
+        const LoginStep s = seq_[seqAt_++];
+        if (s.level > menuWho().level) continue;
+        const std::string& c = s.cmd;
+        bool               shown = true;
+        if (s.clear) out_ += theme::CLS;
+        if (c == "SYSOPNOTICES" || c == "NMAILSCAN") {
+            showNotes();
+        } else if (c == "DISPLAYFILE") {
+            showArt(s.data + ".ANS");
+        } else if (c == "RANDOMRUMOR") {
+            rumorLine();
+        } else if (c == "LASTCALLS" || c == "LASTCALLERS") {  // these screens end through showMenu(): the sequence picks up there
+            seqPauseNext_ = s.pause;
+            showLastCallers();
+            return;
+        } else if (c == "WHOISONLINE") {
+            seqPauseNext_ = s.pause;
+            showWhoOnline();
+            return;
+        } else if (c == "USERSTATS" || c == "SHOWSTATS" || c == "SYSTEMSTATS") {
+            seqPauseNext_ = s.pause;
+            showSystemInfo();
+            return;
+        } else if (c == "ONELINERS" && linersGet_) {
+            seqPauseNext_ = s.pause;
+            state_ = State::Bulletin;  // (straight to the oneliners: no bulletin here)
+            menuOrLiners();
+            return;
+        } else if (c == "FASTLOGIN" && menu_->enter("FASTLOGN", menuWho())) {
+            state_ = State::Menu;
+            seqFast_ = true;
+            return;
+        } else {
+            shown = false;  // not on AXIS yet (news, InfoForms, new user voting...): skipped
+        }
+        if (shown && s.pause) {
+            seqPauseNext_ = true;
+            seqResume();
+            return;
+        }
+    }
+    inSeq_ = false;
+    showMainMenu();
 }
 
 bool Node::o2() const { return cfg_.theme == "oblivion" || cfg_.theme == "iniquity"; }  // (iniquity: the same layout, in green and grey)
@@ -681,6 +749,10 @@ void Node::resumeAfterDoor(DoorEnd how, uint32_t nowMs) {
 }
 
 void Node::showMainMenu() {
+    if (inSeq_ && !seqFast_) {  // a login sequence step's screen is done
+        seqResume();
+        return;
+    }
     state_ = State::Menu;
     if (menu_ && !builtin_) {
         if (enterMenu(menuName_)) return;
@@ -786,6 +858,10 @@ void Node::key(char c) {
     if (state_ == State::Matrix) {
         if (frontDoor_) frontKey(c);
         else matrixKey(c);
+        return;
+    }
+    if (state_ == State::SeqPause) {
+        nextStep();
         return;
     }
     if (state_ == State::PreLogon) {  // any key: the LOGIN screen (after check access: the matrix again)
@@ -894,7 +970,8 @@ void Node::key(char c) {
                 out_ += DIM;
                 out_ += "   Welcome, ";
                 out_ += HI + handle_ + DIM + ".";
-                menuOrLiners();
+                if (menu_ && !builtin_) startSequence();  // menu files: the same sequence a real login runs
+                else menuOrLiners();
                 return;
             }
             auto same = [](const std::string& a, const std::string& b) {
@@ -1166,6 +1243,18 @@ void Node::key(char c) {
     bool fromMenus = false;
     if (menu_ && !builtin_) {
         MenuAction a = menu_->key(c, lastInput_);
+        if (seqFast_ && a.kind != MenuAction::None) {  // the fast login lightbar: go on with the sequence, or jump
+            seqFast_ = false;
+            if (a.kind == MenuAction::Run && a.arg == "FULL_LOGIN_SEQUENCE") {
+                nextStep();
+                return;
+            }
+            inSeq_ = false;
+            if (a.kind == MenuAction::Goto) {
+                if (!enterMenu(a.arg)) showMainMenu();
+                return;
+            }
+        }
         switch (a.kind) {
             case MenuAction::None:
                 if (c == '?') menu_->redraw();
@@ -1252,22 +1341,9 @@ void Node::key(char c) {
                 out_ += std::string(theme::TEXT) + "Message for the sysop (Enter alone to cancel):\r\n   " + theme::ORANGE + "> " + theme::WHITE;
             }
             break;
-        case 'w': {
-            out_ += theme::CLS;
-            out_ += "\r\n" + theme::drip("WHO") + "   ";
-            out_ += theme::fade("WHO'S ONLINE");
-            out_ += "\r\n";
-            std::vector<WhoLine> all = who_ ? who_() : std::vector<WhoLine>{{node_, handle_, "Menu"}};
-            for (const WhoLine& w : all) {
-                char b[160];
-                std::snprintf(b, sizeof b, "   %snode %-3d %s%-24s %s%s\r\n", theme::ORANGE, w.node, theme::WHITE,
-                              w.handle.empty() ? "" : w.handle.c_str(), theme::TEXT,
-                              w.handle.empty() ? "waiting for a caller" : w.activity.c_str());
-                out_ += b;
-            }
-            showMenu();
+        case 'w':
+            showWhoOnline();
             break;
-        }
         case 'f':
             if (!files_) {
                 out_ += "\r\n\r\n   ";
@@ -1423,19 +1499,9 @@ void Node::key(char c) {
             }
             showDoors();
             break;
-        case 'i': {
-            SysInfo s = info_();
-            char b[320];
-            std::snprintf(b, sizeof b,
-                          "\r\n\r\n   %sSystem%s\r\n   node      %d\r\n   address   %s  (%s)\r\n"
-                          "   wifi      %s, %d dBm\r\n   uptime    %s\r\n   free RAM  %u bytes\r\n"
-                          "   storage   %s\r\n",
-                          HI, DIM, node_, s.ip.c_str(), s.host.c_str(), s.wifi.c_str(), s.rssi,
-                          uptime(s.uptimeSec).c_str(), (unsigned)s.freeHeap, s.storage.c_str());
-            out_ += b;
-            showMenu();
+        case 'i':
+            showSystemInfo();
             break;
-        }
         case 'c':
             out_ += "\r\n\r\n   ";
             out_ += RED;
@@ -1650,6 +1716,37 @@ void Node::multiKey(char c) {
         default:
             break;
     }
+}
+
+void Node::showWhoOnline() {
+    out_ += theme::CLS;
+    out_ += "\r\n" + theme::drip("WHO") + "   ";
+    out_ += theme::fade("WHO'S ONLINE");
+    out_ += "\r\n";
+    std::vector<WhoLine> all;
+    if (who_) all = who_();
+    else all.push_back({node_, handle_, "Menu"});
+    for (const WhoLine& w : all) {
+        char b[160];
+        std::snprintf(b, sizeof b, "   %snode %-3d %s%-24s %s%s\r\n", theme::ORANGE, w.node, theme::WHITE,
+                      w.handle.empty() ? "" : w.handle.c_str(), theme::TEXT,
+                      w.handle.empty() ? "waiting for a caller" : w.activity.c_str());
+        out_ += b;
+    }
+    showMenu();
+}
+
+void Node::showSystemInfo() {
+    SysInfo s = info_();
+    char b[320];
+    std::snprintf(b, sizeof b,
+                  "\r\n\r\n   %sSystem%s\r\n   node      %d\r\n   address   %s  (%s)\r\n"
+                  "   wifi      %s, %d dBm\r\n   uptime    %s\r\n   free RAM  %u bytes\r\n"
+                  "   storage   %s\r\n",
+                  HI, DIM, node_, s.ip.c_str(), s.host.c_str(), s.wifi.c_str(), s.rssi,
+                  uptime(s.uptimeSec).c_str(), (unsigned)s.freeHeap, s.storage.c_str());
+    out_ += b;
+    showMenu();
 }
 
 void Node::showLastCallers() {
@@ -2194,13 +2291,14 @@ std::string Node::activityText() const {
         case State::PreLogon:
         case State::CheckAccess: return "logging in";
         case State::ApplyBar: return "new user application";
+        case State::SeqPause: return "logging in";
         case State::ApplyAsk:
         case State::NupAsk:
         case State::Applying: return "new user application";
         case State::Pending: return "waiting to be validated";
         case State::OneLinerAsk:
         case State::OneLiner: return "oneliners";
-        case State::Menu: return "main menu";
+        case State::Menu: return seqFast_ ? "logging in" : "main menu";
         case State::Messages: return msgs_ ? msgs_->where() : "message areas";
         case State::Doors: return "door menu";
         case State::InDoor: return "in " + door().name;

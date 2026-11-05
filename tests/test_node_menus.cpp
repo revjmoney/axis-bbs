@@ -26,6 +26,7 @@ struct Rig {
     void login() {
         n.begin(0);
         type("Rev\r");
+        if (n.state() == Node::State::SeqPause) type(" ");  // the default login sequence's one pause, then MAIN
     }
     std::string type(const std::string& s) {
         n.input((const uint8_t*)s.data(), s.size(), 1000);

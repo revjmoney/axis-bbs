@@ -111,3 +111,63 @@ TEST_CASE("front door: D disconnects") {
     r.type("d");
     CHECK(r.n.state() == Node::State::Done);
 }
+
+namespace {
+std::string loginAll(Rig& r) {  // through the front door with Rev's password; everything shown from the password on
+    r.start();
+    r.type("j");
+    r.type(" ");
+    r.type("Rev\r");
+    return r.type("pass1234\r");
+}
+}  // namespace
+
+TEST_CASE("login sequence: steps run in order, a level-limited step is skipped, then MAIN") {
+    Rig r;
+    r.fs["LOGIN.SEQ"] = "step=DISPLAYFILE|0|1|0|NEWS\nstep=DISPLAYFILE|0|0|255|SECRET\n";
+    r.fs["NEWS.ANS"] = "NEWS ART";
+    r.fs["SECRET.ANS"] = "SECRET ART";
+    std::string out = loginAll(r);
+    CHECK(out.find("NEWS ART") != std::string::npos);
+    CHECK(out.find("press a key") != std::string::npos);  // its pause
+    std::string rest = r.type(" ");
+    CHECK(rest.find("SECRET ART") == std::string::npos);  // level 255 only
+    CHECK(rest.find("MAIN ->") != std::string::npos);
+}
+
+TEST_CASE("fast login: 2 jumps to MAIN and skips the rest; 1 continues the sequence") {
+    Rig r;
+    r.fs["LOGIN.SEQ"] = "step=FASTLOGIN|0|0|0|\nstep=DISPLAYFILE|0|0|0|LATER\n";
+    r.fs["FASTLOGN.MNU"] = "prompt1=FAST ->\ncmd=1|RUN:FULL_LOGIN_SEQUENCE|*|0|\ncmd=2|GOTO:MAIN|*|0|\n";
+    r.fs["LATER.ANS"] = "LATER ART";
+    CHECK(loginAll(r).find("FAST ->") != std::string::npos);
+    std::string jump = r.type("2");
+    CHECK(jump.find("MAIN ->") != std::string::npos);
+    CHECK(jump.find("LATER ART") == std::string::npos);
+    Rig s;
+    s.fs = r.fs;
+    loginAll(s);
+    std::string full = s.type("1");
+    CHECK(full.find("LATER ART") != std::string::npos);
+    CHECK(full.find("MAIN ->") != std::string::npos);
+}
+
+TEST_CASE("login sequence: user stats and who's online are the existing screens") {
+    Rig r;
+    r.fs["LOGIN.SEQ"] = "step=USERSTATS|0|0|0|\nstep=WHOISONLINE|0|0|0|\nstep=DISPLAYFILE|0|0|0|AFTER\n";
+    r.fs["AFTER.ANS"] = "AFTER ART";
+    std::string out = loginAll(r);
+    CHECK(out.find("free RAM") != std::string::npos);
+    CHECK(out.find("WHO'S ONLINE") != std::string::npos);
+    CHECK(out.find("AFTER ART") != std::string::npos);
+    CHECK(out.find("MAIN ->") != std::string::npos);
+}
+
+TEST_CASE("an unknown login sequence step is skipped") {
+    Rig r;
+    r.fs["LOGIN.SEQ"] = "step=PRINTNEWS|0|0|0|\nstep=DISPLAYFILE|0|0|0|X\n";
+    r.fs["X.ANS"] = "X ART";
+    std::string out = loginAll(r);
+    CHECK(out.find("X ART") != std::string::npos);
+    CHECK(out.find("MAIN ->") != std::string::npos);
+}

@@ -22,6 +22,7 @@
 #include "bbs/usersettings.h"
 #include "bbs/version.h"
 #include "bbs/menurunner.h"
+#include "bbs/loginseq.h"
 
 namespace axis::bbs {
 
@@ -36,7 +37,7 @@ struct SysInfo {
 
 class Node {
 public:
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, SysopMenu, PreLogon, CheckAccess, ApplyBar, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, SysopMenu, PreLogon, CheckAccess, ApplyBar, SeqPause, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -160,6 +161,12 @@ private:
     int                                            wanders_ = 0;        // matrix picks without logging in (10, then goodbye)
     int                                            loginAt_[2][2] = {};  // LOGIN.ANS |{P} and |{O}: row, column (0: none)
     std::unique_ptr<YesNoBar>                      applyBar_;
+    std::vector<LoginStep>                         seq_;  // ViSiON/3's login sequence, running between login and MAIN
+    size_t                                         seqAt_ = 0;
+    bool                                           inSeq_ = false, seqFast_ = false, seqPauseNext_ = false;
+    void                                           startSequence();
+    void                                           nextStep();
+    void                                           seqResume();  // a step's screen is done: its pause, or the next step
     bool                                           showFrontDoor();
     void                                           frontKey(char c);
     void                                           showPrelogon();
@@ -193,6 +200,8 @@ private:
     void                      rumorLine();          // one random rumor, over the main menu
     void                      extrasKey(char c);    // Rumors and BbsList states
     void                      showLastCallers();
+    void                      showWhoOnline();
+    void                      showSystemInfo();
     bool                      available_ = true;
     uint32_t                  prevCall_ = 0;
     uint32_t                  callStart_ = 0;  // when they logged in (ms); the call's time limit counts from here
