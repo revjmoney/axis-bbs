@@ -1375,7 +1375,17 @@ static void startDoor() {
     }
     if (!d.exe.empty() && d.exe[0] == '*') {  // built in: the screen copy is its unzip workspace
         logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
-        viewer.reset(new axis::bbs::AnsiViewer(callerFiles(), d.args, areaName(d.args), lentRam, lentBytes, *line));
+        std::vector<std::pair<std::string, std::string>> va;  // "ansi,scene-acid,...": several areas, a picker first
+        for (size_t from = 0; from <= d.args.size();) {
+            size_t comma = d.args.find(',', from);
+            std::string id = d.args.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
+            if (!id.empty()) va.push_back({id, areaName(id)});
+            if (comma == std::string::npos) break;
+            from = comma + 1;
+        }
+        viewer.reset(new axis::bbs::AnsiViewer(callerFiles(), va.empty() ? d.args : va[0].first, va.empty() ? areaName(d.args) : va[0].second,
+                                               lentRam, lentBytes, *line));
+        viewer->setAreas(va);
         viewer->setZipState(zipStateTake());
         viewer->setClock([] { return (uint32_t)millis(); });  // ANSI movies play at modem speed
         viewer->begin();
@@ -2392,11 +2402,20 @@ static void runCommand(const String& cmd, Print& out) {
         else if (cmd.startsWith("@FDEL ")) ok = callerFiles().remove(area, name);
         else if (storageHasSd() && !third.empty() && name.find('/') == std::string::npos) {  // a move: same card, another folder
             ok = ::rename(("/sd/files/" + area + "/" + name).c_str(), ("/sd/files/" + third + "/" + name).c_str()) == 0;
-            if (ok)
-                for (auto& e : callerFiles().list(third))
-                    if (e.name == name && e.desc.empty())
-                        for (auto& o : callerFiles().list(area))
-                            if (o.name == name) callerFiles().describe(third, name, o.desc);
+            if (ok) {  // carry its description over: scan the old FILES.BBS a line at a time (a big area's list costs the main too much RAM)
+                File   fb = SD.open(("/files/" + area + "/FILES.BBS").c_str());
+                String desc;
+                while (fb && fb.available() && desc.isEmpty()) {
+                    String l = fb.readStringUntil('\n');
+                    int    sp = l.indexOf(' ');
+                    if (sp > 0 && l.substring(0, sp).equalsIgnoreCase(name.c_str())) {
+                        desc = l.substring(sp);
+                        desc.trim();
+                    }
+                }
+                if (fb) fb.close();
+                if (!desc.isEmpty()) callerFiles().describe(third, name, desc.c_str());
+            }
         }
         logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + area.c_str() + " " + name.c_str() + (ok ? "" : " (failed)"));
         out.println(ok ? "axis: done" : "axis: that didn't work");

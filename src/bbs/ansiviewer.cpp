@@ -43,7 +43,25 @@ AnsiViewer::AnsiViewer(FileLibrary& lib, std::string areaId, std::string areaNam
                        door::ByteStream& line)
     : lib_(lib), area_(std::move(areaId)), areaName_(std::move(areaName)), ws_(workspace), wsSize_(workspaceSize), line_(line) {}
 
-void AnsiViewer::begin() { showPacks(); }
+void AnsiViewer::begin() {
+    if (areas_.size() > 1) showAreas();
+    else showPacks();
+}
+
+void AnsiViewer::showAreas() {  // which file area's packs (each one small enough for the main to list)
+    st_ = St::Areas;
+    typed_.clear();
+    std::string s = CLS;
+    s += "\r\n   " + theme::fade("A N S I   P A C K   V I E W E R") + DIM + "   pick a file area\r\n";
+    s += std::string(MAG) + "   " + std::string(70, '\xc4') + "\r\n";
+    for (size_t i = 0; i < areas_.size(); i++) {
+        char b[120];
+        std::snprintf(b, sizeof b, "   %s[%2u]%s %s\r\n", CYAN, (unsigned)(i + 1), HI, areas_[i].second.c_str());
+        s += b;
+    }
+    s += std::string(DIM) + "\r\n   Area number (Enter or Q to leave): " + HI;
+    send(s);
+}
 
 bool AnsiViewer::number(char c, int& n) {
     if (c == '\r') {
@@ -256,9 +274,27 @@ void AnsiViewer::finishPiece(ZipReader::Result res) {
 bool AnsiViewer::key(char c) {
     int n = 0;
     switch (st_) {
-        case St::Packs:
+        case St::Areas:
             if ((c | 0x20) == 'q') return false;
             if (!number(c, n)) return true;
+            if (n == 0) return false;
+            if (n <= (int)areas_.size()) {
+                area_ = areas_[(size_t)n - 1].first;
+                areaName_ = areas_[(size_t)n - 1].second;
+                showPacks();
+            } else showAreas();
+            return true;
+        case St::Packs:
+            if ((c | 0x20) == 'q' && areas_.size() > 1) {  // back to the areas
+                showAreas();
+                return true;
+            }
+            if ((c | 0x20) == 'q') return false;
+            if (!number(c, n)) return true;
+            if (n == 0 && areas_.size() > 1) {
+                showAreas();
+                return true;
+            }
             if (n == 0) return false;
             if (n > (int)packs_.size() || !openPack((size_t)n - 1)) showPacks();
             return true;
