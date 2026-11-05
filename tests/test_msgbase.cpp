@@ -175,3 +175,21 @@ TEST_CASE("a reply starts with the message quoted, initials in front, like the o
     CHECK(m.body.find("SK> glad the board is up") != std::string::npos);
     CHECK(m.body.find("right on") != std::string::npos);
 }
+
+TEST_CASE("the sysop can drop posts from an area and the rest stay whole") {
+    Dir              d;
+    FileMessageStore st(d.p.string());
+    st.post("cnc", msg("Rev", "All", "keep me", "line one\nline two"));
+    st.post("cnc", msg("Spammer", "All", "buy stuff", "spam"));
+    st.post("cnc", msg("Kid", "All", "keep me too", "ok"));
+    CHECK(st.drop("cnc", [](const Message& m) { return m.num == 2; }) == 1);
+    auto h = st.headers("cnc");
+    REQUIRE(h.size() == 2);
+    CHECK(h[0].subject == "keep me");
+    CHECK(h[1].num == 3);  // numbers don't change
+    Message m;
+    REQUIRE(st.read("cnc", 1, m));
+    CHECK(m.body == "line one\nline two");
+    CHECK(st.post("cnc", msg("Rev", "All", "new", "x")) == 4);  // and new ones keep counting up
+    CHECK(st.drop("nowhere", [](const Message&) { return true; }) == 0);
+}

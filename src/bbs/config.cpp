@@ -66,6 +66,7 @@ BbsConfig parseConfig(const std::string& ini) {
     c.loginSplash = true;  // on unless the settings say login_splash=0
     std::vector<DoorEntry> listed;
     std::map<int, FileArea> areas;  // by number: sorted, and a repeated number replaces
+    std::map<int, MenuItem> menu;  // "menu.main.N=..."
     std::map<int, FileArea> msgAreas;  // "msgareaN=id|name"
     size_t pos = 0;
     while (pos < ini.size()) {
@@ -118,8 +119,12 @@ BbsConfig parseConfig(const std::string& ini) {
             if (FileArea a; areaFrom(v, a)) msgAreas[std::atoi(k.c_str() + 7)] = a;
         } else if (k.rfind("area", 0) == 0 && k.size() > 4 && std::isdigit((unsigned char)k[4])) {
             if (FileArea a; areaFrom(v, a)) areas[std::atoi(k.c_str() + 4)] = a;
+        } else if (k.rfind("menu.main.", 0) == 0 && k.size() > 10 && std::isdigit((unsigned char)k[10])) {
+            size_t b1 = v.find('|'), b2 = b1 == std::string::npos ? b1 : v.find('|', b1 + 1);
+            if (b2 != std::string::npos && b1 > 0) menu[std::atoi(k.c_str() + 10)] = {v.substr(0, b1), v.substr(b1 + 1, b2 - b1 - 1), v.substr(b2 + 1)};
         } else c.unknown.emplace_back(k, v);
     }
+    for (auto& m : menu) c.mainMenu.push_back(m.second);
     if (listed.empty()) listed = c.doors;  // none in the file: keep the default list
     bool dos = false;
     for (auto& d : listed) dos = dos || d.exe == "*DOSSHELL";
@@ -200,9 +205,26 @@ std::string formatConfig(const BbsConfig& c) {
         kv(("area" + std::to_string(i + 1)).c_str(), areaText(c.areas[i]));
     for (size_t i = 0; i < c.msgAreas.size(); i++)
         kv(("msgarea" + std::to_string(i + 1)).c_str(), areaText(c.msgAreas[i]));
+    for (size_t i = 0; i < c.mainMenu.size(); i++)
+        kv(("menu.main." + std::to_string(i + 1)).c_str(), c.mainMenu[i].key + "|" + c.mainMenu[i].name + "|" + c.mainMenu[i].cmd);
     for (auto& u : c.unknown) kv(u.first.c_str(), u.second);
     kv("setup_done", c.setupDone ? "1" : "0");
     return s;
+}
+
+const std::vector<std::pair<std::string, char>>& menuCommands() {
+    static const std::vector<std::pair<std::string, char>> v = {
+        {"messages", 'M'}, {"files", 'F'},    {"doors", 'D'},    {"teleconference", 'T'}, {"who", 'W'},     {"page", 'P'},
+        {"account", 'U'},  {"oneliners", 'O'}, {"multinode", 'N'}, {"lastcallers", 'L'},   {"email", 'E'},   {"scan", 'S'},
+        {"rumors", 'R'},   {"bbslist", 'B'},  {"topten", 'K'},   {"voting", 'V'},         {"info", 'I'},    {"credits", 'C'},
+        {"goodbye", 'G'},  {"sysop", '*'}};
+    return v;
+}
+
+char menuCommandKey(const std::string& cmd) {
+    for (auto& c : menuCommands())
+        if (c.first == cmd) return c.second;
+    return 0;
 }
 
 }  // namespace axis::bbs

@@ -105,6 +105,7 @@ public:
     // the doors this caller can pick: the configured ones, and for the sysop each LORD's setup program
     // (LORDCFG, drawn straight to the screen: drop "local")
     std::vector<DoorEntry> doorChoices() const;
+    std::string            editedMenu() const;  // the sysop's main menu items (cfg mainMenu) in a window
     void             resumeAfterDoor(DoorEnd how, uint32_t nowMs);
     // a download or upload from the Files menu (State::Transfer): the host runs it, then reports back
     const TransferRequest& transfer() const { return browser_->transfer(); }

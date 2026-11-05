@@ -67,6 +67,21 @@ void scan(const std::string& path, bool bodies, F visit) {
     }
     std::fclose(in);
 }
+std::string record(int num, const Message& m) {  // one post as it's stored
+    std::string rec = "\x01MSG\nnum=" + std::to_string(num) + "\nfrom=" + oneLine(m.from) + "\nto=" + oneLine(m.to) +
+                      "\nsubj=" + oneLine(m.subject) + "\ndate=" + oneLine(m.date) + "\n\n";
+    std::string line;
+    for (size_t i = 0; i <= m.body.size(); i++) {  // body lines; one that starts like a record mark is escaped
+        if (i == m.body.size() || m.body[i] == '\n') {
+            if (!line.empty() && line[0] == '\x01') line = " " + line;
+            rec += line + "\n";
+            line.clear();
+        } else if (m.body[i] != '\r') {
+            line += m.body[i];
+        }
+    }
+    return rec;
+}
 std::vector<std::string> split(const std::string& s, char sep, size_t n) {  // the last field whole
     std::vector<std::string> v;
     size_t                   pos = 0;
@@ -109,6 +124,33 @@ bool FileMessageStore::read(const std::string& area, int num, Message& out) {
     return found;
 }
 
+int FileMessageStore::drop(const std::string& area, const std::function<bool(const Message&)>& gone) {
+    std::string tmp = path(area) + ".tmp";
+    std::FILE*  out = nullptr;
+    int         dropped = 0, kept = 0;
+    scan(path(area), true, [&](const Message& m) {
+        if (gone(m)) {
+            dropped++;
+            return true;
+        }
+        if (!out) out = std::fopen(tmp.c_str(), "wb");
+        if (out) {
+            std::string r = record(m.num, m);
+            std::fwrite(r.data(), 1, r.size(), out);
+        }
+        kept++;
+        return true;
+    });
+    if (out) std::fclose(out);
+    if (!dropped) {
+        std::remove(tmp.c_str());
+        return 0;
+    }
+    std::remove(path(area).c_str());
+    if (kept) std::rename(tmp.c_str(), path(area).c_str());
+    return dropped;
+}
+
 int FileMessageStore::post(const std::string& area, const Message& m) {
     int last = 0;
     scan(path(area), false, [&](const Message& h) {
@@ -117,18 +159,7 @@ int FileMessageStore::post(const std::string& area, const Message& m) {
     });
     std::FILE* out = std::fopen(path(area).c_str(), "ab");
     if (!out) return 0;
-    std::string rec = "\x01MSG\nnum=" + std::to_string(last + 1) + "\nfrom=" + oneLine(m.from) + "\nto=" + oneLine(m.to) +
-                      "\nsubj=" + oneLine(m.subject) + "\ndate=" + oneLine(m.date) + "\n\n";
-    std::string line;
-    for (size_t i = 0; i <= m.body.size(); i++) {  // body lines; one that starts like a record mark is escaped
-        if (i == m.body.size() || m.body[i] == '\n') {
-            if (!line.empty() && line[0] == '\x01') line = " " + line;
-            rec += line + "\n";
-            line.clear();
-        } else if (m.body[i] != '\r') {
-            line += m.body[i];
-        }
-    }
+    std::string rec = record(last + 1, m);
     bool ok = std::fwrite(rec.data(), 1, rec.size(), out) == rec.size();
     std::fclose(out);
     return ok ? last + 1 : 0;

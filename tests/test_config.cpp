@@ -229,3 +229,25 @@ TEST_CASE("a mirrored area with no level: id|name|m") {
     CHECK(c.areas[0].minSecurity == 0);
     CHECK(c.areas[0].name == "Axis");
 }
+
+TEST_CASE("the main menu's items are data: hotkey, name and command, kept in order") {
+    BbsConfig c = parseConfig("menu.main.2=F|File Vaults|files\nmenu.main.1=X|Message Bases|messages\n");
+    REQUIRE(c.mainMenu.size() == 2);
+    CHECK(c.mainMenu[0].key == "X");
+    CHECK(c.mainMenu[0].name == "Message Bases");
+    CHECK(c.mainMenu[0].cmd == "messages");
+    CHECK(c.mainMenu[1].cmd == "files");
+    std::string t = formatConfig(c);
+    CHECK(t.find("menu.main.1=X|Message Bases|messages") != std::string::npos);
+    CHECK(parseConfig(t).mainMenu.size() == 2);
+    CHECK(parseConfig("").mainMenu.empty());  // none set: the built-in menu
+}
+
+TEST_CASE("every menu command has the board's own key for it") {
+    CHECK(menuCommandKey("messages") == 'M');
+    CHECK(menuCommandKey("files") == 'F');
+    CHECK(menuCommandKey("goodbye") == 'G');
+    CHECK(menuCommandKey("sysop") == '*');
+    CHECK(menuCommandKey("nonsense") == 0);
+    CHECK(menuCommands().size() >= 18);
+}

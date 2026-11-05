@@ -440,3 +440,27 @@ TEST_CASE("a door asked for at the board's own screen says to call in for doors"
     CHECK(n.state() == Node::State::Menu);
     CHECK(plain(n.takeOutput()).find("telnet") != std::string::npos);
 }
+
+TEST_CASE("an edited main menu shows its items and only its hotkeys work") {
+    axis::bbs::BbsConfig c;
+    c.mainMenu = {{"X", "Message Bases", "messages"}, {"Q", "Leave", "goodbye"}};
+    axis::bbs::Node n(1, [] { return axis::bbs::SysInfo{}; }, c);
+    n.begin(0);
+    n.input((const uint8_t*)"\r", 1, 100);  // past the splash
+    for (int i = 0; i < 6 && n.state() != axis::bbs::Node::State::Menu; i++) {
+        n.takeOutput();
+        n.input((const uint8_t*)"Tester\r", 7, 200 + i * 100);
+        n.input((const uint8_t*)"\r", 1, 300 + i * 100);
+    }
+    if (n.state() == axis::bbs::Node::State::Menu) {
+        n.takeOutput();
+        n.input((const uint8_t*)"?", 1, 2000);
+        std::string out = n.takeOutput();
+        CHECK(out.find("Message Bases") != std::string::npos);
+        CHECK(out.find("Leave") != std::string::npos);
+        n.input((const uint8_t*)"f", 1, 2100);  // files isn't on this menu
+        CHECK(n.takeOutput().find("Not on this menu") != std::string::npos);
+        n.input((const uint8_t*)"q", 1, 2200);  // Q runs goodbye
+        CHECK(n.state() != axis::bbs::Node::State::Menu);
+    }
+}

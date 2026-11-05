@@ -406,6 +406,13 @@ void Node::prompt() {
     }
 }
 
+std::string Node::editedMenu() const {  // the sysop's menu items in a window
+    std::vector<std::pair<std::string, std::string>> rows;
+    for (const MenuItem& m : cfg_.mainMenu)
+        if (m.cmd != "sysop" || sysop_) rows.push_back({"[" + m.key + "]", m.name});
+    return theme::window("COMMANDS", rows);
+}
+
 std::vector<DoorEntry> Node::doorChoices() const {
     std::vector<DoorEntry> v = cfg_.doors;
     if (!sysop_) return v;
@@ -473,6 +480,13 @@ void Node::showMainMenu() {
         if (!art.empty()) {
             out_ += mci(art);
         } else {
+            if (!cfg_.mainMenu.empty()) {  // the sysop's edited menu
+                out_ += theme::titleBar("Main Menu");
+                out_ += editedMenu();
+                rumorLine();
+                prompt();
+                return;
+            }
             static const BarItem items[] = {{'M', "Message Bases"}, {'F', "File Vaults"},    {'D', "Doors"},         {'T', "Teleconference"},
                                             {'W', "Who's Online"},  {'O', "Oneliners"},      {'U', "User Settings"}, {'Y', "Yell for SysOp"},
                                             {'I', "System Info"},   {'C', "Credits"},        {'G', "Goodbye"},       {'N', "MultiNode"}};  // (R rumors, B BBS list, K top ten, E email, S scan work too)
@@ -493,6 +507,11 @@ void Node::showMainMenu() {
     }
     if (std::string art = art_ ? art_("MAIN.ANS") : ""; !art.empty()) {  // the axis look's own main menu screen
         out_ += mci(art);
+        prompt();
+        return;
+    }
+    if (!cfg_.mainMenu.empty()) {
+        out_ += "\r\n" + theme::drip("MENU") + editedMenu();
         prompt();
         return;
     }
@@ -878,6 +897,16 @@ void Node::key(char c) {
             return;
         }
         c = to[hit - from];
+    } else if (!cfg_.mainMenu.empty() && c != '?' && c != '*') {  // the sysop's edited menu: its hotkeys only
+        char run = 0;
+        for (const MenuItem& m : cfg_.mainMenu)
+            if (!m.key.empty() && (m.key[0] | 0x20) == (c | 0x20)) run = menuCommandKey(m.cmd);
+        if (!run) {
+            out_ += std::string("\r\n   ") + AMBER + "Not on this menu." + theme::TEXT;
+            prompt();
+            return;
+        }
+        c = run;
     }
     switch (c | 0x20) {  // either case
         case 't':

@@ -25,6 +25,14 @@ struct FileArea {
 
 std::vector<FileArea> defaultFileAreas();  // Rev's list (design spec, file areas table)
 
+// One item of an editable menu: the key callers press, what it's called, the BBS command it runs.
+struct MenuItem {
+    std::string key, name, cmd;
+};
+// The commands a menu item can run, with the board's own key for each ("messages" -> 'M').
+const std::vector<std::pair<std::string, char>>& menuCommands();
+char menuCommandKey(const std::string& cmd);  // 0 if there's no such command
+
 struct BbsConfig {
     std::string sysopHandle, sysopSalt, sysopHash, sysopRealName;
     std::string dosSalt, dosHash;  // the DOS Prompt door password (set at the serial console: @DOSPASS)
@@ -53,6 +61,8 @@ struct BbsConfig {
                                    {"tooling", "Tooling, Feeds & Speeds"}, {"workholding", "Workholding & Fixtures"},
                                    {"lasers", "Lasers, Plasma & 3D Printers"}, {"showtell", "Show & Tell"}, {"crashes", "Crashes & Fails"},
                                    {"trade", "Buy, Sell & Trade"}, {"scene", "BBS Scene & ANSI"}, {"sysop", "Ask the Sysop"}};  // "msgareaN=id|name"  // "areaN=id|name"; the defaults unless listed
+    // the main menu as data ("menu.main.N=hotkey|name|command"); empty = the built-in menu
+    std::vector<MenuItem> mainMenu;
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save
 };
 

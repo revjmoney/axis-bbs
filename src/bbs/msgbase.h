@@ -22,6 +22,7 @@ public:
     virtual std::vector<Message> headers(const std::string& area) = 0;  // without bodies, oldest first
     virtual bool                 read(const std::string& area, int num, Message& out) = 0;
     virtual int                  post(const std::string& area, const Message& m) = 0;  // its number, or 0
+    virtual int drop(const std::string&, const std::function<bool(const Message&)>&) { return 0; }  // the sysop removes posts
     virtual ~MessageStore() = default;
 };
 
@@ -31,6 +32,8 @@ public:
     std::vector<Message> headers(const std::string& area) override;
     bool                 read(const std::string& area, int num, Message& out) override;
     int                  post(const std::string& area, const Message& m) override;
+    // the sysop: rewrite the area without the posts `gone` picks (numbers stay); how many went
+    int drop(const std::string& area, const std::function<bool(const Message&)>& gone) override;
 
 private:
     std::string path(const std::string& area) const;
