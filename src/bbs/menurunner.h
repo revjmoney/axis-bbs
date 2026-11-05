@@ -27,6 +27,9 @@ class MenuRunner {
 public:
     using Loader = std::function<std::string(const std::string& file)>;  // "MAIN.MNU", "MAIN.ANS": "" if none
     MenuRunner(Loader load, ArtEmit emit, ArtValue value);
+    // a menu's art read a piece at a time (a 7 KB screen never sits in RAM whole); false: not there, use the Loader
+    using ArtPieces = std::function<bool(const std::string& file, const ArtEmit& piece)>;
+    void setArtPieces(ArtPieces pieces) { artPieces_ = std::move(pieces); }
     bool       enter(const std::string& name, const AcsUser& who);  // false: no such menu, or not allowed
     MenuAction key(char c, uint32_t nowMs = 0);                     // key(0): the next auto-run, if any
     void       tick(uint32_t nowMs);                                // a lone ESC becomes Esc after a pause
@@ -41,6 +44,7 @@ private:
     MenuAction  typed(bool enter);
     void        emit(const std::string& s) { emit_(s.data(), s.size()); }
     Loader                    load_;
+    ArtPieces                 artPieces_;
     ArtEmit                   emit_;
     ArtValue                  value_;
     MenuDef                   def_;

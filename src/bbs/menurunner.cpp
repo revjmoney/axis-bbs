@@ -42,9 +42,21 @@ bool MenuRunner::enter(const std::string& name, const AcsUser& who) {
 
 void MenuRunner::redraw() {
     if (def_.clr) emit("\x1b[0m\x1b[2J\x1b[H");
-    std::string art = load_(name_ + ".ANS");
-    if (!art.empty()) expandArt(art, who_, value_, emit_);
-    art = std::string();
+    std::string carry;  // text up to the last line break goes out; the rest waits, so no code is cut in two
+    auto        piece = [&](const char* d, size_t n) {
+        carry.append(d, n);
+        size_t cut = carry.rfind('\n');
+        cut = cut != std::string::npos ? cut + 1 : carry.size() > 1024 ? carry.size() - 32 : 0;
+        if (cut) {
+            expandArt(carry.substr(0, cut), who_, value_, emit_);
+            carry.erase(0, cut);
+        }
+    };
+    if (!artPieces_ || !artPieces_(name_ + ".ANS", piece)) {
+        std::string art = load_(name_ + ".ANS");
+        if (!art.empty()) expandArt(art, who_, value_, emit_);
+    }
+    if (!carry.empty()) expandArt(carry, who_, value_, emit_);
     if (bar_) emit(bar_->draw());
     prompt();
 }

@@ -276,9 +276,27 @@ static std::string menuFile(const std::string& name) {
     if (mnu)
         if (auto it = menuCache.find(name); it != menuCache.end()) return it->second;
     std::string reply;
-    s = cluster->request(std::string("U\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1' ? reply.substr(1) : "";
+    if (cluster->request(std::string("U\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1') {
+        reply.erase(0, 1);  // (in place: art is several KB, no second copy)
+        s = std::move(reply);
+    }
     if (mnu) menuCache[name] = s;
     return s;
+}
+
+// a menu's art from this board's own storage a piece at a time (false when it isn't here: the whole-file path)
+static bool menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) {
+    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
+    FILE* f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
+    if (!f) return false;
+    char b[512];
+    for (size_t n, total = 0; total < 16384 && (n = fread(b, 1, sizeof b, f)) > 0; total += n) {
+        const void* sauce = memchr(b, 0x1a, n);  // the SAUCE record: not part of the picture
+        piece(b, sauce ? (size_t)((const char*)sauce - b) : n);
+        if (sauce) break;
+    }
+    fclose(f);
+    return true;
 }
 
 // The shared lists for the local console (callers use the same over their own node setup).
@@ -1290,7 +1308,7 @@ static void answerIn(WiFiClient incoming) {
         });
         node->setMessages(&callerMessages());
         node->setArt([](const std::string& name) { return themeArt(name); });
-        node->setMenus([](const std::string& name) { return menuFile(name); });
+        node->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
         node->setOneLiners(
             [] {  // the wall: here on the main, over the link on a follower
@@ -2009,7 +2027,7 @@ static void handleTap(int x, int y) {
             localNode->setSysopRun(sysopRun);
             localNode->setMessages(&callerMessages());
             localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
-            localNode->setMenus([](const std::string& name) { return menuFile(name); });
+            localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
             localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
             localNode->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
             localPan = 0;

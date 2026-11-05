@@ -237,13 +237,14 @@ char v3Command(const std::string& f) {
 }
 }  // namespace
 
-void Node::setMenus(MenuRunner::Loader load) {
+void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
     menu_.reset();
     builtin_ = false;
     if (!load || load("MAIN.MNU").empty()) return;
     menu_.reset(new MenuRunner(
         load, [this](const char* d, size_t n) { out_.append(d, n); },
         [this](const std::string& k) { return menuValue(k); }));
+    menu_->setArtPieces(std::move(pieces));
 }
 
 // a placeholder's value: "%XX" are AXIS's own codes (as theme art has always used them), the rest ViSiON/3's names

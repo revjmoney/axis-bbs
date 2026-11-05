@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "bbs/menurunner.h"
 
+#include <algorithm>
 #include <map>
 
 #include "doctest.h"
@@ -86,4 +87,21 @@ TEST_CASE("runner: an arrow key on a menu with no lightbar runs nothing (it is n
     REQUIRE(g.r.enter("MAIN", AcsUser{10, ""}));
     for (char c : std::string("\x1b[A\x1b[B\x1b[5~\x1bOA")) CHECK(g.r.key(c).kind == MenuAction::None);
     CHECK(g.r.key('a').kind == MenuAction::Goto);  // the real key still works
+}
+
+TEST_CASE("runner: art from a piece-by-piece loader comes out the same as the whole file, codes split across pieces") {
+    std::string art;
+    for (int i = 0; i < 300; i++) art += "|15row " + std::to_string(i) + " |07grey|CR\r\n";  // ~6 KB with codes everywhere
+    Rig whole, pieces;
+    whole.fs = pieces.fs = {{"MAIN.MNU", "clr=0\nprompt=0\ncmd=M|GOTO:MSGMENU|*|0|\n"}, {"MAIN.ANS", art}};
+    REQUIRE(whole.r.enter("MAIN", AcsUser{10, ""}));
+    pieces.r.setArtPieces([&](const std::string& file, const ArtEmit& piece) {
+        if (file != "MAIN.ANS") return false;
+        for (size_t at = 0; at < art.size(); at += 7) piece(art.data() + at, std::min<size_t>(7, art.size() - at));  // 7: splits |15 and |CR
+        return true;
+    });
+    pieces.fs.erase("MAIN.ANS");  // only the piece loader has it
+    pieces.out.clear();
+    REQUIRE(pieces.r.enter("MAIN", AcsUser{10, ""}));
+    CHECK(pieces.out == whole.out);
 }

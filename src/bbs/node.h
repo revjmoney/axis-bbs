@@ -84,7 +84,7 @@ public:
     // the Oblivion look's screens from the card (MATRIX.ANS, MAIN.ANS): their text, or "" for the stock screen
     void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
     // ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): with a MAIN.MNU they drive the main menu; without, the built-in one
-    void        setMenus(MenuRunner::Loader load);
+    void        setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces = nullptr);
     // the last callers list ("handle|node|time|location" lines, oldest first) and adding this call to it
     void        setLastCallers(std::function<std::vector<std::string>()> get, std::function<void(const std::string&)> add) {
         callersGet_ = std::move(get);
