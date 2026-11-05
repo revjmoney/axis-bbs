@@ -347,3 +347,23 @@ TEST_CASE("dos closing a duplicate handle keeps the original open") {
     r.call(0x3E00);
     CHECK(r.slurp("LOG.DAT") == "KEPT");
 }
+
+TEST_CASE("dos open with AL=44h can also write (LORDCFG registers by patching LORD.EXE that way)") {
+    Rig r("open44w");
+    r.file("LORD.EXE", "MZ......");
+    r.str(0x200, "LORD.EXE");
+    r.cpu.setDx(0x200);
+    r.call(0x3D44);
+    REQUIRE_FALSE(r.cpu.cf());
+    uint16_t h = r.cpu.ax();
+    r.cpu.setBx(h), r.cpu.setCx(0), r.cpu.setDx(2);
+    r.call(0x4200);  // to offset 2
+    r.str(0x300, "R");
+    r.cpu.setBx(h), r.cpu.setCx(1), r.cpu.setDx(0x300);
+    r.call(0x4000);
+    CHECK_FALSE(r.cpu.cf());
+    CHECK(r.cpu.ax() == 1);  // a short write is Pascal's runtime error 101
+    r.cpu.setBx(h);
+    r.call(0x3E00);
+    CHECK(r.slurp("LORD.EXE") == "MZR.....");
+}

@@ -283,8 +283,11 @@ bool Dos::int21() {
                 p += name;
                 mem_.writeBlock(lin(ds, (uint16_t)(dx + p.size() - std::string(name).size())), name, std::string(name).size() + 1);
             }
-            int access = ah == 0x3D ? (al & 3) : 2;
-            if (access == 3) access = 0;  // DOS ignores the reserved value; LORD opens with AL=44h
+            // LORD and LORDCFG open with AL=44h (sharing "deny none", access bits 100b): LORD only reads that
+            // way, but LORDCFG registers by writing LORD.EXE through it, so anything but plain read (0) or
+            // write (1) opens read/write
+            int access = ah == 0x3D ? (al & 7) : 2;
+            if (access > 2) access = 2;
             int host = fs_.open(p, access, ah != 0x3D, ah == 0x3C, ah == 0x5B);
             int h = host < 0 ? host : newHandle(host);
             if (host >= 0 && h < 0) {
