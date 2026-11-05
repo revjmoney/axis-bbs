@@ -202,7 +202,7 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
 <div class="lead"><div class="lead-text"><p class="lede">The 6-digit setup PIN, the telnet wizard and your sysop account.</p><p>Once it is on your network, the board asks how you want to set the BBS up: <strong>ON THIS SCREEN</strong> or <strong>OVER TELNET</strong>.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/setup-pin.png"><div class="screen"><img src="media/setup-pin.png" alt="The CYD first-boot setup screen: telnet axis.local and a six digit setup PIN in big yellow numbers" loading="lazy" width="640" height="480"></div></a><figcaption>Setup over telnet: the one-time PIN</figcaption></figure></div></div>
 <div class="topic-body"><ul>
     <li><strong>Over telnet</strong> is the easy way: the screen shows <code>telnet axis.local</code>, the board's address, and a 6-digit <strong>setup PIN</strong>. Call in from a computer on the same network, type the PIN, and answer the wizard. Anyone who calls before setup is done only sees "This BBS is being set up" and a PIN prompt.</li>
-    <li><strong>On this screen</strong> is reserved for an on-screen wizard. In version 0.4 it still only says the on-screen setup is coming in a later build and offers a way back, so use telnet.</li>
+    <li><strong>On this screen</strong> is reserved for an on-screen wizard. In version 0.5 it still only says the on-screen setup is coming in a later build and offers a way back, so use telnet.</li>
   </ul>
   <div class="figs">
     
@@ -830,37 +830,39 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
 
 <article class="topic" id="cyd-console" data-group="Sysop" aria-labelledby="cyd-console-title">
 <header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="cyd-console-title">The CYD console</h2><dl class="msghead"><dt>Topic</dt><dd>The CYD console</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>25 of 34</dd></dl></header>
-<div class="lead"><div class="lead-text"><p class="lede">Activity screen, node detail and KICK, the touch sysop menu.</p><p>The board's own touchscreen is the sysop's control panel. Nothing here needs a password: whoever can touch the board is the sysop.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen: AXIS logo, LOCAL button, battery spot, status lights NET LINK SD CALL DOOR PAGE, two node lines, a ticker and the newest events" loading="lazy" width="640" height="480"></div></a><figcaption>The activity screen (CYD panel at 2x)</figcaption></figure></div></div>
-<details class="sub" id="wfc" open><summary>The activity screen</summary><div class="sub-body"><p>When idle the screen shows the drippy AXIS logo and a framed panel titled WAITING FOR CALLER (ACTIVITY while callers are on), with this board's node numbers in the corner.</p>
-  
+<div class="lead"><div class="lead-text"><p class="lede">The Iniquity-style activity screen, node detail and KICK, the sysop menu, the control panel.</p><p>The board's own touchscreen is the sysop's control panel. Nothing here needs a password: whoever can touch the board is the sysop.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen: AXIS logo, LOCAL button, battery spot, status lights NET LINK SD CALL DOOR PAGE, two node lines, a ticker and the newest events" loading="lazy" width="640" height="480"></div></a><figcaption>The activity screen (CYD panel at 2x)</figcaption></figure></div></div>
+<details class="sub" id="wfc" open><summary>The activity screen</summary><div class="sub-body"><p>When idle the board shows an Iniquity-style activity screen: a title bar with the version and this board's nodes, a chunky AXIS logo across the top 3/16, a status line (time, date, event), then three framed boxes.</p>
   <ul>
-    <li><strong>Status lights:</strong> NET (WiFi), LINK (other boards in the cluster), SD (card), CALL (callers online), DOOR (a door running anywhere in the cluster), PAGE (a caller paged the sysop). Steady means on, blinking means busy, dim means off.</li>
-    <li><strong>One line per node</strong> on this board: the caller, where they are, and minutes online, or "waiting for a caller". Lines too long for their space scroll.</li>
-    <li><strong>A ticker</strong> on the free row: the other boards' nodes and who is on them, the dial address and port, IP, WiFi network and signal, storage, uptime, free RAM, calls today, the last caller and the location.</li>
-    <li><strong>The two newest events</strong> from the log. A page from a caller takes their place for a minute.</li>
-    <li><strong>N NEW USERS</strong> blinks in the frame while applications wait; otherwise the frame shows the time.</li>
-    <li><strong>A battery spot</strong> top right shows "?" (there is no battery sensor on a stock board), and the <strong>LOCAL</strong> button under it opens the <a href="#local-console">local console</a>.</li>
+    <li><strong>The menu box</strong> (a lightbar, every line a touch target): <strong>f1 local logon</strong> opens the <a href="#local-console">local console</a>; <strong>f2 sysop menu</strong> opens the <a href="#sysop-menu">sysop menu</a>; f3 users, f4 files, f5 event log, f6 bbs setup and f7 system open the sysop menu at that layer. f3 shows how many applications wait.</li>
+    <li><strong>The nodes box:</strong> every node on every board in the cluster, headless boards included, with who is on and what they are doing (or the board's address while it waits). Tap a node on this board for its detail screen.</li>
+    <li><strong>The today box:</strong> calls today, new users, the last caller, free RAM, uptime, WiFi signal, SD space and file areas.</li>
+    <li><strong>Status lamps:</strong> net, link (other boards), sd, call, door and page. Steady means on, blinking means busy, dark means off.</li>
+    <li><strong>The newest event</strong> (a page from a caller takes its place for a minute) and a footer that blinks "N new users waiting" while applications wait.</li>
   </ul></div></details>
 <details class="sub" id="node-detail"><summary>Node detail and KICK</summary><div class="sub-body"><p>Tap a node's line for its detail screen: the caller, what they are doing, time online, their IP, whether they are a sysop, their calls and upload and download totals. <strong>BACK</strong> returns; <strong>KICK</strong> hangs that caller up (and logs it). Tap anywhere else on the activity screen for the sysop menu.</p></div></details>
-<details class="sub" id="sysop-menu"><summary>The sysop menu</summary><div class="sub-body"><div class="figs one">
-    <figure class="crt cyd"><a class="lb" href="media/cyd-sysop.png"><div class="screen"><img src="media/cyd-sysop.png" alt="The touch sysop menu: BBS SETUP, USERS, FILES, MESSAGES, LOGS, SYSTEM and EXIT" loading="lazy" width="640" height="480"></div></a><figcaption>The sysop menu</figcaption></figure>
+<details class="sub" id="sysop-menu" open><summary>The sysop menu</summary><div class="sub-body"><p>The sysop menu is part of the BBS itself: lightbar screens in the board's look, the same menu whether you are called in or at the board. Online, press <kbd>*</kbd> at the main menu (sysop only). On the board, tap <strong>f2</strong> (or f3 to f7 to land on a layer): it opens straight into the menu in big 8x16 letters, and you tap a line to pick it, or use KEYS. Move with the arrow keys or the item's number, <kbd>Enter</kbd> picks, <kbd>Q</kbd> or <kbd>Esc</kbd> goes back a layer, <kbd>N</kbd>/<kbd>P</kbd> page.</p>
+  <div class="figs one">
+    <figure class="crt cyd"><a class="lb" href="media/cyd-sysopmenu.png"><div class="screen"><img src="media/cyd-sysopmenu.png" alt="The sysop menu on the board in big letters: Users, File areas, Message bases, Settings, Menus, System" loading="lazy" width="640" height="480"></div></a><figcaption>The sysop menu on the board (f2)</figcaption></figure>
   </div>
-  <details class="ref"><summary>Reference table: button, what is there (6 rows)</summary><div class="table-wrap"><table>
-    <thead><tr><th>Button</th><th>What is there</th></tr></thead>
+  <details class="ref"><summary>Reference table: layer, what you can do (6 rows)</summary><div class="table-wrap"><table>
+    <thead><tr><th>Layer</th><th>What you can do</th></tr></thead>
     <tbody>
-      <tr><td>BBS SETUP</td><td>The settings at a glance: BBS name, sysop, location, dial address, timezone, FTN address, new user security and minutes, idle logoff, theme and doors. <strong>THEME</strong> flips the look for the whole cluster. <strong>RUN SETUP</strong> makes a new setup PIN and goes back to the setup choice; nothing changes until the wizard saves.</td></tr>
-      <tr><td>USERS</td><td>Every caller, pending ones first; MORE pages. Tap one for CALLER: handle, status, location, name, email, calls and every application answer, with VALIDATE, DENY, ACCESS (FILES, MSGS, DOORS, FREE DL and SYSOP toggles) and MORE.</td></tr>
-      <tr><td>FILES</td><td>The file areas and how many files each holds ("no SD" without a card).</td></tr>
-      <tr><td>MESSAGES</td><td>The FTN address and a note; message areas are managed with <code>msgareaN</code> settings for now.</td></tr>
-      <tr><td>LOGS</td><td>The board's event log, newest first; MORE goes further back.</td></tr>
-      <tr><td>SYSTEM</td><td>Software version, hardware, storage, free RAM, uptime, calls today, WiFi and address. <strong>FORMAT SD</strong> erases the card to a fresh FAT32 volume after a YES, ERASE IT confirmation (refused while a caller is online). <strong>RESTART</strong> reboots the board.</td></tr>
+      <tr><td>Users</td><td>Every caller. Pick one to change real name, location, email, tagline and security level; validate or deny; set a password; turn files, messages, doors, free downloads and twit on or off; make a sysop; delete (asks first). Add a user.</td></tr>
+      <tr><td>File areas</td><td>Add, rename, set the security level, move up the list, remove. Inside an area: every file; change a description, rename, move to another area, delete (asks first).</td></tr>
+      <tr><td>Message bases</td><td>The same for message areas, plus purge posts older than N days. Inside a base: every post, newest first; delete or move one.</td></tr>
+      <tr><td>Settings</td><td>Every setting, in groups (BBS and sysop, network, callers and limits, look, other), plus the sysop password, the <a href="#accounts">new user password</a> and the DOS prompt password (set, never shown).</td></tr>
+      <tr><td>Menus</td><td>The main menu's items: start from a copy of the built-in menu, then change each item's hotkey, name and command (picked from the list), move items, remove them, add new ones, or go back to the built-in menu. A theme's MAIN.ANS on the card keeps its own letters.</td></tr>
+      <tr><td>System</td><td>The event log, every node (send a note, 15 more minutes, send to the teleconference, kick), status, SD cards, web and No-IP (update now), SD check, the doors on the card, restart.</td></tr>
     </tbody>
   </table></div></details>
-  <p>The touch screens show the settings; to change one other than the theme, use <code>@SET</code> on the serial console or run setup again. See the <a href="#settings">settings reference</a>.</p>
-  <div class="figs">
-    <figure class="crt cyd"><a class="lb" href="media/cyd-setup.png"><div class="screen"><img src="media/cyd-setup.png" alt="BBS SETUP with THEME and RUN SETUP" loading="lazy" width="640" height="480"></div></a><figcaption>BBS SETUP</figcaption></figure>
-    <figure class="crt cyd"><a class="lb" href="media/cyd-users.png"><div class="screen"><img src="media/cyd-users.png" alt="USERS with callers and their status" loading="lazy" width="640" height="480"></div></a><figcaption>USERS</figcaption></figure>
-  </div></div></details>
+  <p>Every change goes through the same <code>@</code> command the serial console uses, and runs on the main board, which shares it with every board. A follower board passes its sysop menu's commands to the main.</p></div></details>
+<details class="sub" id="control-panel"><summary>The sysop control panel (PC and phone)</summary><div class="sub-body"><p>A small app for your PC, <code>python tools/panel/run.py</code>, finds every board on your home network and serves a control panel to any browser on that network, PC or phone, at <code>http://&lt;your pc&gt;:8326/</code>, with a tray icon. Log in with the sysop password (or any security 255 user); the password never crosses the network.</p>
+  <ul>
+    <li><strong>Nodes, Users, Settings, Lists, System:</strong> the same controls as the sysop menu, built from whatever is online.</li>
+    <li><strong>Wall:</strong> every node's screen, live, like a security camera wall.</li>
+    <li><strong>Console:</strong> open a new sysop session on any board, or break in on a caller (they are told when you join and leave).</li>
+    <li>Each board's panel port is TCP 2326, LAN only, one panel at a time. Three bad logins from an address lock it out, as for telnet.</li>
+  </ul></div></details>
 <nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#user-editor" data-key="p"><small><span class="hk">P</span>rev</small>Sysop user editor</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#local-console" data-key="n"><small><span class="hk">N</span>ext</small>Local console</a></nav>
 </article>
 
@@ -1054,6 +1056,13 @@ setup_done=1</code></pre></details>
       <tr><td><code>@PUT</code>, <code>@LS</code>, <code>@RM</code>, <code>@MKDIR</code>, <code>@BAUD</code></td><td>File transfer to the board's storage, used by <code>tools/sdput.py</code> (<em>bench</em>).</td></tr>
       <tr><td><code>@DISCORD [url]</code></td><td>Discord webhook on that board, or off. See <a href="#internet">internet extras</a>.</td></tr>
       <tr><td><code>@DDNS [domain|host|key|secret]</code></td><td>GoDaddy dynamic DNS on that board, or off.</td></tr>
+      <tr><td class="wrap"><code>@KICK n</code>, <code>@ADDTIME n min</code>, <code>@FORCETC n</code>, <code>@NOTE n text</code>, <code>@BCAST text</code></td><td>Act on a node on this board: kick, more minutes for this call, send to the teleconference, a note; a broadcast to every caller on this board.</td></tr>
+      <tr><td class="wrap"><code>@USERS</code>, <code>@USER h</code>, <code>@VALIDATE h</code>, <code>@DENY h</code>, <code>@SEC h n</code>, <code>@PERM h files|msgs|doors|freedl on|off</code>, <code>@TWIT h on|off</code>, <code>@UEDIT h|field|value</code>, <code>@USERPASS h pw</code>, <code>@UDEL h</code></td><td>Users: list, details, validate, deny, level, permissions, twit, edit a field (realname, location, email, tagline, security, handle), set a password, delete.</td></tr>
+      <tr><td class="wrap"><code>@AREAS</code>, <code>@MSGAREAS</code>, <code>@AREASET files|N|id|name|level</code>, <code>@AREADEL msgs|N</code>, <code>@AREAUP files|N</code></td><td>File and message areas: list, add or change, remove, move up.</td></tr>
+      <tr><td class="wrap"><code>@FILES area</code>, <code>@FDESC area|name|text</code>, <code>@FREN area|old|new</code>, <code>@FMV area|name|to</code>, <code>@FDEL area|name</code></td><td>Files in an area: list, describe, rename, move, delete.</td></tr>
+      <tr><td class="wrap"><code>@POSTS area</code>, <code>@POSTDEL area|n</code>, <code>@POSTMV area|n|to</code>, <code>@PURGE area|days</code></td><td>Posts in a message base: list, delete, move, purge old ones.</td></tr>
+      <tr><td class="wrap"><code>@MENU</code>, <code>@MENUCMDS</code>, <code>@MENUSTART</code>, <code>@MENUSET N|key|name|command</code>, <code>@MENUUP N</code>, <code>@MENUDEL N</code>, <code>@MENURESET</code></td><td>The main menu's items: list, the commands they can run, start editing from the built-in menu, add or change, move, remove, back to the built-in menu.</td></tr>
+      <tr><td class="wrap"><code>@SETTINGS</code>, <code>@STATUS</code>, <code>@RUMORS</code>, <code>@LINERS</code>, <code>@BBSLIST</code>, <code>@VOTES</code>, <code>@RESTART</code></td><td>The settings (never a salt or hash), one status line, the lists, restart this board.</td></tr>
       <tr><td><code>@NUP [password]</code></td><td>Sets the new user password (NUP) callers need before they can apply, shared to every board. <code>@NUP</code> alone lets anyone apply again.</td></tr>
       <tr><td><code>@NOIP [host|username|password]</code></td><td>No-IP dynamic DNS on that board, or off. <code>@NOIPNOW</code> updates at once. See <a href="#internet">internet extras</a>.</td></tr>
       <tr><td><code>@WEB</code>, <code>@WEBTEST</code>, <code>@WEBPING</code></td><td>Internet extras status, a test announcement, and an HTTPS test.</td></tr>
@@ -1140,7 +1149,7 @@ build/axis_tests</code></pre>
     <div class="titleblock" role="contentinfo" aria-label="Title block">
       <div class="tb title wide"><span>Title</span><b>Axis Micro BBS Firmware</b></div>
       <div class="tb"><span>Part</span><b>AXIS-BBS</b></div>
-      <div class="tb"><span>Rev</span><b>0.4</b></div>
+      <div class="tb"><span>Rev</span><b>0.5</b></div>
       <div class="tb wide"><span>Drawn</span><b>Rev. J. Money, the maker of RotatoCAM</b></div>
       <div class="tb"><span>Scale</span><b>1:1</b></div>
       <div class="tb"><span>Sheet</span><b>1 OF 1</b></div>

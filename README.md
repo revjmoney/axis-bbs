@@ -37,8 +37,9 @@ Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headle
 | DOS doors | 8086 emulator with FOSSIL and DOOR.SYS: LORD 4.07, BBS Black Jack | [lord](https://revjmoney.github.io/axis-bbs/docs.html#lord) |
 | Built-in doors | ANSI Pack Viewer with ANSI movies; password-locked DOS prompt | [ansi-viewer](https://revjmoney.github.io/axis-bbs/docs.html#ansi-viewer) |
 | Accounts | New user application, validation, levels, permissions, time limits, twit flag | [accounts](https://revjmoney.github.io/axis-bbs/docs.html#accounts) |
-| Sysop console | Activity screen with status lights, KICK, touch sysop menu, local console | [cyd-console](https://revjmoney.github.io/axis-bbs/docs.html#cyd-console) |
+| Sysop console | Iniquity-style activity screen, a layered sysop menu inside the BBS (users, file areas and files, message bases and posts, every setting, a menu editor, system) on telnet and the touchscreen, local console | [cyd-console](https://revjmoney.github.io/axis-bbs/docs.html#cyd-console) |
 | Headless nodes | Plain ESP32 boards as extra nodes, set up over the AXIS-SETUP hotspot | [headless](https://revjmoney.github.io/axis-bbs/docs.html#headless) |
+| Sysop control panel | A PC app that serves a panel to your phone or PC on the LAN: every control, a live wall of every node's screen, console login or break-in | [control-panel](https://revjmoney.github.io/axis-bbs/docs.html#control-panel) |
 | Internet extras | No-IP dynamic DNS (asked by the setup wizard), GoDaddy DNS, Discord announcements | [internet](https://revjmoney.github.io/axis-bbs/docs.html#internet) |
 
 <p>

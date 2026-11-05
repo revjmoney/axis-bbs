@@ -805,7 +805,7 @@ static void drawWfc() {
         snprintf(b, sizeof b, "%u new user%s waiting", (unsigned)users.pending(), users.pending() == 1 ? "" : "s");
         plain(2, 231, b, blink ? rgb(80, 255, 80) : rgb(0, 150, 0));
     } else {
-        fade(2, 231, "(release 11/04/26)", true);
+        fade(2, 231, "(release 11/05/26)", true);
     }
     fade(200, 231, "(c) jmscnc.com", true);
 }
