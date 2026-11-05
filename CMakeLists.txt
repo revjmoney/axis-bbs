@@ -52,6 +52,7 @@ add_library(axiscore STATIC
     src/bbs/noip.cpp
     src/door/screenmirror.cpp
     src/bbs/panelproto.cpp
+    src/bbs/loginguard.cpp
     src/bbs/setup_gate.cpp
     third_party/sha256/sha256.c
     src/door/cpu.cpp
@@ -82,6 +83,7 @@ add_executable(axis_tests
     tests/test_noip.cpp
     tests/test_screenmirror.cpp
     tests/test_panelproto.cpp
+    tests/test_loginguard.cpp
     tests/test_setup_gate.cpp
     tests/test_cpu.cpp
     tests/test_guestmem.cpp

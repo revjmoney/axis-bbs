@@ -528,6 +528,8 @@ void Node::showMenu() {
 
 void Node::input(const uint8_t* p, size_t n, uint32_t nowMs) {
     lastInput_ = nowMs;
+    if (holdUntil_ && (int32_t)(nowMs - holdUntil_) < 0) return;  // a wrong password: slow the guessing down
+    holdUntil_ = 0;
     for (size_t i = 0; i < n && state_ != State::Done; i++) key((char)p[i]);
 }
 
@@ -640,9 +642,11 @@ void Node::key(char c) {
             if (!ok) {
                 if (++tries_ >= 3) {
                     out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + "Three strikes." + theme::TEXT + " Call back when you remember it.\r\n";
+                    failedLogin_ = true;
                     state_ = State::Done;
                     return;
                 }
+                holdUntil_ = lastInput_ + 2000u * (uint32_t)tries_;  // 2 s, then 4 s
                 out_ += "\r\n   " + std::string(theme::ORANGE) + "Wrong password.";
                 prompt();
                 return;
@@ -706,10 +710,12 @@ void Node::key(char c) {
                 app_.reset(new NewUserApp(handle_, out_, cfg_, rng_));
                 app_->begin();
             } else if (++tries_ >= 3) {
+                failedLogin_ = true;
                 out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + "Wrong." + theme::TEXT + " This board is private.\r\n";
                 if (onEvent) onEvent("new user password: 3 wrong tries from " + handle_);
                 state_ = State::Done;
             } else {
+                holdUntil_ = lastInput_ + 2000u * (uint32_t)tries_;
                 out_ += "\r\n   " + std::string(theme::ORANGE) + "Wrong." + theme::TEXT + " New user password" + theme::ORANGE + ": " + theme::WHITE;
             }
         } else if (c == '\b' || c == 0x7f) {

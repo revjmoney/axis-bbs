@@ -47,6 +47,7 @@ public:
     // accounts: without them anyone is let in by handle (the first builds, tests)
     void setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow);
     bool isSysop() const { return sysop_; }
+    bool failedLogin() const { return failedLogin_; }  // the call ended on wrong passwords (for the per-address lockout)
     void addMinutes(int m) { if (callStart_) callStart_ += (uint32_t)m * 60000u; }  // the sysop gives more time (this call only)
     std::function<void(const std::string&)> onEvent;  // for the event log ("new user password: 3 wrong tries from X")
     // Chat across the nodes: say(text, page) sends a teleconference line (or a page for the sysop);
@@ -192,6 +193,8 @@ private:
     uint32_t                  lastInput_ = 0;
     size_t                    door_ = 0;
     std::vector<DoorEntry>    doorList_;  // what showDoors listed
+    uint32_t                  holdUntil_ = 0;  // after a wrong password, typing is ignored until then (2 s, then 4 s)
+    bool                      failedLogin_ = false;
     UserStore*                users_ = nullptr;
     std::function<void()>     saveUsers_;
     uint32_t (*rng_)() = nullptr;

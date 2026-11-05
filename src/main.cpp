@@ -32,6 +32,7 @@
 #include "cluster/doorfs.h"
 #include "door/screenmirror.h"
 #include "bbs/panelproto.h"
+#include "bbs/loginguard.h"
 #include <base64.h>
 #include <mbedtls/base64.h>
 #include "cluster/mirrorjob.h"
@@ -75,6 +76,7 @@ static axis::bbs::BbsConfig cfg;
 static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
+static axis::bbs::LoginGuard loginGuard;  // an address with 3 failed calls in 10 min waits 5 min (more for repeats)
 // The sysop control panel (tools/panel): one LAN connection on port 2326 (bbs/panelproto.h)
 static WiFiServer           panelServer(2326);
 static WiFiClient           panelClient;
@@ -981,6 +983,12 @@ static void sendApp(const std::string& s) {
 }
 
 static void hangUp() {
+    if (line && node && node->failedLogin()) {  // wrong passwords: count it against the caller's address
+        uint32_t ip = (uint32_t)line->remoteIP();
+        loginGuard.failed(ip, millis());
+        if (!loginGuard.allowed(ip, millis()))
+            logEvent("login: " + line->remoteIP().toString() + " locked out for " + String(loginGuard.secondsLeft(ip, millis()) / 60) + " min");
+    }
     line.reset();  // closes the connection
     logEvent("hang up" + heapText() + " " + String(node && !node->handle().empty() ? node->handle().c_str() : "") + " after " +
              String((millis() - callStartMs) / 1000) + "s");
@@ -1063,6 +1071,13 @@ static void pumpPassing() {
 static void answerIn(WiFiClient incoming);
 
 static void answer(WiFiClient incoming) {
+    if (!loginGuard.allowed((uint32_t)incoming.remoteIP(), millis())) {  // too many failed logins from there lately
+        uint32_t m = (loginGuard.secondsLeft((uint32_t)incoming.remoteIP(), millis()) + 59) / 60;
+        incoming.print("\r\nToo many failed logins from your address. Try again in " + String(m) + " minute" + (m == 1 ? "" : "s") + ".\r\n");
+        delay(50);
+        incoming.stop();
+        return;
+    }
     int free = -1;  // setup takes one caller; a set-up board as many as its sessions
     for (size_t i = 0; i < sessions.size() && free < 0; i++)
         if (!sessionLine(i) && (i == 0 || (cfg.setupDone && mode == Mode::Normal))) free = (int)i;
@@ -1965,6 +1980,11 @@ static std::string panelExtra(const std::string& in) {
 static void pumpPanel() {
     if (panelServer.hasClient()) {
         WiFiClient c = panelServer.available();
+        if (!loginGuard.allowed((uint32_t)c.remoteIP(), millis())) {  // the panel port counts too
+            c.print("BYE locked\n");
+            c.stop();
+            return;
+        }
         {  // one panel at a time: a new one replaces the old (a restarted app's socket can look alive for minutes)
             if (panelClient.connected()) {
                 if (panelConNode) panelExtra("CON OFF");
@@ -2014,7 +2034,8 @@ static void pumpPanel() {
         std::string reply = panelSession->line(panelLine.c_str());
         panelLine = "";
         if (!reply.empty()) panelClient.write((const uint8_t*)reply.data(), reply.size());
-        if (panelSession->closed()) {
+        if (panelSession->closed()) {  // three bad panel logins
+            loginGuard.failed((uint32_t)panelClient.remoteIP(), millis());
             panelClient.stop();
             panelSession.reset();
             return;

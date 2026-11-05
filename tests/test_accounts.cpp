@@ -25,9 +25,14 @@ struct Rig {
         node.begin(0);
         node.takeOutput();
     }
+    uint32_t    now = 1000;
     std::string type(const std::string& s) {
-        node.input((const uint8_t*)s.data(), s.size(), 1000);
+        node.input((const uint8_t*)s.data(), s.size(), now);
         return plain(node.takeOutput());
+    }
+    std::string typeLater(const std::string& s, uint32_t ms) {  // after waiting ms
+        now += ms;
+        return type(s);
     }
 };
 
@@ -322,12 +327,13 @@ TEST_CASE("three wrong new user passwords hang up and are logged") {
     r.type("Chip Breaker\ry");
     r.type("lamer\r");
     CHECK(r.node.state() == Node::State::NupAsk);
-    r.type("leech\r");
-    r.type("narc\r");
+    r.typeLater("leech\r", 3000);  // (wrong answers hold the line 2 s, then 4 s)
+    r.typeLater("narc\r", 5000);
     CHECK(r.node.wantsHangup());
     CHECK(logged.find("new user password") != std::string::npos);
     CHECK(logged.find("Chip Breaker") != std::string::npos);
     CHECK(r.users.all().empty());
+    CHECK(r.node.failedLogin());
 }
 
 TEST_CASE("without a new user password, Apply goes straight to the application") {
