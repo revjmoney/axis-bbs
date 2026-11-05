@@ -48,7 +48,11 @@ struct BbsConfig {
     // "*DOSSHELL": args = its sandbox folder on the SD card; always listed (added if a saved list lacks it)
     std::vector<FileArea>  areas = defaultFileAreas();
     std::vector<FileArea>  msgAreas{{"general", "General Chatter"}, {"cnc", "CNC Shop Talk"}, {"rotatocam", "RotatoCAM"},
-                                   {"scene", "BBS Scene & ANSI"}, {"sysop", "Ask the Sysop"}};  // "msgareaN=id|name"  // "areaN=id|name"; the defaults unless listed
+                                   {"routers", "Routers & Gantries"}, {"mills", "Mills & Lathes"},
+                                   {"rotary", "4th & 5th Axis"}, {"cam", "CAM & G-code"}, {"controls", "Controllers & Electronics"},
+                                   {"tooling", "Tooling, Feeds & Speeds"}, {"workholding", "Workholding & Fixtures"},
+                                   {"lasers", "Lasers, Plasma & 3D Printers"}, {"showtell", "Show & Tell"}, {"crashes", "Crashes & Fails"},
+                                   {"trade", "Buy, Sell & Trade"}, {"scene", "BBS Scene & ANSI"}, {"sysop", "Ask the Sysop"}};  // "msgareaN=id|name"  // "areaN=id|name"; the defaults unless listed
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save
 };
 
