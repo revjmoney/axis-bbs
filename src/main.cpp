@@ -1417,6 +1417,7 @@ static void releaseDoorSlot() {
     }
     screenReturn();
     screenDirty = true;
+    web::setDoorRunning(false);  // HTTPS may use the heap again
 }
 
 static void abortDoor(axis::bbs::Node::DoorEnd how) {
@@ -1582,6 +1583,7 @@ static void startDoorInner() {
 }
 
 static void startDoor() {
+    web::setDoorRunning(true);  // before the door allocates: a handshake must not take the largest block
     try {
         startDoorInner();
     } catch (const std::bad_alloc&) {

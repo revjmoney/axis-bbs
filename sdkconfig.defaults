@@ -20,19 +20,23 @@ CONFIG_COMPILER_CXX_RTTI=y
 # CONFIG_SPIRAM is not set
 CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y
 
-# WiFi: a BBS needs far fewer buffers than Arduino reserves (8 static RX + 8 static TX)
+# WiFi: static RX stays at 4 (~1.6 KB each, always resident; at least the RX block-ack window).
+# Dynamic RX and TX may grow only to 8, and dynamic RX stays at least the static count.
+# A busy main can no longer spend the old 16-buffer ceiling while a door is allocating pages.
 CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=4
-CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=8
 CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER=y
-CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=8
 CONFIG_ESP32_WIFI_AMPDU_RX_ENABLED=y
 CONFIG_ESP32_WIFI_RX_BA_WIN=4
 CONFIG_ESP32_WIFI_AMPDU_TX_ENABLED=y
 
-# lwIP: as Arduino had it (16 sockets, 5760-byte windows)
+# lwIP: 16 sockets. Windows are 2 * MSS (2880) instead of Arduino's 4 * MSS (5760).
+# Each connected TCP socket then holds about 5.6 KB less send and receive buffer.
+# Telnet still has two segments in flight. A ZMODEM download is slower, not smaller.
 CONFIG_LWIP_MAX_SOCKETS=16
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760
-CONFIG_LWIP_TCP_WND_DEFAULT=5760
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
+CONFIG_LWIP_TCP_WND_DEFAULT=2880
 
 # TLS (the ring board's Discord/DDNS posts): allocate on demand
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
@@ -55,8 +59,18 @@ CONFIG_FATFS_LFN_STACK=y
 CONFIG_FATFS_MAX_LFN=255
 CONFIG_FATFS_API_ENCODING_UTF_8=y
 
-# keep instruction RAM free: the 8086 door borrows ~36 KB of it for LORD (Arduino keeps these off too)
+# Instruction RAM for the 8086 door. WiFi and SPI interrupt code were already left in
+# flash (Arduino does the same; that WiFi choice is what freed the door's IRAM arena).
+# Sleep-mode WiFi code is pinned off too: with the other two off, that option would
+# take about 7 KB of IRAM back. New in this file: non-ISR FreeRTOS calls move to flash
+# (the option's own note: up to about 8 KB of IRAM) and non-ISR ring-buffer calls do
+# the same. Their interrupt copies stay in IRAM, because a UART interrupt still runs
+# from there and cannot call flash while the cache is off.
 # CONFIG_ESP32_WIFI_IRAM_OPT is not set
 # CONFIG_ESP32_WIFI_RX_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_SLP_IRAM_OPT is not set
 # CONFIG_SPI_MASTER_ISR_IN_IRAM is not set
 # CONFIG_SPI_SLAVE_ISR_IN_IRAM is not set
+# CONFIG_RINGBUF_PLACE_ISR_FUNCTIONS_INTO_FLASH is not set
+CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y
+CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH=y
