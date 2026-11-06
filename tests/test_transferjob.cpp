@@ -98,9 +98,11 @@ std::string sample(size_t n) {
     return s;
 }
 
-std::vector<uint8_t> workspace(ZipReader::kWorkspace);
-
 void run(TransferJob& job, Transfer& other) {
+    // Sized here, not as a file-scope vector. ZipReader::kWorkspace is set in another file, so a
+    // file-scope vector would be built while that constant is still 0 and every ZIP check would
+    // be rejected for lack of memory.
+    std::vector<uint8_t> workspace(ZipReader::kWorkspace);
     uint32_t now = 0;
     bool     a = true, b = true;
     for (int i = 0; i < 20000 && (a || b); i++, now += 10) {
