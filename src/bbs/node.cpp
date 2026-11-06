@@ -2088,6 +2088,15 @@ std::string Node::activityText() const {
 void Node::poll(uint32_t nowMs) {
     MciScope mciScope(*this);
     if (menu_ && !builtin_ && state_ == State::Menu) menu_->tick(nowMs);  // a lone ESC on a lightbar: Esc after a pause
+    if (state_ == State::Files && browser_ && !browser_->tick(nowMs, lastInput_)) {
+        browser_.reset();
+        showMainMenu();
+    }
+    if (state_ == State::Messages && msgs_ && !msgs_->tick(nowMs, lastInput_)) {
+        msgs_.reset();
+        if (users_ && !sysop_ && users_->byId(userId_) && saveUsers_) saveUsers_();
+        showMainMenu();
+    }
     if (callStart_ && !sysop_ && cfg_.dailyMinutes > 0 && state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer) {
         uint32_t used = nowMs - callStart_, limit = (uint32_t)cfg_.dailyMinutes * 60000u;
         if (used >= limit) {

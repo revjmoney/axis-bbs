@@ -53,21 +53,40 @@ bool FileBrowser::lineKey(char c, size_t max) {
 void FileBrowser::showAreas() {
     st_ = St::Areas;
     line_.clear();
+    typedAreas_ = false;
     out_ += CLS;
     out_ += "\r\n" + theme::drip("FILES") + "   ";
     out_ += theme::fade("F I L E   A R E A S");
     out_ += MAG;
     out_ += "  \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
-    for (size_t i = 0; i < areas_.size(); i++) {
-        size_t n = lib_.list(areas_[i].id).size();
-        char   b[128];
-        std::snprintf(b, sizeof b, "   %s[%2u]%s %-34s%s%4u file%s\r\n", CYAN, (unsigned)(i + 1), HI, areas_[i].name.c_str(), DIM,
-                      (unsigned)n, n == 1 ? "" : "s");
-        out_ += b;
+    if (!bars_) {
+        usingList_ = false;
+        for (size_t i = 0; i < areas_.size(); i++) {
+            size_t n = lib_.list(areas_[i].id).size();
+            char   b[128];
+            std::snprintf(b, sizeof b, "   %s[%2u]%s %-34s%s%4u file%s\r\n", CYAN, (unsigned)(i + 1), HI, areas_[i].name.c_str(), DIM,
+                          (unsigned)n, n == 1 ? "" : "s");
+            out_ += b;
+        }
+        out_ += DIM;
+        out_ += "\r\n   " + theme::key("N", "ew files since your last call   ") + theme::key("/", " search") + DIM +
+                "\r\n   Area number (Enter for the main menu): ";
+        out_ += HI;
+        return;
     }
-    out_ += DIM;
-    out_ += "\r\n   " + theme::key("N", "ew files since your last call   ") + theme::key("/", " search") + DIM + "\r\n   Area number (Enter for the main menu): ";
-    out_ += HI;
+    std::vector<std::string> rows;
+    rows.reserve(areas_.size());
+    for (size_t i = 0; i < areas_.size(); i++) {  // names and counts only: one pass, not every file's bytes
+        size_t n = lib_.list(areas_[i].id).size();
+        char   b[80];
+        std::snprintf(b, sizeof b, "%-40.40s %4u file%s", areas_[i].name.c_str(), (unsigned)n, n == 1 ? "" : "s");
+        rows.emplace_back(b);
+    }
+    list_.setItems(std::move(rows));
+    usingList_ = true;
+    out_ += list_.draw();
+    out_ += std::string("\r\n   ") + DIM + "arrows move   Enter opens   number+Enter   " + theme::key("N", "ew") + "  " + theme::key("/", "search") +
+            "  " + theme::key("Q", "uit") + " or Esc\r\n";
 }
 
 void FileBrowser::openArea(size_t i) {
@@ -78,11 +97,12 @@ void FileBrowser::openArea(size_t i) {
     showPage();
 }
 
-void FileBrowser::showPage() {
+void FileBrowser::showPage(int at) {
     int pages = ((int)files_.size() + kPerPage - 1) / kPerPage;
     if (pages == 0) pages = 1;
     if (page_ >= pages) page_ = pages - 1;
     if (page_ < 0) page_ = 0;
+    st_ = St::List;
     out_ += CLS;
     char b[160];
     std::snprintf(b, sizeof b, "\r\n   %s%s%s   page %d of %d, %u files\r\n", YEL, areas_[area_].name.c_str(), DIM, page_ + 1, pages,
@@ -90,18 +110,138 @@ void FileBrowser::showPage() {
     out_ += b;
     out_ += MAG;
     out_ += "   \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
-    if (files_.empty()) {
+    size_t begin = (size_t)page_ * kPerPage;
+    size_t end = begin + kPerPage;
+    if (end > files_.size()) end = files_.size();
+    if (!bars_) {
+        usingList_ = false;
+        if (files_.empty()) {
+            out_ += DIM;
+            out_ += "   (nothing here yet)\r\n";
+        }
+        for (size_t i = begin; i < end; i++) {
+            const FileEntry& f = files_[i];
+            std::string      desc = f.desc.size() > 50 ? f.desc.substr(0, 50) : f.desc;
+            std::snprintf(b, sizeof b, "   %s%-13s%s%7s  %s%s\r\n", HI, f.name.substr(0, 13).c_str(), GRN, fileSizeText(f.size).c_str(), DIM,
+                          desc.c_str());
+            out_ += b;
+        }
+        listPrompt();
+        return;
+    }
+    std::vector<std::string> rows;
+    rows.reserve(end - begin);
+    for (size_t i = begin; i < end; i++) {  // this page only, not the whole area
+        const FileEntry& f = files_[i];
+        std::string      desc = f.desc.size() > 40 ? f.desc.substr(0, 40) : f.desc;
+        std::snprintf(b, sizeof b, "%-12.12s %7s  %s", f.name.c_str(), fileSizeText(f.size).c_str(), desc.c_str());
+        rows.emplace_back(b);
+    }
+    if (rows.empty()) {
+        usingList_ = false;
         out_ += DIM;
         out_ += "   (nothing here yet)\r\n";
+        listPrompt();
+        return;
     }
-    for (size_t i = (size_t)page_ * kPerPage; i < files_.size() && i < (size_t)(page_ + 1) * kPerPage; i++) {
-        const FileEntry& f = files_[i];
-        std::string      desc = f.desc.size() > 50 ? f.desc.substr(0, 50) : f.desc;
-        std::snprintf(b, sizeof b, "   %s%-13s%s%7s  %s%s\r\n", HI, f.name.substr(0, 13).c_str(), GRN, fileSizeText(f.size).c_str(), DIM,
-                      desc.c_str());
-        out_ += b;
-    }
+    if (at < 0) at = 0;
+    if (at >= (int)rows.size()) at = (int)rows.size() - 1;
+    list_.setItems(std::move(rows), (size_t)at);
+    usingList_ = true;
+    out_ += list_.draw();
     listPrompt();
+}
+
+void FileBrowser::selectFile(size_t index) {
+    if (index >= files_.size()) return;
+    const FileEntry& f = files_[index];
+    if (isTextFile(f.name)) {
+        if (std::string why = gate_ ? gate_(0) : std::string(); !why.empty()) {
+            out_ += AMBER;
+            out_ += "   " + why + "\r\n";
+            listPrompt();
+            return;
+        }
+        view(f.name);
+        return;
+    }
+    if (std::string why = gate_ ? gate_(f.size) : std::string(); !why.empty()) {
+        out_ += AMBER;
+        out_ += "   " + why + "\r\n";
+        listPrompt();
+        return;
+    }
+    req_ = TransferRequest();
+    req_.area = areas_[area_].id;
+    req_.name = f.name;
+    usingList_ = false;
+    askProtocol();
+}
+
+bool FileBrowser::listCommand(char c) {
+    switch (c | 0x20) {
+        case 'n':
+            page_++;
+            showPage();
+            return true;
+        case 'p':
+            page_--;
+            showPage();
+            return true;
+        case 'd':
+            out_ += "d\r\n   ";
+            out_ += DIM;
+            out_ += "File name: ";
+            out_ += HI;
+            line_.clear();
+            req_ = TransferRequest();
+            usingList_ = false;
+            st_ = St::DownName;
+            return true;
+        case 'u':
+            out_ += "u\r\n   ";
+            out_ += DIM;
+            out_ += "Describe it in one line (Enter to cancel): ";
+            out_ += HI;
+            line_.clear();
+            req_ = TransferRequest();
+            req_.upload = true;
+            usingList_ = false;
+            st_ = St::UpDesc;
+            return true;
+        case 'v':
+            out_ += "v\r\n   ";
+            out_ += DIM;
+            out_ += "File name: ";
+            out_ += HI;
+            line_.clear();
+            usingList_ = false;
+            st_ = St::ViewName;
+            return true;
+        case 'i':
+            out_ += "i\r\n   ";
+            out_ += DIM;
+            out_ += "File name: ";
+            out_ += HI;
+            line_.clear();
+            usingList_ = false;
+            st_ = St::InfoName;
+            return true;
+        case 'q':
+            showAreas();
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool FileBrowser::tick(uint32_t now, uint32_t lastInput) {
+    if (!bars_ || !usingList_ || !list_.midKey() || now - lastInput <= 300) return true;
+    list_.keyTimeout();
+    if (!list_.escaped()) return true;
+    if (st_ == St::Areas && !typedAreas_) return false;
+    if (st_ == St::List) showAreas();
+    return true;
 }
 
 std::string FileBrowser::where() const {
@@ -166,6 +306,7 @@ void FileBrowser::listPrompt() {
 }
 
 void FileBrowser::info(const std::string& name) {
+    usingList_ = false;
     const FileEntry* f = nullptr;
     for (const FileEntry& e : files_)
         if (sameName(e.name, name)) f = &e;
@@ -228,6 +369,7 @@ void FileBrowser::info(const std::string& name) {
 }
 
 void FileBrowser::view(const std::string& name) {
+    usingList_ = false;
     const FileEntry* f = nullptr;
     for (const FileEntry& e : files_)
         if (sameName(e.name, name)) f = &e;
@@ -327,29 +469,56 @@ void FileBrowser::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::
     out_ += "\r\n\r\n";
     out_ += theme::window(ok ? (req_.upload ? "UPLOAD COMPLETE" : "DOWNLOAD COMPLETE") : "TRANSFER FAILED", rows);
     files_ = lib_.list(areas_[area_].id);  // an upload is in the list now
-    st_ = St::List;
-    listPrompt();
+    if (bars_) showPage();
+    else {
+        st_ = St::List;
+        listPrompt();
+    }
 }
 
 bool FileBrowser::key(char c) {
     switch (st_) {
         case St::Areas:
-            if (line_.empty() && (c | 0x20) == 'n') {
-                showNewFiles();
-                return true;
-            }
-            if (line_.empty() && c == '/') {
-                st_ = St::Search;
-                out_ += std::string("\r\n   ") + DIM + "Search every area for: " + HI;
-                return true;
-            }
-            if (!lineKey(c, 3)) return true;
-            if (line_.empty()) return false;  // Enter alone: back to the main menu
-            {
+            if (typedAreas_ || !bars_ || !usingList_) {
+                if (line_.empty() && (c | 0x20) == 'n') {
+                    showNewFiles();
+                    typedAreas_ = true;
+                    usingList_ = false;
+                    return true;
+                }
+                if (line_.empty() && c == '/') {
+                    st_ = St::Search;
+                    usingList_ = false;
+                    out_ += std::string("\r\n   ") + DIM + "Search every area for: " + HI;
+                    return true;
+                }
+                if (!lineKey(c, 3)) return true;
+                typedAreas_ = false;
+                if (line_.empty()) return false;  // Enter alone: back to the main menu
                 int n = std::atoi(line_.c_str());
                 line_.clear();
                 if (n >= 1 && (size_t)n <= areas_.size()) openArea((size_t)n - 1);
                 else showAreas();
+                return true;
+            }
+            if (!list_.midKey() && (c | 0x20) == 'n') {
+                showNewFiles();
+                typedAreas_ = true;
+                usingList_ = false;
+                return true;
+            }
+            if (!list_.midKey() && c == '/') {
+                st_ = St::Search;
+                usingList_ = false;
+                out_ += std::string("\r\n   ") + DIM + "Search every area for: " + HI;
+                return true;
+            }
+            if (!list_.midKey() && (c | 0x20) == 'q') return false;
+            {
+                int pick = list_.key(c);
+                out_ += list_.takeRedraw();
+                if (list_.escaped()) return false;
+                if (pick >= 0 && (size_t)pick < areas_.size()) openArea((size_t)pick);
             }
             return true;
         case St::Search:
@@ -359,10 +528,38 @@ bool FileBrowser::key(char c) {
                 line_.clear();
                 st_ = St::Areas;
                 if (what.empty()) showAreas();
-                else search(what);
+                else {
+                    search(what);
+                    typedAreas_ = true;
+                    usingList_ = false;
+                }
             }
             return true;
         case St::List:
+            if (bars_ && usingList_) {
+                if (!list_.midKey() && listCommand(c)) return true;
+                int before = list_.current();
+                int shown = (int)list_.size();
+                int pick = list_.key(c);
+                out_ += list_.takeRedraw();
+                if (list_.escaped()) {
+                    showAreas();
+                    return true;
+                }
+                if (pick >= 0) {
+                    selectFile((size_t)page_ * kPerPage + (size_t)pick);
+                    return true;
+                }
+                int pages = ((int)files_.size() + kPerPage - 1) / kPerPage;
+                if (list_.clamped() > 0 && shown > 0 && before == shown - 1 && page_ + 1 < pages) {
+                    page_++;
+                    showPage();
+                } else if (list_.clamped() < 0 && before == 0 && page_ > 0) {
+                    page_--;
+                    showPage(kPerPage);
+                }
+                return true;
+            }
             switch (c | 0x20) {
                 case 'n':
                     page_++;

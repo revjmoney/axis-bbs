@@ -3,12 +3,14 @@
 // [M]essages: the areas with their counts and how many are new to this caller, an area's newest
 // headers, reading by number or the next new one, posting and replying (a body ends with /S).
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "bbs/config.h"
+#include "bbs/lightbar.h"
 #include "bbs/msgbase.h"
 
 namespace axis::bbs {
@@ -23,11 +25,13 @@ public:
     void        setTagline(std::string t) { tagline_ = std::move(t); }  // signs each post
     // posts by these writers don't show (a twit's, to everyone but them and the sysop)
     void        setHidden(std::function<bool(const std::string& from)> h) { hidden_ = std::move(h); }
+    void        setLightbars(bool on) { bars_ = on; }  // false: numbered text prompts
     void        begin();
     // the new scan: every area's new messages one after another ([N] moves on, across areas)
     void        beginScan();
     static int  countNew(const std::vector<FileArea>& areas, MessageStore& store, const std::map<std::string, int>& lastRead);
     bool        key(char c);  // false once the caller leaves for the main menu
+    bool        tick(uint32_t now, uint32_t lastInput);  // a lone Esc backs out
     std::string where() const;
 
 private:
@@ -55,6 +59,10 @@ private:
     St                           s_ = St::Areas;
     size_t                       area_ = 0;
     std::vector<Message>         heads_;
+    size_t                       listFrom_ = 0;  // first header in the lightbar window (newest page to start)
+    ScrollList                   list_{4, 6, 72, 15, 111, 15};  // bright white on the theme orange, plain white
+    bool                         bars_ = true;
+    bool                         usingList_ = false;
     Message                      current_, draft_;
     std::string                  line_;
     int                          lines_ = 0;
