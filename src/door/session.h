@@ -31,7 +31,7 @@ enum class DropFile { None, DoorSys, Dorinfo };
 struct DoorConfig {
     std::string           dir;            // the door's folder (informational; drive C: is the HostFs root)
     std::string           exe;            // e.g. "LORD.EXE"
-    std::string           args;           // command tail, e.g. "0 NOEMS /DREW"
+    std::string           args;           // command tail, e.g. "1 NOEMS /DREW"
     size_t                ramBudget = 128 * 1024;
     uint32_t              timeLimitSec = 3600;
     bool                  localMode = true;  // keys and screen on the caller stream (sysop at the console)
@@ -53,6 +53,7 @@ public:
     ~DoorSession();
     DoorResult run();                 // until the door finishes
     bool       step(uint32_t maxMs);  // run up to maxMs; false once finished
+    void       abandon(DoorResult r);  // a failure outside step(); ignored once the door already stopped
     DoorResult result() const { return result_; }
     int        exitCode() const;
     GuestMemory::Stats memStats() const;
@@ -68,6 +69,7 @@ public:
 
 private:
     bool load();
+    bool stepInner(uint32_t maxMs);
     DoorConfig                  cfg_;
     HostFs&                     fs_;
     LockTable&                  locks_;
@@ -89,6 +91,7 @@ private:
     uint32_t                    instructions_ = 0;
     uint32_t                    intsTraced_ = 0;
     bool                        carrierLost_ = false;
+    bool                        heapFail_ = false;  // the image source ran out of host memory
     uint64_t                    lostAtMs_ = 0;
 };
 

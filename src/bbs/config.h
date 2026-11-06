@@ -49,7 +49,7 @@ struct BbsConfig {
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)
-    std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "LORD.EXE", "%N /DREW", "doorsys"},
+    std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "LORD.EXE", "%N NOEMS /DREW", "doorsys"},
                                  {"blackjack", "BBS Black Jack", "BLKJK.EXE", "BJ.CFG", "doorsys"},
                                  {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"},
                                  {"dos", "DOS Prompt (password)", "*DOSSHELL", "dosbox", "none"}};
@@ -71,6 +71,9 @@ std::string formatConfig(const BbsConfig& c);
 // A cluster follower's settings: the main's (one BBS), keeping this board's own name, session count
 // and telnet port; set up, since the main was.
 BbsConfig   mergeSettings(const BbsConfig& mine, const std::string& mainIni);
+// Stock LORD tails from before NOEMS ("1 /DREW", "%N /DREW"). Other doors and any custom LORD
+// tail are left as the sysop wrote them. True when args changed.
+bool        migrateLordArgs(DoorEntry& d);
 const char* tzRule(const std::string& name);  // POSIX TZ rule, "" if unknown
 const std::vector<std::string>& tzNames();
 

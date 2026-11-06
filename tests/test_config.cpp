@@ -79,7 +79,30 @@ TEST_CASE("config has LORD as the default door") {
     CHECK(c.doors[1].id == "blackjack");
     CHECK(c.doors[2].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
     CHECK(c.doors[3].exe == "*DOSSHELL");  // the built-in DOS Prompt
-    CHECK(c.doors[0].args == "%N /DREW");  // %N: the node number (each node its own LORD node file)
+    CHECK(c.doors[0].args == "%N NOEMS /DREW");  // %N: the node number; NOEMS: LORD must not look for EMS
+}
+
+TEST_CASE("stock LORD arguments gain NOEMS; custom tails and other doors stay") {
+    DoorEntry stock{"lord", "Legend of the Red Dragon", "LORD.EXE", "%N /DREW", "doorsys"};
+    CHECK(migrateLordArgs(stock));
+    CHECK(stock.args == "%N NOEMS /DREW");
+    DoorEntry old{"lord", "Legend of the Red Dragon", "lord.exe", "1 /DREW", "doorsys"};
+    CHECK(migrateLordArgs(old));
+    CHECK(old.args == "%N NOEMS /DREW");
+    DoorEntry lower{"lord", "x", "LORD.EXE", "%n /DREW", "doorsys"};
+    CHECK(migrateLordArgs(lower));
+    CHECK(lower.args == "%N NOEMS /DREW");
+    DoorEntry already{"lord", "x", "LORD.EXE", "%N NOEMS /DREW", "doorsys"};
+    CHECK_FALSE(migrateLordArgs(already));
+    CHECK(already.args == "%N NOEMS /DREW");
+    DoorEntry local{"lord", "x", "LORD.EXE", "0 NOEMS /DREW", "doorsys"};
+    CHECK_FALSE(migrateLordArgs(local));
+    DoorEntry custom{"lord", "x", "LORD.EXE", "%N /DREW /FAST", "doorsys"};
+    CHECK_FALSE(migrateLordArgs(custom));
+    CHECK(custom.args == "%N /DREW /FAST");
+    DoorEntry jack{"blackjack", "BBS Black Jack", "BLKJK.EXE", "BJ.CFG", "doorsys"};
+    CHECK_FALSE(migrateLordArgs(jack));
+    CHECK(jack.args == "BJ.CFG");
 }
 
 TEST_CASE("config doors round trip") {
