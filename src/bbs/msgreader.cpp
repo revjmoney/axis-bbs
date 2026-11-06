@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "bbs/listscreen.h"
 #include "bbs/theme.h"
 
 namespace axis::bbs {
@@ -68,8 +69,8 @@ void MessageReader::beginScan() {
 void MessageReader::showAreas() {
     s_ = St::Areas;
     line_.clear();
-    out_ += "\x1b[0m\x1b[2J\x1b[H\r\n" + drip("MSGS") + "   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
     if (!bars_) {
+        out_ += "\x1b[0m\x1b[2J\x1b[H\r\n" + drip("MSGS") + "   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
         usingList_ = false;
         for (size_t i = 0; i < areas_.size(); i++) {
             auto h = headersOf(areas_[i].id);
@@ -97,8 +98,10 @@ void MessageReader::showAreas() {
     }
     list_.setItems(std::move(rows));
     usingList_ = true;
+    out_ += listScreenTop("MESSAGE AREAS", "Area                              Messages");
     out_ += list_.draw();
-    out_ += std::string("\r\n   ") + TEXT + "arrows move   Enter opens   number+Enter   " + theme::key("Q", "uit") + " or Esc\r\n";
+    out_ += listScreenStatus(areas_.empty() ? "" : areas_[0].name);
+    out_ += listScreenKeys("arrows move   Enter opens   number+Enter   " + theme::key("Q", "uit") + " or Esc");
 }
 
 void MessageReader::openArea(size_t i) {
@@ -110,11 +113,11 @@ void MessageReader::openArea(size_t i) {
 
 void MessageReader::showList() {
     s_ = St::List;
-    out_ += "\x1b[0m\x1b[2J\x1b[H\r\n   " + fade(areas_[area_].name) + std::string(TEXT) + "   " + std::to_string(heads_.size()) +
-            " messages\r\n   " + DGREY + std::string(70, '\xc4') + "\r\n";
-    if (heads_.empty()) out_ += std::string("   ") + TEXT + "(no messages yet: [P]ost the first)\r\n";
     int last = lastRead_.count(areas_[area_].id) ? lastRead_[areas_[area_].id] : 0;
     if (!bars_) {
+        out_ += "\x1b[0m\x1b[2J\x1b[H\r\n   " + fade(areas_[area_].name) + std::string(TEXT) + "   " + std::to_string(heads_.size()) +
+                " messages\r\n   " + DGREY + std::string(70, '\xc4') + "\r\n";
+        if (heads_.empty()) out_ += std::string("   ") + TEXT + "(no messages yet: [P]ost the first)\r\n";
         usingList_ = false;
         size_t from = heads_.size() > (size_t)kPerPage ? heads_.size() - kPerPage : 0;  // the newest page
         for (size_t i = from; i < heads_.size(); i++) {
@@ -147,8 +150,13 @@ void MessageReader::showList() {
     }
     list_.setItems(std::move(rows));
     usingList_ = true;
+    char cap[80];
+    std::snprintf(cap, sizeof cap, "  #  From          To            Subject          %u msgs", (unsigned)heads_.size());
+    out_ += listScreenTop(areas_[area_].name, cap);
     out_ += list_.draw();
-    listPrompt();
+    out_ += listScreenStatus(heads_[listFrom_ + (size_t)list_.current()].subject);
+    out_ += listScreenKeys(theme::key("R", "ead #  ") + theme::key("N", "ext new  ") + theme::key("P", "ost  ") + theme::key("Q", "uit") +
+                           "   Enter reads");
 }
 
 bool MessageReader::tick(uint32_t now, uint32_t lastInput) {
@@ -268,8 +276,12 @@ void MessageReader::save() {
     out_ += std::string("\r\n   ") + (n ? std::string(TEXT) + "Saved as #" + std::to_string(n) + "." : std::string(ORANGE) + "Couldn't save it, sorry.") + "\r\n";
     if (n) lastRead_[areas_[area_].id] = n > lastRead_[areas_[area_].id] ? n : lastRead_[areas_[area_].id];
     heads_ = headersOf(areas_[area_].id);
-    s_ = St::List;
-    listPrompt();
+    listFrom_ = heads_.size() > (size_t)kPerPage ? heads_.size() - (size_t)kPerPage : 0;
+    if (bars_) showList();
+    else {
+        s_ = St::List;
+        listPrompt();
+    }
 }
 
 bool MessageReader::key(char c) {
@@ -288,6 +300,7 @@ bool MessageReader::key(char c) {
             {
                 int pick = list_.key(c);
                 out_ += list_.takeRedraw();
+                if (list_.size() && (size_t)list_.current() < areas_.size()) out_ += listScreenStatus(areas_[(size_t)list_.current()].name);
                 if (list_.escaped()) return false;
                 if (pick >= 0 && (size_t)pick < areas_.size()) openArea((size_t)pick);
             }
@@ -320,6 +333,10 @@ bool MessageReader::key(char c) {
                 int shown = (int)list_.size();
                 int pick = list_.key(c);
                 out_ += list_.takeRedraw();
+                {
+                    size_t i = listFrom_ + (size_t)list_.current();
+                    if (i < heads_.size()) out_ += listScreenStatus(heads_[i].from + "  " + heads_[i].subject);
+                }
                 if (list_.escaped()) {
                     showAreas();
                     return true;

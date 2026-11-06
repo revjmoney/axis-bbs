@@ -8,6 +8,7 @@
 #include <cstdlib>
 
 #include "bbs/archive.h"
+#include "bbs/listscreen.h"
 #include "bbs/theme.h"
 #include "bbs/zipreader.h"
 
@@ -54,12 +55,12 @@ void FileBrowser::showAreas() {
     st_ = St::Areas;
     line_.clear();
     typedAreas_ = false;
-    out_ += CLS;
-    out_ += "\r\n" + theme::drip("FILES") + "   ";
-    out_ += theme::fade("F I L E   A R E A S");
-    out_ += MAG;
-    out_ += "  \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
     if (!bars_) {
+        out_ += CLS;
+        out_ += "\r\n" + theme::drip("FILES") + "   ";
+        out_ += theme::fade("F I L E   A R E A S");
+        out_ += MAG;
+        out_ += "  \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
         usingList_ = false;
         for (size_t i = 0; i < areas_.size(); i++) {
             size_t n = lib_.list(areas_[i].id).size();
@@ -84,9 +85,11 @@ void FileBrowser::showAreas() {
     }
     list_.setItems(std::move(rows));
     usingList_ = true;
+    out_ += listScreenTop("FILE AREAS", "Area                                      Files");
     out_ += list_.draw();
-    out_ += std::string("\r\n   ") + DIM + "arrows move   Enter opens   number+Enter   " + theme::key("N", "ew") + "  " + theme::key("/", "search") +
-            "  " + theme::key("Q", "uit") + " or Esc\r\n";
+    out_ += listScreenStatus(areas_.empty() ? "" : areas_[0].name);
+    out_ += listScreenKeys("arrows move   Enter opens   number+Enter   " + theme::key("N", "ew") + "  " + theme::key("/", "search") + "  " +
+                           theme::key("Q", "uit") + " or Esc");
 }
 
 void FileBrowser::openArea(size_t i) {
@@ -103,13 +106,15 @@ void FileBrowser::showPage(int at) {
     if (page_ >= pages) page_ = pages - 1;
     if (page_ < 0) page_ = 0;
     st_ = St::List;
-    out_ += CLS;
     char b[160];
-    std::snprintf(b, sizeof b, "\r\n   %s%s%s   page %d of %d, %u files\r\n", YEL, areas_[area_].name.c_str(), DIM, page_ + 1, pages,
-                  (unsigned)files_.size());
-    out_ += b;
-    out_ += MAG;
-    out_ += "   \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
+    if (!bars_) {
+        out_ += CLS;
+        std::snprintf(b, sizeof b, "\r\n   %s%s%s   page %d of %d, %u files\r\n", YEL, areas_[area_].name.c_str(), DIM, page_ + 1, pages,
+                      (unsigned)files_.size());
+        out_ += b;
+        out_ += MAG;
+        out_ += "   \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
+    }
     size_t begin = (size_t)page_ * kPerPage;
     size_t end = begin + kPerPage;
     if (end > files_.size()) end = files_.size();
@@ -139,8 +144,8 @@ void FileBrowser::showPage(int at) {
     }
     if (rows.empty()) {
         usingList_ = false;
-        out_ += DIM;
-        out_ += "   (nothing here yet)\r\n";
+        out_ += listScreenTop(areas_[area_].name, "Name          Size   About");
+        out_ += std::string("   ") + theme::TEXT + "(nothing here yet)\r\n";
         listPrompt();
         return;
     }
@@ -148,8 +153,14 @@ void FileBrowser::showPage(int at) {
     if (at >= (int)rows.size()) at = (int)rows.size() - 1;
     list_.setItems(std::move(rows), (size_t)at);
     usingList_ = true;
+    std::snprintf(b, sizeof b, "Name          Size   About                         page %d/%d", page_ + 1, pages);
+    out_ += listScreenTop(areas_[area_].name, b);
     out_ += list_.draw();
-    listPrompt();
+    size_t ix = (size_t)page_ * kPerPage + (size_t)list_.current();
+    std::string about = ix < files_.size() ? files_[ix].name + "  " + fileSizeText(files_[ix].size) + "  " + files_[ix].desc : "";
+    out_ += listScreenStatus(about);
+    out_ += listScreenKeys(theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
+                           theme::key("D", "ownload  ") + theme::key("U", "pload  ") + theme::key("Q", "uit") + "   Enter selects");
 }
 
 void FileBrowser::selectFile(size_t index) {
@@ -517,6 +528,7 @@ bool FileBrowser::key(char c) {
             {
                 int pick = list_.key(c);
                 out_ += list_.takeRedraw();
+                if (list_.size() && (size_t)list_.current() < areas_.size()) out_ += listScreenStatus(areas_[(size_t)list_.current()].name);
                 if (list_.escaped()) return false;
                 if (pick >= 0 && (size_t)pick < areas_.size()) openArea((size_t)pick);
             }
@@ -542,6 +554,11 @@ bool FileBrowser::key(char c) {
                 int shown = (int)list_.size();
                 int pick = list_.key(c);
                 out_ += list_.takeRedraw();
+                {
+                    size_t ix = (size_t)page_ * kPerPage + (size_t)list_.current();
+                    if (ix < files_.size())
+                        out_ += listScreenStatus(files_[ix].name + "  " + fileSizeText(files_[ix].size) + "  " + files_[ix].desc);
+                }
                 if (list_.escaped()) {
                     showAreas();
                     return true;

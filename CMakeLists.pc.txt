@@ -40,6 +40,7 @@ add_library(axiscore STATIC
     src/bbs/pipecodes.cpp
     src/bbs/menufile.cpp
     src/bbs/lightbar.cpp
+    src/bbs/listscreen.cpp
     src/bbs/menurunner.cpp
     src/bbs/newuser.cpp
     src/bbs/touchkeyboard.cpp

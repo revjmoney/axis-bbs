@@ -372,6 +372,22 @@ TEST_CASE("file lightbar: Enter opens the highlighted area and then the highligh
     CHECK_FALSE(b.wantsTransfer());
 }
 
+TEST_CASE("file areas are a classic list: title bar, columns, and the highlight's status line") {
+    FakeLibrary lib = library();
+    BbsConfig   cfg = twoAreas();
+    std::string out;
+    FileBrowser b(cfg.areas, lib, out);
+    b.begin();
+    std::string p = plain(out);
+    CHECK(p.find("A R E A S") != std::string::npos);
+    CHECK(p.find("Files") != std::string::npos);
+    CHECK(out.find("\x1b[21;1H") != std::string::npos);
+    out.clear();
+    down(b);
+    CHECK(out.find("\x1b[21;1H") != std::string::npos);
+    CHECK(plain(out).find("Text Files") != std::string::npos);
+}
+
 TEST_CASE("file lightbar: Enter on a binary starts that file's download, and Q goes back") {
     FakeLibrary lib = library();
     BbsConfig   cfg = twoAreas();

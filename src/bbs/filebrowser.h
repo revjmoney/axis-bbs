@@ -10,6 +10,7 @@
 #include "bbs/config.h"
 #include "bbs/filelib.h"
 #include "bbs/lightbar.h"
+#include "bbs/listscreen.h"
 #include "bbs/transferjob.h"
 
 namespace axis::bbs {
@@ -66,7 +67,7 @@ private:
     std::vector<std::string>     text_;  // the file being viewed, as lines
     size_t                       shown_ = 0;
     TransferRequest              req_;
-    ScrollList                   list_{4, 6, 72, 15, 111, 15};  // bright white on the theme orange, plain white
+    ScrollList                   list_{3, kListRow, 74, kListRows, 111, 15};  // white on the theme orange
     bool                         bars_ = true;
     bool                         usingList_ = false;   // a lightbar is on screen
     bool                         typedAreas_ = false;  // after New or Search: the old "area number" line

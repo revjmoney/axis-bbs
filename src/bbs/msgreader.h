@@ -11,6 +11,7 @@
 
 #include "bbs/config.h"
 #include "bbs/lightbar.h"
+#include "bbs/listscreen.h"
 #include "bbs/msgbase.h"
 
 namespace axis::bbs {
@@ -60,7 +61,7 @@ private:
     size_t                       area_ = 0;
     std::vector<Message>         heads_;
     size_t                       listFrom_ = 0;  // first header in the lightbar window (newest page to start)
-    ScrollList                   list_{4, 6, 72, 15, 111, 15};  // bright white on the theme orange, plain white
+    ScrollList                   list_{3, kListRow, 74, kListRows, 111, 15};  // white on the theme orange
     bool                         bars_ = true;
     bool                         usingList_ = false;
     Message                      current_, draft_;
