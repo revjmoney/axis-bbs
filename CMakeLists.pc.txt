@@ -26,6 +26,7 @@ add_library(axiscore STATIC
     src/bbs/ansiviewer.cpp
     src/bbs/rotatelog.cpp
     src/bbs/dosshell.cpp
+    src/bbs/diag.cpp
     src/bbs/dripfont.cpp
     src/bbs/ledsignal.cpp
     src/bbs/msgbase.cpp
@@ -144,7 +145,9 @@ add_executable(axis_tests
     tests/test_remotefiles.cpp
     tests/test_pooledlib.cpp
     tests/test_relay.cpp
-    tests/test_doorfs.cpp)
+    tests/test_doorfs.cpp
+    tests/test_diag.cpp
+    tests/test_doorlife.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)

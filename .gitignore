@@ -1,6 +1,10 @@
 build/
+build-size/
 .superpowers/
 .pio/
+sdkconfig
+sdkconfig.*
+!sdkconfig.defaults
 local/
 __pycache__/
 build.log

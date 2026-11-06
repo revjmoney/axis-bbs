@@ -157,6 +157,79 @@ TEST_CASE("zmodem sends an empty file") {
     CHECK(got.empty());
 }
 
+TEST_CASE("a 256 KB ZMODEM file arrives byte for byte, and no single write is a huge buffer") {
+    struct Counting : End {
+        size_t biggest = 0;
+        void   write(const uint8_t* p, size_t n) override {
+            if (n > biggest) biggest = n;
+            End::write(p, n);
+        }
+    };
+    std::deque<uint8_t> ab, ba;
+    Counting            a;
+    End                 b;
+    a.in = &ba;
+    a.out = &ab;
+    b.in = &ab;
+    b.out = &ba;
+    auto                 file = sample(256 * 1024);
+    std::vector<uint8_t> got;
+    ZmodemSender         s(a, reader(file), (uint32_t)file.size(), "BIG.BIN");
+    ZmodemReceiver       r(
+        b, [](const std::string&, uint32_t n) { return n == 256 * 1024; },
+        [&](const uint8_t* p, size_t n) { got.insert(got.end(), p, p + n); return true; }, [](bool) {});
+    run(s, r, 8000);
+    CHECK(s.result() == Transfer::Result::Ok);
+    CHECK(r.result() == Transfer::Result::Ok);
+    CHECK(got == file);
+    CHECK(a.biggest > 0);
+    CHECK(a.biggest <= 8192);  // a subpacket, not the whole file in one write
+}
+
+TEST_CASE("two ZMODEM transfers stepped together keep each file intact") {
+    Line a, b;
+    auto fa = sample(80 * 1024), fb = sample(96 * 1024);
+    fa[0] = 1;
+    fb[0] = 2;
+    std::vector<uint8_t> ga, gb;
+    ZmodemSender sa(a.a, reader(fa), (uint32_t)fa.size(), "A.BIN");
+    ZmodemSender sb(b.a, reader(fb), (uint32_t)fb.size(), "B.BIN");
+    ZmodemReceiver ra(
+        a.b, [](const std::string& n, uint32_t sz) { return n == "A.BIN" && sz == 80 * 1024; },
+        [&](const uint8_t* p, size_t n) { ga.insert(ga.end(), p, p + n); return true; }, [](bool) {});
+    ZmodemReceiver rb(
+        b.b, [](const std::string& n, uint32_t sz) { return n == "B.BIN" && sz == 96 * 1024; },
+        [&](const uint8_t* p, size_t n) { gb.insert(gb.end(), p, p + n); return true; }, [](bool) {});
+    uint32_t now = 0;
+    bool     go = true;
+    for (int i = 0; i < 8000 && go; i++, now += 10) {
+        bool a1 = sa.step(now), a2 = ra.step(now), b1 = sb.step(now), b2 = rb.step(now);
+        go = a1 || a2 || b1 || b2;
+    }
+    CHECK(sa.result() == Transfer::Result::Ok);
+    CHECK(sb.result() == Transfer::Result::Ok);
+    CHECK(ga == fa);
+    CHECK(gb == fb);
+}
+
+TEST_CASE("a ZMODEM sender stops when the line drops instead of spinning") {
+    Line l;
+    auto file = sample(64 * 1024);
+    ZmodemSender s(l.a, reader(file), (uint32_t)file.size(), "DROP.BIN");
+    ZmodemReceiver r(
+        l.b, [](const std::string&, uint32_t) { return true; }, [](const uint8_t*, size_t) { return true; }, [](bool) {});
+    uint32_t now = 0;
+    for (int i = 0; i < 8; i++, now += 10) {
+        s.step(now);
+        r.step(now);
+    }
+    CHECK(s.result() == Transfer::Result::Running);
+    l.a.up = false;
+    for (int i = 0; i < 5 && s.step(now); i++, now += 10) r.step(now);
+    CHECK(s.result() == Transfer::Result::Cancelled);
+    CHECK(s.error().find("hung up") != std::string::npos);
+}
+
 TEST_CASE("five CANs cancel a zmodem transfer") {
     Line           l;
     auto           file = sample(200000);
