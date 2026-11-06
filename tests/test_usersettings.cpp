@@ -151,7 +151,7 @@ TEST_CASE("areas above a caller's security level don't show up for them, but do 
     CHECK(files.find("Axis Firmware") != std::string::npos);
     CHECK(files.find("Zero Day") == std::string::npos);
     r.me().security = 200;
-    r.type("\r");
+    r.type("q");  // leave the area lightbar (Enter would open the highlighted area)
     CHECK(r.type("f").find("Zero Day") != std::string::npos);
 }
 

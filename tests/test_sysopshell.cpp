@@ -40,6 +40,21 @@ struct Rig {
 };
 }  // namespace
 
+TEST_CASE("the look is picked from a numbered list, not typed") {
+    Rig r;
+    r.shell.begin();
+    r.type("44");  // Settings, then Look
+    CHECK(plain(r.out).find("theme") != std::string::npos);
+    r.type("1");
+    std::string o = plain(r.out);
+    CHECK(o.find("Axis, drippy orange") != std::string::npos);
+    CHECK(o.find("Oblivion, grey and cyan") != std::string::npos);
+    CHECK(o.find("Iniquity, green and grey") != std::string::npos);
+    CHECK(o.find("now") != std::string::npos);  // the fixture's theme is iniquity
+    r.type("2");
+    CHECK(r.ranCmd("@SET theme=oblivion"));
+}
+
 TEST_CASE("the sysop menu opens on its top layer") {
     Rig r;
     r.shell.begin();

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include <filesystem>
+#include <map>
 #include <regex>
 #include <string>
+#include <vector>
 
 #include "doctest.h"
 #include "bbs/msgbase.h"
+#include "bbs/msgreader.h"
 #include "bbs/node.h"
 
 using namespace axis::bbs;
@@ -155,7 +158,7 @@ TEST_CASE("[S]can: new messages in every area, one after another, then back to t
     out = r.type("n");
     CHECK(out.find("all caught up") != std::string::npos);
     r.type("q");
-    r.type("\r");
+    r.type("q");  // list, then the area lightbar; Enter would open the highlighted area
     CHECK(r.n.state() == Node::State::Menu);
     CHECK(r.type("s").find("No new messages") != std::string::npos);  // read them all: nothing new
 }
@@ -192,4 +195,60 @@ TEST_CASE("the sysop can drop posts from an area and the rest stay whole") {
     CHECK(m.body == "line one\nline two");
     CHECK(st.post("cnc", msg("Rev", "All", "new", "x")) == 4);  // and new ones keep counting up
     CHECK(st.drop("nowhere", [](const Message&) { return true; }) == 0);
+}
+
+TEST_CASE("message lightbar: Enter opens the highlighted area and reads the highlighted header") {
+    Dir              d;
+    FileMessageStore st(d.p.string());
+    st.post("general", msg("Spindle Kid", "All", "welcome", "glad the board is up"));
+    st.post("general", msg("Troll", "All", "noise", "ignore me"));
+    st.post("cnc", msg("Rev", "All", "chips", "flying"));
+    std::string              out;
+    std::map<std::string, int> last;
+    std::vector<FileArea>    areas{{"general", "General Chatter"}, {"cnc", "CNC Shop Talk"}};
+    MessageReader            r(areas, st, out, "Rev", last, [] { return std::string("now"); });
+    r.setHidden([](const std::string& from) { return from == "Troll"; });
+    r.begin();
+    CHECK(out.find("General Chatter") != std::string::npos);
+    r.key('\r');
+    CHECK(out.find("welcome") != std::string::npos);
+    CHECK(out.find("Troll") == std::string::npos);
+    r.key('q');
+    r.key('\x1b');
+    r.key('[');
+    r.key('B');
+    r.key('\r');
+    CHECK(r.where().find("CNC") != std::string::npos);
+    out.clear();
+    r.key('\r');
+    CHECK(out.find("flying") != std::string::npos);
+    CHECK(out.find("ignore me") == std::string::npos);
+}
+
+TEST_CASE("message lightbar: page up reaches an older header, Q returns, text mode still takes a number") {
+    Dir              d;
+    FileMessageStore st(d.p.string());
+    for (int i = 1; i <= 20; i++) st.post("general", msg("Rev", "All", ("note " + std::to_string(i)).c_str(), "body"));
+    std::string                out;
+    std::map<std::string, int> last;
+    std::vector<FileArea>      one{{"general", "General"}};
+    MessageReader              r(one, st, out, "Rev", last, [] { return std::string("now"); });
+    r.begin();
+    r.key('\r');
+    out.clear();
+    r.key('\x1b');
+    r.key('[');
+    r.key('A');  // already at the top of the newest window: older page
+    CHECK(out.find("note 1") != std::string::npos);
+    CHECK(r.key('q'));
+    CHECK(r.where() == "message areas");
+    CHECK_FALSE(r.key('q'));
+
+    std::string                text;
+    std::map<std::string, int> last2;
+    MessageReader              plain(one, st, text, "Rev", last2, [] { return std::string("now"); });
+    plain.setLightbars(false);
+    plain.begin();
+    CHECK(text.find("Area number") != std::string::npos);
+    CHECK_FALSE(plain.key('\r'));
 }

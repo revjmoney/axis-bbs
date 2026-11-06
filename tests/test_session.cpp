@@ -6,7 +6,10 @@
 #include <vector>
 
 #include "doctest.h"
+#include <new>
+
 #include "door/bytestream.h"
+#include "door/imagesource.h"
 #include "door/mz.h"
 #include "door/session.h"
 #include "platform/pc/stdhostfs.h"
@@ -87,6 +90,84 @@ TEST_CASE("session tiny budget ends cleanly with OutOfMemory") {
     cfg.dir = d.string();
     cfg.exe = "T.EXE";
     cfg.ramBudget = 16 * 1024;  // low memory + text page + a little
+    DoorSession s(cfg, fs, locks, caller, 1);
+    CHECK(s.run() == DoorResult::OutOfMemory);
+}
+
+TEST_CASE("session repeated entry and exit and out-of-memory teardown stay usable") {
+    fs::path d = tmpDir("repeat");
+    writeExe(d / "T.EXE", {0xB8, 0x03, 0x4C, 0xCD, 0x21});
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    for (int i = 0; i < 20; i++) {
+        ScriptStream caller;
+        DoorConfig   cfg;
+        cfg.dir = d.string();
+        cfg.exe = "T.EXE";
+        DoorSession s(cfg, fs, locks, caller, 1);
+        CHECK(s.run() == DoorResult::Exited);
+        CHECK(s.exitCode() == 3);
+    }
+    fs::path o = tmpDir("repeat-oom");
+    writeExe(o / "T.EXE", {0x8C, 0xC8, 0x05, 0x00, 0x10, 0x8E, 0xC0, 0x31, 0xFF, 0xB9, 0x00, 0x80, 0xB8, 0x01, 0x00,
+                           0xF3, 0xAB, 0xB8, 0x00, 0x4C, 0xCD, 0x21},
+             0x2000);
+    axis::pc::StdHostFs ofs(o);
+    for (int i = 0; i < 5; i++) {
+        ScriptStream caller;
+        DoorConfig   cfg;
+        cfg.dir = o.string();
+        cfg.exe = "T.EXE";
+        cfg.ramBudget = 16 * 1024;
+        std::vector<uint8_t> arena(8 * 1024, 0);
+        cfg.arenas.emplace_back(arena.data(), arena.size());
+        DoorSession s(cfg, ofs, locks, caller, 1);
+        CHECK(s.run() == DoorResult::OutOfMemory);
+        CHECK(arena[0] == 0);  // lent pages are not freed with the session
+    }
+}
+
+namespace {
+struct ThrowingImage : ImageSource {
+    const uint8_t* image(HostFs&, const std::string&, uint16_t, MzInfo&, size_t&) override { throw std::bad_alloc(); }
+};
+struct EmptyHeapImage : ImageSource {
+    const uint8_t* image(HostFs&, const std::string&, uint16_t, MzInfo&, size_t&) override { return nullptr; }
+    bool           exhaustedHeap() const override { return true; }
+};
+}  // namespace
+
+TEST_CASE("an allocation thrown while loading ends as out of memory and a later door still runs") {
+    fs::path d = tmpDir("throw");
+    writeExe(d / "T.EXE", {0xB8, 0x03, 0x4C, 0xCD, 0x21});
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d.string();
+    cfg.exe = "T.EXE";
+    ThrowingImage boom;
+    cfg.imageSource = &boom;
+    {
+        DoorSession s(cfg, fs, locks, caller, 1);
+        CHECK(s.run() == DoorResult::OutOfMemory);
+    }
+    cfg.imageSource = nullptr;
+    DoorSession again(cfg, fs, locks, caller, 1);
+    CHECK(again.run() == DoorResult::Exited);
+}
+
+TEST_CASE("an image source that ran out of heap is out of memory, not a missing program") {
+    fs::path d = tmpDir("imgheap");
+    writeExe(d / "T.EXE", {0xB8, 0x00, 0x4C, 0xCD, 0x21});
+    axis::pc::StdHostFs fs(d);
+    LockTable           locks;
+    ScriptStream        caller;
+    DoorConfig          cfg;
+    cfg.dir = d.string();
+    cfg.exe = "T.EXE";
+    EmptyHeapImage empty;
+    cfg.imageSource = &empty;
     DoorSession s(cfg, fs, locks, caller, 1);
     CHECK(s.run() == DoorResult::OutOfMemory);
 }

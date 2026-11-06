@@ -87,7 +87,10 @@ void ScrollList::setItems(std::vector<std::string> items, size_t at) {
 
 void ScrollList::move(int to) {
     int n = (int)items_.size();
+    clamped_ = 0;
     if (n == 0) return;
+    if (to < 0) clamped_ = -1;
+    else if (to >= n) clamped_ = 1;
     at_ = to < 0 ? 0 : to >= n ? n - 1 : to;
     if (at_ < top_) top_ = at_;
     if (at_ >= top_ + h_) top_ = at_ - h_ + 1;
@@ -121,6 +124,7 @@ void ScrollList::keyTimeout() {
 }
 
 int ScrollList::key(char c) {
+    clamped_ = 0;
     int n = (int)items_.size();
     if (esc_ == 1) {
         if (c == '[' || c == 'O') {

@@ -5,6 +5,7 @@
 #include <Preferences.h>
 
 #include <memory>
+#include <new>
 #include <vector>
 
 #include "door/imagekey.h"
@@ -37,26 +38,50 @@ void FlashImageSource::unmap() {
 const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint16_t loadSeg, MzInfo& mz, size_t& len) {
     unmap();
     rewrote_ = false;
+    oom_ = false;
+    int h = -1;
+    try {
+    return imageBody(fs, exe, loadSeg, mz, len, h);
+    } catch (const std::bad_alloc&) {
+        if (h >= 0) fs.close(h);
+        h = -1;
+        oom_ = true;
+        error_ = "out of memory";
+        return nullptr;
+    }
+}
+
+const uint8_t* FlashImageSource::imageBody(HostFs& fs, const std::string& exe, uint16_t loadSeg, MzInfo& mz, size_t& len, int& h) {
     const esp_partition_t* part = doorPartition();
     if (!part) {
         error_ = "no door partition";
         return nullptr;
     }
-    int h = fs.open(exe, 0, false, false);
+    h = fs.open(exe, 0, false, false);
     if (h < 0) {
         error_ = "door program not found";
         return nullptr;
     }
-    std::unique_ptr<uint8_t[]> buf(new uint8_t[kChunk]);
+    std::unique_ptr<uint8_t[]> buf(new (std::nothrow) uint8_t[kChunk]);
+    if (!buf) {
+        fs.close(h);
+        h = -1;
+        h = -1;
+        oom_ = true;
+        error_ = "out of memory";
+        return nullptr;
+    }
     int64_t                    fileSize = fs.seek(h, 0, 2);
     if (fileSize < 28 || !readAt(fs, h, 0, buf.get(), 28) || !parseMz(buf.get(), (size_t)fileSize, mz)) {
         fs.close(h);
+        h = -1;
         error_ = "not a DOS program";
         return nullptr;
     }
     len = (mz.imageSize + kChunk - 1) / kChunk * kChunk;
     if (len > part->size) {
         fs.close(h);
+        h = -1;
         error_ = "program too big for the door partition";
         return nullptr;
     }
@@ -83,7 +108,15 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
         prefs.end();
         // 16 KB of image at a time: one pass over the relocation table collects just that window's
         // targets, so RAM stays small even for LORD's 14,988 relocations
-        std::unique_ptr<uint8_t[]> check(new uint8_t[kChunk]);
+        std::unique_ptr<uint8_t[]> check(new (std::nothrow) uint8_t[kChunk]);
+        if (!check) {
+            fs.close(h);
+        h = -1;
+            h = -1;
+            oom_ = true;
+            error_ = "out of memory";
+            return nullptr;
+        }
         for (uint32_t wbase = 0; wbase < len; wbase += kWindow) {
             uint32_t              wend = wbase + kWindow;
             std::vector<uint32_t> relocs;
@@ -91,6 +124,7 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
                 uint32_t n = mz.relocCount - i < kChunk / 4 ? mz.relocCount - i : kChunk / 4;
                 if (!readAt(fs, h, mz.relocTable + i * 4u, check.get(), n * 4)) {
                     fs.close(h);
+        h = -1;
                     error_ = "can't read the relocation table";
                     return nullptr;
                 }
@@ -104,6 +138,7 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
                 uint32_t have = base < mz.imageSize ? (mz.imageSize - base < kChunk ? mz.imageSize - base : kChunk) : 0;
                 if (have && !readAt(fs, h, mz.headerSize + base, buf.get(), have)) {
                     fs.close(h);
+        h = -1;
                     error_ = "read error";
                     return nullptr;
                 }
@@ -117,6 +152,7 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
                     esp_partition_read(part, base, check.get(), kChunk) != ESP_OK ||
                     memcmp(buf.get(), check.get(), kChunk) != 0) {
                     fs.close(h);
+        h = -1;
                     error_ = "flash write failed";
                     return nullptr;
                 }
@@ -130,6 +166,7 @@ const uint8_t* FlashImageSource::image(HostFs& fs, const std::string& exe, uint1
         prefs.end();
     }
     fs.close(h);
+        h = -1;
 
     const void* ptr = nullptr;
     size_t      mapLen = (len + 0xFFFF) & ~(size_t)0xFFFF;  // the MMU maps 64 KB pages

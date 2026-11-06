@@ -1,0 +1,69 @@
+# Host tests and the two firmware builds. No secrets. A failing compile or test fails the job.
+name: Build
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Compilers
+        run: sudo apt-get update && sudo apt-get install -y g++ cmake ninja-build
+      - name: Configure and test
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          set -o pipefail
+          cmake -S . -B build -G Ninja
+          cmake --build build
+          ./build/axis_tests --reporters=console
+
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+          key: pio-6.1.18-espressif32-6.9.0-idf-3.40407.240606-${{ runner.os }}
+      - name: PlatformIO 6.1.18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv
+          pip install platformio==6.1.18
+      - name: Compile CYD
+        run: |
+          set -o pipefail
+          pio run -e cyd -j 2 | tee cyd-build.log
+          sh tools/ci/save_firmware_size.sh cyd
+      - name: Compile headless
+        run: |
+          set -o pipefail
+          pio run -e headless -j 2 | tee headless-build.log
+          sh tools/ci/save_firmware_size.sh headless
+      - name: Save size and map
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: firmware-size
+          if-no-files-found: error
+          path: |
+            cyd-build.log
+            headless-build.log
+            build-size/
+            .pio/build/cyd/axis-bbs.map
+            .pio/build/headless/axis-bbs.map

@@ -71,6 +71,11 @@ std::vector<SysopMenu::Button> SysopMenu::buttons() const {
                 b.push_back({"THEME", 104, 204, 84, 30});
                 b.push_back({"RUN SETUP", 192, 204, 120, 30, true});
             }
+            if (screen_ == Screen::Theme) {
+                b.push_back({"AXIS", 8, 36, 304, 44});
+                b.push_back({"OBLIVION", 8, 88, 304, 44});
+                b.push_back({"INIQUITY", 8, 140, 304, 44});
+            }
             if (screen_ == Screen::System) {
                 b.back().w = 58;
                 b.push_back({"SYSOP PW", 70, 204, 80, 30});  // the sysop password, on the touch keyboard
@@ -96,7 +101,9 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
                 if (b.label == kSections[i]) go(kSectionScreens[i]);
             return Action::None;
         }
-        if (b.label == "BACK") go(screen_ == Screen::UserDetail ? Screen::Users : screen_ == Screen::Access ? Screen::UserDetail : Screen::Main);
+        if (b.label == "BACK")
+            go(screen_ == Screen::UserDetail ? Screen::Users : screen_ == Screen::Access ? Screen::UserDetail
+               : screen_ == Screen::Theme ? Screen::Setup : Screen::Main);
         else if (b.label == "ACCESS") go(Screen::Access);
         else if (b.label == "FILES") return Action::ToggleFiles;
         else if (b.label == "MSGS") return Action::ToggleMessages;
@@ -113,7 +120,12 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
             return Action::FormatSd;
         } else if (b.label == "RESTART") return Action::Restart;
         else if (b.label == "RUN SETUP") return Action::RerunSetup;
-        else if (b.label == "THEME") return Action::CycleTheme;
+        else if (b.label == "THEME") go(Screen::Theme);
+        else if (b.label == "AXIS" || b.label == "OBLIVION" || b.label == "INIQUITY") {
+            theme_ = b.label == "AXIS" ? "axis" : b.label == "OBLIVION" ? "oblivion" : "iniquity";
+            go(Screen::Setup);
+            return Action::SetTheme;
+        }
         else if (b.label == "SET PASS") return Action::SetUserPassword;
         else if (b.label == "SYSOP PW") return Action::SetSysopPassword;
         return Action::None;
@@ -140,6 +152,7 @@ std::string SysopMenu::title() const {
         case Screen::Logs: return "LOGS";
         case Screen::System: return "SYSTEM";
         case Screen::ConfirmFormat: return "FORMAT SD CARD?";
+        case Screen::Theme: return "LOOK";
     }
     return "";
 }
@@ -163,6 +176,15 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
             all.push_back(row("NUP", c.nupHash.empty() ? "none (anyone can apply)" : "set (asked before Apply)"));
             all.push_back(row("theme", c.theme == "oblivion" ? "oblivion (grey and cyan)" : c.theme == "iniquity" ? "iniquity (green and grey)" : "axis (drippy orange)"));
             all.push_back(row("doors", std::to_string(c.doors.size()) + (c.doors.empty() ? "" : " (" + c.doors[0].name + ")")));
+            break;
+        case Screen::Theme:
+            all.push_back("1  Axis");
+            all.push_back("   drippy orange");
+            all.push_back("2  Oblivion");
+            all.push_back("   grey and cyan");
+            all.push_back("3  Iniquity");
+            all.push_back("   green and grey");
+            all.push_back(std::string("now: ") + (c.theme.empty() ? "axis" : c.theme));
             break;
         case Screen::Users: {
             std::vector<const User*> order;  // pending first, then the rest; tap a row to open it

@@ -51,6 +51,7 @@ public:
     virtual bool lock(int key, uint32_t off, uint32_t len, int owner);    // false if any locked range overlaps
     virtual bool unlock(int key, uint32_t off, uint32_t len, int owner);  // false unless that exact lock exists
     virtual void releaseOwner(int owner);
+    size_t       count() const { return locks_.size(); }  // locks still held (a session drops its own on destroy)
     virtual ~LockTable() = default;
 
 private:

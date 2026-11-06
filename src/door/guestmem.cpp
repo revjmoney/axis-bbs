@@ -8,9 +8,15 @@
 namespace axis {
 namespace door {
 
-PagePool::PagePool(size_t budgetBytes) : budget_(budgetBytes / kPageSize) {}
+PagePool::PagePool(size_t budgetBytes) : budget_(budgetBytes / kPageSize) {
+    try {
+        used_.reserve(budget_);  // recording a page must not need another heap block
+    } catch (...) {
+        // a tiny vector can still grow one pointer at a time; alloc() catches that
+    }
+}
 
-PagePool::~PagePool() { releaseAll(); }
+PagePool::~PagePool() { freeUsed(); }
 
 void PagePool::addArena(uint8_t* arena, size_t bytes) {
     if (!arena || bytes < kPageSize) return;
@@ -27,25 +33,53 @@ bool PagePool::lent(const uint8_t* p) const {
 uint8_t* PagePool::alloc() {
     if (used_.size() >= budget_) return nullptr;
     uint8_t* p = nullptr;
+    bool     heap = false;
     if (!spare_.empty()) {
         p = spare_.back();
         spare_.pop_back();
     } else {
         p = (uint8_t*)std::malloc(kPageSize);
         if (!p) return nullptr;  // the heap ran out before the budget did
+        heap = true;
     }
-    used_.push_back(p);
+    if (failTrack_) {  // the page was had, then recording it failed: give it back
+        failTrack_ = false;
+        if (heap) std::free(p);
+        else spare_.push_back(p);
+        return nullptr;
+    }
+    try {
+        used_.push_back(p);
+    } catch (...) {
+        if (heap) std::free(p);
+        else {
+            try {
+                spare_.push_back(p);
+            } catch (...) {
+                // the lent page stays inside its arena; releaseAll rebuilds the spare list
+            }
+        }
+        return nullptr;
+    }
     if (used_.size() > peak_) peak_ = used_.size();
     return p;
 }
 
-void PagePool::releaseAll() {
+void PagePool::freeUsed() {
     for (uint8_t* p : used_)
         if (!lent(p)) std::free(p);
     used_.clear();
     spare_.clear();
-    for (auto& a : arenas_)
-        for (size_t off = a.second; off > 0; off -= kPageSize) spare_.push_back(a.first + off - kPageSize);
+}
+
+void PagePool::releaseAll() {
+    freeUsed();
+    try {
+        for (auto& a : arenas_)
+            for (size_t off = a.second; off > 0; off -= kPageSize) spare_.push_back(a.first + off - kPageSize);
+    } catch (...) {
+        spare_.clear();
+    }
 }
 
 GuestMemory::GuestMemory(PagePool& pool) : pool_(pool) {}

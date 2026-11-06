@@ -17,6 +17,8 @@ struct ImageSource {
     // reads the program from fs itself (in chunks: it may be bigger than free RAM), fills mz from its
     // header, and returns the image relocated for loadSeg, valid for the whole session; nullptr on failure
     virtual const uint8_t* image(HostFs& fs, const std::string& exe, uint16_t loadSeg, MzInfo& mz, size_t& len) = 0;
+    // true when image() returned nullptr because a host allocation failed (not a missing/bad program)
+    virtual bool exhaustedHeap() const { return false; }
     virtual ~ImageSource() = default;
 };
 

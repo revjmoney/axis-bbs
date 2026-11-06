@@ -26,6 +26,7 @@ add_library(axiscore STATIC
     src/bbs/ansiviewer.cpp
     src/bbs/rotatelog.cpp
     src/bbs/dosshell.cpp
+    src/bbs/diag.cpp
     src/bbs/dripfont.cpp
     src/bbs/ledsignal.cpp
     src/bbs/msgbase.cpp
@@ -40,6 +41,7 @@ add_library(axiscore STATIC
     src/bbs/pipecodes.cpp
     src/bbs/menufile.cpp
     src/bbs/lightbar.cpp
+    src/bbs/listscreen.cpp
     src/bbs/menurunner.cpp
     src/bbs/newuser.cpp
     src/bbs/touchkeyboard.cpp
@@ -94,6 +96,7 @@ add_executable(axis_tests
     tests/test_setup_gate.cpp
     tests/test_cpu.cpp
     tests/test_guestmem.cpp
+    tests/test_irampick.cpp
     tests/test_mz.cpp
     tests/test_dos.cpp
     tests/test_bios.cpp
@@ -142,7 +145,9 @@ add_executable(axis_tests
     tests/test_remotefiles.cpp
     tests/test_pooledlib.cpp
     tests/test_relay.cpp
-    tests/test_doorfs.cpp)
+    tests/test_doorfs.cpp
+    tests/test_diag.cpp
+    tests/test_doorlife.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)

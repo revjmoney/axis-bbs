@@ -25,15 +25,19 @@ public:
     // before the heap, never freed here. Must be 4-byte aligned; pages are only touched as words.
     void addArena(uint8_t* arena, size_t bytes);
     ~PagePool();
-    uint8_t* alloc();  // nullptr when the budget is used up
+    uint8_t* alloc();  // nullptr when the budget or the heap is used up (never throws)
     void     releaseAll();
+    // Test hook: the next alloc takes a page, then fails while recording it and gives that page back.
+    void     failNextTrack() { failTrack_ = true; }
     size_t   usedPages() const { return used_.size(); }
     size_t   peakPages() const { return peak_; }
     size_t   budgetPages() const { return budget_; }
 
 private:
+    void                  freeUsed();
     bool                  lent(const uint8_t* p) const;
     size_t                budget_, peak_ = 0;
+    bool                  failTrack_ = false;
     std::vector<uint8_t*> used_, spare_;  // spare_: lent pages not handed out yet
     std::vector<std::pair<uint8_t*, size_t>> arenas_;
 };

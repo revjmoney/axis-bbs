@@ -70,6 +70,21 @@ TEST_CASE("telnet stream finishes a write the socket takes in pieces") {
     CHECK(l.carrier());
 }
 
+TEST_CASE("telnet stream sends an 8 KB burst through a 17-byte socket window") {
+    FakeLine l;
+    l.acceptPerWrite = 17;
+    std::string body(8192, '\x7e');
+    body[100] = '\xff';
+    body[4000] = '\x0d';
+    l.write((const uint8_t*)body.data(), body.size());
+    l.flush();
+    CHECK(l.carrier());
+    CHECK_FALSE(l.closed);
+    // 0xFF is doubled for telnet; CR stays one byte (ZMODEM escapes CR before it gets here)
+    CHECK(l.toCaller.size() == body.size() + 1);
+    CHECK(l.toCaller.find('\xff') != std::string::npos);
+}
+
 TEST_CASE("telnet stream drops carrier after 10 s with no progress") {
     FakeLine l;
     l.acceptPerWrite = 0;
