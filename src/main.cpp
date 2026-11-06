@@ -1744,8 +1744,8 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
     } else if (a == A::SetUserPassword || a == A::SetSysopPassword) {  // the touch keyboard takes it from here
         pwFor = a == A::SetSysopPassword ? 0 : sysop.selectedUser();
         pwKb.reset("new password, then OK", true);
-    } else if (a == A::CycleTheme) {  // the next caller sees it; every board gets it
-        cfg.theme = cfg.theme == "axis" ? "oblivion" : cfg.theme == "oblivion" ? "iniquity" : "axis";
+    } else if (a == A::SetTheme) {  // picked from the look list; the next caller sees it, every board gets it
+        if (!sysop.chosenTheme().empty()) cfg.theme = sysop.chosenTheme();
         bool ok = configSave(cfg);
         logEvent(String("sysop: theme ") + cfg.theme.c_str() + (ok ? "" : " (SAVE FAILED)"));
         if (cluster) cluster->shareSettings();

@@ -475,6 +475,23 @@ void SysopShell::settingGroup(Layer& l, int g) {
         else
             for (int i = 0; kGroups[g].keys[i]; i++) mine = mine || k == kGroups[g].keys[i];
         if (!mine) continue;
+        if (k == "theme") {  // a list of the looks: spelling "oblivion" on a phone is miserable
+            std::string cur = v;
+            l.items.push_back({k, v, [this, cur] {
+                                   push("LOOK", [this, cur](Layer& x) {
+                                       const char* ids[] = {"axis", "oblivion", "iniquity"};
+                                       const char* labels[] = {"Axis, drippy orange", "Oblivion, grey and cyan", "Iniquity, green and grey"};
+                                       for (int i = 0; i < 3; i++) {
+                                           std::string id = ids[i];
+                                           x.items.push_back({labels[i], id == cur ? "now" : "", [this, id] {
+                                                                  did(run_("@SET theme=" + id));
+                                                                  pop();
+                                                              }});
+                                       }
+                                   });
+                               }});
+            continue;
+        }
         l.items.push_back({k, v, [this, k] {
                                ask("New " + k, false, [this, k](const std::string& nv) { did(run_("@SET " + k + "=" + nv)); });
                            }});
