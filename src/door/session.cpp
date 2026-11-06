@@ -3,6 +3,7 @@
 #include "door/session.h"
 
 #include <cctype>
+#include <new>
 #include <chrono>
 #include <thread>
 
@@ -74,6 +75,10 @@ DoorSession::~DoorSession() {
     pool_.reset();
 }
 
+void DoorSession::abandon(DoorResult r) {
+    if (result_ == DoorResult::Running) result_ = r;
+}
+
 bool DoorSession::load() {
     // the drop file first: the door reads it as it starts
     if (cfg_.dropFile != DropFile::None) {
@@ -107,7 +112,10 @@ bool DoorSession::load() {
         img = image_.data();
         imgLen = image_.size();
     }
-    if (!img) return false;
+    if (!img) {
+        heapFail_ = cfg_.imageSource && cfg_.imageSource->exhaustedHeap();
+        return false;
+    }
 
     pool_.reset(new PagePool(cfg_.ramBudget));
     for (auto& a : cfg_.arenas) pool_->addArena(a.first, a.second);
@@ -158,10 +166,20 @@ bool DoorSession::load() {
 
 bool DoorSession::step(uint32_t maxMs) {
     if (result_ != DoorResult::Running) return false;
+    try {
+        return stepInner(maxMs);
+    } catch (const std::bad_alloc&) {
+        // a host allocation threw: the door's pages and files are released by the destructor
+        abandon(DoorResult::OutOfMemory);
+        return false;
+    }
+}
+
+bool DoorSession::stepInner(uint32_t maxMs) {
     if (!loaded_) {
         loaded_ = true;
         if (!load()) {
-            result_ = mem_ && mem_->outOfMemory() ? DoorResult::OutOfMemory : DoorResult::LoadError;
+            result_ = heapFail_ || (mem_ && mem_->outOfMemory()) ? DoorResult::OutOfMemory : DoorResult::LoadError;
             return false;
         }
         startMs_ = cfg_.clockMs();

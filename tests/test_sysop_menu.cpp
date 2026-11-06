@@ -235,7 +235,16 @@ TEST_CASE("BBS SETUP shows the theme and its THEME button asks to switch it") {
     for (auto& l : m.lines(data())) all += l + "\n";
     CHECK(all.find("theme") != std::string::npos);
     CHECK(all.find("axis") != std::string::npos);
+    tapButton(m, "THEME");
+    CHECK(m.screen() == SysopMenu::Screen::Theme);
+    std::string looks;
+    for (auto& l : m.lines(data())) looks += l + "\n";
+    CHECK(looks.find("Axis") != std::string::npos);
+    CHECK(looks.find("Oblivion") != std::string::npos);
+    CHECK(looks.find("Iniquity") != std::string::npos);
     SysopMenu::Action a = SysopMenu::Action::None;
-    tapButton(m, "THEME", &a);
-    CHECK(a == SysopMenu::Action::CycleTheme);
+    tapButton(m, "OBLIVION", &a);
+    CHECK(a == SysopMenu::Action::SetTheme);
+    CHECK(m.chosenTheme() == "oblivion");
+    CHECK(m.screen() == SysopMenu::Screen::Setup);
 }

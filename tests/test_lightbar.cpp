@@ -77,6 +77,29 @@ TEST_CASE("scroll list: shows a window of the list, scrolls with the bar, page k
     CHECK(l.current() == 9);
 }
 
+TEST_CASE("scroll list: moving past either end reports the clamp and stays put") {
+    ScrollList l(1, 1, 10, 3);
+    l.setItems({"a", "b"});
+    l.key('\x1b');
+    l.key('[');
+    l.key('B');
+    CHECK(l.current() == 1);
+    CHECK(l.clamped() == 0);
+    l.key('\x1b');
+    l.key('[');
+    l.key('B');
+    CHECK(l.current() == 1);
+    CHECK(l.clamped() == 1);
+    l.key('\x1b');
+    l.key('[');
+    l.key('A');
+    l.key('\x1b');
+    l.key('[');
+    l.key('A');
+    CHECK(l.current() == 0);
+    CHECK(l.clamped() == -1);
+}
+
 TEST_CASE("scroll list: typed numbers then Enter pick by number; Enter alone picks the bar; a letter jumps") {
     ScrollList l(1, 1, 20, 5);
     l.setItems({"ACID-50A.ZIP", "BT-1980.ZIP", "CIA54.ZIP", "ICE-9401.ZIP"});

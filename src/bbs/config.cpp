@@ -221,6 +221,15 @@ const std::vector<std::pair<std::string, char>>& menuCommands() {
     return v;
 }
 
+bool migrateLordArgs(DoorEntry& d) {
+    std::string exe = d.exe;
+    for (char& c : exe) c = (char)std::toupper((unsigned char)c);
+    if (exe != "LORD.EXE") return false;
+    if (d.args != "1 /DREW" && d.args != "%N /DREW" && d.args != "%n /DREW") return false;
+    d.args = "%N NOEMS /DREW";
+    return true;
+}
+
 char menuCommandKey(const std::string& cmd) {
     for (auto& c : menuCommands())
         if (c.first == cmd) return c.second;

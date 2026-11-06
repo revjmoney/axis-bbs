@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <ESPmDNS.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 #include <lwip/sockets.h>
 #include <soc/soc_memory_types.h>
 #include <WiFi.h>
@@ -16,9 +17,14 @@
 
 #include <Preferences.h>
 
+#include <cstdio>
 #include <memory>
+#include <new>
+
+#include <freertos/task.h>
 
 #include "bbs/announce.h"
+#include "bbs/diag.h"
 #include "platform/cyd/web.h"
 #include "bbs/ansiviewer.h"
 #include "bbs/dosshell.h"
@@ -30,6 +36,7 @@
 #include "bbs/theme.h"
 #include "bbs/setupportal.h"
 #include "cluster/doorfs.h"
+#include "door/irampick.h"
 #include "door/screenmirror.h"
 #include "bbs/panelproto.h"
 #include "bbs/loginguard.h"
@@ -70,6 +77,15 @@
 #pragma GCC optimize("Os")
 
 static constexpr int kNodeNumber = 1;
+
+// Last door and the boot reason, for @STATUS. Updated when a door starts or returns. No flash writes.
+static axis::bbs::DiagSample boardDiag_;
+
+static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
+    boardDiag_.door = how;
+    boardDiag_.doorPeakKb = peakKb;
+    boardDiag_.doorStackWords = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+}
 
 enum class Mode { Normal, SetupChoice, SetupTelnet, SetupTouch, WifiPick };
 
@@ -1392,6 +1408,48 @@ static void answerIn(WiFiClient incoming) {
 }
 
 // ------------------------------------------------------------------ doors
+static void zipStateFree();
+// Give back everything a door borrowed: guest pages, files, locks, the screen copy, instruction RAM.
+// Safe to call twice, and it does not allocate.
+static void releaseDoorSlot() {
+    door.reset();
+    doorMirror.reset();
+    doorImage.reset();
+    doorFs.reset();
+    if (curSession >= 0) (doorRemoteLocks ? *doorRemoteLocks : doorLocks).releaseOwner(sessionNumber(curSession));
+    doorRemoteLocks.reset();
+    viewer.reset();
+    zipStateFree();
+    dosShell.reset();
+    dosFs.reset();
+    busySlot = -1;
+    if (doorIram) {
+        heap_caps_free(doorIram);
+        doorIram = nullptr;
+    }
+    screenReturn();
+    screenDirty = true;
+    web::setDoorRunning(false);  // HTTPS may use the heap again
+}
+
+static void abortDoor(axis::bbs::Node::DoorEnd how) {
+    using E = axis::bbs::Node::DoorEnd;
+    noteDoor(how == E::OutOfMemory ? axis::bbs::DoorDiag::OutOfMemory
+             : how == E::TimeLimit  ? axis::bbs::DoorDiag::TimeLimit
+             : how == E::LoadError  ? axis::bbs::DoorDiag::LoadError
+             : how == E::CarrierLost ? axis::bbs::DoorDiag::Hangup
+                                    : axis::bbs::DoorDiag::Quit,
+             0);
+    releaseDoorSlot();
+    if (!node) return;
+    try {
+        node->resumeAfterDoor(how, millis());
+        sendApp(node->takeOutput());
+    } catch (...) {
+        esp_rom_printf("axis: door menu recover failed\n");
+    }
+}
+
 static void doorStatusLine() {  // straight to the panel: there is no screen copy during a door
 #ifdef AXIS_HEADLESS
     return;  // no panel
@@ -1414,7 +1472,7 @@ static std::string areaName(const std::string& id) {
 static uint8_t* zipStateTake();
 static void     zipStateFree();
 
-static void startDoor() {
+static void startDoorInner() {
     const axis::bbs::DoorEntry& d = node->door();
     sendApp(node->takeOutput());
     doorHeapBefore = ESP.getFreeHeap();
@@ -1502,27 +1560,22 @@ static void startDoor() {
     c.imageSource = doorImage.get();
     c.arenas.emplace_back(lentRam, lentBytes);  // the screen copy becomes the door's first pages
     // Spare instruction RAM: malloc never hands it out (it can't be read a byte at a time), but
-    // guest pages are only touched as words, so a door can use it. About 40 KB on this board.
-    // Only pure instruction RAM: a block in the shared D/IRAM region is byte heap too (taking it
-    // once left the door 10 KB of heap), so such blocks are held aside while we look, then freed.
-    size_t iramBytes = 0;
-    {
-        void* aside[4];
-        int   held = 0;
-        while (held < 4) {
-            size_t b = heap_caps_get_largest_free_block(MALLOC_CAP_EXEC) / 4096 * 4096;
-            void*  p = b ? heap_caps_malloc(b, MALLOC_CAP_EXEC) : nullptr;
-            if (!p) break;
-            if (esp_ptr_in_diram_iram(p)) {
-                aside[held++] = p;
-                continue;
-            }
-            doorIram = (uint8_t*)p;
-            iramBytes = b;
-            break;
-        }
-        while (held) heap_caps_free(aside[--held]);
+    // guest pages are only touched as words. Shared D/IRAM is byte heap too, so it is set aside
+    // and returned; a failed take is retried one page smaller (IDF asks for 4 extra bytes there).
+    if (doorIram) {
+        heap_caps_free(doorIram);
+        doorIram = nullptr;
     }
+    axis::door::IramPick iram = axis::door::pickInstructionRam(
+        [] { return heap_caps_get_largest_free_block(MALLOC_CAP_EXEC); },
+        [](size_t b) -> axis::door::ExecTake {
+            void* p = b ? heap_caps_malloc(b, MALLOC_CAP_EXEC) : nullptr;
+            if (!p) return {};
+            return {p, b, esp_ptr_in_diram_iram(p) != 0};
+        },
+        [](void* p) { heap_caps_free(p); });
+    doorIram = (uint8_t*)iram.ptr;
+    size_t iramBytes = iram.bytes;
     if (doorIram) c.arenas.emplace_back(doorIram, iramBytes);
     c.dropFile = setup ? axis::door::DropFile::None : d.drop == "dorinfo" ? axis::door::DropFile::Dorinfo : axis::door::DropFile::DoorSys;
     c.caller.alias = c.caller.realName = node->handle();
@@ -1532,16 +1585,34 @@ static void startDoor() {
     c.timeLimitSec = (uint32_t)cfg.dailyMinutes * 60u;
     c.clockMs = [] { return (uint64_t)millis(); };
     c.sleepMs = [](uint32_t ms) { delay(ms); };
-    c.onOutOfMemory = [] {  // byte-addressable heap is what pages and everything else need
-        Serial.printf("axis: door out of memory: byte heap %u, largest %u, pool %u of %u pages\n",
-                      heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-                      door ? (unsigned)door->poolPages() : 0u, door ? (unsigned)door->poolBudget() : 0u);
+    c.onOutOfMemory = [] {  // rom printf: this runs when the byte heap cannot spare another page
+        unsigned used = door ? (unsigned)door->poolPages() : 0u;
+        unsigned budget = door ? (unsigned)door->poolBudget() : 0u;
+        const char* why = budget && used >= budget ? "cap" : "heap";
+        esp_rom_printf("axis: door out of memory (%s): byte heap %u, largest %u, pool %u of %u pages\n", why,
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), used, budget);
     };
     doorStartMs = millis();
-    Serial.printf("axis: door %s for %s, byte heap %u + %u lent from the screen + %u instruction RAM\n", d.id.c_str(),
-                  node->handle().c_str(), heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)lentBytes, (unsigned)iramBytes);
+    Serial.printf("axis: door %s for %s, byte heap %u + %u lent from the screen + %u instruction RAM, stack %u words\n",
+                  d.id.c_str(), node->handle().c_str(), heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)lentBytes,
+                  (unsigned)iramBytes, (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
     door.reset(new axis::door::DoorSession(c, *doorFs, *locks, *line, me));
+}
+
+static void startDoor() {
+    noteDoor(axis::bbs::DoorDiag::Running, 0);
+    web::setDoorRunning(true);  // before the door allocates: a handshake must not take the largest block
+    try {
+        startDoorInner();
+    } catch (const std::bad_alloc&) {
+        esp_rom_printf("axis: ALLOC FAILED during door start (uncaught)\n");
+        abortDoor(axis::bbs::Node::DoorEnd::OutOfMemory);
+    } catch (...) {
+        esp_rom_printf("axis: door start failed\n");
+        abortDoor(axis::bbs::Node::DoorEnd::LoadError);
+    }
 }
 
 // The unzipper's working state (~12 KB), from the heap only while a ZIP is open; its 32 KB window
@@ -1557,13 +1628,8 @@ static void zipStateFree() {
 }
 
 static void finishViewer() {
-    busySlot = -1;
-    viewer.reset();
-    zipStateFree();
-    dosShell.reset();
-    dosFs.reset();
-    screenReturn();
-    screenDirty = true;
+    noteDoor(line && line->carrier() ? axis::bbs::DoorDiag::Quit : axis::bbs::DoorDiag::Hangup, 0);
+    releaseDoorSlot();
     logEvent(String("door ") + node->door().id.c_str() + " ended after " + String((millis() - doorStartMs) / 1000) + "s");
     if (!line || !line->carrier()) {
         hangUp();
@@ -1576,32 +1642,36 @@ static void finishViewer() {
 static void finishDoor() {
     using R = axis::door::DoorResult;
     using E = axis::bbs::Node::DoorEnd;
-    R   r = door->result();
-    int peakKb = (int)door->memStats().peakRamPages * 4;
-    door.reset();
-    if (doorMirror && line) line->write((const uint8_t*)"[0m[2J", 8);  // out of the setup screen
-    doorMirror.reset();
-    doorImage.reset();
-    doorFs.reset();
-    (doorRemoteLocks ? *doorRemoteLocks : doorLocks).releaseOwner(sessionNumber(curSession));
-    doorRemoteLocks.reset();
-    busySlot = -1;
-    heap_caps_free(doorIram);
-    doorIram = nullptr;
-    screenReturn();
+    R   r = door ? door->result() : R::LoadError;
+    int peakKb = door ? (int)door->memStats().peakRamPages * 4 : 0;
+    axis::bbs::DoorDiag diagHow = r == R::Exited ? axis::bbs::DoorDiag::Quit
+                                  : r == R::OutOfMemory ? axis::bbs::DoorDiag::OutOfMemory
+                                  : r == R::CarrierLost ? axis::bbs::DoorDiag::Hangup
+                                  : r == R::TimeLimit ? axis::bbs::DoorDiag::TimeLimit
+                                                      : axis::bbs::DoorDiag::LoadError;
+    noteDoor(diagHow, (uint32_t)peakKb);
+    bool mirror = doorMirror != nullptr;
+    if (mirror && line) line->write((const uint8_t*)"\x1b[0m\x1b[2J", 8);  // out of the setup screen
+    releaseDoorSlot();
+    unsigned stackWords = (unsigned)uxTaskGetStackHighWaterMark(nullptr);
     logEvent(String("door ") + node->door().id.c_str() + " ended (" +
              (r == R::Exited ? "quit" : r == R::OutOfMemory ? "out of memory" : r == R::CarrierLost ? "hung up"
               : r == R::TimeLimit ? "time limit" : "couldn't start") + ")");
-    Serial.printf("axis: door %s done result %d, peak RAM %d KB, %lus, heap before %u after %u, lowest %u\n", node->door().id.c_str(),
-                  (int)r, peakKb, (unsigned long)((millis() - doorStartMs) / 1000), doorHeapBefore, ESP.getFreeHeap(), ESP.getMinFreeHeap());
-    screenDirty = true;
+    Serial.printf("axis: door %s done result %d, peak RAM %d KB, %lus, heap before %u after %u, lowest %u, stack %u words\n",
+                  node->door().id.c_str(), (int)r, peakKb, (unsigned long)((millis() - doorStartMs) / 1000), doorHeapBefore,
+                  ESP.getFreeHeap(), ESP.getMinFreeHeap(), stackWords);
+    if (stackWords < 128) esp_rom_printf("axis: door stack low: %u words free\n", stackWords);
     if (!line || !line->carrier() || r == R::CarrierLost) {
         hangUp();
         return;
     }
     E how = r == R::OutOfMemory ? E::OutOfMemory : r == R::TimeLimit ? E::TimeLimit : r == R::LoadError ? E::LoadError : E::Normal;
-    node->resumeAfterDoor(how, millis());
-    sendApp(node->takeOutput());
+    try {
+        node->resumeAfterDoor(how, millis());
+        sendApp(node->takeOutput());
+    } catch (...) {
+        esp_rom_printf("axis: door menu recover failed\n");
+    }
 }
 
 // keystrokes from the caller, already through the telnet filter
@@ -1703,8 +1773,8 @@ static void sysopAction(axis::bbs::SysopMenu::Action a) {
     } else if (a == A::SetUserPassword || a == A::SetSysopPassword) {  // the touch keyboard takes it from here
         pwFor = a == A::SetSysopPassword ? 0 : sysop.selectedUser();
         pwKb.reset("new password, then OK", true);
-    } else if (a == A::CycleTheme) {  // the next caller sees it; every board gets it
-        cfg.theme = cfg.theme == "axis" ? "oblivion" : cfg.theme == "oblivion" ? "iniquity" : "axis";
+    } else if (a == A::SetTheme) {  // picked from the look list; the next caller sees it, every board gets it
+        if (!sysop.chosenTheme().empty()) cfg.theme = sysop.chosenTheme();
         bool ok = configSave(cfg);
         logEvent(String("sysop: theme ") + cfg.theme.c_str() + (ok ? "" : " (SAVE FAILED)"));
         if (cluster) cluster->shareSettings();
@@ -2414,10 +2484,20 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@STATUS") {  // one line for the panel
         int on = 0;
         for (size_t i = 0; i < sessions.size(); i++) on += sessionLine(i) ? 1 : 0;
-        out.printf("id=%s role=%s nodes=%d on=%d heap=%u largest=%u up=%lu rssi=%d sd_mb=%u ip=%s\n", WiFi.macAddress().c_str(),
-                   !cluster ? "solo" : cluster->role() == axis::cluster::Role::Main ? "main" : "follower", (int)sessions.size(), on,
-                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-                   (unsigned long)(millis() / 1000), (int)WiFi.RSSI(), (unsigned)(storageFreeBytes() >> 20), WiFi.localIP().toString().c_str());
+        axis::bbs::DiagSample sample = boardDiag_;
+        sample.heapFree = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        sample.largest = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        sample.minHeap = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+        sample.stackWords = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+        char line[384];
+        std::snprintf(line, sizeof line, "id=%s role=%s nodes=%d on=%d heap=%u largest=%u up=%lu rssi=%d sd_mb=%u ip=%s",
+                      WiFi.macAddress().c_str(),
+                      !cluster ? "solo" : cluster->role() == axis::cluster::Role::Main ? "main" : "follower", (int)sessions.size(), on,
+                      sample.heapFree, sample.largest, (unsigned long)(millis() / 1000), (int)WiFi.RSSI(),
+                      (unsigned)(storageFreeBytes() >> 20), WiFi.localIP().toString().c_str());
+        out.print(line);
+        out.print(axis::bbs::diagFields(sample).c_str());
+        out.print('\n');
     } else if (cmd.startsWith("@UEDIT ")) {  // "@UEDIT handle|field|value": realname location email tagline security handle
         String a = cmd.substring(7);
         int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
@@ -2777,6 +2857,7 @@ static void allocFailed(size_t size, uint32_t caps, const char* fn) {
 }
 
 void setup() {
+    boardDiag_.resetCode = (int)esp_reset_reason();
     heap_caps_register_failed_alloc_callback(allocFailed);
     ledBegin();
     Serial.begin(115200);
@@ -2792,11 +2873,9 @@ void setup() {
     web::begin();
     cfg = configLoad();
     sessions.resize(cfg.setupDone ? (size_t)cfg.sessions : 1);  // callers at once (setup takes one)
-    for (auto& d : cfg.doors)  // LORD as a multinode door: each node its own node file and drop folder
-        if (d.id == "lord" && d.args == "1 /DREW") {
-            d.args = "%N /DREW";
-            configSave(cfg);
-        }
+    bool lordArgs = false;  // stock LORD tails gain NOEMS; a sysop's own arguments stay
+    for (auto& d : cfg.doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
+    if (lordArgs) configSave(cfg);
     users.parse(flashRead("/users.dat"));
     linersLoad();
     callersLoad();
@@ -2953,7 +3032,13 @@ static void serviceSession(int i) {
         return;
     }
     if (door && busySlot == i) {  // the door owns the caller's line; the BBS waits
-        bool running = door->step(millis() - lastServedMs < 100 ? 8 : 30);  // short slices while a follower's door is asking us
+        bool running = false;
+        try {
+            running = door->step(millis() - lastServedMs < 100 ? 8 : 30);  // short slices while a follower's door is asking us
+        } catch (...) {
+            esp_rom_printf("axis: door step failed\n");
+            door->abandon(axis::door::DoorResult::OutOfMemory);
+        }
         if (doorMirror && line) {  // a setup program: its screen, as ANSI
             doorMirror->update(door->textPage(), [&](const char* d, size_t n) { line->write((const uint8_t*)d, n); });
         }

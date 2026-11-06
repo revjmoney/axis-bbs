@@ -20,11 +20,14 @@ public:
     bool        rewrote() const { return rewrote_; }
     uint32_t    key() const { return key_; }
     const char* error() const { return error_; }
+    bool        exhaustedHeap() const override { return oom_; }
 
 private:
     void                   unmap();
+    const uint8_t*         imageBody(axis::door::HostFs& fs, const std::string& exe, uint16_t loadSeg, axis::door::MzInfo& mz,
+                                     size_t& len, int& openHandle);
     std::string            id_;
-    bool                   force_, rewrote_ = false;
+    bool                   force_, rewrote_ = false, oom_ = false;
     uint32_t               key_ = 0;
     const char*            error_ = "";
     spi_flash_mmap_handle_t handle_ = 0;

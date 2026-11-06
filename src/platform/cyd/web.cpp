@@ -21,14 +21,17 @@ volatile bool      main_ = true;  // (any board with the settings does the work)
 String             discord_, domain_, host_, key_, secret_, lastIp_, lastResult_ = "idle";
 String             noipHost_, noipUser_, noipPass_, noipIp_, noipResult_ = "idle";
 volatile bool      noipStopped_ = false;  // No-IP refused: wait for new settings (it bans clients that keep trying)
+volatile bool      door_ = false;    // a door is using the heap: do not start a handshake
 SemaphoreHandle_t  lock_ = nullptr;  // the settings, shared with the task
 constexpr size_t   kLine = 320;
 constexpr uint32_t kDdnsEveryMs = 10 * 60 * 1000;
 constexpr uint32_t kFirstCheckMs = 60 * 1000;  // after boot: time to clear bad settings before any network call
 constexpr size_t   kTlsNeeds = 48 * 1024;      // a TLS handshake wants about 45 KB in one piece
 
-// a busy CYD main can't spare a TLS handshake: trying anyway starves the whole board
-bool tlsFits() { return heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kTlsNeeds; }
+// a busy CYD main can't spare a TLS handshake: trying anyway starves the whole board.
+// A running door wins even when the largest block still looks big enough: the handshake
+// would take that block and the next guest page would fail.
+bool tlsFits() { return !door_ && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kTlsNeeds; }
 
 String jsonText(const char* s) {  // a JSON string's inside
     String o;
@@ -113,17 +116,29 @@ void run(void*) {
     uint32_t lastDdns = 0;
     bool     first = true;
     char     line[kLine];
+    bool     holding = false;  // one Discord line kept across a door, instead of dropped
     for (;;) {
-        if (xQueueReceive(queue_, line, pdMS_TO_TICKS(2000)) == pdTRUE) {
+        if (!holding && xQueueReceive(queue_, line, pdMS_TO_TICKS(door_ ? 500 : 2000)) == pdTRUE) holding = true;
+        if (holding && door_) {
+            vTaskDelay(pdMS_TO_TICKS(500));  // the door has the heap: post this line when it returns
+        } else if (holding) {
             xSemaphoreTake(lock_, portMAX_DELAY);
             String url = discord_;
             xSemaphoreGive(lock_);
+            // A door can start between the check above and this one: keep the line if it did.
             if (main_ && url.length() && WiFi.status() == WL_CONNECTED && tlsFits()) {
+                holding = false;
                 int code = request("POST", url, String("{\"content\":\"") + jsonText(line) + "\"}", "", nullptr);
-                if (code != 204 && code != 200) Serial.printf("axis: discord post failed (HTTP %d)\n", code);
-                vTaskDelay(pdMS_TO_TICKS(1500));  // Discord's rate limit: a few posts a second at most
+                if (code == -2 && door_) holding = true;  // the handshake refused because a door started
+                else if (code != 204 && code != 200) Serial.printf("axis: discord post failed (HTTP %d)\n", code);
+                if (!holding) vTaskDelay(pdMS_TO_TICKS(1500));  // Discord's rate limit: a few posts a second at most
+            } else if (door_) {
+                vTaskDelay(pdMS_TO_TICKS(500));
+            } else {
+                holding = false;  // no webhook, or the heap cannot spare TLS: drop it, as before
             }
         }
+        if (door_) continue;  // DNS checks allocate too; the timer is not consumed, so they run after
         if (main_ && WiFi.status() == WL_CONNECTED && millis() > kFirstCheckMs && (first || millis() - lastDdns > kDdnsEveryMs)) {
             first = false;
             lastDdns = millis();
@@ -156,6 +171,8 @@ void begin() {
 }
 
 void setMain(bool isMain) { main_ = isMain; }
+
+void setDoorRunning(bool on) { door_ = on; }
 
 void announce(const String& line) {
     if (!queue_ || !discord_.length() || !main_ || !line.length()) return;

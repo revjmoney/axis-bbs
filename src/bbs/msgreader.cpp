@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "bbs/listscreen.h"
 #include "bbs/theme.h"
 
 namespace axis::bbs {
@@ -67,42 +68,104 @@ void MessageReader::beginScan() {
 
 void MessageReader::showAreas() {
     s_ = St::Areas;
-    out_ += "\x1b[0m\x1b[2J\x1b[H\r\n" + drip("MSGS") + "   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
-    for (size_t i = 0; i < areas_.size(); i++) {
+    line_.clear();
+    if (!bars_) {
+        out_ += "\x1b[0m\x1b[2J\x1b[H\r\n" + drip("MSGS") + "   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
+        usingList_ = false;
+        for (size_t i = 0; i < areas_.size(); i++) {
+            auto h = headersOf(areas_[i].id);
+            int  last = lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, fresh = 0;
+            for (auto& m : h) fresh += m.num > last;
+            char b[160];
+            std::snprintf(b, sizeof b, "   %s[%2u] %s%-34s %s%4u msgs%s", ORANGE, (unsigned)(i + 1), WHITE, areas_[i].name.c_str(), TEXT,
+                          (unsigned)h.size(), fresh ? "" : "\r\n");
+            out_ += b;
+            if (fresh) out_ += std::string("  ") + ORANGE + std::to_string(fresh) + " new" + TEXT + "\r\n";
+        }
+        out_ += std::string("\r\n   ") + TEXT + "Area number (Enter for the main menu): " + WHITE;
+        return;
+    }
+    std::vector<std::string> rows;
+    rows.reserve(areas_.size());
+    for (size_t i = 0; i < areas_.size(); i++) {  // headers only (the store already omits bodies)
         auto h = headersOf(areas_[i].id);
         int  last = lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, fresh = 0;
         for (auto& m : h) fresh += m.num > last;
-        char b[160];
-        std::snprintf(b, sizeof b, "   %s[%2u] %s%-34s %s%4u msgs%s", ORANGE, (unsigned)(i + 1), WHITE, areas_[i].name.c_str(), TEXT,
-                      (unsigned)h.size(), fresh ? "" : "\r\n");
-        out_ += b;
-        if (fresh) out_ += std::string("  ") + ORANGE + std::to_string(fresh) + " new" + TEXT + "\r\n";
+        char b[80];
+        std::snprintf(b, sizeof b, "%-32.32s %4u msgs%s", areas_[i].name.c_str(), (unsigned)h.size(),
+                      fresh ? (std::string("  ") + std::to_string(fresh) + " new").c_str() : "");
+        rows.emplace_back(b);
     }
-    out_ += std::string("\r\n   ") + TEXT + "Area number (Enter for the main menu): " + WHITE;
-    line_.clear();
+    list_.setItems(std::move(rows));
+    usingList_ = true;
+    out_ += listScreenTop("MESSAGE AREAS", "Area                              Messages");
+    out_ += list_.draw();
+    out_ += listScreenStatus(areas_.empty() ? "" : areas_[0].name);
+    out_ += listScreenKeys("arrows move   Enter opens   number+Enter   " + theme::key("Q", "uit") + " or Esc");
 }
 
 void MessageReader::openArea(size_t i) {
     area_ = i;
     heads_ = headersOf(areas_[i].id);
+    listFrom_ = heads_.size() > (size_t)kPerPage ? heads_.size() - (size_t)kPerPage : 0;
     showList();
 }
 
 void MessageReader::showList() {
     s_ = St::List;
-    out_ += "\x1b[0m\x1b[2J\x1b[H\r\n   " + fade(areas_[area_].name) + std::string(TEXT) + "   " + std::to_string(heads_.size()) +
-            " messages\r\n   " + DGREY + std::string(70, '\xc4') + "\r\n";
-    if (heads_.empty()) out_ += std::string("   ") + TEXT + "(no messages yet: [P]ost the first)\r\n";
-    int    last = lastRead_.count(areas_[area_].id) ? lastRead_[areas_[area_].id] : 0;
-    size_t from = heads_.size() > (size_t)kPerPage ? heads_.size() - kPerPage : 0;  // the newest page
-    for (size_t i = from; i < heads_.size(); i++) {
-        const Message& m = heads_[i];
-        char           b[200];
-        std::snprintf(b, sizeof b, "   %s%c%s%4d %s%-14.14s %s%-14.14s %s%-26.26s\r\n", ORANGE, m.num > last ? '*' : ' ', DGREY, m.num, WHITE,
-                      m.from.c_str(), TEXT, m.to.c_str(), WHITE, m.subject.c_str());
-        out_ += b;
+    int last = lastRead_.count(areas_[area_].id) ? lastRead_[areas_[area_].id] : 0;
+    if (!bars_) {
+        out_ += "\x1b[0m\x1b[2J\x1b[H\r\n   " + fade(areas_[area_].name) + std::string(TEXT) + "   " + std::to_string(heads_.size()) +
+                " messages\r\n   " + DGREY + std::string(70, '\xc4') + "\r\n";
+        if (heads_.empty()) out_ += std::string("   ") + TEXT + "(no messages yet: [P]ost the first)\r\n";
+        usingList_ = false;
+        size_t from = heads_.size() > (size_t)kPerPage ? heads_.size() - kPerPage : 0;  // the newest page
+        for (size_t i = from; i < heads_.size(); i++) {
+            const Message& m = heads_[i];
+            char           b[200];
+            std::snprintf(b, sizeof b, "   %s%c%s%4d %s%-14.14s %s%-14.14s %s%-26.26s\r\n", ORANGE, m.num > last ? '*' : ' ', DGREY, m.num, WHITE,
+                          m.from.c_str(), TEXT, m.to.c_str(), WHITE, m.subject.c_str());
+            out_ += b;
+        }
+        listPrompt();
+        return;
     }
-    listPrompt();
+    if (heads_.empty()) listFrom_ = 0;
+    else if (listFrom_ >= heads_.size()) listFrom_ = heads_.size() - 1;
+    size_t end = listFrom_ + (size_t)kPerPage;
+    if (end > heads_.size()) end = heads_.size();
+    std::vector<std::string> rows;
+    rows.reserve(end - listFrom_);
+    for (size_t i = listFrom_; i < end; i++) {  // one window of headers, bodies stay on disk until Read
+        const Message& m = heads_[i];
+        char           b[80];
+        std::snprintf(b, sizeof b, "%c%4d %-12.12s %-12.12s %-24.24s", m.num > last ? '*' : ' ', m.num, m.from.c_str(), m.to.c_str(),
+                      m.subject.c_str());
+        rows.emplace_back(b);
+    }
+    if (rows.empty()) {
+        usingList_ = false;
+        listPrompt();
+        return;
+    }
+    list_.setItems(std::move(rows));
+    usingList_ = true;
+    char cap[80];
+    std::snprintf(cap, sizeof cap, "  #  From          To            Subject          %u msgs", (unsigned)heads_.size());
+    out_ += listScreenTop(areas_[area_].name, cap);
+    out_ += list_.draw();
+    out_ += listScreenStatus(heads_[listFrom_ + (size_t)list_.current()].subject);
+    out_ += listScreenKeys(theme::key("R", "ead #  ") + theme::key("N", "ext new  ") + theme::key("P", "ost  ") + theme::key("Q", "uit") +
+                           "   Enter reads");
+}
+
+bool MessageReader::tick(uint32_t now, uint32_t lastInput) {
+    if (!bars_ || !usingList_ || !list_.midKey() || now - lastInput <= 300) return true;
+    list_.keyTimeout();
+    if (!list_.escaped()) return true;
+    if (s_ == St::Areas) return false;
+    if (s_ == St::List) showAreas();
+    return true;
 }
 
 void MessageReader::listPrompt() {
@@ -110,11 +173,15 @@ void MessageReader::listPrompt() {
 }
 
 void MessageReader::show(int num) {
+    usingList_ = false;
     Message m;
     if (!st_.read(areas_[area_].id, num, m)) {
         out_ += std::string("\r\n   ") + ORANGE + "No message #" + std::to_string(num) + " here.\r\n";
-        s_ = St::List;
-        listPrompt();
+        if (bars_) showList();
+        else {
+            s_ = St::List;
+            listPrompt();
+        }
         return;
     }
     current_ = m;
@@ -163,11 +230,15 @@ void MessageReader::nextNew() {
     } else {
         out_ += std::string("\r\n   ") + TEXT + "No new messages in " + areas_[area_].name + ".\r\n";
     }
-    s_ = St::List;
-    listPrompt();
+    if (bars_ && area_ < areas_.size()) showList();
+    else {
+        s_ = St::List;
+        listPrompt();
+    }
 }
 
 void MessageReader::startPost(bool reply) {
+    usingList_ = false;
     draft_ = Message();
     draft_.from = handle_;
     if (reply) {
@@ -205,23 +276,86 @@ void MessageReader::save() {
     out_ += std::string("\r\n   ") + (n ? std::string(TEXT) + "Saved as #" + std::to_string(n) + "." : std::string(ORANGE) + "Couldn't save it, sorry.") + "\r\n";
     if (n) lastRead_[areas_[area_].id] = n > lastRead_[areas_[area_].id] ? n : lastRead_[areas_[area_].id];
     heads_ = headersOf(areas_[area_].id);
-    s_ = St::List;
-    listPrompt();
+    listFrom_ = heads_.size() > (size_t)kPerPage ? heads_.size() - (size_t)kPerPage : 0;
+    if (bars_) showList();
+    else {
+        s_ = St::List;
+        listPrompt();
+    }
 }
 
 bool MessageReader::key(char c) {
     switch (s_) {
         case St::Areas:
-            if (!lineKey(c, 3)) return true;
-            if (line_.empty()) return false;
-            {
+            if (!bars_ || !usingList_) {
+                if (!lineKey(c, 3)) return true;
+                if (line_.empty()) return false;
                 int n = std::atoi(line_.c_str());
                 line_.clear();
                 if (n >= 1 && (size_t)n <= areas_.size()) openArea((size_t)n - 1);
                 else showAreas();
+                return true;
+            }
+            if (!list_.midKey() && (c | 0x20) == 'q') return false;
+            {
+                int pick = list_.key(c);
+                out_ += list_.takeRedraw();
+                if (list_.size() && (size_t)list_.current() < areas_.size()) out_ += listScreenStatus(areas_[(size_t)list_.current()].name);
+                if (list_.escaped()) return false;
+                if (pick >= 0 && (size_t)pick < areas_.size()) openArea((size_t)pick);
             }
             return true;
         case St::List:
+            if (bars_ && usingList_) {
+                if (!list_.midKey()) {
+                    char k = (char)(c | 0x20);
+                    if (k == 'r') {
+                        out_ += std::string("r\r\n   ") + TEXT + "Message number: " + WHITE;
+                        line_.clear();
+                        usingList_ = false;
+                        s_ = St::ReadNum;
+                        return true;
+                    }
+                    if (k == 'n') {
+                        nextNew();
+                        return true;
+                    }
+                    if (k == 'p') {
+                        startPost(false);
+                        return true;
+                    }
+                    if (k == 'q') {
+                        showAreas();
+                        return true;
+                    }
+                }
+                int before = list_.current();
+                int shown = (int)list_.size();
+                int pick = list_.key(c);
+                out_ += list_.takeRedraw();
+                {
+                    size_t i = listFrom_ + (size_t)list_.current();
+                    if (i < heads_.size()) out_ += listScreenStatus(heads_[i].from + "  " + heads_[i].subject);
+                }
+                if (list_.escaped()) {
+                    showAreas();
+                    return true;
+                }
+                if (pick >= 0) {
+                    size_t i = listFrom_ + (size_t)pick;
+                    if (i < heads_.size()) show(heads_[i].num);
+                    return true;
+                }
+                if (list_.clamped() < 0 && before == 0 && listFrom_ > 0) {
+                    listFrom_ = listFrom_ > (size_t)kPerPage ? listFrom_ - (size_t)kPerPage : 0;
+                    showList();
+                } else if (list_.clamped() > 0 && shown > 0 && before == shown - 1 && listFrom_ + (size_t)shown < heads_.size()) {
+                    listFrom_ += (size_t)kPerPage;
+                    showList();
+                }
+                return true;
+            }
+            [[fallthrough]];  // the text list and a message being read share R N P Q
         case St::Reading:
             switch (c | 0x20) {
                 case 'r':

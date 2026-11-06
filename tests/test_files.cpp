@@ -161,7 +161,7 @@ TEST_CASE("Q leaves the list and Enter leaves the areas") {
     type(n, "f1\r");
     type(n, "q");
     CHECK(n.state() == Node::State::Files);
-    type(n, "\r");
+    type(n, "q");  // Q from the area lightbar leaves; Enter opens the highlighted area
     CHECK(n.state() == Node::State::Menu);
 }
 
@@ -349,4 +349,115 @@ TEST_CASE("/ at the area list searches every area's names and descriptions") {
     b.key('/');
     for (char ch : std::string("list1\r")) b.key(ch);  // names too: LIST1.TXT, LIST10 ... LIST19
     CHECK(plain(out).find("LIST15.TXT") != std::string::npos);
+}
+
+static void down(FileBrowser& b) {
+    b.key('\x1b');
+    b.key('[');
+    b.key('B');
+}
+
+TEST_CASE("file lightbar: Enter opens the highlighted area and then the highlighted file") {
+    FakeLibrary lib = library();
+    BbsConfig   cfg = twoAreas();
+    std::string out;
+    FileBrowser b(cfg.areas, lib, out);
+    b.begin();
+    down(b);  // Text Files
+    b.key('\r');
+    CHECK(b.where() == "Text Files");
+    out.clear();
+    b.key('\r');  // LIST0.TXT, a text file
+    CHECK(out.find("line 1") != std::string::npos);
+    CHECK_FALSE(b.wantsTransfer());
+}
+
+TEST_CASE("file areas are a classic list: title bar, columns, and the highlight's status line") {
+    FakeLibrary lib = library();
+    BbsConfig   cfg = twoAreas();
+    std::string out;
+    FileBrowser b(cfg.areas, lib, out);
+    b.begin();
+    std::string p = plain(out);
+    CHECK(p.find("A R E A S") != std::string::npos);
+    CHECK(p.find("Files") != std::string::npos);
+    CHECK(out.find("\x1b[21;1H") != std::string::npos);
+    out.clear();
+    down(b);
+    CHECK(out.find("\x1b[21;1H") != std::string::npos);
+    CHECK(plain(out).find("Text Files") != std::string::npos);
+}
+
+TEST_CASE("file lightbar: Enter on a binary starts that file's download, and Q goes back") {
+    FakeLibrary lib = library();
+    BbsConfig   cfg = twoAreas();
+    std::string out;
+    FileBrowser b(cfg.areas, lib, out);
+    b.begin();
+    b.key('\r');  // Axis area
+    CHECK(b.where() == "Axis Micro BBS Firmware");
+    b.key('\r');  // AXISFLSH.ZIP
+    CHECK(plain(out).find("[Z]MODEM") != std::string::npos);
+    b.key('z');
+    CHECK(b.wantsTransfer());
+    CHECK(b.transfer().name == "AXISFLSH.ZIP");
+    CHECK(b.transfer().area == "axis");
+}
+
+TEST_CASE("file lightbar: moving past the page shows the next files, and an empty area's Enter does nothing") {
+    FakeLibrary lib = library();
+    BbsConfig   cfg = twoAreas();
+    std::string out;
+    FileBrowser b(cfg.areas, lib, out);
+    b.begin();
+    down(b);
+    b.key('\r');
+    out.clear();
+    for (int i = 0; i < 15; i++) down(b);  // off the end of the first page
+    CHECK(plain(out).find("LIST15.TXT") != std::string::npos);
+    CHECK(b.key('q'));
+    CHECK(b.where() == "area list");
+    CHECK_FALSE(b.key('q'));
+
+    FakeLibrary empty;
+    empty.areas["axis"] = {};
+    std::string           o2;
+    std::vector<FileArea> emptyAreas{{"axis", "Empty Area"}};
+    FileBrowser           e(emptyAreas, empty, o2);
+    e.begin();
+    e.key('\r');
+    CHECK(e.where() == "Empty Area");
+    CHECK(e.key('\r'));
+    CHECK_FALSE(e.wantsTransfer());
+}
+
+TEST_CASE("file lightbars off keep the area-number prompt, and a browser only lists areas it was given") {
+    FakeLibrary lib = library();
+    BbsConfig   cfg = twoAreas();
+    std::string out;
+    FileBrowser b(cfg.areas, lib, out);
+    b.setLightbars(false);
+    b.begin();
+    CHECK(out.find("Area number") != std::string::npos);
+    CHECK_FALSE(b.key('\r'));
+
+    std::string           one;
+    std::vector<FileArea> justText{cfg.areas[1]};
+    FileBrowser           only(justText, lib, one);
+    only.begin();
+    CHECK(one.find("Text Files") != std::string::npos);
+    CHECK(one.find("Axis Micro BBS Firmware") == std::string::npos);
+    only.key('\r');
+    CHECK(only.where() == "Text Files");
+}
+
+TEST_CASE("Esc on the file-area lightbar leaves after a short pause") {
+    FakeLibrary lib = library();
+    Node        n = inFiles(lib);
+    type(n, "f");
+    type(n, "\x1b");
+    n.poll(1000);
+    CHECK(n.state() == Node::State::Files);
+    n.poll(1400);
+    CHECK(n.state() == Node::State::Menu);
 }

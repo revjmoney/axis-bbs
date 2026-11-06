@@ -49,13 +49,15 @@ public:
     std::string takeRedraw();    // two rows, or the whole window when it scrolled
     int         current() const { return at_; }
     size_t      size() const { return items_.size(); }
+    // -1 if the last move tried to go above the first row, +1 below the last, else 0
+    int         clamped() const { return clamped_; }
 
 private:
     std::string row(int i) const;  // item i at its row in the window
     void        move(int to);
     std::vector<std::string> items_;
     std::string              typed_;
-    int x_, y_, w_, h_, hi_, reg_, at_ = 0, top_ = 0, shownAt_ = 0, shownTop_ = 0, esc_ = 0, escNum_ = 0;
+    int x_, y_, w_, h_, hi_, reg_, at_ = 0, top_ = 0, shownAt_ = 0, shownTop_ = 0, esc_ = 0, escNum_ = 0, clamped_ = 0;
     bool escaped_ = false;
 };
 

@@ -105,6 +105,33 @@ TEST_CASE("page pool hands out a lent arena first and never frees it") {
     CHECK(pool.alloc() == arena.data());
 }
 
+TEST_CASE("a failed page record gives the heap page back and the pool can allocate again") {
+    PagePool pool(8 * kPageSize);
+    pool.failNextTrack();
+    CHECK(pool.alloc() == nullptr);
+    CHECK(pool.usedPages() == 0);
+    uint8_t* p = pool.alloc();
+    REQUIRE(p != nullptr);
+    CHECK(pool.usedPages() == 1);
+    pool.releaseAll();
+    CHECK(pool.usedPages() == 0);
+    CHECK(pool.alloc() != nullptr);
+    pool.releaseAll();
+}
+
+TEST_CASE("a failed page record puts a lent page back on the spare list") {
+    std::vector<uint8_t> arena(kPageSize, 0x5A);
+    PagePool             pool(8 * kPageSize);
+    pool.addArena(arena.data(), arena.size());
+    pool.failNextTrack();
+    CHECK(pool.alloc() == nullptr);
+    CHECK(pool.usedPages() == 0);
+    CHECK(pool.alloc() == arena.data());
+    CHECK(arena[0] == 0x5A);  // the screen's bytes were not freed
+    pool.releaseAll();
+    CHECK(pool.alloc() == arena.data());
+}
+
 TEST_CASE("arena pages count against the budget") {
     std::vector<uint8_t> arena(2 * kPageSize);
     PagePool             pool(2 * kPageSize);
