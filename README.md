@@ -1,6 +1,6 @@
 # Axis Micro BBS Firmware
 
-**A real, old-school telnet BBS written from scratch in C++ for the ESP32 "Cheap Yellow Display"** (CYD, ESP32-2432S028R: 2.8" 320x240 touchscreen, 4 MB flash, no PSRAM). ANSI art, ZMODEM file areas, messages and email, live multinode chat, a touch sysop console, and real DOS doors like Legend of the Red Dragon on a built-in 8086 emulator. The little board is the whole BBS.
+**A real, old-school telnet BBS written from scratch in C++ for the ESP32 "Cheap Yellow Display"** (CYD, ESP32-2432S028R: 2.8" 320x240 touchscreen, 4 MB flash, no PSRAM). ANSI art, ZMODEM file areas, messages and email, live multinode chat, a touch sysop console, and Legend of the Red Dragon as a native door. The little board is the whole BBS.
 
 The software behind **AXIS UNDERGROUND CNC**. Made by Rev. J. Money, the maker of [RotatoCAM](https://rotatocam.com).
 
@@ -36,7 +36,8 @@ Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headle
 | Multinode | Up to 4 callers per board; more boards join as nodes of one BBS with failover | [multinode](https://revjmoney.github.io/axis-bbs/docs.html#multinode) |
 | SD card clustering | Every card in the cluster as one library, with mirrored areas (built, PC tested). **Work in progress:** the SD disc changer, each card a hot-swappable disc with FILE_ID.DIZ descriptions | [sd-pool](https://revjmoney.github.io/axis-bbs/docs.html#sd-pool) |
 | Chat | Teleconference, node messages, broadcasts, split-screen chat | [chat](https://revjmoney.github.io/axis-bbs/docs.html#chat) |
-| DOS doors | 8086 emulator with FOSSIL and DOOR.SYS: LORD 4.07, BBS Black Jack | [lord](https://revjmoney.github.io/axis-bbs/docs.html#lord) |
+| Native LORD | Legend of the Red Dragon in C++, on the board, over telnet. Several callers can play at once. Art and warriors come from the installed LORD folder. | [lord](https://revjmoney.github.io/axis-bbs/docs.html#lord) |
+| DOS emulator | A separate PC build (`dosemu/`, `doorhost`) for an unmodified EXE such as LORD.EXE or BBS Black Jack. It is not linked into the ESP32 image. | [dosemu](https://revjmoney.github.io/axis-bbs/docs.html#dosemu) |
 | Built-in doors | ANSI Pack Viewer with ANSI movies; password-locked DOS prompt | [ansi-viewer](https://revjmoney.github.io/axis-bbs/docs.html#ansi-viewer) |
 | Accounts | New user application, validation, levels, permissions, time limits, twit flag | [accounts](https://revjmoney.github.io/axis-bbs/docs.html#accounts) |
 | Sysop console | Iniquity-style activity screen, a layered sysop menu inside the BBS (users, file areas and files, message bases and posts, every setting, a menu editor, system) on telnet and the touchscreen, local console | [cyd-console](https://revjmoney.github.io/axis-bbs/docs.html#cyd-console) |
@@ -72,8 +73,10 @@ Settings are changed on the board (BBS SETUP), over the USB serial console at 11
 
 ## Building and tests
 
-- Firmware: PlatformIO, `espressif32@6.9.0`, Arduino, LovyanGFX. Environments `cyd` (default), `headless`, `headless-ring` (`platformio.ini`). Partitions in `partitions.csv`: app 1.81 MB, door 448 KB, LittleFS 1.69 MB (kept in place, so users and settings survive a flash).
-- PC tests of the portable code and the 8086 door runtime (CMake, Ninja, g++ from MSYS2 on Windows, doctest):
+The tree builds two ways. `CMakeLists.txt` picks from whether `IDF_PATH` is set.
+
+- **The board.** PlatformIO sets `IDF_PATH`, so this is the ESP32 image: `pio run -e cyd` (also `headless` and `headless-ring`). Native LORD is `src/lord/` and is in that image. `dosemu/` is not linked. An `.EXE` door tells the caller the DOS runtime is not in this firmware. Partitions in `partitions.csv`: app 1.875 MB, door cache 384 KB (left in place, unused by native LORD), LittleFS 1.69 MB.
+- **The PC build.** A plain CMake run, with `IDF_PATH` unset, includes `CMakeLists.pc.txt`. That build links `dosemu/` and `third_party/i8086` (the 8086 emulator, high-level DOS, BIOS, FOSSIL) and also compiles the native engine, so the tests cover both. `doorhost` is how you play an unmodified EXE. Details: [the DOS emulator](https://revjmoney.github.io/axis-bbs/docs.html#dosemu).
 
   ```
   cmake -S . -B build -G Ninja && cmake --build build && build/axis_tests

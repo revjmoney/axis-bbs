@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Axis Micro BBS Firmware: a real telnet BBS on an ESP32 touchscreen</title>
-<meta name="description" content="Axis Micro BBS Firmware is a real old-school telnet BBS written from scratch in C++ for the ESP32 Cheap Yellow Display: ANSI menus, file areas with ZMODEM, messages, multinode chat, real DOS doors like LORD, and a touch sysop console. Made by Rev. J. Money, the maker of RotatoCAM.">
+<meta name="description" content="Axis Micro BBS Firmware is a real old-school telnet BBS written from scratch in C++ for the ESP32 Cheap Yellow Display: ANSI menus, file areas with ZMODEM, messages, multinode chat, a native Legend of the Red Dragon, and a touch sysop console. Made by Rev. J. Money, the maker of RotatoCAM.">
 <meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
 <meta property="og:title" content="Axis Micro BBS Firmware">
-<meta property="og:description" content="A real telnet BBS on a 2.8 inch ESP32 touchscreen board. ANSI, ZMODEM, multinode chat, and LORD running on an 8086 emulator.">
+<meta property="og:description" content="A real telnet BBS on a 2.8 inch ESP32 touchscreen board. ANSI, ZMODEM, multinode chat, and a native Legend of the Red Dragon.">
 <meta property="og:image" content="https://revjmoney.github.io/axis-bbs/media/main-menu.png">
 <meta property="og:url" content="https://revjmoney.github.io/axis-bbs/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Cpath d='M3 14V6h2V4h2V2h2v2h2v2h2v8h-3v-3H6v3zM6 9h4V7H6z' fill='%23AA5500'/%3E%3C/svg%3E">
@@ -85,7 +85,7 @@
           <dt>software</dt><dd>Axis Micro BBS Firmware 0.5</dd>
           <dt>license</dt><dd>GPL-3.0+ by Rev. J. Money</dd>
           <dt>hardware</dt><dd>ESP32-2432S028R, 240 MHz, 4 MB flash</dd>
-          <dt>doors</dt><dd>LORD 4.07 on a built-in 8086 emulator</dd>
+          <dt>doors</dt><dd>Native LORD, in C++, over telnet</dd>
         </dl>
       </section>
     </div>
@@ -123,6 +123,7 @@
     <div class="box callers">
       <h2 class="box-title" id="updates-title">LAST UPDATES</h2>
       <ul class="callers-list">
+        <li><span class="cl-date">2026-11-07</span><span class="cl-what">LORD on the board is the native C++ door. The DOS emulator is a separate PC build.</span></li>
         <li><span class="cl-date">2026-11-04</span><span class="cl-what">Local console opens on all 80 columns drawn crisp; ZOOM gives 40 big columns</span></li>
         <li><span class="cl-date">2026-11-04</span><span class="cl-what">File search, quoted replies, a call time limit, the voting booth, a user editor and the twit flag</span></li>
         <li><span class="cl-date">2026-11-04</span><span class="cl-what">DOS shell: MORE, TREE, DOSKEY history, DATE and TIME, archive listings</span></li>
@@ -206,12 +207,12 @@
       </article>
 
       <article class="fcard">
-        <a class="fcard-thumb lb" href="media/lord-title.png"><img src="media/lord-title.png" alt="Legend of the Red Dragon running on the CYD" loading="lazy" width="640" height="424"></a>
+        <a class="fcard-thumb lb" href="media/lord-walk.gif"><img src="media/lord-walk.gif" alt="Animated telnet walk of the native LORD door" loading="lazy" width="640" height="424"></a>
         <div class="fcard-body">
-          <h3>Real DOS doors</h3>
-          <p class="fcard-line">LORD 4.07 on an 8086 emulator, on the board.</p>
-          <div class="fcard-extra"><div><p>A high-level DOS, a BIOS and a FOSSIL driver run the unmodified LORD and BBS Black Jack with DOOR.SYS, as multinode doors.</p></div></div>
-          <div class="fcard-foot"><a href="docs.html#lord">LORD</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+          <h3>Native LORD</h3>
+          <p class="fcard-line">Legend of the Red Dragon, in C++, on the board.</p>
+          <div class="fcard-extra"><div><p>The engine runs in the BBS over telnet and reads the installed LORD folder for warriors, gear, and ANSI scenes. Several callers can play at once. An unmodified EXE, if you want that, is the separate PC build.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#lord">LORD</a> <a href="docs.html#dosemu">DOS emulator</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
         </div>
       </article>
 
