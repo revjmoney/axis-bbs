@@ -59,6 +59,14 @@ CONFIG_FATFS_LFN_STACK=y
 CONFIG_FATFS_MAX_LFN=255
 CONFIG_FATFS_API_ENCODING_UTF_8=y
 
+# FatFs sizes every file buffer from the larger of the SD sector (512) and this
+# wear-levelling sector. Nothing here uses wear levelling (LittleFS holds the
+# internal flash). The default 4096 makes the volume window and each of the 10
+# SD file slots a 4096-byte buffer, about 45 KB, on the only board with a card.
+# 512 matches the card. The card's own bytes are not rewritten.
+CONFIG_WL_SECTOR_SIZE_512=y
+# CONFIG_WL_SECTOR_SIZE_4096 is not set
+
 # Instruction RAM for the 8086 door. WiFi and SPI interrupt code were already left in
 # flash (Arduino does the same; that WiFi choice is what freed the door's IRAM arena).
 # Sleep-mode WiFi code is pinned off too: with the other two off, that option would

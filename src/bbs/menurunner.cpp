@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/menurunner.h"
 
 #include <cctype>
@@ -79,6 +80,10 @@ MenuAction MenuRunner::run(const MenuCmd& c) {
         size_t sp = rest.find(' ');
         a.kind = MenuAction::Run, a.arg = rest.substr(0, sp);
         if (sp != std::string::npos) a.args = rest.substr(sp + 1);
+    } else if (!verb.empty()) {  // ViSiON/3's other verbs (LOGIN, NEWUSER, CHECKACCESS, DISCONNECT): the BBS decides
+        size_t sp = s.find(' ');
+        a.kind = MenuAction::Run, a.arg = s.substr(0, sp);
+        if (sp != std::string::npos) a.args = s.substr(sp + 1);
     }
     return a;
 }

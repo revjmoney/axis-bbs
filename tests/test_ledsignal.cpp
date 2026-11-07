@@ -5,94 +5,87 @@
 
 using namespace axis::bbs;
 
-namespace {
-bool lit(Rgb c) { return c.r || c.g || c.b; }
-bool is(Rgb c, int r, int g, int b) { return (c.r > 0) == (r > 0) && (c.g > 0) == (g > 0) && (c.b > 0) == (b > 0); }
-// was this colour ever shown over the span?
-bool shows(const LedInputs& in, int r, int g, int b, uint32_t from = 0, uint32_t to = 20000) {
-    for (uint32_t t = from; t < to; t += 10)
-        if (lit(ledColor(in, t)) && is(ledColor(in, t), r, g, b)) return true;
-    return false;
-}
-}  // namespace
-
-TEST_CASE("an idle board gives a faint blue pulse now and then, and is dark the rest of the time") {
+TEST_CASE("an idle board breathes under the dim cap and never reaches a fade") {
     LedInputs idle;
-    CHECK(shows(idle, 0, 0, 1));
-    int dark = 0;
-    for (uint32_t t = 0; t < 10000; t += 10) dark += !lit(ledColor(idle, t));
-    CHECK(dark > 900);
+    uint8_t   peak = 0;
+    bool      mid = false;
+    for (uint32_t t = 0; t < 4000; t += 20) {
+        uint8_t d = ledDuty(idle, t);
+        if (d > peak) peak = d;
+        if (d > 4 && d < kLedBreathePeak) mid = true;
+    }
+    CHECK(peak == kLedBreathePeak);
+    CHECK(peak < kLedFadePeak);
+    CHECK(mid);
+    CHECK(ledDuty(idle, 0) == 0);
 }
 
-TEST_CASE("a caller online blinks white, a door running blinks red, pending users blink green") {
-    LedInputs a;
-    a.callers = 1;
-    CHECK(shows(a, 1, 1, 1));
+TEST_CASE("one caller fades in once, two callers fade in twice, then the light rests") {
+    LedInputs one;
+    one.nodes = 1;
+    int rises = 0;
+    bool up = false;
+    for (uint32_t t = 0; t < 2400; t += 20) {
+        bool on = ledDuty(one, t) > 8;
+        if (on && !up) rises++;
+        up = on;
+    }
+    CHECK(rises == 1);
+    CHECK(ledDuty(one, 400) > 8);
+    CHECK(ledDuty(one, 400) <= kLedFadePeak);
+
+    LedInputs two;
+    two.nodes = 2;
+    rises = 0;
+    up = false;
+    for (uint32_t t = 0; t < 3400; t += 20) {
+        bool on = ledDuty(two, t) > 8;
+        if (on && !up) rises++;
+        up = on;
+    }
+    CHECK(rises == 2);
+    CHECK(ledDuty(two, 2500) == 0);  // the rest after the two fades
+}
+
+TEST_CASE("a door blinks fast and stays inside the dim cap") {
     LedInputs d;
-    d.doorRunning = true;
-    CHECK(shows(d, 1, 0, 0));
-    LedInputs p;
-    p.pendingUsers = 2;
-    CHECK(shows(p, 0, 1, 0));
+    d.door = true;
+    d.nodes = 3;
+    CHECK(ledDuty(d, 0) == kLedFadePeak);
+    CHECK(ledDuty(d, 100) == 0);
+    CHECK(ledDuty(d, 200) == kLedFadePeak);
+    CHECK(ledDuty(d, 40) == kLedFadePeak);
 }
 
-TEST_CASE("several signals take turns, so each one shows") {
-    LedInputs in;
-    in.callers = 1;
-    in.doorRunning = true;
-    in.pendingUsers = 1;
-    in.transfer = true;
-    in.chat = true;
-    CHECK(shows(in, 1, 1, 1));
-    CHECK(shows(in, 1, 0, 0));
-    CHECK(shows(in, 0, 1, 0));
-    CHECK(shows(in, 0, 1, 1));  // transfer: cyan
-    CHECK(shows(in, 0, 0, 1));  // chat: blue
+TEST_CASE("a cyd scales the same duty to about 75 percent") {
+    CHECK(ledCydDuty(0) == 0);
+    CHECK(ledCydDuty(kLedBreathePeak) == (uint8_t)((uint16_t)kLedBreathePeak * kCydFadePeak / kLedFadePeak));
+    CHECK(ledCydDuty(kLedFadePeak) == kCydFadePeak);
+    CHECK(kCydFadePeak > kLedFadePeak);
+    CHECK(kCydFadePeak < 255);
 }
 
-TEST_CASE("a page for the sysop strobes magenta over everything else") {
-    LedInputs in;
-    in.callers = 1;
-    in.doorRunning = true;
-    in.paged = true;
-    for (uint32_t t = 0; t < 4000; t += 10)
-        if (lit(ledColor(in, t))) CHECK(is(ledColor(in, t), 1, 0, 1));
-    CHECK(shows(in, 1, 0, 1, 0, 4000));
-}
-
-TEST_CASE("a lost main shows yellow") {
-    LedInputs in;
-    in.mainLost = true;
-    CHECK(shows(in, 1, 1, 0));
-}
-
-TEST_CASE("an eight light ring: an idle comet goes round, a door lights only the reds, a page strobes the reds") {
-    LedInputs idle;
-    uint8_t   a[8], b[8];
-    ledRing(idle, 0, a);
-    ledRing(idle, 600, b);
-    int headA = 0, headB = 0;
-    for (int i = 0; i < 8; i++) {
-        if (a[i] > a[headA]) headA = i;
-        if (b[i] > b[headB]) headB = i;
-    }
-    CHECK(a[headA] == 255);
-    CHECK(headA != headB);  // it moved round the ring
+TEST_CASE("a cyd door is red, idle drifts, and each caller pulse has its own colour") {
     LedInputs door;
-    door.doorRunning = true;
-    door.callers = 1;
-    for (uint32_t t = 0; t < 3000; t += 70) {
-        ledRing(door, t, a);
-        for (int i = 1; i < 8; i += 2) CHECK(a[i] == 0);  // odd places are the greens: dark
-    }
-    LedInputs paged;
-    paged.paged = true;
-    bool on = false, off = false;
-    for (uint32_t t = 0; t < 1000; t += 25) {
-        ledRing(paged, t, a);
-        on = on || (a[0] == 255 && a[2] == 255 && a[4] == 255 && a[6] == 255);
-        off = off || (a[0] == 0 && a[2] == 0);
-    }
-    CHECK(on);
-    CHECK(off);
+    door.door = true;
+    door.nodes = 2;
+    LedColour red = ledColour(door, 40);
+    CHECK(red.r == 255);
+    CHECK(red.g == 0);
+    CHECK(red.b == 0);
+
+    LedInputs idle;
+    LedColour a = ledColour(idle, 0);
+    LedColour b = ledColour(idle, 4000);
+    CHECK((a.r != b.r || a.g != b.g || a.b != b.b));
+
+    LedInputs two;
+    two.nodes = 2;
+    LedColour p0 = ledColour(two, 200);
+    LedColour p1 = ledColour(two, 1200);
+    CHECK((p0.r != p1.r || p0.g != p1.g || p0.b != p1.b));
+    CHECK((p0.r != 255 || p0.g != 0 || p0.b != 0));
+    CHECK(ledColour(two, 2500).r == 0);
+    CHECK(ledColour(two, 2500).g == 0);
+    CHECK(ledColour(two, 2500).b == 0);
 }

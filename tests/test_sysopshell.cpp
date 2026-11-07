@@ -20,7 +20,7 @@ struct Rig {
         {"@USER Kid", "handle Kid\nreal Kid Kutter\nfrom Conway\nsecurity 10\n"},
         {"@AREAS", "1|axis|Axis Firmware|0|\n2|gcode|G-code|20|m\n"},
         {"@MSGAREAS", "1|general|General Chatter|0|\n"},
-        {"@SETTINGS", "bbs_name=AXIS UNDERGROUND CNC\ntheme=iniquity\nsysop_salt_should_never=x\n"},
+        {"@SETTINGS", "bbs_name=AXIS UNDERGROUND CNC\ntheme=iniquity\nwfc=iniquity\nsysop_salt_should_never=x\n"},
         {"@MENU", ""},
         {"@LOG", "12:00 boot\n12:01 call from 10.0.0.2\n"},
     };
@@ -44,15 +44,29 @@ TEST_CASE("the look is picked from a numbered list, not typed") {
     Rig r;
     r.shell.begin();
     r.type("44");  // Settings, then Look
-    CHECK(plain(r.out).find("theme") != std::string::npos);
+    CHECK(plain(r.out).find("look") != std::string::npos);
     r.type("1");
     std::string o = plain(r.out);
     CHECK(o.find("Axis, drippy orange") != std::string::npos);
-    CHECK(o.find("Oblivion, grey and cyan") != std::string::npos);
-    CHECK(o.find("Iniquity, green and grey") != std::string::npos);
-    CHECK(o.find("now") != std::string::npos);  // the fixture's theme is iniquity
+    CHECK(o.find("Cyan, grey and cyan") != std::string::npos);
+    CHECK(o.find("Green, green and grey") != std::string::npos);
+    CHECK(o.find("Crt, hardcore crt") != std::string::npos);
+    CHECK(o.find("Skulls, skulls") != std::string::npos);
+    CHECK(o.find("Wasteland, wasteland") != std::string::npos);
+    CHECK(o.find("Oblivion") == std::string::npos);
+    CHECK(o.find("now") != std::string::npos);  // the fixture's theme is the old green id
     r.type("2");
-    CHECK(r.ranCmd("@SET theme=oblivion"));
+    CHECK(r.ranCmd("@SET theme=cyan"));
+}
+
+TEST_CASE("the waiting screen row writes the same look") {
+    Rig r;
+    r.shell.begin();
+    r.type("442");  // Settings, Look, the wfc row
+    CHECK(plain(r.out).find("Axis, drippy orange") != std::string::npos);
+    r.type("1");
+    CHECK(r.ranCmd("@SET theme=axis"));
+    CHECK_FALSE(r.ranCmd("@SET wfc=axis"));
 }
 
 TEST_CASE("the sysop menu opens on its top layer") {
@@ -141,6 +155,24 @@ TEST_CASE("Q and Esc go back a layer, and Q on the top layer leaves") {
     CHECK(r.shell.open());
     r.type("q");
     CHECK_FALSE(r.shell.open());
+}
+
+TEST_CASE("sections switch messages off and turn original LORD back on") {
+    Rig r;
+    r.replies["@SETTINGS"] += "messages_on=1\nfiles_on=1\ndoors_on=1\n"
+                              "door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys\n"
+                              "door8=lord|LORD Fast|FAST.EXE|%N|doorsys\n";
+    r.shell.begin();
+    r.type("7");  // Sections, after System
+    std::string o = plain(r.out);
+    CHECK(o.find("Messages") != std::string::npos);
+    CHECK(o.find("Legend of the Red Dragon") != std::string::npos);
+    CHECK(o.find("LORD Fast") != std::string::npos);
+    CHECK(o.find("off") != std::string::npos);
+    r.type("1");
+    CHECK(r.ranCmd("@SET messages_on=0"));
+    r.type("4");
+    CHECK(r.ranCmd("@SET door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys|1"));
 }
 
 TEST_CASE("arrow keys move the lightbar") {

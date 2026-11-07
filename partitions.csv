@@ -2,9 +2,11 @@
 # 2026-11-04: app 1.5 MB -> 1.81 MB, door 768 KB -> 448 KB (LORD's relocated image is 352 KB).
 # LittleFS (spiffs) keeps its offset and size, so users, settings and logs survive the change.
 # 2026-11-05: app 1.81 MB -> 1.875 MB, door 448 KB -> 384 KB (LORD 352 KB still fits; LittleFS untouched).
+# 2026-11-07: native build. The door cache is not in this image (only dosemu/cyd/flashimage.cpp
+# looks it up, and that file is the PC doorhost). App grows 1.875 MB -> 2.25 MB (0x240000).
+# LittleFS stays at 0x250000. NVS stays at 0x9000. A full upload writes this table.
 # Name,   Type, SubType, Offset,   Size
 nvs,      data, nvs,     0x9000,   0x5000
 otadata,  data, ota,     0xe000,   0x2000
-app0,     app,  ota_0,   0x10000,  0x1E0000
-door,     data, 0x41,    0x1F0000, 0x60000
+app0,     app,  ota_0,   0x10000,  0x240000
 spiffs,   data, spiffs,  0x250000, 0x1B0000

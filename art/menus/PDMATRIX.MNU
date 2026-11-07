@@ -1,0 +1,19 @@
+; from ViSiON/3 menus/v3 PDMATRIX (MIT); AXIS art is its own
+title=PD Matrix
+clr=1
+prompt=0
+prompt1=
+prompt2=
+fallback=
+acs=*
+pass=
+help=
+hotkey=0
+cmd=J|LOGIN|*|0|
+cmd=C|NEWUSER|*|0|
+cmd=A|CHECKACCESS|*|0|
+cmd=D|DISCONNECT|*|0|
+bar=49,10,96,7,J,Journey onward.
+bar=49,11,96,7,C,Create an account.
+bar=49,12,96,7,A,Check your access.
+bar=49,13,96,7,D,Disconnect.

@@ -17,6 +17,7 @@ public:
     virtual int  read() = 0;       // -1 if none
     virtual int  peek() = 0;       // the next byte without taking it, -1 if none
     virtual void write(const uint8_t* p, size_t n) = 0;
+    virtual void flush() {}  // send bytes already queued; a poll must not need this
     virtual bool carrier() = 0;
     virtual ~ByteStream() = default;
 };

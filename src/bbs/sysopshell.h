@@ -57,6 +57,7 @@ private:
     void menus(Layer& l);
     void menuItem(Layer& l, int n);
     void system(Layer& l);
+    void sections(Layer& l);
     void nodes(Layer& l);
 
     std::string&       out_;

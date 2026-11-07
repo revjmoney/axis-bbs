@@ -79,6 +79,16 @@ TEST_CASE("file sizes read like a 90s file list") {
     CHECK(fileSizeText(21972477) == "21.0M");
 }
 
+TEST_CASE("a movie pack keeps the word movies inside a short file row") {
+    const char* desc = "Blocktronics: Detention Block AA-23, Star Wars (2017): ANSI movies inside [16colo.rs]";
+    std::string row = fileAbout(desc, 48);
+    CHECK(row.find("ANSI movies") == 0);
+    CHECK(row.find("Detention Block AA-23") != std::string::npos);
+    CHECK(row.size() <= 48);
+    CHECK(fileAbout("Blocktronics: 1980 (2012)", 40) == "Blocktronics: 1980 (2012)");
+    CHECK(fileAbout("Short ANSI movies", 48) == "Short ANSI movies");
+}
+
 TEST_CASE("menu shows Files") {
     FakeLibrary lib = library();
     Node        n(1, info, twoAreas(), &lib);

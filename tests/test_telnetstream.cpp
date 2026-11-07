@@ -129,10 +129,16 @@ TEST_CASE("telnet stream batches a door's one-byte writes until flush") {
     CHECK(l.toCaller == "Legend of the Red Dragon");
 }
 
-TEST_CASE("telnet stream flushes when the door waits for a key") {
+TEST_CASE("telnet stream does not send on a key poll") {
     CountingLine l;
     l.write((const uint8_t*)"Your choice? ", 13);
     CHECK(l.available() == 0);
+    CHECK(l.peek() == -1);
+    CHECK(l.read() == -1);
+    CHECK(l.writes == 0);
+    CHECK(l.toCaller.empty());
+    l.flush();
+    CHECK(l.writes == 1);
     CHECK(l.toCaller == "Your choice? ");
 }
 

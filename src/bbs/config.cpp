@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/config.h"
+#include "bbs/theme.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -64,7 +65,8 @@ bool areaFrom(const std::string& v, FileArea& a);
 BbsConfig parseConfig(const std::string& ini) {
     BbsConfig              c;
     c.loginSplash = true;  // on unless the settings say login_splash=0
-    std::vector<DoorEntry> listed;
+    c.messagesOn = c.filesOn = c.doorsOn = true;  // on unless messages_on / files_on / doors_on is 0
+    std::map<int, DoorEntry> doorByNum;  // by number: a repeated doorN replaces, so @SET doorN= edits that row
     std::map<int, FileArea> areas;  // by number: sorted, and a repeated number replaces
     std::map<int, MenuItem> menu;  // "menu.main.N=..."
     std::map<int, FileArea> msgAreas;  // "msgareaN=id|name"
@@ -98,9 +100,14 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "daily_minutes") c.dailyMinutes = n;
         else if (k == "idle_minutes") c.idleMinutes = n;
         else if (k == "login_splash") c.loginSplash = n != 0;
+        else if (k == "messages_on") c.messagesOn = n != 0;
+        else if (k == "files_on") c.filesOn = n != 0;
+        else if (k == "doors_on") c.doorsOn = n != 0;
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "free_kb") c.freeKb = (int)n;
-        else if (k == "theme") c.theme = v == "oblivion" ? "oblivion" : "axis";
+        else if (k == "theme" || k == "wfc") {
+            if (const char* id = theme::knownLook(v)) c.theme = id;  // either key is the one look
+        }
         else if (k == "sessions") c.sessions = n < 1 ? 1 : n > 4 ? 4 : n;
         else if (k == "setup_done") c.setupDone = n == 1;
         else if (k.rfind("door", 0) == 0 && k.size() > 4 && std::isdigit((unsigned char)k[4])) {
@@ -113,7 +120,9 @@ BbsConfig parseConfig(const std::string& ini) {
             }
             if (f.size() >= 3 && !f[0].empty()) {
                 DoorEntry d{f[0], f[1], f[2], f.size() > 3 ? f[3] : "", f.size() > 4 && !f[4].empty() ? f[4] : "doorsys"};
-                listed.push_back(d);
+                if (f.size() > 5 && !f[5].empty()) d.enabled = f[5] != "0";
+                else if (lordGameExe(d.exe)) d.enabled = false;  // original LORD stays off until the sysop turns that row on
+                doorByNum[std::atoi(k.c_str() + 4)] = std::move(d);
             }
         } else if (k.rfind("msgarea", 0) == 0 && k.size() > 7 && std::isdigit((unsigned char)k[7])) {
             if (FileArea a; areaFrom(v, a)) msgAreas[std::atoi(k.c_str() + 7)] = a;
@@ -125,11 +134,22 @@ BbsConfig parseConfig(const std::string& ini) {
         } else c.unknown.emplace_back(k, v);
     }
     for (auto& m : menu) c.mainMenu.push_back(m.second);
-    if (listed.empty()) listed = c.doors;  // none in the file: keep the default list
-    bool dos = false;
-    for (auto& d : listed) dos = dos || d.exe == "*DOSSHELL";
-    if (!dos) listed.push_back({"dos", "DOS Prompt (password)", "*DOSSHELL", "dosbox", "none"});
-    c.doors = listed;
+    std::vector<DoorEntry> listed;
+    if (doorByNum.empty()) listed = c.doors;  // none in the file: keep the default list
+    else
+        for (auto& e : doorByNum) listed.push_back(e.second);
+    bool script = false, native = false;
+    std::vector<DoorEntry> kept;
+    for (auto& d : listed) {
+        if (d.exe == "*DOSSHELL") continue;  // the DOS prompt is out of the firmware
+        script = script || d.exe == "*SCRIPT";
+        native = native || d.exe == "*LORD";
+        kept.push_back(std::move(d));
+    }
+    // A saved door list gets the native game even when the old LORD.EXE row is still there.
+    if (!doorByNum.empty() && !native) kept.push_back({"lord", "LORD", "*LORD", "", "none"});
+    if (!script) kept.push_back({"script", "Scripts", "*SCRIPT", "", "none"});
+    c.doors = std::move(kept);
     if (!msgAreas.empty()) {
         c.msgAreas.clear();
         for (auto& a : msgAreas) c.msgAreas.push_back(a.second);
@@ -138,6 +158,9 @@ BbsConfig parseConfig(const std::string& ini) {
         c.areas.clear();
         for (auto& a : areas) c.areas.push_back(a.second);
     }
+    if (const char* id = theme::knownLook(c.theme)) c.theme = id;
+    else c.theme = "axis";
+    c.wfc = c.theme;  // the waiting screen and the caller look are the same switch
     return c;
 }
 
@@ -194,12 +217,17 @@ std::string formatConfig(const BbsConfig& c) {
     kv("idle_minutes", std::to_string(c.idleMinutes));
     kv("sessions", std::to_string(c.sessions));
     kv("login_splash", c.loginSplash ? "1" : "0");
+    kv("messages_on", c.messagesOn ? "1" : "0");
+    kv("files_on", c.filesOn ? "1" : "0");
+    kv("doors_on", c.doorsOn ? "1" : "0");
     kv("theme", c.theme);
+    kv("wfc", c.wfc);
     kv("ratio", std::to_string(c.ratio));
     kv("free_kb", std::to_string(c.freeKb));
     for (size_t i = 0; i < c.doors.size(); i++) {
         const DoorEntry& d = c.doors[i];
-        kv(("door" + std::to_string(i + 1)).c_str(), d.id + "|" + d.name + "|" + d.exe + "|" + d.args + "|" + d.drop);
+        kv(("door" + std::to_string(i + 1)).c_str(),
+           d.id + "|" + d.name + "|" + d.exe + "|" + d.args + "|" + d.drop + "|" + (d.enabled ? "1" : "0"));
     }
     for (size_t i = 0; i < c.areas.size(); i++)
         kv(("area" + std::to_string(i + 1)).c_str(), areaText(c.areas[i]));
@@ -215,8 +243,9 @@ std::string formatConfig(const BbsConfig& c) {
 const std::vector<std::pair<std::string, char>>& menuCommands() {
     static const std::vector<std::pair<std::string, char>> v = {
         {"messages", 'M'}, {"files", 'F'},    {"doors", 'D'},    {"teleconference", 'T'}, {"who", 'W'},     {"page", 'P'},
-        {"account", 'U'},  {"oneliners", 'O'}, {"multinode", 'N'}, {"lastcallers", 'L'},   {"email", 'E'},   {"scan", 'S'},
-        {"rumors", 'R'},   {"bbslist", 'B'},  {"topten", 'K'},   {"voting", 'V'},         {"info", 'I'},    {"credits", 'C'},
+        {"account", 'U'},  {"oneliners", 'O'}, {"multinode", 'N'}, {"lastcallers", 'L'},   {"users", 'H'},   {"email", 'E'},
+        {"scan", 'S'},
+        {"rumors", 'R'},   {"bbslist", 'B'},  {"axisnet", 'J'}, {"topten", 'K'},   {"voting", 'V'},         {"info", 'I'},    {"credits", 'C'},
         {"goodbye", 'G'},  {"sysop", '*'}};
     return v;
 }

@@ -5,7 +5,9 @@
 
 #include "doctest.h"
 #include "bbs/node.h"
+#include "bbs/password.h"
 #include "bbs/theme.h"
+#include "bbs/users.h"
 
 using namespace axis::bbs;
 
@@ -150,5 +152,59 @@ TEST_CASE("every stock O/2 letter lands on the right command") {
         n.input((const uint8_t*)&w.key, 1, 0);
         CHECK_MESSAGE(n.state() == w.state, "key " << w.key);
     }
+    theme::use(theme::Look::Axis);
+}
+
+TEST_CASE("Oblivion L lists callers, S draws the stats screen, and the prompt shows ?") {
+    uint32_t (*rng)() = []() -> uint32_t { return 0x5A5A5A5Au; };
+    UserStore users;
+    auto add = [&](const char* handle, User::Status st, bool twit) {
+        User u;
+        u.handle = handle;
+        u.location = "Myrtle Beach";
+        u.tagline = "rotary chips";
+        u.calls = 14;
+        u.salt = makeSalt(rng);
+        u.hash = hashPassword(u.salt, "pass1234");
+        u.status = st;
+        u.twit = twit;
+        users.add(u);
+    };
+    add("RevJMoney", User::Status::Validated, false);
+    add("Waiting", User::Status::Pending, false);
+    add("TwitCaller", User::Status::Validated, true);
+    BbsConfig c = O2::make(true);
+    SysInfo   live;
+    live.ip = "192.168.1.77";
+    live.host = "axis.local";
+    live.wifi = "TestNet";
+    live.rssi = -40;
+    live.uptimeSec = 3725;
+    live.storage = "SD card 7580 MB";
+    live.freeHeap = 150000;
+    Node n(1, [live] { return live; }, c);
+    n.setAccounts(&users, [] {}, rng, [] { return 1800000000u; });
+    n.setArt([](const std::string& name) { return name == "MAIN.ANS" ? std::string("art") : std::string(); });
+    n.begin(0);
+    std::string login = "lRevJMoney\rpass1234\r";
+    n.input((const uint8_t*)login.data(), login.size(), 1000);
+    std::string menu = plain(n.takeOutput());
+    CHECK(menu.find("?") != std::string::npos);
+    n.input((const uint8_t*)"l", 1, 1000);
+    std::string listed = plain(n.takeOutput());
+    CHECK(listed.find("RevJMoney") != std::string::npos);
+    CHECK(listed.find("Myrtle Beach") != std::string::npos);
+    CHECK(listed.find("Waiting") == std::string::npos);
+    CHECK(listed.find("TwitCaller") == std::string::npos);
+    CHECK(listed.find("?") != std::string::npos);
+    n.input((const uint8_t*)"w", 1, 1000);
+    CHECK(plain(n.takeOutput()).find("(nobody yet)") != std::string::npos);
+    n.input((const uint8_t*)"s", 1, 1000);
+    std::string stats = plain(n.takeOutput());
+    CHECK(stats.find("192.168.1.77") != std::string::npos);
+    CHECK(stats.find("1h 2m") != std::string::npos);
+    CHECK(stats.find("SD card 7580 MB") != std::string::npos);
+    CHECK(stats.find("RevJMoney") != std::string::npos);
+    CHECK(stats.find("STATS") != std::string::npos);
     theme::use(theme::Look::Axis);
 }

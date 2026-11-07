@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Rev. J. Money
 """The starter AXIS menu set: ViSiON/3's menus and keys (via v3import), lightbars laid over a placeholder AXIS
-header for MAIN, MSGMENU, FILEM and DOORSM, and the doors menu pointed at AXIS's own doors. The real art pass
+header for MAIN, MSGMENU, FILEM and DOORSM, and the doors menu pointed at AXIS's own doors. The front door
+(PDMATRIX, FASTLOGN) keeps ViSiON/3's lightbar coordinates and recolours them to AXIS orange. Placeholder
+art covers the matrix, fast login, three pre-logon screens, the login screen (|{P} and |{O} mark the
+handle and password) and the new-user screen. LOGIN.SEQ is the same template the firmware uses
+when the file is missing, including the Saylor poster before the fast-login choice. The real art pass
 replaces the .ANS files later; the menus and keys stay.
 
 usage: python -I tools/menus/make_starter.py V3_MENU_DIR OUT_DIR
@@ -34,6 +38,22 @@ DOORS = ['cmd=L|DOOR:lord|fD|0|Playing LORD', 'cmd=B|DOOR:blackjack|fD|0|Playing
          'cmd=A|DOOR:ansiview|*|0|Viewing ANSI Packs', 'cmd=S|DOOR:dos|s255|1|At the DOS prompt', 'cmd=Q|GOTO:MAIN|*|0|',
          'cmd=G|LOGOFF|*|0|']
 
+# ViSiON/3's login.json template, the same steps loginseq.cpp uses when LOGIN.SEQ is empty.
+# SAYLOR is the poster in the theme folder. Fast login still skips everything after FASTLOGIN.
+SEQ = """; AXIS login sequence. step=COMMAND|CLEAR|PAUSE|LEVEL|DATA
+step=SYSOPNOTICES|0|0|0|
+step=NMAILSCAN|1|1|0|
+step=DISPLAYFILE|1|1|0|SAYLOR
+step=FASTLOGIN|0|0|0|
+step=PRINTNEWS|1|1|0|
+step=LASTCALLS|0|0|0|
+step=ONELINERS|0|0|0|
+step=USERSTATS|0|0|0|
+step=INFOFORMREQUIRED|0|0|0|
+step=NEWUSERVAL|0|0|255|
+step=CHECKNUV|0|0|0|
+"""
+
 
 def bars(cols):
     out = []
@@ -50,6 +70,33 @@ def art(word, seed):
     return a
 
 
+def recolor(lines):
+    """ViSiON bar colours (field 3 and 4) become AXIS orange: lit 96, plain 7. Text may contain commas."""
+    out = []
+    for line in lines:
+        if line.startswith('bar='):
+            p = line[4:].split(',', 5)
+            if len(p) == 6:
+                p[2], p[3] = str(HI), str(REG)
+                line = 'bar=' + ','.join(p)
+        out.append(line)
+    return out
+
+
+def write_text(path, text):
+    with open(path, 'w', encoding='latin-1', newline='\n') as f:
+        f.write(text)
+
+
+def write_ans(path, text):
+    with open(path, 'wb') as f:
+        f.write(text.encode('latin-1'))
+
+
+def line_at(row, col, text):
+    return '\x1b[%d;%dH\x1b[0;37m%s' % (row, col, text)
+
+
 def main():
     v3, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -60,11 +107,35 @@ def main():
         if name in BARS:
             word, cols = BARS[name]
             lines += bars(cols)
-            with open(os.path.join(out, name + '.ANS'), 'wb') as f:
-                f.write(art(word, 40 + i).encode('latin-1'))
+            write_ans(os.path.join(out, name + '.ANS'), art(word, 40 + i))
         with open(os.path.join(out, name + '.MNU'), 'w', encoding='latin-1', newline='\n') as f:
             f.write('\n'.join(lines) + '\n')
         print(name)
+
+    # Front door. Lightbar rows stay where ViSiON drew them (matrix 10-13, fast login 14-17), under the 7-row header.
+    for i, (name, word) in enumerate([('PDMATRIX', 'MATRIX'), ('FASTLOGN', 'FAST')]):
+        lines = recolor(v3import.one(v3, name).rstrip('\n').split('\n'))
+        write_text(os.path.join(out, name + '.MNU'), '\n'.join(lines) + '\n')
+        write_ans(os.path.join(out, name + '.ANS'), art(word, 60 + i))
+        bars_out = [l for l in lines if l.startswith('bar=')]
+        if not bars_out or any(',%d,%d,' % (HI, REG) not in l for l in bars_out):
+            sys.exit('front door %s lost its orange lightbars' % name)
+        print(name, len(bars_out), 'bars')
+
+    # |{P} and |{O} are login markers. The cursor is the '|' cell. Both marks share a column.
+    login = axis_packs.header('LOGIN', 'LOGIN', 'axis', 65)
+    login += line_at(12, 4, 'Handle:   |{P}')
+    login += line_at(14, 4, 'Password: |{O}')
+    write_ans(os.path.join(out, 'LOGIN.ANS'), login)
+
+    write_ans(os.path.join(out, 'NEWUSER.ANS'), axis_packs.header('APPLY', 'APPLY', 'axis', 66) + line_at(12, 4, 'A new account waits on the sysop.'))
+    for i, (n, word, blurb) in enumerate([
+            (1, 'AXIS', 'The shop is open.'),
+            (2, 'SHOP', 'The spindle is warm.'),
+            (3, 'MILL', 'Mind the chips.')]):
+        write_ans(os.path.join(out, 'PRELOGON%d.ANS' % n), axis_packs.header(word, word, 'axis', 70 + i) + line_at(12, 4, blurb))
+    write_text(os.path.join(out, 'LOGIN.SEQ'), SEQ)
+    print('LOGIN NEWUSER PRELOGON1-3 LOGIN.SEQ')
 
 
 if __name__ == '__main__':

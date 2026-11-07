@@ -50,6 +50,39 @@ void put(const String& args) {
     ::close(f);
     Serial.printf(done == size ? "@DONE %lu\n" : "@ERR short %lu\n", (unsigned long)(done == size ? sum : done));
 }
+
+void typeFile(const String& args) {  // a small text file, so a node file can be patched without a full rewrite
+    String path = args;
+    path.trim();
+    if (!path.length()) {
+        Serial.println("@ERR usage");
+        return;
+    }
+    path = full(path);
+    int f = ::open(path.c_str(), O_RDONLY);
+    if (f < 0) {
+        Serial.printf("@ERR open %d\n", errno);
+        return;
+    }
+    struct stat st;
+    if (::fstat(f, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0 || st.st_size > 8192) {
+        ::close(f);
+        Serial.println("@ERR");
+        return;
+    }
+    Serial.printf("@READY %lu\n", (unsigned long)st.st_size);
+    static uint8_t blk[512];
+    size_t left = (size_t)st.st_size;
+    while (left) {
+        size_t want = left > sizeof blk ? sizeof blk : left;
+        ssize_t got = ::read(f, blk, want);
+        if (got <= 0) break;
+        Serial.write(blk, (size_t)got);
+        left -= (size_t)got;
+    }
+    ::close(f);
+    if (left) Serial.println("\n@ERR short");
+}
 }  // namespace
 
 bool serialFileCommand(const String& cmd) {
@@ -77,6 +110,8 @@ bool serialFileCommand(const String& cmd) {
         Serial.println("@OK");
         Serial.flush();
         Serial.updateBaudRate(cmd.substring(6).toInt());
+    } else if (cmd.startsWith("@TYPE ")) {
+        typeFile(cmd.substring(6));
     } else {
         return false;
     }

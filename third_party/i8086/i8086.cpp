@@ -830,6 +830,50 @@ void i8086::reset()
 }
 
 
+struct Snap {
+    uint8_t regs[48];
+    uint8_t flags[10];
+    uint16_t ip;
+    uint16_t segOverride;
+    uint8_t halted, pending, pendingIndex, segEn, repEn;
+    axis::door::MemoryBus* bus;
+};
+static_assert(sizeof(Snap) <= 96, "Cpu::snap_ holds an i8086 snap");
+
+void i8086::saveSnap(uint8_t* dst) {
+    Snap s;
+    memcpy(s.regs, regs, sizeof s.regs);
+    memcpy(s.flags, flags, sizeof s.flags);
+    s.ip = reg_ip;
+    s.segOverride = seg_override;
+    s.halted = s_halted ? 1 : 0;
+    s.pending = s_pendingIRQ ? 1 : 0;
+    s.pendingIndex = s_pendingIRQIndex;
+    s.segEn = seg_override_en;
+    s.repEn = rep_override_en;
+    s.bus = s_bus;
+    memcpy(dst, &s, sizeof s);
+}
+
+void i8086::loadSnap(const uint8_t* src) {
+    Snap s;
+    memcpy(&s, src, sizeof s);
+    memcpy(regs, s.regs, sizeof s.regs);
+    memcpy(flags, s.flags, sizeof s.flags);
+    reg_ip = s.ip;
+    seg_override = s.segOverride;
+    s_halted = s.halted != 0;
+    s_pendingIRQ = s.pending != 0;
+    s_pendingIRQIndex = s.pendingIndex;
+    seg_override_en = s.segEn;
+    rep_override_en = s.repEn;
+    s_bus = s.bus;
+    g_bus = s.bus;
+    regs8 = regs;
+    regs16 = (uint16_t*)regs;
+}
+
+
 // tries to make more compact opcode "switch"
 static uint8_t optcodes[] = {
 // 0    1   2   3   4   5   6   7   8   9   a   b   c   d   e   f

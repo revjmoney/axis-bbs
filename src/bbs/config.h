@@ -11,7 +11,16 @@ namespace axis::bbs {
 // A door on the Doors menu. Its files live in /doors/<id>/ on the board's storage.
 struct DoorEntry {
     std::string id, name, exe, args, drop = "doorsys";  // drop: "doorsys" (DOOR.SYS) or "dorinfo"
+    bool        enabled = true;  // sixth field of doorN ("|0" hides it). A saved LORD.EXE with no field is off.
 };
+
+// LORD.EXE, any mix of case. LORD Fast is FAST.EXE and is not this.
+inline bool lordGameExe(const std::string& exe) {
+    if (exe.size() != 8) return false;
+    for (size_t i = 0; i < 8; i++)
+        if ((exe[i] | 0x20) != "lord.exe"[i]) return false;
+    return true;
+}
 
 // A file area. Its files live in /files/<id>/ on the SD card.
 struct FileArea;
@@ -35,7 +44,7 @@ char menuCommandKey(const std::string& cmd);  // 0 if there's no such command
 
 struct BbsConfig {
     std::string sysopHandle, sysopSalt, sysopHash, sysopRealName;
-    std::string dosSalt, dosHash;  // the DOS Prompt door password (set at the serial console: @DOSPASS)
+    std::string dosSalt, dosHash;  // old DOS Prompt password keys; still parsed so a saved ini loads. The command is gone.
     std::string nupSalt, nupHash;  // NUP: the new user password asked before Apply ("" = none; wizard, @NUP)
     std::string bbsName = "Axis Underground CNC", location, boardName = "axis", publicHost;
     int         telnetPort = 23;
@@ -44,16 +53,18 @@ struct BbsConfig {
     int         newUserSecurity = 10, dailyMinutes = 60, idleMinutes = 5;
     int         sessions = 2;
     int         ratio = 0, freeKb = 0;  // downloads up to ratio x uploads + freeKb ("ratio", "free_kb"; 0 = no ratio)
-    std::string theme = "axis";  // the look: "axis" (drippy orange) or "oblivion" (stock Oblivion/2 style) ("theme")
-    bool        loginSplash = false;  // Rev's RotatoCAM ANSI splash before the login screen ("login_splash", on unless 0)  // callers this board takes at once (1 to 4); doors and transfers one at a time
+    std::string theme = "axis";  // the one look ("theme"): axis, cyan, green, or a card screenset id
+    std::string wfc = "axis";    // the waiting screen. Always the same id as theme. Old files still have the key.
+    bool        loginSplash = false;  // Rev's RotatoCAM ANSI splash before the login screen ("login_splash", on unless 0)  // callers this board takes at once (1 to 4). Each can be in LORD, a movie, a pack, or a transfer. A deflated piece or a ZIP check needs its own inflate window and is refused when the heap is short.
+    bool        messagesOn = true, filesOn = true, doorsOn = true;  // board switches ("messages_on", "files_on", "doors_on"); on unless 0. A caller's own access is separate.
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)
     std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "LORD.EXE", "%N NOEMS /DREW", "doorsys"},
                                  {"blackjack", "BBS Black Jack", "BLKJK.EXE", "BJ.CFG", "doorsys"},
                                  {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"},
-                                 {"dos", "DOS Prompt (password)", "*DOSSHELL", "dosbox", "none"}};
-    // "*DOSSHELL": args = its sandbox folder on the SD card; always listed (added if a saved list lacks it)
+                                 {"script", "Scripts", "*SCRIPT", "", "none"}};
+    // "*SCRIPT": programs in /scripts on the card. A saved list that lacks it gets this row. *DOSSHELL is dropped.
     std::vector<FileArea>  areas = defaultFileAreas();
     std::vector<FileArea>  msgAreas{{"general", "General Chatter"}, {"cnc", "CNC Shop Talk"}, {"rotatocam", "RotatoCAM"},
                                    {"routers", "Routers & Gantries"}, {"mills", "Mills & Lathes"},

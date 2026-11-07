@@ -67,6 +67,27 @@ std::string fileSizeText(uint32_t bytes) {
     return b;
 }
 
+std::string fileAbout(const std::string& desc, size_t width) {
+    if (width == 0 || desc.empty()) return "";
+    std::string low(desc.size(), '\0');
+    for (size_t i = 0; i < desc.size(); i++) low[i] = (char)std::tolower((unsigned char)desc[i]);
+    size_t movie = low.find("movie");
+    if (desc.size() <= width && (movie == std::string::npos || movie + 5 <= desc.size())) return desc;
+    if (movie == std::string::npos || movie + 5 <= width) return desc.substr(0, width);
+    size_t colon = low.rfind(':', movie);
+    std::string title = colon == std::string::npos ? desc : desc.substr(0, colon);
+    while (!title.empty() && title.back() == ' ') title.pop_back();
+    size_t group = title.find(':');
+    if (group != std::string::npos) {
+        size_t t = group + 1;
+        while (t < title.size() && title[t] == ' ') t++;
+        if (title.size() - t >= 8) title = title.substr(t);
+    }
+    std::string s = "ANSI movies: " + title;
+    if (s.size() > width) s.resize(width);
+    return s;
+}
+
 bool isTextFile(const std::string& name) {
     size_t dot = name.rfind('.');
     if (dot == std::string::npos) return false;

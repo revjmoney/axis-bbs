@@ -56,6 +56,9 @@ std::vector<FileEntry> mergeFilesBbs(const std::string& filesBbs,
                                      const std::vector<std::pair<std::string, uint32_t>>& folder);
 
 std::string fileSizeText(uint32_t bytes);  // "512", "48K", "21.0M"
+// A file list only has room for `width` columns. A description that says "movie" past that
+// cut starts with "ANSI movies:" so the pack is obvious. Anything else keeps its front.
+std::string fileAbout(const std::string& desc, size_t width);
 bool        isTextFile(const std::string& name);  // .TXT .NFO .DIZ .ANS .ASC .BBS .DOC .MD .1ST
 
 }  // namespace axis::bbs

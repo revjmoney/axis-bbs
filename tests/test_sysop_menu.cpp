@@ -2,9 +2,11 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "doctest.h"
 #include "bbs/eventlog.h"
+#include "bbs/station.h"
 #include "bbs/sysop_menu.h"
 
 using namespace axis::bbs;
+namespace station = axis::bbs::station;
 
 namespace {
 // the centre of a button, wherever the layout puts it
@@ -77,6 +79,26 @@ TEST_CASE("formatting the SD card needs a second tap to confirm") {
     CHECK(m.screen() == SysopMenu::Screen::ConfirmFormat);
     tapButton(m, "YES, ERASE IT", &a);
     CHECK(a == SysopMenu::Action::FormatSd);
+}
+
+TEST_CASE("the station screen shows stub sensors and a relay tap flips one") {
+    station::relay(1, 0);
+    SysopMenu m;
+    m.open();
+    tapButton(m, "SYSTEM");
+    tapButton(m, "STATION");
+    CHECK(m.screen() == SysopMenu::Screen::Station);
+    auto lines = m.lines(data());
+    REQUIRE(lines.size() >= 5);
+    CHECK(lines[0].find("72") != std::string::npos);
+    CHECK(lines[0].find("stub") != std::string::npos);
+    CHECK(lines[4].find("off") != std::string::npos);
+    m.tap(20, 32 + 4 * 16 + 8);  // relay 1's row
+    CHECK(station::relayState(1) == 1);
+    CHECK(m.lines(data())[4].find("on") != std::string::npos);
+    tapButton(m, "BACK");
+    CHECK(m.screen() == SysopMenu::Screen::System);
+    station::relay(1, 0);
 }
 
 TEST_CASE("cancelling the format goes back to System") {
@@ -233,18 +255,44 @@ TEST_CASE("BBS SETUP shows the theme and its THEME button asks to switch it") {
     tapButton(m, "BBS SETUP");
     std::string all;
     for (auto& l : m.lines(data())) all += l + "\n";
-    CHECK(all.find("theme") != std::string::npos);
+    CHECK(all.find("look") != std::string::npos);
     CHECK(all.find("axis") != std::string::npos);
+    CHECK(all.find("wfc") == std::string::npos);
     tapButton(m, "THEME");
     CHECK(m.screen() == SysopMenu::Screen::Theme);
+    CHECK(m.title() == "LOOK");
     std::string looks;
     for (auto& l : m.lines(data())) looks += l + "\n";
-    CHECK(looks.find("Axis") != std::string::npos);
-    CHECK(looks.find("Oblivion") != std::string::npos);
-    CHECK(looks.find("Iniquity") != std::string::npos);
+    CHECK(looks.find("* Axis") != std::string::npos);
+    CHECK(looks.find("Cyan") != std::string::npos);
+    CHECK(looks.find("Green") != std::string::npos);
+    CHECK(looks.find("Crt") != std::string::npos);
+    CHECK(looks.find("Underground") != std::string::npos);
+    CHECK(looks.find("Wasteland") != std::string::npos);
+    CHECK(looks.find("Oblivion") == std::string::npos);
     SysopMenu::Action a = SysopMenu::Action::None;
-    tapButton(m, "OBLIVION", &a);
+    a = m.tap(40, 32 + 16 + 8);  // row 1 is cyan; the rows are the buttons
     CHECK(a == SysopMenu::Action::SetTheme);
-    CHECK(m.chosenTheme() == "oblivion");
+    CHECK(m.chosenTheme() == "cyan");
     CHECK(m.screen() == SysopMenu::Screen::Setup);
+}
+
+TEST_CASE("BBS SETUP has one look switch, and the waiting screen uses it") {
+    SysopMenu m;
+    m.open();
+    tapButton(m, "BBS SETUP");
+    bool wfc = false;
+    for (auto& b : m.buttons())
+        if (b.label == "WFC") wfc = true;
+    CHECK_FALSE(wfc);
+    tapButton(m, "THEME");
+    SysopMenu::Action a = m.tap(40, 32 + 2 * 16 + 8);  // row 2 is green
+    CHECK(a == SysopMenu::Action::SetTheme);
+    CHECK(m.chosenTheme() == "green");
+    m.open();
+    tapButton(m, "BBS SETUP");
+    tapButton(m, "THEME");
+    a = m.tap(40, 32 + 9 * 16 + 8);  // row 9 is wasteland, above the BACK button
+    CHECK(a == SysopMenu::Action::SetTheme);
+    CHECK(m.chosenTheme() == "wasteland");
 }

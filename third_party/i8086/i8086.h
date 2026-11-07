@@ -116,6 +116,11 @@ public:
   static uint16_t flagsWord();
   static void     setFlagsWord(uint16_t value);
 
+  // The register file is static. A second CPU (two doors in one PC test) swaps it.
+  // 96 bytes is enough for the registers, flags, IP, and the memory bus pointer.
+  static void saveSnap(uint8_t* dst);
+  static void loadSnap(const uint8_t* src);
+
 
 private:
 

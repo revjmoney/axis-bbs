@@ -24,7 +24,7 @@ struct SysopData {  // what the screens show, gathered by the firmware when draw
 
 class SysopMenu {
 public:
-    enum class Screen { Main, Setup, Users, UserDetail, Access, Files, Messages, Logs, System, ConfirmFormat, Theme };
+    enum class Screen { Main, Setup, Users, UserDetail, Access, Files, Messages, Logs, System, ConfirmFormat, Theme, Station };
     enum class Action { None, Close, FormatSd, Restart, RerunSetup, ValidateUser, DenyUser, ToggleFiles, ToggleMessages, ToggleDoors, ToggleFreeDownloads, ToggleSysop, SetTheme, SetUserPassword, SetSysopPassword };
     struct Button {
         std::string label;
@@ -42,7 +42,7 @@ public:
     std::string         title() const;
     std::vector<std::string> lines(const SysopData& d) const;  // at most kLinesPerPage
     int selectedUser() const { return user_; }  // for ValidateUser / DenyUser
-    const std::string& chosenTheme() const { return theme_; }  // after SetTheme: "axis", "oblivion" or "iniquity"
+    const std::string& chosenTheme() const { return theme_; }  // after SetTheme: a look id
 
 private:
     void   go(Screen s);
