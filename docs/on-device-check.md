@@ -1,6 +1,6 @@
 # On-device check (node 1)
 
-Host tests run the 8086 door and ZMODEM on the PC. They do not boot the ESP32, and they do not
+Host tests run the native LORD engine, the PC DOS emulator (`doorhost`), and ZMODEM. They do not boot the ESP32, and they do not
 reproduce the CYD's byte-heap fragmentation. This is the short check to run on the board itself.
 Do not point it at someone else's BBS. Use a board you can flash and a serial console at 115200.
 

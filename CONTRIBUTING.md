@@ -26,7 +26,7 @@ Axis is built around ANSI art, and it always wants more. Good targets:
 ### Write code
 Pull requests are very welcome. Some areas with room to grow:
 - a **dial-up modem node** (real Hayes modems over RS-232),
-- more **DOS doors** running on the built-in 8086 emulator, and fixes to the emulator itself,
+- the **native LORD** engine (`src/lord/`), and the separate PC **DOS emulator** (`dosemu/`, `doorhost`) if you want to run an unmodified EXE,
 - **FidoNet-style** message networking between boards,
 - lower **RAM use** on the main board (it runs with about 40 KB free, so every KB counts),
 - the **sysop control panel** (`tools/panel/`, Python).

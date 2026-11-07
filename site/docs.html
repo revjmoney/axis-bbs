@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Docs and Wiki: Axis Micro BBS Firmware</title>
-<meta name="description" content="The complete manual for Axis Micro BBS Firmware: a real telnet BBS for the ESP32 Cheap Yellow Display. Setup, calling in, themes, files, messages, multinode clustering, DOS doors, the sysop console, every setting and every serial command.">
+<meta name="description" content="The complete manual for Axis Micro BBS Firmware: a real telnet BBS for the ESP32 Cheap Yellow Display. Setup, calling in, themes, files, messages, multinode clustering, native LORD, the PC DOS emulator, the sysop console, every setting and every serial command.">
 <meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
 <meta property="og:title" content="Axis Micro BBS Firmware: Docs and Wiki">
@@ -65,8 +65,9 @@
 <li><a href="#chat" data-k="chat between callers who teleconference page sysop multinode note broadcast split chat dnd force who&#x27;s online, teleconference, paging, node messages, split-screen chat.">Chat between callers</a></li>
 </ul></div>
 <div class="side-group"><div class="side-g">Doors</div><ul>
-<li><a href="#doors" data-k="doors and the dos runtime doors dos runtime 8086 fossil door.sys doorn the 8086 door runtime and adding doors with doorn.">Doors and the DOS runtime</a></li>
-<li><a href="#lord" data-k="lord and black jack lord legend red dragon black jack install legend of the red dragon 4.07 and bbs black jack on the board.">LORD and Black Jack</a></li>
+<li><a href="#doors" data-k="doors door list doorn native lord the door list and adding a door with doorn.">Doors</a></li>
+<li><a href="#lord" data-k="native lord legend red dragon telnet engine installed folder the native legend of the red dragon on the board.">Native LORD</a></li>
+<li><a href="#dosemu" data-k="dosemu dos emulator 8086 doorhost exe pc build the pc build that runs an unmodified exe.">DOS emulator</a></li>
 <li><a href="#ansi-viewer" data-k="ansi pack viewer ansi viewer artpack movies artpacks straight out of their zips, and ansi movies.">ANSI Pack Viewer</a></li>
 <li><a href="#dos-prompt" data-k="dos prompt door dos prompt shell sandbox dospass commands a password-locked c:\&gt; sandbox and its commands.">DOS Prompt door</a></li>
 </ul></div>
@@ -97,7 +98,7 @@
 <li><a href="#area-callers"><span class="al-n">[ 2]</span> <span class="al-name">Callers</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">10 topics</span></a></li>
 <li><a href="#area-community"><span class="al-n">[ 3]</span> <span class="al-name">Community</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">2 topics</span></a></li>
 <li><a href="#area-multinode"><span class="al-n">[ 4]</span> <span class="al-name">Multinode</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">2 topics</span></a></li>
-<li><a href="#area-doors"><span class="al-n">[ 5]</span> <span class="al-name">Doors</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">4 topics</span></a></li>
+<li><a href="#area-doors"><span class="al-n">[ 5]</span> <span class="al-name">Doors</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">5 topics</span></a></li>
 <li><a href="#area-sysop"><span class="al-n">[ 6]</span> <span class="al-name">Sysop</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">7 topics</span></a></li>
 <li><a href="#area-reference"><span class="al-n">[ 7]</span> <span class="al-name">Reference</span><span class="al-dots" aria-hidden="true"></span><span class="al-c">5 topics</span></a></li>
 </ul></div>
@@ -128,8 +129,9 @@
 <a class="tcard" href="#chat" data-k="chat between callers who teleconference page sysop multinode note broadcast split chat dnd force who&#x27;s online, teleconference, paging, node messages, split-screen chat."><span class="tcard-thumb"><img src="media/split-chat.gif" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Chat between callers</span><span class="tcard-sum">Who's online, teleconference, paging, node messages, split-screen chat.</span></a>
 </div></div>
 <div class="hub-group" id="area-doors" data-group="Doors"><h2 class="hub-g">Doors</h2><div class="cards-grid">
-<a class="tcard" href="#doors" data-k="doors and the dos runtime doors dos runtime 8086 fossil door.sys doorn the 8086 door runtime and adding doors with doorn."><span class="tcard-thumb"><img src="media/doors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Doors and the DOS runtime</span><span class="tcard-sum">The 8086 door runtime and adding doors with doorN.</span></a>
-<a class="tcard" href="#lord" data-k="lord and black jack lord legend red dragon black jack install legend of the red dragon 4.07 and bbs black jack on the board."><span class="tcard-thumb"><img src="media/lord-title.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">LORD and Black Jack</span><span class="tcard-sum">Legend of the Red Dragon 4.07 and BBS Black Jack on the board.</span></a>
+<a class="tcard" href="#doors" data-k="doors door list doorn native lord the door list and adding a door with doorn."><span class="tcard-thumb"><img src="media/doors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Doors</span><span class="tcard-sum">The door list, and adding a door with doorN.</span></a>
+<a class="tcard" href="#lord" data-k="native lord legend red dragon telnet engine installed folder the native legend of the red dragon on the board."><span class="tcard-thumb"><img src="media/lord-walk.gif" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Native LORD</span><span class="tcard-sum">Legend of the Red Dragon, in C++, on the board.</span></a>
+<a class="tcard" href="#dosemu" data-k="dosemu dos emulator 8086 doorhost exe pc build the pc build that runs an unmodified exe."><span class="tcard-thumb"><img src="media/blackjack.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">DOS emulator</span><span class="tcard-sum">The PC build that runs an unmodified EXE.</span></a>
 <a class="tcard" href="#ansi-viewer" data-k="ansi pack viewer ansi viewer artpack movies artpacks straight out of their zips, and ansi movies."><span class="tcard-thumb"><img src="media/ansi-viewer.gif" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">ANSI Pack Viewer</span><span class="tcard-sum">Artpacks straight out of their ZIPs, and ANSI movies.</span></a>
 <a class="tcard" href="#dos-prompt" data-k="dos prompt door dos prompt shell sandbox dospass commands a password-locked c:\&gt; sandbox and its commands."><span class="tcard-thumb"><img src="media/doors.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">DOS Prompt door</span><span class="tcard-sum">A password-locked C:\&gt; sandbox and its commands.</span></a>
 </div></div>
@@ -153,7 +155,7 @@
 
 <article class="topic" id="overview" data-group="Getting started" aria-labelledby="overview-title">
 <header class="topic-head"><div class="eyebrow">Getting started</div><h2 id="overview-title">Overview</h2><dl class="msghead"><dt>Topic</dt><dd>Overview</dd><dt>Area</dt><dd>Getting started</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>1 of 34</dd></dl></header>
-<div class="lead"><div class="lead-text"><p class="lede">What the BBS is, what it does and what you need to run one.</p><p>Axis Micro BBS Firmware is a real, old-school bulletin board system that you call with a telnet terminal. It is written from scratch in C++ and runs entirely on the ESP32 "Cheap Yellow Display" (CYD, model ESP32-2432S028R): a 2.8 inch 320x240 touchscreen board with 4 MB of flash and no PSRAM. There is no PC behind it. The little board answers the calls, draws the ANSI screens, keeps the users and messages, serves the files over ZMODEM, and even runs real DOS door games like Legend of the Red Dragon on an 8086 emulator.</p>
+<div class="lead"><div class="lead-text"><p class="lede">What the BBS is, what it does and what you need to run one.</p><p>Axis Micro BBS Firmware is a real, old-school bulletin board system that you call with a telnet terminal. It is written from scratch in C++ and runs entirely on the ESP32 "Cheap Yellow Display" (CYD, model ESP32-2432S028R): a 2.8 inch 320x240 touchscreen board with 4 MB of flash and no PSRAM. There is no PC behind it. The little board answers the calls, draws the ANSI screens, keeps the users and messages, serves the files over ZMODEM, and runs Legend of the Red Dragon as a native door written in C++.</p>
   <p>The live board it was built for is <strong>AXIS UNDERGROUND CNC</strong>, run by Rev. J. Money, the maker of <a href="https://rotatocam.com">RotatoCAM</a>. The software is the same for anyone who flashes it.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/axis-main-menu.png"><div class="screen"><img src="media/axis-main-menu.png" alt="The main menu in the Axis look: a drippy orange MENU banner over a boxed command list" loading="lazy" width="640" height="424"></div></a><figcaption>Main menu, Axis look</figcaption></figure></div></div>
 <div class="topic-body"><div class="figs">
     
@@ -167,7 +169,7 @@
     <li>Message areas with quoting and taglines, a new message scan, and private email.</li>
     <li>Oneliners, rumors, a BBS list, top ten, a voting booth, last callers and a bulletin.</li>
     <li>Several callers per board, and several boards on one LAN joined into one BBS: teleconference, node messages, broadcasts and live split-screen chat between callers.</li>
-    <li>Real DOS doors (LORD 4.07, BBS Black Jack) through DOOR.SYS and a FOSSIL driver, plus built-in doors: an ANSI pack viewer with ANSI movies, and a password-locked DOS prompt.</li>
+    <li>Native LORD (Legend of the Red Dragon in C++, over telnet), an ANSI pack viewer with ANSI movies, and a password-locked DOS prompt. An unmodified DOS EXE is a separate PC build, not this firmware.</li>
     <li>A touch sysop console on the board itself: activity screen, node details with KICK, user validation, settings, logs, SD formatting, and a local login on the 2.8 inch screen.</li>
   </ul></div></details>
 <details class="sub" id="what-you-need"><summary>What you need</summary><div class="sub-body"><details class="ref"><summary>Reference table: item, why (6 rows)</summary><div class="table-wrap"><table>
@@ -615,7 +617,7 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
 <article class="topic" id="multinode" data-group="Multinode" aria-labelledby="multinode-title">
 <header class="topic-head"><div class="eyebrow">Multinode</div><h2 id="multinode-title">Nodes and clustering</h2><dl class="msghead"><dt>Topic</dt><dd>Nodes and clustering</dd><dt>Area</dt><dd>Multinode</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>17 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Several callers per board, and boards that join into one BBS.</p><p>One board takes several callers at once, and several boards on one LAN join into one BBS with shared users, settings, files, messages and lists. Each caller slot is a <strong>node</strong>.</p><figure class="family"><a class="lb" href="media/cluster-family.jpg"><img src="media/cluster-family.jpg" alt="The AXIS cluster family: two CYD boards and a headless ESP32 on a terminal breakout, seven nodes of one BBS" loading="lazy" width="900" height="1200"></a><figcaption>The cluster family: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headless ESP32 on a breakout (nodes 5 to 7). Seven nodes, one BBS.</figcaption></figure></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen showing node 1+2, status lights and the system ticker" loading="lazy" width="640" height="480"></div></a><figcaption>The main board serving nodes 1 and 2</figcaption></figure></div></div>
-<details class="sub" id="sessions" open><summary>Sessions per board</summary><div class="sub-body"><p><code>sessions</code> sets how many callers a board takes at once: 1 to 4, default 2 on a CYD (a headless node defaults to 3). Each session is its own node number; the activity screen shows them as, for example, <code>node 1+2</code>. Doors and file transfers share one memory slot per board, so only one session per board can be in a door or a transfer at a time. Everything else (menus, messages, chat, browsing) runs side by side.</p></div></details>
+<details class="sub" id="sessions" open><summary>Sessions per board</summary><div class="sub-body"><p><code>sessions</code> sets how many callers a board takes at once: 1 to 4, default 2 on a CYD (a headless node defaults to 3). Each session is its own node number; the activity screen shows them as, for example, <code>node 1+2</code>. Native LORD does not take the single door slot, so more than one caller on the same board can be in it. The ANSI viewer, the DOS prompt, and a file transfer still share one slot per board. Everything else (menus, messages, chat, browsing) runs side by side.</p></div></details>
 <details class="sub" id="cluster"><summary>How boards join</summary><div class="sub-body"><p>Flash another board, put it on the same network, and it finds the others by itself (mDNS service <code>_axisbbs._tcp</code> plus UDP broadcast). There is nothing to configure.</p>
   <ul>
     <li><strong>The SD board is main and node 1.</strong> The board with the SD card is the main: it owns the files, messages and lists, and serves them to the others over the link. A main without a card hands the role to a board that has one as soon as it joins. More boards with cards add their cards to the file areas; see <a href="#sd-pool">SD card clustering</a>.</li>
@@ -624,7 +626,7 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <li><strong>Node numbers.</strong> Each board gets one number per session and keeps it across reboots. Once every node has been idle for 10 seconds (the local console counts as busy), the main renumbers the cluster so its own sessions are 1, 2 and so on, then each other board in order, closing gaps like "2+4".</li>
     <li><strong>Failover.</strong> Boards trade a heartbeat every second. If the main goes away, the next board takes over within about 5 seconds; the board with the SD card always wins the main role back.</li>
     <li><strong>Caller relay.</strong> Callers dial the main. When every node on the main is busy, it passes the caller to the lowest free node on another board, passing the bytes both ways untouched.</li>
-    <li><strong>Doors on other boards.</strong> A board without the door files runs the door locally and reads the main's door folder over the link, with the main's record locks, so a multinode door like LORD keeps its data whole.</li>
+    <li><strong>Doors on other boards.</strong> A board without the door files runs native LORD locally and reads the main's door folder over the link, with the main's record locks, so every node shares one <code>PLAYER.DAT</code>.</li>
   </ul>
   <div class="figs">
     
@@ -683,55 +685,73 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <figure class="crt"><a class="lb" href="media/split-ask.png"><div class="screen"><img src="media/split-ask.png" alt="A caller being asked to accept a split-screen chat request" loading="lazy" width="640" height="424"></div></a><figcaption>The chat request</figcaption></figure>
     <figure class="crt"><a class="lb" href="media/split-chat.gif"><div class="screen"><img src="media/split-chat.gif" alt="Animated split-screen chat: two callers typing live in the top and bottom halves" loading="lazy" width="640" height="424"></div></a><figcaption>Two callers typing live (animated)</figcaption></figure>
   </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#multinode" data-key="p"><small><span class="hk">P</span>rev</small>Nodes and clustering</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#doors" data-key="n"><small><span class="hk">N</span>ext</small>Doors and the DOS runtime</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#multinode" data-key="p"><small><span class="hk">P</span>rev</small>Nodes and clustering</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#doors" data-key="n"><small><span class="hk">N</span>ext</small>Doors</a></nav>
 </article>
 
 <article class="topic" id="doors" data-group="Doors" aria-labelledby="doors-title">
-<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="doors-title">Doors and the DOS runtime</h2><dl class="msghead"><dt>Topic</dt><dd>Doors and the DOS runtime</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>19 of 34</dd></dl></header>
-<div class="lead"><div class="lead-text"><p class="lede">The 8086 door runtime and adding doors with doorN.</p><p><kbd>D</kbd> lists the doors, numbered 1 to 9, then A, B, C and on. Type a door's key to go in; Enter goes back to the menu. When the door ends, the caller comes back to the BBS, with a note if the door ran out of memory, ran out of time, or could not start.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/doors.png"><div class="screen"><img src="media/doors.png" alt="The doors list: Legend of the Red Dragon, BBS Black Jack, ANSI Pack Viewer and DOS Prompt" loading="lazy" width="640" height="424"></div></a><figcaption>The default doors</figcaption></figure></div></div>
-<details class="sub" id="dos-runtime" open><summary>The DOS door runtime</summary><div class="sub-body"><p>Real DOS door games run on the ESP32 itself. The runtime is an 8086 CPU emulator (a refactored FabGL core) with paged memory, a high-level DOS, a BIOS, and a FOSSIL driver on INT 14h that connects the door's serial port to the caller's telnet line. The door gets a <code>DOOR.SYS</code> (or <code>DORINFO1.DEF</code>) drop file like it would on a 90s BBS.</p>
+<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="doors-title">Doors</h2><dl class="msghead"><dt>Topic</dt><dd>Doors</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-07</dd><dt>Msg</dt><dd>19 of 35</dd></dl></header>
+<div class="lead"><div class="lead-text"><p class="lede">The door list, and adding a door with doorN.</p><p>On the Oblivion menu, <kbd>O</kbd> opens the door list (the Axis look uses its own doors key). Doors are numbered 1 to 9, then A, B, C and on. Type a door's key to go in; Enter goes back to the menu. When the door ends, the caller comes back to the BBS, with a note if the door ran out of memory, ran out of time, or could not start.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/doors.png"><div class="screen"><img src="media/doors.png" alt="The doors list on the board" loading="lazy" width="640" height="424"></div></a><figcaption>The doors list</figcaption></figure></div></div>
+<details class="sub" id="dos-runtime" open><summary>What runs on the board</summary><div class="sub-body"><p>The ESP32 image runs doors that are built into the firmware. A program name that starts with <code>*</code> is one of those. Native LORD is <code>*LORD</code>. The ANSI viewer is <code>*ANSIVIEW</code>. The DOS prompt is <code>*DOSSHELL</code>.</p>
   <ul>
-    <li><strong>Where the files go.</strong> Each door lives in <code>/doors/&lt;id&gt;/</code> on the board's storage (the SD card if there is one). DOS sees that folder as <code>C:\</code>.</li>
-    <li><strong>Door code in flash.</strong> The first time a door runs, its EXE is relocated and written to the <code>door</code> flash partition (448 KB), and served from there afterwards. The partition holds one door at a time and remembers which, so switching doors rebuilds it. <code>@DOORCHECK lord</code> on the serial console does this ahead of time.</li>
-    <li><strong>Memory.</strong> The door borrows the board's screen memory and spare instruction RAM as its guest memory. Only one session per board can be in a door at once; a second caller is told the door is busy.</li>
+    <li><strong>Native LORD</strong> does not take the single door slot, so two callers on the same board can both be in it. See <a href="#lord">Native LORD</a>.</li>
+    <li><strong>The ANSI viewer and the DOS prompt</strong> do take that slot. A second caller is told the door is busy.</li>
+    <li><strong>An <code>.EXE</code></strong> does not run on this image. The caller is told the DOS runtime is not in this firmware. That runtime is the separate PC build. See <a href="#dosemu">the DOS emulator</a>.</li>
     <li><strong>Time.</strong> A door session is limited to <code>daily_minutes</code>.</li>
-    <li><strong>The CYD's own screen</strong> has no terminal for a door: the local console says to call in over telnet for doors and downloads.</li>
+    <li><strong>Files.</strong> Native LORD reads <code>/doors/lord/</code> on the SD card (the main board's card, for every node).</li>
   </ul></div></details>
 <details class="sub" id="door-settings"><summary>Adding doors: <code>doorN</code></summary><div class="sub-body"><pre><code>doorN=id|name|exe|args|drop
-door1=lord|Legend of the Red Dragon|LORD.EXE|%N /DREW|doorsys
-door2=blackjack|BBS Black Jack|BLKJK.EXE|BJ.CFG|doorsys
-door3=ansiview|ANSI Pack Viewer|*ANSIVIEW|ansi|none
-door4=dos|DOS Prompt (password)|*DOSSHELL|dosbox|none</code></pre>
+door1=lord|LORD|*LORD||none
+door2=ansiview|ANSI Pack Viewer|*ANSIVIEW|ansi|none
+door3=dos|DOS Prompt (password)|*DOSSHELL|dosbox|none</code></pre>
   <details class="ref"><summary>Reference table: field, meaning (5 rows)</summary><div class="table-wrap"><table>
     <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
     <tbody>
       <tr><td><code>id</code></td><td>The folder under <code>/doors/</code>.</td></tr>
       <tr><td><code>name</code></td><td>What callers see in the list.</td></tr>
-      <tr><td><code>exe</code></td><td>The DOS program to run. A name starting with <code>*</code> is a door built into the firmware (<code>*ANSIVIEW</code>, <code>*DOSSHELL</code>).</td></tr>
-      <tr><td><code>args</code></td><td>The command line. <code>%N</code> becomes the caller's node number, which makes a door multinode. For <code>*ANSIVIEW</code> it is the file area id to show; for <code>*DOSSHELL</code> it is the sandbox folder on the SD card.</td></tr>
+      <tr><td><code>exe</code></td><td>What to run. A name starting with <code>*</code> is built into the firmware (<code>*LORD</code>, <code>*ANSIVIEW</code>, <code>*DOSSHELL</code>). An <code>.EXE</code> name is not started on the board.</td></tr>
+      <tr><td><code>args</code></td><td>The command line. For <code>*ANSIVIEW</code> it is the file area id to show. For <code>*DOSSHELL</code> it is the sandbox folder on the SD card. <code>*LORD</code> does not use this field.</td></tr>
       <tr><td><code>drop</code></td><td><code>doorsys</code> (DOOR.SYS, the default), <code>dorinfo</code> (DORINFO1.DEF) or <code>none</code>.</td></tr>
     </tbody>
   </table></div></details>
-  <p>If no <code>doorN</code> lines are set, the four doors above are the list. The DOS Prompt is always added if a saved list leaves it out. For a multinode door with <code>%N</code>, nodes other than 1 get their own drop folder <code>NODE&lt;n&gt;\</code>, and LORD's <code>NODE&lt;n&gt;.DAT</code> is made once from <code>NODE1.DAT</code>.</p></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#chat" data-key="p"><small><span class="hk">P</span>rev</small>Chat between callers</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#lord" data-key="n"><small><span class="hk">N</span>ext</small>LORD and Black Jack</a></nav>
+  <p>The DOS Prompt is always added if a saved list leaves it out. A saved list that has no <code>*LORD</code> row gains one named LORD. An old <code>LORD.EXE</code> row can stay in the file, and this firmware will not start it.</p></div></details>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#chat" data-key="p"><small><span class="hk">P</span>rev</small>Chat between callers</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#lord" data-key="n"><small><span class="hk">N</span>ext</small>Native LORD</a></nav>
 </article>
 
 <article class="topic" id="lord" data-group="Doors" aria-labelledby="lord-title">
-<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="lord-title">LORD and Black Jack</h2><dl class="msghead"><dt>Topic</dt><dd>LORD and Black Jack</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>20 of 34</dd></dl></header>
-<div class="lead"><div class="lead-text"><p class="lede">Legend of the Red Dragon 4.07 and BBS Black Jack on the board.</p><p>The unmodified LORD 4.07 plays on the board through FOSSIL and DOOR.SYS, as a multinode door (<code>%N /DREW</code>). To install it, prepare a clean copy on a PC and copy it to <code>/doors/lord/</code>:</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/lord-title.png"><div class="screen"><img src="media/lord-title.png" alt="The Legend of the Red Dragon title screen over telnet from the board" loading="lazy" width="640" height="424"></div></a><figcaption>LORD 4.07 running on the CYD, over telnet</figcaption></figure></div></div>
-<div class="topic-body"><pre><code>python -I tools/door_prepare.py LORD_FOLDER build/lord-ready
-# copy build/lord-ready to /doors/lord on the SD card, or send it over USB:
+<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="lord-title">Native LORD</h2><dl class="msghead"><dt>Topic</dt><dd>Native LORD</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-07</dd><dt>Msg</dt><dd>20 of 35</dd></dl></header>
+<div class="lead"><div class="lead-text"><p class="lede">Legend of the Red Dragon, written in C++ and running on the board.</p><p>The game on the ESP32 is a native port of the open-source LORD engine (Synchronet's LORD.js, by Deuce, Stephen Hurd). It runs in the BBS process over telnet. It does not run <code>LORD.EXE</code>, and the board image does not include an 8086 emulator. The source is <code>src/lord/</code>. The door row is <code>*LORD</code>.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/lord-walk.gif"><div class="screen"><img src="media/lord-walk.gif" alt="Animated telnet walk of the native LORD door: town, stats, the inn, the bank, the king, armor, slaughter, and training" loading="lazy" width="640" height="424"></div></a><figcaption>A telnet walk of the native door</figcaption></figure></div></div>
+<div class="topic-body"><ul>
+    <li><strong>Your files, not ours.</strong> Warriors, weapons, armor, trainers, and the ANSI scenes come from the installed LORD folder. The engine does not carry the game's text. Scene order is <code>NAME.ANS</code> if that file is there, then <code>lordtxt.lrd</code>, then <code>LORDTXT.DAT</code>.</li>
+    <li><strong>One world.</strong> Every node reads the main board's <code>PLAYER.DAT</code>. Two callers on the same board can both be in LORD. A fight with someone who is already online reaches them on whichever board they called.</li>
+    <li><strong>Mail</strong> between warriors goes through the BBS email area.</li>
+    <li><strong>What you can open:</strong> the town, the forest, slaughter, the king, armor, the healers, the bank, the inn, training, the day log, other places, and the end of the realm. A skill that reaches 40 asks for a new profession. Forest events and the day log are read from the installed files.</li>
+  </ul>
+  <p>Copy a LORD 4.07 folder to <code>/doors/lord/</code> on the main board's SD card. <code>tools/door_prepare.py</code> can stage that folder on a PC. It needs <code>build/doorhost</code> from the <a href="#dosemu">PC build</a>, because it runs LORDCFG once to write a fresh <code>lord.dat</code>. The native door then just reads the folder.</p>
+<pre><code>python -I tools/door_prepare.py LORD_FOLDER build/lord-ready
 python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code></pre>
-  <p><code>door_prepare.py</code> copies the game, clears old player data, writes <code>NODE1.DAT</code> (FOSSIL, DOOR.SYS in <code>C:\</code>) and makes a fresh <code>lord.dat</code>. Keep the sysop name and BBS name set the way you want before players join: they are passed to doors exactly as set. LORD's startup takes a little while on the board; the emulator runs on a 240 MHz microcontroller, after all.</p>
-  <div class="figs">
-    
-    <figure class="crt"><a class="lb" href="media/lord-fight.png"><div class="screen"><img src="media/lord-fight.png" alt="A LORD forest fight: attack, stats, run, and the Death Knight attack" loading="lazy" width="640" height="424"></div></a><figcaption>A forest fight in LORD</figcaption></figure>
-  </div></div>
-<details class="sub" id="blackjack" open><summary>BBS Black Jack</summary><div class="sub-body"><p>BBS Black Jack 2.5 runs as a real DOS door from <code>/doors/blackjack</code>, configured by its <code>BJ.CFG</code> (node 1, <code>C:\</code>, DOOR.SYS).</p>
-  <div class="figs one">
-    <figure class="crt"><a class="lb" href="media/blackjack.png"><div class="screen"><img src="media/blackjack.png" alt="BBS Black Jack standings: high scorers and this week's standings" loading="lazy" width="640" height="424"></div></a><figcaption>BBS Black Jack in the AXIS door runtime</figcaption></figure>
-  </div></div></details>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#doors" data-key="p"><small><span class="hk">P</span>rev</small>Doors and the DOS runtime</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#ansi-viewer" data-key="n"><small><span class="hk">N</span>ext</small>ANSI Pack Viewer</a></nav>
+  <p>You can also copy a folder you already play. The repo does not include the game files.</p></div>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#doors" data-key="p"><small><span class="hk">P</span>rev</small>Doors</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#dosemu" data-key="n"><small><span class="hk">N</span>ext</small>DOS emulator</a></nav>
+</article>
+
+<article class="topic" id="dosemu" data-group="Doors" aria-labelledby="dosemu-title">
+<header class="topic-head"><div class="eyebrow">Doors</div><h2 id="dosemu-title">The DOS emulator</h2><dl class="msghead"><dt>Topic</dt><dd>The DOS emulator</dd><dt>Area</dt><dd>Doors</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-07</dd><dt>Msg</dt><dd>21 of 35</dd></dl></header>
+<div class="lead"><div class="lead-text"><p class="lede">A separate PC build, for when you want the unmodified EXE.</p><p>The 8086 runtime is still in the repository, under <code>dosemu/</code>. It is not linked into the ESP32 firmware. There is no PlatformIO environment that puts it back on the board. If a caller picks a door whose program is an <code>.EXE</code>, the board says the DOS runtime is not in this firmware.</p></div><div class="lead-fig"><figure class="crt"><a class="lb" href="media/blackjack.png"><div class="screen"><img src="media/blackjack.png" alt="BBS Black Jack standings, from the PC door runtime" loading="lazy" width="640" height="424"></div></a><figcaption>An EXE in the PC build, not on the ESP32</figcaption></figure></div></div>
+<div class="topic-body"><p><code>CMakeLists.txt</code> is the split. When PlatformIO builds the board it sets <code>IDF_PATH</code>, and the firmware compiles <code>src/</code> only. A plain CMake run, with <code>IDF_PATH</code> unset, includes <code>CMakeLists.pc.txt</code>. That PC build links <code>dosemu/door/</code> and <code>third_party/i8086</code> (8086, paged memory, a high-level DOS, a BIOS, and FOSSIL on INT 14h) and it also compiles <code>src/lord/</code>, so one test binary covers the native engine and the emulator.</p>
+<pre><code>cmake -S . -B build -G Ninja
+cmake --build build
+build/axis_tests</code></pre>
+  <p>On Windows, use MSYS2's g++ and Ninja, and the programs are <code>build/axis_tests.exe</code> and <code>build/doorhost.exe</code>. Do not export <code>IDF_PATH</code> in that shell, or CMake will try to build the ESP-IDF project instead.</p>
+<details class="sub" id="doorhost" open><summary>doorhost: one EXE, on the PC</summary><div class="sub-body"><p><code>doorhost</code> runs a DOS door you already have. The repository does not include <code>LORD.EXE</code> or any other game. Play it at the keyboard:</p>
+<pre><code>build/doorhost --dir LORD_FOLDER --exe LORD.EXE --args "1 /DREW" --local</code></pre>
+  <p>Or wait for one telnet caller. FOSSIL is the door's serial port, and the host writes a <code>DOOR.SYS</code> drop file unless you pass <code>--drop dorinfo</code>.</p>
+<pre><code>build/doorhost --dir LORD_FOLDER --exe LORD.EXE --args "1 /DREW" --telnet 2323</code></pre>
+  <p>The same host runs other EXEs this runtime already knows, such as BBS Black Jack (<code>BLKJK.EXE</code>, with its <code>BJ.CFG</code>). <code>tools/door_prepare.py</code> calls <code>doorhost</code> once, to let LORDCFG write a fresh <code>lord.dat</code>, before you copy the data folder to the board for <a href="#lord">native LORD</a>.</p></div></details>
+<details class="sub" id="dosemu-layout"><summary>What is in dosemu/</summary><div class="sub-body"><ul>
+    <li><code>dosemu/door/</code> is the CPU, guest memory, DOS, BIOS, FOSSIL, drop files, and the session that runs one EXE. The PC build compiles these.</li>
+    <li><code>dosemu/cyd/</code> is the old flash cache that served a relocated EXE from the <code>door</code> partition. The current ESP32 image does not compile it. The partition is still in <code>partitions.csv</code> so a flash does not move LittleFS.</li>
+    <li><code>third_party/i8086/</code> is the MIT FabGL core the PC build links. It is not part of the board image.</li>
+  </ul></div></details></div>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#lord" data-key="p"><small><span class="hk">P</span>rev</small>Native LORD</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#ansi-viewer" data-key="n"><small><span class="hk">N</span>ext</small>ANSI Pack Viewer</a></nav>
 </article>
 
 <article class="topic" id="ansi-viewer" data-group="Doors" aria-labelledby="ansi-viewer-title">
@@ -748,7 +768,7 @@ python -I tools/sdput.py COM5 build/lord-ready /doors/lord --baud=921600</code><
     <figure class="crt"><a class="lb" href="media/ansi-viewer-pieces.png"><div class="screen"><img src="media/ansi-viewer-pieces.png" alt="The pieces inside one artpack in three columns" loading="lazy" width="640" height="424"></div></a><figcaption>Pieces inside a pack</figcaption></figure>
     <figure class="crt"><a class="lb" href="media/ansi-viewer-art.png"><div class="screen"><img src="media/ansi-viewer-art.png" alt="An ANSI art piece shown from inside a ZIP" loading="lazy" width="640" height="424"></div></a><figcaption>A piece, straight out of the ZIP</figcaption></figure>
   </div></div>
-<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#lord" data-key="p"><small><span class="hk">P</span>rev</small>LORD and Black Jack</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#dos-prompt" data-key="n"><small><span class="hk">N</span>ext</small>DOS Prompt door</a></nav>
+<nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#dosemu" data-key="p"><small><span class="hk">P</span>rev</small>DOS emulator</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#dos-prompt" data-key="n"><small><span class="hk">N</span>ext</small>DOS Prompt door</a></nav>
 </article>
 
 <article class="topic" id="dos-prompt" data-group="Doors" aria-labelledby="dos-prompt-title">
@@ -986,7 +1006,7 @@ pio run -e headless-ring -t upload --upload-port COM7   # with the eight-light r
       <tr><td><code>theme</code></td><td>The look: <code>axis</code>, <code>oblivion</code> or <code>iniquity</code> (anything else means axis).</td><td><code>axis</code></td><td><code>theme=oblivion</code></td></tr>
       <tr><td><code>ratio</code></td><td>Download ratio: callers may take up to ratio times what they uploaded, plus <code>free_kb</code>. 0 means no ratio.</td><td><code>0</code></td><td><code>ratio=3</code></td></tr>
       <tr><td><code>free_kb</code></td><td>A download allowance in KB on top of the ratio.</td><td><code>0</code></td><td><code>free_kb=512</code></td></tr>
-      <tr><td><code>doorN</code></td><td>A door: <code>id|name|exe|args|drop</code>. See <a href="#door-settings">doors</a>.</td><td>LORD, Black Jack, ANSI viewer, DOS Prompt</td><td class="wrap"><code>door1=lord|Legend of the Red Dragon|LORD.EXE|%N /DREW|doorsys</code></td></tr>
+      <tr><td><code>doorN</code></td><td>A door: <code>id|name|exe|args|drop</code>. See <a href="#door-settings">doors</a>. <code>*LORD</code> is the native game. An <code>.EXE</code> is not started on the board.</td><td>native LORD, ANSI viewer, DOS Prompt</td><td class="wrap"><code>door1=lord|LORD|*LORD||none</code></td></tr>
       <tr><td><code>areaN</code></td><td>A file area: <code>id|name</code>, <code>id|name|level</code> or <code>id|name|level|m</code>. Sorted by N; a repeated N replaces. A 4th field <code>m</code> mirrors the area onto two SD cards (see <a href="#sd-pool">SD card clustering</a>).</td><td>the 19 default areas</td><td class="wrap"><code>area30=gameboy|Game Boy Homebrew|20</code></td></tr>
       <tr><td><code>msgareaN</code></td><td>A message area: <code>id|name</code> or <code>id|name|level</code>.</td><td>the 5 default areas</td><td class="wrap"><code>msgarea6=lasers|Laser Talk</code></td></tr>
       <tr><td><code>setup_done</code></td><td>1 once the setup wizard has saved. 0 starts the first-boot setup.</td><td><code>0</code></td><td><code>setup_done=1</code></td></tr>
@@ -1009,10 +1029,9 @@ login_splash=1
 theme=oblivion
 ratio=3
 free_kb=512
-door1=lord|Legend of the Red Dragon|LORD.EXE|%N /DREW|doorsys
-door2=blackjack|BBS Black Jack|BLKJK.EXE|BJ.CFG|doorsys
-door3=ansiview|ANSI Pack Viewer|*ANSIVIEW|ansi|none
-door4=dos|DOS Prompt (password)|*DOSSHELL|dosbox|none
+door1=lord|LORD|*LORD||none
+door2=ansiview|ANSI Pack Viewer|*ANSIVIEW|ansi|none
+door3=dos|DOS Prompt (password)|*DOSSHELL|dosbox|none
 area1=axis|Axis Micro BBS Firmware
 area2=gcode|G-code and Toolpaths
 msgarea1=general|General Chatter
@@ -1085,15 +1104,15 @@ setup_done=1</code></pre></details>
     <tbody>
       <tr><td><code>nvs</code></td><td>data, nvs</td><td><code>0x9000</code></td><td>20 KB</td><td>WiFi networks, web secrets</td></tr>
       <tr><td><code>otadata</code></td><td>data, ota</td><td><code>0xE000</code></td><td>8 KB</td><td>Boot selection</td></tr>
-      <tr><td><code>app0</code></td><td>app, ota_0</td><td><code>0x10000</code></td><td>1.81 MB</td><td>The firmware</td></tr>
-      <tr><td><code>door</code></td><td>data, 0x41</td><td><code>0x1E0000</code></td><td>448 KB</td><td>The relocated code of the current DOS door</td></tr>
+      <tr><td><code>app0</code></td><td>app, ota_0</td><td><code>0x10000</code></td><td>1.875 MB</td><td>The firmware, including native LORD</td></tr>
+      <tr><td><code>door</code></td><td>data, 0x41</td><td><code>0x1F0000</code></td><td>384 KB</td><td>Old EXE cache. Native LORD does not use it. Left in place so LittleFS is not moved.</td></tr>
       <tr><td><code>spiffs</code></td><td>data, spiffs (LittleFS)</td><td><code>0x250000</code></td><td>1.69 MB</td><td><code>/axis.ini</code>, <code>/users.dat</code>, event log, lists, and everything when there is no SD card</td></tr>
     </tbody>
   </table></div></details>
   <p>LittleFS keeps its offset and size across releases, so a new flash never loses users, settings or logs.</p></div></details>
 <details class="sub" id="sd-card"><summary>The SD card</summary><div class="sub-body"><p>FAT32. The board checks for a card at boot and uses it for storage if it answers, otherwise internal flash. FORMAT SD (or <code>@SDFORMAT FORMAT</code>) makes a fresh FAT32 volume.</p>
 <pre><code>/sd/files/&lt;area id&gt;/     file areas, each with an optional FILES.BBS
-/sd/doors/&lt;door id&gt;/     DOS doors (C:\ for the door)
+/sd/doors/lord/          native LORD data (warriors, gear, ANSI scenes)
 /sd/themes/&lt;theme&gt;/      MATRIX.ANS, MAIN.ANS, BULLETIN.ANS
 /sd/dosbox/              the DOS Prompt sandbox (16 MB at most)</code></pre></div></details>
 <details class="sub" id="building"><summary>Building from source</summary><div class="sub-body"><p>PlatformIO, the <code>espressif32@6.9.0</code> platform, the Arduino framework and LovyanGFX. Three environments:</p>
@@ -1105,11 +1124,15 @@ setup_done=1</code></pre></details>
       <tr><td><code>headless-ring</code></td><td>A headless node driving the eight-light ring</td><td><code>pio run -e headless-ring -t upload --upload-port COMx</code></td></tr>
     </tbody>
   </table></div></div></details>
-<details class="sub" id="pc-tests"><summary>PC tests</summary><div class="sub-body"><p>The portable code (telnet, ZMODEM and XMODEM, the BBS screens, users, messages, archives, the cluster logic and the whole 8086 door runtime) also builds on a PC with CMake, with a doctest test suite. On Windows use MSYS2's g++ and Ninja:</p>
+<details class="sub" id="pc-tests"><summary>The two builds</summary><div class="sub-body"><p>Same tree, two builds. <code>CMakeLists.txt</code> follows <code>IDF_PATH</code>.</p>
+  <ul>
+    <li><strong>Board.</strong> <code>pio run -e cyd</code> (or <code>headless</code>, <code>headless-ring</code>). PlatformIO sets <code>IDF_PATH</code>. The image is <code>src/</code>, including <code>src/lord/</code>. <code>dosemu/</code> is not linked.</li>
+    <li><strong>PC.</strong> Leave <code>IDF_PATH</code> unset. CMake includes <code>CMakeLists.pc.txt</code>, which links <code>dosemu/</code>, <code>third_party/i8086</code>, and the native engine. You get <code>axis_tests</code>, <code>doorhost</code>, and <code>xfertest</code>.</li>
+  </ul>
 <pre><code>cmake -S . -B build -G Ninja
 cmake --build build
 build/axis_tests</code></pre>
-  <p>The PC build also makes <code>doorhost</code>, which runs a DOS door locally or hosts one caller over telnet for testing (<code>doorhost --telnet 2323</code>), and <code>tools/xfertest</code>, which calls a board like a caller to measure transfers.</p></div></details>
+  <p>On Windows use MSYS2's g++ and Ninja. How to run an unmodified EXE is on the <a href="#dosemu">DOS emulator</a> page. <code>tools/xfertest</code> calls a board like a caller to measure transfers.</p></div></details>
 <nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#serial" data-key="p"><small><span class="hk">P</span>rev</small>Serial console</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#troubleshooting" data-key="n"><small><span class="hk">N</span>ext</small>Troubleshooting</a></nav>
 </article>
 
@@ -1121,9 +1144,9 @@ build/axis_tests</code></pre>
   <details class="sub" id="faq-wifi"><summary>The board won't join my WiFi</summary><div class="sub-body"><p>The ESP32 only sees 2.4 GHz networks. Check the password (SHOW reveals it on the keyboard), move the board closer, or use HIDDEN for a network that does not broadcast. <code>@WIFIPICK</code> reopens the picker.</p></div></details>
   <details class="sub" id="faq-files"><summary>The file areas say they are offline</summary><div class="sub-body"><p>The main board has no working SD card. Use a FAT32 card, reseat it and send <code>@SDCHECK</code>, or format it from SYSTEM, FORMAT SD.</p></div></details>
   <details class="sub" id="faq-download"><summary>A caller can't download anything</summary><div class="sub-body"><p>That is the download gate: they need to upload something first, or you turn on FREE DL for them. If they have uploaded, check the <code>ratio</code> and <code>free_kb</code> settings.</p></div></details>
-  <details class="sub" id="faq-door-busy"><summary>"The door is busy"</summary><div class="sub-body"><p>Another caller on the same board is in a door or a transfer; each board runs one at a time. Try again in a bit, or add a board so callers spread out.</p></div></details>
+  <details class="sub" id="faq-door-busy"><summary>"The door is busy"</summary><div class="sub-body"><p>Another caller on the same board is in the ANSI viewer, the DOS prompt, or a file transfer. Those share one slot. Native LORD does not, so two callers can be in it together.</p></div></details>
   <details class="sub" id="faq-dos"><summary>The DOS Prompt says it is not enabled</summary><div class="sub-body"><p>Set its password on the serial console: <code>@DOSPASS yourpassword</code>.</p></div></details>
-  <details class="sub" id="faq-lord"><summary>LORD takes a while to start</summary><div class="sub-body"><p>It is a real DOS program on an emulated 8086 inside a microcontroller. The first run also writes the relocated EXE to flash; <code>@DOORCHECK lord</code> does that ahead of time.</p></div></details>
+  <details class="sub" id="faq-lord"><summary>A door says the DOS runtime is not in this firmware</summary><div class="sub-body"><p>That row is an <code>.EXE</code>. The board runs <code>*LORD</code>, not <code>LORD.EXE</code>. Open the native row, or run the EXE with <code>doorhost</code> on a PC. See <a href="#dosemu">the DOS emulator</a>.</p></div></details>
   <details class="sub" id="faq-cluster"><summary>A second board doesn't join</summary><div class="sub-body"><p>Both boards must be on the same network and subnet, and the router must pass UDP broadcast and mDNS between them. Guest networks with client isolation block it. <code>@NODES</code> shows what each board sees.</p></div></details>
   <details class="sub" id="faq-password"><summary>I forgot the sysop password</summary><div class="sub-body"><p><code>@RESETSETUP</code> on the serial console erases the settings and restarts into the first-boot setup, where you set a new sysop account. User accounts are kept. If another account is a sysop (security 255), it can still log in meanwhile.</p></div></details>
   <details class="sub" id="faq-discord"><summary>Discord or dynamic DNS does nothing</summary><div class="sub-body"><p>Both are off until set, and the HTTPS work needs about 45 KB of free memory. Set them on a headless node, then check with <code>@WEB</code> and <code>@WEBPING</code>.</p></div></details></div>
