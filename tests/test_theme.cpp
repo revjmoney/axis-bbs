@@ -4,6 +4,7 @@
 #include <string>
 
 #include "doctest.h"
+#include "bbs/listscreen.h"
 #include "bbs/theme.h"
 
 using namespace axis::bbs;
@@ -11,6 +12,18 @@ using namespace axis::bbs;
 namespace {
 std::string visible(const std::string& s) { return std::regex_replace(s, std::regex("\x1b\\[[0-9;]*m"), ""); }
 }  // namespace
+
+TEST_CASE("the waiting screen has its own colours for each look") {
+    auto a = theme::wfcColours(theme::Look::Axis);
+    auto o = theme::wfcColours(theme::Look::Oblivion);
+    auto i = theme::wfcColours(theme::Look::Iniquity);
+    CHECK(a.accent == 12);  // orange
+    CHECK(o.accent == 3);   // cyan
+    CHECK(i.accent == 2);   // green, the screen's original frames
+    CHECK(a.hot != i.hot);
+    CHECK(o.ramp[0] == i.ramp[0]);  // both diodes run cyan into blue
+    CHECK(a.ramp[0] != i.ramp[0]);  // axis is gold
+}
 
 TEST_CASE("fade text keeps the letters and fades each word from dark edges to a bright middle") {
     std::string f = theme::fade("UNDERGROUND");
@@ -113,17 +126,58 @@ TEST_CASE("pipe codes become ANSI colours: |00 to |15 the text, |16 to |23 the b
 }
 
 TEST_CASE("a theme name from the settings picks the look; anything unknown is the Axis look") {
+    CHECK(theme::lookFrom("cyan") == theme::Look::Oblivion);
     CHECK(theme::lookFrom("oblivion") == theme::Look::Oblivion);
     CHECK(theme::lookFrom("OBLIVION") == theme::Look::Oblivion);
     CHECK(theme::lookFrom("axis") == theme::Look::Axis);
     CHECK(theme::lookFrom("") == theme::Look::Axis);
-    CHECK(std::string(theme::lookName(theme::Look::Oblivion)) == "oblivion");
+    CHECK(std::string(theme::lookName(theme::Look::Oblivion)) == "cyan");
+    CHECK(std::string(theme::legacyThemeFolder("cyan")) == "oblivion");
+    CHECK(theme::legacyThemeFolder("axis") == nullptr);
 }
 
-TEST_CASE("the iniquity look fades in greens and is named in the settings") {
+TEST_CASE("the look list is the three built-in looks plus the seven screensets") {
+    CHECK(theme::lookCount() == 10);
+    CHECK(std::string(theme::lookId(0)) == "axis");
+    CHECK(std::string(theme::lookId(1)) == "cyan");
+    CHECK(std::string(theme::lookId(2)) == "green");
+    CHECK(std::string(theme::lookId(3)) == "crt");
+    CHECK(std::string(theme::lookId(4)) == "sea");
+    CHECK(std::string(theme::lookId(5)) == "haunted");
+    CHECK(std::string(theme::lookId(6)) == "cathedral");
+    CHECK(std::string(theme::lookId(7)) == "skulls");
+    CHECK(std::string(theme::lookId(8)) == "underground");
+    CHECK(std::string(theme::lookId(9)) == "wasteland");
+    CHECK(theme::lookId(10) == nullptr);
+    CHECK(std::string(theme::knownLook("skulls")) == "skulls");
+    CHECK(std::string(theme::knownLook("CRT")) == "crt");
+    CHECK(theme::knownLook("nope") == nullptr);
+    CHECK(theme::lookFrom("skulls") == theme::Look::Axis);  // screenset art keeps the Axis keys
+    CHECK(theme::lookFrom("crt") == theme::Look::Axis);
+    CHECK(theme::lookFrom("cathedral") == theme::Look::Axis);
+    CHECK(std::string(theme::nextLook("axis")) == "cyan");
+    CHECK(std::string(theme::nextLook("green")) == "crt");
+    CHECK(std::string(theme::nextLook("wasteland")) == "axis");
+    CHECK(std::string(theme::nextLook("nope")) == "axis");
+    CHECK(theme::legacyThemeFolder("crt") == nullptr);
+    CHECK(theme::legacyThemeFolder("underground") == nullptr);
+    CHECK(theme::wfcColoursFor("cyan").accent == theme::wfcColours(theme::Look::Oblivion).accent);
+    CHECK(theme::wfcColoursFor("green").accent == theme::wfcColours(theme::Look::Iniquity).accent);
+    CHECK(theme::wfcColoursFor("crt").accent == theme::wfcColours(theme::Look::Iniquity).accent);
+    CHECK(theme::wfcColoursFor("haunted").accent == 2);
+    CHECK(theme::wfcColoursFor("sea").accent == 1);
+    CHECK(theme::wfcColoursFor("cathedral").accent == 5);
+    CHECK(theme::wfcColoursFor("skulls").accent == 4);
+    CHECK(theme::wfcColoursFor("wasteland").accent == 6);
+    CHECK(theme::wfcColoursFor("underground").accent == theme::wfcColours(theme::Look::Axis).accent);
+    CHECK(std::string(theme::lookBlurb("sea")) == "deep sea");
+}
+
+TEST_CASE("the green look fades in greens and is named in the settings") {
     theme::use(theme::lookFrom("iniquity"));
     CHECK(theme::look() == theme::Look::Iniquity);
-    CHECK(std::string(theme::lookName(theme::Look::Iniquity)) == "iniquity");
+    CHECK(std::string(theme::lookName(theme::Look::Iniquity)) == "green");
+    CHECK(std::string(theme::lookName(theme::lookFrom("green"))) == "green");
     CHECK(theme::fade("UNDERGROUND").find("[0;32m") != std::string::npos);  // dark green at the ends
     theme::use(theme::Look::Axis);
 }
@@ -133,4 +187,22 @@ TEST_CASE("a section title uses the theme's header screen when the card has one"
     CHECK(theme::drip("BBS LIST").find("<bbs list art>") != std::string::npos);
     CHECK(theme::drip("DOORS").find("<bbs list art>") == std::string::npos);  // none for doors: the stock title
     theme::setArt(nullptr);
+}
+
+TEST_CASE("file and message lists wear a header and keep the lightbar's column row") {
+    std::string top = listScreenTop("FILE AREAS", "Area                                      Files");
+    CHECK(top.find("\x1b[4;1H") != std::string::npos);
+    CHECK(visible(top).find("FILE AREAS") != std::string::npos);
+    CHECK(top.find("\xdc") != std::string::npos);
+    CHECK(visible(top).find("Area") != std::string::npos);
+    CHECK(visible(listScreenTop("MESSAGE AREAS", "Messages")).find("MESSAGE AREAS") != std::string::npos);
+    std::string lip = visible(theme::banner("FILE AREAS"));
+    size_t start = 0;
+    for (size_t p; (p = lip.find("\r\n", start)) != std::string::npos; start = p + 2) CHECK(p - start < 80);
+    theme::setArt([](const std::string& name) { return name == "FILES.ANS" ? std::string("FILEART\r\n") : std::string(); });
+    std::string art = listScreenTop("FILE AREAS", "Area");
+    CHECK(art.find("FILEART") != std::string::npos);
+    CHECK(art.find("\x1b[4;1H") != std::string::npos);
+    theme::setArt(nullptr);
+    theme::use(theme::Look::Axis);
 }

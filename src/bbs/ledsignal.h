@@ -1,35 +1,38 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The CYD's RGB LED tells the sysop what the whole cluster is doing, from across the room. Each
-// active signal gets a 2 second turn, so several can show at once:
-//   white flash once a second   a caller is online (any node)
-//   red 1 Hz blink              a door is running (any node)
-//   green long blink            new user applications are waiting
-//   cyan breathing              a file transfer is running
-//   blue double blink           someone is in the teleconference
-//   yellow double blink         the main board was lost (failover) a moment ago
-//   magenta strobe              a caller paged the sysop (over everything else, for a minute)
-//   faint blue pulse every 5 s  idle: the board is alive
+// Status light for this board. The bare board uses its blue LED (GPIO 2, active
+// high), capped hard because full brightness is too much. A CYD uses its RGB LED
+// (GPIO 4 red, 16 green, 17 blue, active low) with the same timing, peaked at
+// about 75 percent. GPIO 2 stays a panel pin on the CYD.
+//   door running     fast blink (red on a CYD)
+//   no callers       slow dim breathe (the colour drifts on a CYD)
+//   callers on       one fade-in blink per caller, each pulse its own colour
 #pragma once
 #include <cstdint>
 
 namespace axis::bbs {
 
-struct Rgb {
-    uint8_t r = 0, g = 0, b = 0;
-};
-
 struct LedInputs {
-    int  callers = 0, pendingUsers = 0;
-    bool doorRunning = false, transfer = false, chat = false, paged = false, mainLost = false;
+    int  nodes = 0;  // callers on this board
+    bool door = false;
 };
 
-Rgb ledColor(const LedInputs& in, uint32_t nowMs);
+struct LedColour {
+    uint8_t r, g, b;  // mix, 0-255. Brightness is ledDuty, scaled per board.
+};
 
-// Eight single-colour lights in a ring (a headless node's status ring), red at even places and
-// green at odd ones, as brightness 0-255: a comet goes round (faster with callers on; reds only
-// while a door runs, greens only for a transfer, two comets for chat), new users flash the greens,
-// a page strobes the reds, a lost main pulses them slowly.
-void ledRing(const LedInputs& in, uint32_t nowMs, uint8_t out[8]);
+constexpr uint8_t kLedFadePeak = 32;     // bare board, out of 255
+constexpr uint8_t kLedBreathePeak = 16;  // idle stays under the fade
+constexpr uint8_t kCydFadePeak = 191;    // about 75 percent of 255
+
+// Duty for the bare board's LEDC. 0 is off. Already under the dim cap.
+uint8_t ledDuty(const LedInputs& in, uint32_t nowMs);
+
+// The same duty, scaled so a full fade is kCydFadePeak.
+uint8_t ledCydDuty(uint8_t bareDuty);
+
+// Colour for this moment. A door is red. Idle walks the hue. Each caller pulse
+// takes the next colour. The driver multiplies this by the duty.
+LedColour ledColour(const LedInputs& in, uint32_t nowMs);
 
 }  // namespace axis::bbs

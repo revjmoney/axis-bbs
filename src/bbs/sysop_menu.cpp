@@ -5,6 +5,8 @@
 
 #include <cstdio>
 
+#include "bbs/station.h"
+#include "bbs/theme.h"
 #include "bbs/version.h"
 
 namespace axis::bbs {
@@ -68,20 +70,19 @@ std::vector<SysopMenu::Button> SysopMenu::buttons() const {
             }
             if (screen_ == Screen::Files || screen_ == Screen::Logs || screen_ == Screen::Users) b.push_back({"MORE", 222, 204, 90, 30});
             if (screen_ == Screen::Setup) {
-                b.push_back({"THEME", 104, 204, 84, 30});
-                b.push_back({"RUN SETUP", 192, 204, 120, 30, true});
+                b.back().w = 54;
+                b.push_back({"THEME", 66, 204, 124, 30});
+                b.push_back({"RUN SETUP", 196, 204, 120, 30, true});
             }
             if (screen_ == Screen::Theme) {
-                b.push_back({"AXIS", 8, 36, 304, 44});
-                b.push_back({"OBLIVION", 8, 88, 304, 44});
-                b.push_back({"INIQUITY", 8, 140, 304, 44});
+                // the rows themselves are the buttons; they share the user-list hit grid
             }
             if (screen_ == Screen::System) {
                 b.back().w = 58;
                 b.push_back({"SYSOP PW", 70, 204, 80, 30});  // the sysop password, on the touch keyboard
                 b.push_back({"FORMAT SD", 154, 204, 76, 30, true});
                 b.push_back({"RESTART", 234, 204, 78, 30});
-
+                b.push_back({"STATION", 8, 164, 100, 32});  // sensors and relays, above the bottom row
             }
             break;
     }
@@ -103,7 +104,7 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
         }
         if (b.label == "BACK")
             go(screen_ == Screen::UserDetail ? Screen::Users : screen_ == Screen::Access ? Screen::UserDetail
-               : screen_ == Screen::Theme ? Screen::Setup : Screen::Main);
+               : screen_ == Screen::Theme ? Screen::Setup : screen_ == Screen::Station ? Screen::System : Screen::Main);
         else if (b.label == "ACCESS") go(Screen::Access);
         else if (b.label == "FILES") return Action::ToggleFiles;
         else if (b.label == "MSGS") return Action::ToggleMessages;
@@ -121,14 +122,26 @@ SysopMenu::Action SysopMenu::tap(int x, int y) {
         } else if (b.label == "RESTART") return Action::Restart;
         else if (b.label == "RUN SETUP") return Action::RerunSetup;
         else if (b.label == "THEME") go(Screen::Theme);
-        else if (b.label == "AXIS" || b.label == "OBLIVION" || b.label == "INIQUITY") {
-            theme_ = b.label == "AXIS" ? "axis" : b.label == "OBLIVION" ? "oblivion" : "iniquity";
+        else if (b.label == "SET PASS") return Action::SetUserPassword;
+        else if (b.label == "SYSOP PW") return Action::SetSysopPassword;
+        else if (b.label == "STATION") go(Screen::Station);
+        return Action::None;
+    }
+    if (screen_ == Screen::Station && x >= 8 && x < 312 && y >= 32 && y < 32 + 9 * 16) {
+        int row = (y - 32) / 16;
+        if (row >= 4 && row <= 7) {
+            int n = row - 3;
+            station::relay(n, station::relayState(n) ? 0 : 1);
+        } else if (row == 8) station::beep(880, 80);
+        return Action::None;
+    }
+    if (screen_ == Screen::Theme && x >= 8 && x < 312 && y >= 32 && y < 32 + theme::lookCount() * 16) {
+        int row = (y - 32) / 16;
+        if (const char* id = theme::lookId(row)) {
+            theme_ = id;
             go(Screen::Setup);
             return Action::SetTheme;
         }
-        else if (b.label == "SET PASS") return Action::SetUserPassword;
-        else if (b.label == "SYSOP PW") return Action::SetSysopPassword;
-        return Action::None;
     }
     if (screen_ == Screen::Users && x >= 8 && x < 312 && y >= 32 && y < 32 + kLinesPerPage * 16) {  // a caller's row
         size_t row = (size_t)((y - 32) / 16);
@@ -153,6 +166,7 @@ std::string SysopMenu::title() const {
         case Screen::System: return "SYSTEM";
         case Screen::ConfirmFormat: return "FORMAT SD CARD?";
         case Screen::Theme: return "LOOK";
+        case Screen::Station: return "STATION";
     }
     return "";
 }
@@ -174,18 +188,24 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
                                               std::to_string(c.dailyMinutes) + " min/day"));
             all.push_back(row("idle", std::to_string(c.idleMinutes) + " min"));
             all.push_back(row("NUP", c.nupHash.empty() ? "none (anyone can apply)" : "set (asked before Apply)"));
-            all.push_back(row("theme", c.theme == "oblivion" ? "oblivion (grey and cyan)" : c.theme == "iniquity" ? "iniquity (green and grey)" : "axis (drippy orange)"));
+            {
+                const char* id = theme::knownLook(c.theme);
+                if (!id) id = "axis";
+                all.push_back(row("look", std::string(id) + ", " + theme::lookBlurb(id)));
+            }
             all.push_back(row("doors", std::to_string(c.doors.size()) + (c.doors.empty() ? "" : " (" + c.doors[0].name + ")")));
             break;
-        case Screen::Theme:
-            all.push_back("1  Axis");
-            all.push_back("   drippy orange");
-            all.push_back("2  Oblivion");
-            all.push_back("   grey and cyan");
-            all.push_back("3  Iniquity");
-            all.push_back("   green and grey");
-            all.push_back(std::string("now: ") + (c.theme.empty() ? "axis" : c.theme));
+        case Screen::Theme: {
+            const char* cur = theme::knownLook(c.theme);
+            for (int i = 0; i < theme::lookCount(); i++) {
+                const char* id = theme::lookId(i);
+                std::string line = std::string(cur == id ? "* " : "  ") + theme::lookLabel(i);
+                line += "  " + std::string(theme::lookBlurb(id));
+                if (line.size() > (size_t)kLineChars) line.resize(kLineChars);
+                all.push_back(line);
+            }
             break;
+        }
         case Screen::Users: {
             std::vector<const User*> order;  // pending first, then the rest; tap a row to open it
             for (auto& u : d.users.all())
@@ -273,6 +293,16 @@ std::vector<std::string> SysopMenu::lines(const SysopData& d) const {
             all.push_back(row("wifi", d.info.wifi + ", " + std::to_string(d.info.rssi) + " dBm"));
             all.push_back(row("address", d.info.ip + "  " + d.info.host));
             break;
+        case Screen::Station: {
+            const char* names[] = {"temp", "water", "light", "humid"};
+            for (const char* n : names) all.push_back(station::line(n));
+            for (int i = 1; i <= station::kRelays; i++) {
+                int s = station::relayState(i);
+                all.push_back("relay " + std::to_string(i) + (s ? "  on" : "  off"));
+            }
+            all.push_back("speaker  beep");
+            break;
+        }
         case Screen::ConfirmFormat:
             all.push_back("Erase the whole SD card and make a");
             all.push_back("fresh FAT32 volume? Doors, files and");

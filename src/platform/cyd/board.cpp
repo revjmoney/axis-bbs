@@ -2,7 +2,25 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "platform/cyd/board.h"
 
+#include <esp_mac.h>
+
+#include <cstring>
+
 lgfx::LGFX_Device tft;
+
+// Rev's ring board. esptool read_mac on that ESP32. Do not add a second guess:
+// an unread MISO line looks like an ILI9341 and the probe would drive the lights.
+bool boardIsRing() {
+    static int known = -1;
+    if (known < 0) {
+        uint8_t mac[6] = {};
+        static const uint8_t kRing[6] = {0x30, 0x76, 0xf5, 0xa7, 0x03, 0x6c};
+        known = esp_efuse_mac_get_default(mac) == ESP_OK && std::memcmp(mac, kRing, 6) == 0;
+    }
+    return known == 1;
+}
+
+bool boardHasPanel() { return !boardIsRing(); }
 
 static lgfx::Bus_SPI       bus;
 static lgfx::Light_PWM     light;
@@ -27,11 +45,11 @@ static uint32_t read_panel_reg(lgfx::IBus* b, int32_t pin_cs, uint_fast16_t cmd)
 }
 
 const char* boardInit(uint8_t rotation, uint32_t spiHz) {
-#ifdef AXIS_HEADLESS
-    (void)rotation;
-    (void)spiHz;
-    return "none (headless node)";  // a plain ESP32: no panel, no touch
-#endif
+    if (boardIsRing()) {
+        (void)rotation;
+        (void)spiHz;
+        return "none (headless node)";  // same image as the screens: no panel, no touch, pins left alone
+    }
     {
         auto cfg        = bus.config();
         cfg.spi_host    = HSPI_HOST;
@@ -101,11 +119,7 @@ const char* boardInit(uint8_t rotation, uint32_t spiHz) {
 // fixed for up/down only and left the game pad's left and right swapped).
 // Corrected here so every screen gets true coordinates.
 bool boardTouch(int& x, int& y) {
-#ifdef AXIS_HEADLESS
-    (void)x;
-    (void)y;
-    return false;
-#endif
+    if (!boardHasPanel()) return false;
     lgfx::touch_point_t tp;
     if (!tft.getTouch(&tp, 1)) return false;
     int w = tft.width(), h = tft.height();

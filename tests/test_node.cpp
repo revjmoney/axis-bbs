@@ -5,6 +5,7 @@
 #include "doctest.h"
 #include "bbs/login_art.h"
 #include "bbs/node.h"
+#include "bbs/theme.h"
 
 using axis::bbs::Node;
 using axis::bbs::SysInfo;
@@ -139,7 +140,23 @@ TEST_CASE("D lists the configured doors") {
     std::string out = plain(n.takeOutput());
     CHECK(out.find("Legend of the Red Dragon") != std::string::npos);
     CHECK(out.find("[1]") != std::string::npos);
+    CHECK(out.find("ANSI Movies") != std::string::npos);
     CHECK(n.state() == Node::State::Doors);
+}
+
+TEST_CASE("the movie door is its own row and a copied viewer is listed once") {
+    axis::bbs::BbsConfig c;
+    c.doors = {{"lord", "Legend of the Red Dragon", "LORD.EXE", "%N NOEMS /DREW", "doorsys"},
+               {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"},
+               {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi,scene-block", "doorsys"},
+               {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi,scene-block", "doorsys"}};
+    Node n(1, info, c);
+    auto doors = n.doorChoices();
+    REQUIRE(doors.size() == 3);
+    CHECK(doors[1].name == "ANSI Movies");
+    CHECK(doors[1].args == "ansi");
+    CHECK(doors[2].name == "ANSI Packs");
+    CHECK(doors[2].id == "ansiview");
 }
 
 TEST_CASE("choosing LORD requests the door") {
@@ -463,4 +480,99 @@ TEST_CASE("an edited main menu shows its items and only its hotkeys work") {
         n.input((const uint8_t*)"q", 1, 2200);  // Q runs goodbye
         CHECK(n.state() != axis::bbs::Node::State::Menu);
     }
+}
+
+TEST_CASE("a saved original LORD stays off the doors menu and LORD Fast stays") {
+    axis::bbs::BbsConfig c = axis::bbs::parseConfig(
+        "door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys\n"
+        "door2=blackjack|BBS Black Jack|BLKJK.EXE|BJ.CFG|doorsys\n"
+        "door3=four|AXIS FOUR|FOUR.EXE|%N|doorsys\n"
+        "door4=lord|LORD Fast|FAST.EXE|%N|doorsys\n");
+    c.loginSplash = false;
+    Node caller(1, info, c);
+    caller.begin(0);
+    type(caller, "Rev\r");
+    caller.takeOutput();
+    type(caller, "d");
+    std::string out = plain(caller.takeOutput());
+    CHECK(out.find("Legend of the Red Dragon") == std::string::npos);
+    CHECK(out.find("LORD Fast") != std::string::npos);
+    CHECK(out.find("AXIS FOUR") != std::string::npos);
+    CHECK(out.find("BBS Black Jack") != std::string::npos);
+    type(caller, "3");  // 1 Black Jack, 2 AXIS FOUR, 3 LORD Fast
+    CHECK(caller.state() == Node::State::InDoor);
+    CHECK(caller.door().exe == "FAST.EXE");
+    CHECK(caller.doorRequested() == "lord");
+
+    Node sysop(1, info, c);
+    sysop.beginLocalQuiet(0);
+    bool game = false, setup = false, fast = false;
+    for (const auto& d : sysop.doorChoices()) {
+        if (d.exe == "LORD.EXE") game = true;
+        if (d.exe == "LORDCFG.EXE") setup = true;
+        if (d.exe == "FAST.EXE") fast = true;
+    }
+    CHECK_FALSE(game);
+    CHECK_FALSE(setup);
+    CHECK(fast);
+
+    c.doors[0].enabled = true;
+    Node back(1, info, c);
+    back.beginLocalQuiet(0);
+    bool shown = false, setupOn = false;
+    for (const auto& d : back.doorChoices()) {
+        if (d.exe == "LORD.EXE") shown = true;
+        if (d.exe == "LORDCFG.EXE") setupOn = true;
+    }
+    CHECK(shown);
+    CHECK(setupOn);
+}
+
+TEST_CASE("section switches hide messages, files and doors for every caller") {
+    axis::bbs::BbsConfig c;
+    c.messagesOn = false;
+    c.filesOn = false;
+    c.doorsOn = false;
+    Node n(1, info, c);
+    n.begin(0);
+    type(n, "Rev\r");
+    std::string menu = plain(n.takeOutput());
+    CHECK(menu.find("[M]") == std::string::npos);
+    CHECK(menu.find("[F]") == std::string::npos);
+    CHECK(menu.find("[D]") == std::string::npos);
+    CHECK(menu.find("[G]") != std::string::npos);
+    type(n, "m");
+    CHECK(plain(n.takeOutput()).find("Messages are off.") != std::string::npos);
+    CHECK(n.state() == Node::State::Menu);
+    type(n, "e");
+    CHECK(plain(n.takeOutput()).find("Messages are off.") != std::string::npos);
+    type(n, "s");
+    CHECK(plain(n.takeOutput()).find("Messages are off.") != std::string::npos);
+    type(n, "f");
+    CHECK(plain(n.takeOutput()).find("Files are off.") != std::string::npos);
+    type(n, "d");
+    CHECK(plain(n.takeOutput()).find("Doors are off.") != std::string::npos);
+    CHECK(n.state() == Node::State::Menu);
+
+    Node local(1, info, c);
+    local.beginLocal(0);
+    local.takeOutput();
+    type(local, "d");
+    CHECK(plain(local.takeOutput()).find("Doors are off.") != std::string::npos);
+    CHECK(local.state() == Node::State::Menu);
+}
+
+TEST_CASE("an Oblivion doors key says the section is off") {
+    axis::bbs::BbsConfig c;
+    c.theme = "oblivion";
+    c.doorsOn = false;
+    Node n(1, info, c);
+    n.setArt([](const std::string& name) { return name == "MAIN.ANS" ? std::string("doors") : std::string(); });
+    n.begin(0);
+    type(n, "lRev\r");  // Oblivion opens on the matrix: L is Login
+    n.takeOutput();
+    type(n, "o");
+    CHECK(plain(n.takeOutput()).find("Doors are off.") != std::string::npos);
+    CHECK(n.state() == Node::State::Menu);
+    axis::bbs::theme::use(axis::bbs::theme::Look::Axis);
 }

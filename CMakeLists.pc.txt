@@ -20,15 +20,18 @@ add_library(axiscore STATIC
     src/bbs/zipreader.cpp
     src/bbs/ansiterm.cpp
     src/bbs/announce.cpp
+    src/bbs/axisnet.cpp
     src/bbs/archive.cpp
     src/bbs/email.cpp
     src/bbs/usersettings.cpp
     src/bbs/ansiviewer.cpp
     src/bbs/rotatelog.cpp
     src/bbs/dosshell.cpp
+    src/bbs/script.cpp
     src/bbs/diag.cpp
     src/bbs/dripfont.cpp
     src/bbs/ledsignal.cpp
+    src/bbs/station.cpp
     src/bbs/msgbase.cpp
     src/bbs/msgreader.cpp
     src/bbs/setupportal.cpp
@@ -58,29 +61,32 @@ add_library(axiscore STATIC
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp
     src/bbs/noip.cpp
-    src/door/screenmirror.cpp
+    dosemu/door/screenmirror.cpp
     src/bbs/panelproto.cpp
     src/bbs/loginguard.cpp
     src/bbs/sysopshell.cpp
     src/bbs/setup_gate.cpp
     third_party/sha256/sha256.c
-    src/door/cpu.cpp
-    src/door/guestmem.cpp
-    src/door/mz.cpp
-    src/door/dosmem.cpp
-    src/door/dos.cpp
-    src/door/bios.cpp
-    src/door/session.cpp
-    src/door/fossil.cpp
-    src/door/dropfile.cpp
+    dosemu/door/cpu.cpp
+    dosemu/door/guestmem.cpp
+    dosemu/door/mz.cpp
+    dosemu/door/dosmem.cpp
+    dosemu/door/dos.cpp
+    dosemu/door/bios.cpp
+    dosemu/door/session.cpp
+    dosemu/door/fossil.cpp
+    dosemu/door/dropfile.cpp
     src/door/pathresolve.cpp
-    src/door/imagekey.cpp
+    src/door/locktable.cpp
+    dosemu/door/imagekey.cpp
     src/platform/posix/posixhostfs.cpp
+    src/lord/game.cpp
+    src/lord/realm.cpp
     src/platform/pc/consolestream.cpp
     src/platform/pc/tcpstream.cpp
     third_party/i8086/i8086.cpp
     third_party/miniz/miniz_tinfl.c)
-target_include_directories(axiscore PUBLIC src third_party/i8086 PRIVATE third_party/sha256 third_party/miniz)
+target_include_directories(axiscore PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/miniz)
 
 add_executable(axis_tests
     tests/test_main.cpp
@@ -129,9 +135,13 @@ add_executable(axis_tests
     tests/test_multinode.cpp
     tests/test_email.cpp
     tests/test_extras.cpp
+    tests/test_four.cpp
+    tests/test_lordfast.cpp
+    tests/test_lordnative.cpp
     tests/test_ansiview.cpp
     tests/test_rotatelog.cpp
     tests/test_dosshell.cpp
+    tests/test_script.cpp
     tests/test_ledsignal.cpp
     tests/test_msgbase.cpp
     tests/test_setupportal.cpp

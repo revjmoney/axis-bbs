@@ -3,6 +3,7 @@
 // File copying over the USB serial port, the same line protocol as the CYD Demoscene:
 //   @PUT path size  then 512 byte chunks, each acked "@K", then "@DONE <byte sum>"
 //   @LS dir  ("name size" lines, "@END")   @RM path   @MKDIR path   @BAUD n  (each answers @OK/@ERR)
+//   @TYPE path  ("@READY <size>" then that many raw bytes; files over 8 KB are refused)
 // Paths are on the BBS storage ("/doors/lord/LORD.EXE" lands on the SD card, or internal flash).
 #pragma once
 #include <Arduino.h>

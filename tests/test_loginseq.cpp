@@ -18,11 +18,16 @@ TEST_CASE("login sequence: a file's steps in order, with clear, pause, level and
 
 TEST_CASE("login sequence: no file means ViSiON/3's shipped template") {
     auto s = parseLoginSeq("");
-    REQUIRE(s.size() == 10);
+    REQUIRE(s.size() == 11);
     CHECK(s[0].cmd == "SYSOPNOTICES");
     CHECK(s[1].cmd == "NMAILSCAN");
     CHECK(s[1].pause);
-    CHECK(s[2].cmd == "FASTLOGIN");
-    CHECK(s[8].cmd == "NEWUSERVAL");
-    CHECK(s[8].level == 255);
+    CHECK(s[2].cmd == "DISPLAYFILE");
+    CHECK(s[2].data == "SAYLOR");
+    CHECK(s[2].pause);
+    CHECK(s[3].cmd == "FASTLOGIN");
+    CHECK(s[4].cmd == "PRINTNEWS");
+    CHECK(s[4].pause);
+    CHECK(s[9].cmd == "NEWUSERVAL");
+    CHECK(s[9].level == 255);
 }

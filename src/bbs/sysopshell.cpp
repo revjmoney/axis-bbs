@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "bbs/config.h"
 #include "bbs/theme.h"
 
 namespace axis::bbs {
@@ -41,14 +42,14 @@ const Group kGroups[] = {
     {"BBS and sysop", {"bbs_name", "location", "sysop_handle", "sysop_real_name", "board_name", "ftn_address", "timezone", nullptr}},
     {"Network", {"telnet_port", "public_host", "sessions", nullptr}},
     {"Callers and limits", {"new_user_security", "daily_minutes", "idle_minutes", "ratio", "free_kb", nullptr}},
-    {"Look", {"theme", "login_splash", nullptr}},
+    {"Look", {"theme", "wfc", "login_splash", nullptr}},
 };
 bool inGroups(const std::string& k) {
     for (auto& g : kGroups)
         for (int i = 0; g.keys[i]; i++)
             if (k == g.keys[i]) return true;
     return k.rfind("area", 0) == 0 || k.rfind("msgarea", 0) == 0 || k.rfind("door", 0) == 0 || k.rfind("menu.", 0) == 0 ||
-           k == "setup_done" || k[0] == '#';
+           k == "messages_on" || k == "files_on" || k == "doors_on" || k == "setup_done" || k[0] == '#';
 }
 }  // namespace
 
@@ -119,6 +120,7 @@ void SysopShell::begin() {
                    {"Settings", "", [this] { push("SETTINGS", [this](Layer& x) { settings(x); }); }},
                    {"Menus", "", [this] { push("MENUS", [this](Layer& x) { menus(x); }); }},
                    {"System", "", [this] { push("SYSTEM", [this](Layer& x) { system(x); }); }},
+                   {"Sections", "", [this] { push("SECTIONS", [this](Layer& x) { sections(x); }); }},
                    {"Leave the sysop menu", "", [this] { layers_.clear(); }}};
     });
 }
@@ -475,15 +477,14 @@ void SysopShell::settingGroup(Layer& l, int g) {
         else
             for (int i = 0; kGroups[g].keys[i]; i++) mine = mine || k == kGroups[g].keys[i];
         if (!mine) continue;
-        if (k == "theme") {  // a list of the looks: spelling "oblivion" on a phone is miserable
-            std::string cur = v;
-            l.items.push_back({k, v, [this, cur] {
+        if (k == "theme" || k == "wfc") {  // both rows write the one look. The waiting screen follows it.
+            std::string cur = theme::knownLook(v) ? theme::knownLook(v) : "axis";
+            l.items.push_back({k == "wfc" ? "wfc" : "look", cur, [this, cur] {
                                    push("LOOK", [this, cur](Layer& x) {
-                                       const char* ids[] = {"axis", "oblivion", "iniquity"};
-                                       const char* labels[] = {"Axis, drippy orange", "Oblivion, grey and cyan", "Iniquity, green and grey"};
-                                       for (int i = 0; i < 3; i++) {
-                                           std::string id = ids[i];
-                                           x.items.push_back({labels[i], id == cur ? "now" : "", [this, id] {
+                                       for (int i = 0; i < theme::lookCount(); i++) {
+                                           std::string id = theme::lookId(i);
+                                           std::string label = std::string(theme::lookLabel(i)) + ", " + theme::lookBlurb(id.c_str());
+                                           x.items.push_back({label, id == cur ? "now" : "", [this, id] {
                                                                   did(run_("@SET theme=" + id));
                                                                   pop();
                                                               }});
@@ -554,6 +555,44 @@ void SysopShell::menuItem(Layer& l, int n) {
                                pop();
                            });
                        }});
+}
+
+// ---- sections: board-wide messages, files and doors, plus each door row
+void SysopShell::sections(Layer& l) {
+    std::string messages = "1", files = "1", doors = "1";
+    struct DoorRow {
+        std::string key, line, name;
+        bool        on = true;
+    };
+    std::vector<DoorRow> doorRows;
+    for (auto& line : lines("@SETTINGS")) {
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        if (k == "messages_on") messages = v;
+        else if (k == "files_on") files = v;
+        else if (k == "doors_on") doors = v;
+        else if (k.size() > 4 && k.rfind("door", 0) == 0 && k[4] >= '0' && k[4] <= '9') {
+            auto f = split(v, '|');
+            if (f.size() < 3 || f[0].empty()) continue;
+            bool on = true;
+            if (f.size() > 5 && !f[5].empty()) on = f[5] != "0";
+            else if (lordGameExe(f[2])) on = false;
+            std::string args = f.size() > 3 ? f[3] : "";
+            std::string drop = f.size() > 4 && !f[4].empty() ? f[4] : "doorsys";
+            doorRows.push_back({k, f[0] + "|" + f[1] + "|" + f[2] + "|" + args + "|" + drop, f[1].empty() ? f[2] : f[1], on});
+        }
+    }
+    auto flip = [this](const std::string& key, bool on) {
+        return [this, key, on] { did(run_("@SET " + key + "=" + (on ? "0" : "1"))); };
+    };
+    l.items.push_back({"Messages", messages == "0" ? "off" : "on", flip("messages_on", messages != "0")});
+    l.items.push_back({"Files", files == "0" ? "off" : "on", flip("files_on", files != "0")});
+    l.items.push_back({"Doors", doors == "0" ? "off" : "on", flip("doors_on", doors != "0")});
+    for (const DoorRow& d : doorRows)
+        l.items.push_back({d.name, d.on ? "on" : "off", [this, d] {
+                               did(run_("@SET " + d.key + "=" + d.line + "|" + (d.on ? "0" : "1")));
+                           }});
 }
 
 // ---- system

@@ -15,7 +15,7 @@ import sys
 
 NODE1 = (
     "**Seth Able's Node Data System, for node 1\r\n"
-    "BBSNAME Axis Underground CNC\r\n"
+    "BBSNAME AXIS\r\n"  # LORD's registration code is for this exact name
     "BBSTYPE DOORSYS\r\n"
     ";COMPORT 0\r\n"
     "FOSSIL\r\n"

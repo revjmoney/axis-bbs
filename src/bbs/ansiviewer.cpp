@@ -3,8 +3,10 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/ansiviewer.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 
 #include "bbs/theme.h"
@@ -43,13 +45,60 @@ AnsiViewer::AnsiViewer(FileLibrary& lib, std::string areaId, std::string areaNam
                        door::ByteStream& line)
     : lib_(lib), area_(std::move(areaId)), areaName_(std::move(areaName)), ws_(workspace), wsSize_(workspaceSize), line_(line) {}
 
+AnsiViewer::~AnsiViewer() { releaseInflate(); }
+
+bool AnsiViewer::inflateReady() const {
+    if (state_ && wsSize_ >= 32768) return true;
+    return wsSize_ >= ZipReader::kWorkspace;
+}
+
+bool AnsiViewer::grabInflate() {
+    if (inflateReady()) return true;
+    if (!ws_) {
+        ws_ = (uint8_t*)std::malloc(32768);
+        if (!ws_) return false;
+        ownWs_ = true;
+        wsSize_ = 32768;
+    }
+    if (!state_) {
+        state_ = (uint8_t*)std::malloc(ZipReader::kStateBytes);
+        if (!state_) {
+            if (ownWs_) {
+                std::free(ws_);
+                ws_ = nullptr;
+                ownWs_ = false;
+                wsSize_ = 0;
+            }
+            return false;
+        }
+        ownState_ = true;
+    }
+    return inflateReady();
+}
+
+void AnsiViewer::releaseInflate() {
+    stream_.reset();
+    if (ownState_) std::free(state_);
+    if (ownWs_) std::free(ws_);
+    if (ownState_) state_ = nullptr;
+    if (ownWs_) {
+        ws_ = nullptr;
+        wsSize_ = 0;
+    }
+    ownState_ = false;
+    ownWs_ = false;
+}
+
 void AnsiViewer::begin() {
     if (areas_.size() > 1) showAreas();
     else showPacks();
 }
 
 void AnsiViewer::showList(const std::string& title, const std::string& help) {
-    send(std::string(CLS) + "\r\n   " + theme::fade("A N S I   P A C K   V I E W E R") + DIM + "   " + title + "\r\n" + MAG + "   " +
+    std::string area = area_;
+    for (char& c : area) c = (char)std::toupper((unsigned char)c);
+    const char* banner = areas_.size() <= 1 && area == "ANSI" ? "A N S I   M O V I E S" : "A N S I   P A C K   V I E W E R";
+    send(std::string(CLS) + "\r\n   " + theme::fade(banner) + DIM + "   " + title + "\r\n" + MAG + "   " +
          std::string(70, '\xc4') + "\r\n" + list_.draw() + "\x1b[23;4H" + DIM + help + HI);
 }
 
@@ -85,10 +134,15 @@ void AnsiViewer::showPacks() {
     packs_.clear();
     for (auto& f : lib_.list(area_))
         if (ext(f.name) == "ZIP") packs_.push_back(f);
+    std::stable_partition(packs_.begin(), packs_.end(), [](const FileEntry& f) {
+        std::string low = f.desc;
+        for (char& c : low) c = (char)std::tolower((unsigned char)c);
+        return low.find("movie") != std::string::npos;
+    });
     std::vector<std::string> v;
     for (auto& p : packs_) {
         char        b[160];
-        std::string d = p.desc.size() > 48 ? p.desc.substr(0, 48) : p.desc;
+        std::string d = fileAbout(p.desc, 48);
         std::snprintf(b, sizeof b, "%-13s %7s  %s", p.name.c_str(), fileSizeText(p.size).c_str(), d.c_str());
         v.push_back(b);
     }
@@ -145,6 +199,12 @@ void AnsiViewer::showPieces() {
 void AnsiViewer::showPiece(size_t i) {
     piece_ = i;
     const ZipEntry& e = zip_->entries()[pieces_[i]];
+    if (e.method == 8 && !grabInflate()) {  // stored pieces need no window; a second movie waits for one
+        send(std::string("\r\n\r\n   ") + AMBER +
+             "The board is short on memory for another movie right now. Try again in a minute.\r\n" + DIM);
+        showPieces();
+        return;
+    }
     send(CLS);
     stream_.reset(new ZipReader::Stream(*zip_, e, ws_, wsSize_, state_));
     chunk_.assign(4096, '\0');  // the start, to tell a movie from a still piece
@@ -207,7 +267,7 @@ void AnsiViewer::pump() {
 }
 
 void AnsiViewer::finishPiece(ZipReader::Result res) {
-    stream_.reset();
+    releaseInflate();  // the window is only held while a piece is actually playing
     chunk_.clear();
     st_ = St::Shown;
     const ZipEntry& e = zip_->entries()[pieces_[piece_]];
@@ -249,7 +309,7 @@ bool AnsiViewer::key(char c) {
         }
         case St::Playing:
             if ((c | 0x20) == 'q') {  // stop: back to the list of pieces
-                stream_.reset();
+                releaseInflate();
                 chunk_.clear();
                 send("\x1b[0m");
                 showPieces();

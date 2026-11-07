@@ -18,9 +18,15 @@ using axis::door::ScriptStream;
 namespace {
 struct PackLibrary : FileLibrary {
     std::map<std::string, std::string> files;  // name -> bytes, all in one area
+    std::map<std::string, std::string> about;
     std::vector<FileEntry> list(const std::string&) override {
         std::vector<FileEntry> v;
-        for (auto& f : files) v.push_back({f.first, (uint32_t)f.second.size(), f.first == "AXISTEST.ZIP" ? "Test pack" : ""});
+        for (auto& f : files) {
+            std::string desc = f.first == "AXISTEST.ZIP" ? "Test pack" : "";
+            auto it = about.find(f.first);
+            if (it != about.end()) desc = it->second;
+            v.push_back({f.first, (uint32_t)f.second.size(), desc});
+        }
         return v;
     }
     bool read(const std::string&, const std::string& name, std::string& out, size_t max) override {
@@ -54,6 +60,26 @@ struct Rig {
     bool running = true;
 };
 }  // namespace
+
+TEST_CASE("a pack described as movies is listed first, with that word on the row") {
+    Rig r;
+    r.lib.files.clear();
+    r.lib.files["AXIS-01.ZIP"] = "a";
+    r.lib.files["BT-1980.ZIP"] = "b";
+    r.lib.files["BT-AA23.ZIP"] = "c";
+    r.lib.about["AXIS-01.ZIP"] = "AXIS artpack";
+    r.lib.about["BT-1980.ZIP"] = "Blocktronics: 1980 (2012) [16colo.rs]";
+    r.lib.about["BT-AA23.ZIP"] = "Blocktronics: Detention Block AA-23, Star Wars (2017): ANSI movies inside [16colo.rs]";
+    r.v.begin();
+    std::string out = r.run("");
+    size_t movie = out.find("BT-AA23.ZIP");
+    size_t still = out.find("AXIS-01.ZIP");
+    CHECK(movie != std::string::npos);
+    CHECK(still != std::string::npos);
+    CHECK(movie < still);
+    CHECK(out.find("ANSI movies") != std::string::npos);
+    CHECK(out.find("Detention Block AA-23") != std::string::npos);
+}
 
 TEST_CASE("viewer opens on the list of packs in the area") {
     Rig         r;

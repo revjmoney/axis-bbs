@@ -10,7 +10,9 @@
 namespace axis::cluster {
 
 namespace {
-constexpr uint32_t kListenMs = 3000, kBeatMs = 1000, kLostMs = 5000, kAnnounceMs = 2000, kAskMs = 1000;
+// 5 seconds was shorter than a slow door slice, so a caller on the main made followers
+// drop it and renumber themselves into node 1. A real dead main still fails over.
+constexpr uint32_t kListenMs = 3000, kBeatMs = 1000, kLostMs = 12000, kAnnounceMs = 2000, kAskMs = 1000;
 constexpr uint32_t kCardMs = 10000;      // a follower with a card tells the main about it this often (it is alive)
 constexpr uint32_t kTidyIdleMs = 10000;  // every node idle this long: the main renumbers itself to node 1
 std::string num(uint32_t v) { return std::to_string(v); }

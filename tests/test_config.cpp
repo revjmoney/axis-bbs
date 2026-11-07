@@ -78,7 +78,7 @@ TEST_CASE("config has LORD as the default door") {
     CHECK(c.doors[0].id == "lord");
     CHECK(c.doors[1].id == "blackjack");
     CHECK(c.doors[2].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
-    CHECK(c.doors[3].exe == "*DOSSHELL");  // the built-in DOS Prompt
+    CHECK(c.doors[3].exe == "*SCRIPT");  // programs from /scripts on the card
     CHECK(c.doors[0].args == "%N NOEMS /DREW");  // %N: the node number; NOEMS: LORD must not look for EMS
 }
 
@@ -107,11 +107,20 @@ TEST_CASE("stock LORD arguments gain NOEMS; custom tails and other doors stay") 
 
 TEST_CASE("config doors round trip") {
     auto c = axis::bbs::parseConfig("door1=bre|Barren Realms Elite|BRE.EXE|/N1|dorinfo\n");
-    REQUIRE(c.doors.size() == 2);  // plus the DOS Prompt, always listed
+    REQUIRE(c.doors.size() == 3);  // plus the script door and native LORD
     CHECK(c.doors[0].name == "Barren Realms Elite");
     CHECK(c.doors[0].drop == "dorinfo");
+    bool script = false, native = false, dos = false;
+    for (auto& d0 : c.doors) {
+        script = script || d0.exe == "*SCRIPT";
+        native = native || d0.exe == "*LORD";
+        dos = dos || d0.exe == "*DOSSHELL";
+    }
+    CHECK(script);
+    CHECK(native);
+    CHECK_FALSE(dos);
     auto d = axis::bbs::parseConfig(axis::bbs::formatConfig(c));
-    REQUIRE(d.doors.size() == 2);
+    REQUIRE(d.doors.size() == 3);
     CHECK(d.doors[0].exe == "BRE.EXE");
 }
 
@@ -151,19 +160,26 @@ TEST_CASE("file areas sort by number and a repeated number replaces the earlier 
     CHECK(c.areas[2].id == "models");
 }
 
-TEST_CASE("the DOS prompt password hash survives a save, and its door is always listed") {
+TEST_CASE("the DOS prompt password hash survives a save, and the script door is always listed") {
     BbsConfig c;
     c.dosSalt = "00112233445566778899aabbccddeeff";
     c.dosHash = "abc123";
-    c.doors = {{"lord", "Legend of the Red Dragon", "LORD.EXE", "1 /DREW", "doorsys"}};
+    c.doors = {{"lord", "Legend of the Red Dragon", "LORD.EXE", "1 /DREW", "doorsys"},
+               {"dos", "DOS Prompt (password)", "*DOSSHELL", "dosbox", "none"}};
     BbsConfig back = parseConfig(formatConfig(c));
     CHECK(back.dosSalt == c.dosSalt);
     CHECK(back.dosHash == "abc123");
-    bool dos = false;
-    for (auto& d : back.doors) dos = dos || d.exe == "*DOSSHELL";
-    CHECK(dos);
-    CHECK(back.doors.size() == 2);
-    CHECK(parseConfig(formatConfig(back)).doors.size() == 2);  // listed once, not again on every save
+    bool script = false, native = false, dos = false;
+    for (auto& d : back.doors) {
+        script = script || d.exe == "*SCRIPT";
+        native = native || d.exe == "*LORD";
+        dos = dos || d.exe == "*DOSSHELL";
+    }
+    CHECK(script);
+    CHECK(native);
+    CHECK_FALSE(dos);
+    CHECK(back.doors.size() == 3);
+    CHECK(parseConfig(formatConfig(back)).doors.size() == 3);  // listed once, not again on every save
 }
 
 TEST_CASE("a board takes two callers at once unless the settings say otherwise, and never more than four") {
@@ -203,12 +219,34 @@ TEST_CASE("the login splash is on unless the settings turn it off") {
     CHECK_FALSE(parseConfig(formatConfig(c)).loginSplash);
 }
 
-TEST_CASE("the theme setting is axis unless it says oblivion, and survives a save") {
+TEST_CASE("the look is axis, cyan, or green, and an old name still loads") {
     CHECK(parseConfig("").theme == "axis");
     BbsConfig c = parseConfig("theme=oblivion\n");
-    CHECK(c.theme == "oblivion");
-    CHECK(parseConfig(formatConfig(c)).theme == "oblivion");
-    CHECK(mergeSettings(parseConfig(""), formatConfig(c)).theme == "oblivion");  // one look for the whole cluster
+    CHECK(c.theme == "cyan");
+    CHECK(c.wfc == "cyan");
+    CHECK(parseConfig(formatConfig(c)).theme == "cyan");
+    CHECK(mergeSettings(parseConfig(""), formatConfig(c)).theme == "cyan");  // one look for the whole cluster
+    CHECK(parseConfig("theme=INIQUITY\n").theme == "green");
+    CHECK(parseConfig("theme=green\n").wfc == "green");
+    CHECK(parseConfig("theme=nope\n").theme == "axis");
+    CHECK(parseConfig("theme=skulls\n").theme == "skulls");
+    CHECK(parseConfig("theme=skulls\n").wfc == "skulls");
+    CHECK(parseConfig("theme=CRT\n").theme == "crt");
+    CHECK(parseConfig("wfc=wasteland\n").theme == "wasteland");
+    CHECK(parseConfig("wfc=wasteland\n").wfc == "wasteland");
+}
+
+TEST_CASE("the waiting screen follows the look, including an old wfc line") {
+    CHECK(parseConfig("").wfc == "axis");
+    CHECK(parseConfig("wfc=Axis\n").wfc == "axis");
+    CHECK(parseConfig("wfc=oblivion\n").theme == "cyan");
+    CHECK(parseConfig("wfc=oblivion\n").wfc == "cyan");
+    CHECK(parseConfig("wfc=nope\n").wfc == "axis");
+    BbsConfig c = parseConfig("theme=oblivion\nwfc=axis\n");  // the later line wins, then both match
+    CHECK(c.theme == "axis");
+    CHECK(c.wfc == "axis");
+    CHECK(parseConfig(formatConfig(c)).wfc == c.theme);
+    CHECK(mergeSettings(parseConfig(""), formatConfig(c)).wfc == "axis");
 }
 
 TEST_CASE("an area can need a security level: id|name|level, kept when saved") {
@@ -270,7 +308,43 @@ TEST_CASE("every menu command has the board's own key for it") {
     CHECK(menuCommandKey("messages") == 'M');
     CHECK(menuCommandKey("files") == 'F');
     CHECK(menuCommandKey("goodbye") == 'G');
+    CHECK(menuCommandKey("users") == 'H');
     CHECK(menuCommandKey("sysop") == '*');
     CHECK(menuCommandKey("nonsense") == 0);
     CHECK(menuCommands().size() >= 18);
+}
+
+TEST_CASE("section switches default on and round trip") {
+    CHECK(parseConfig("").messagesOn);
+    CHECK(parseConfig("").filesOn);
+    CHECK(parseConfig("").doorsOn);
+    BbsConfig off = parseConfig("messages_on=0\nfiles_on=0\ndoors_on=0\n");
+    CHECK_FALSE(off.messagesOn);
+    CHECK_FALSE(off.filesOn);
+    CHECK_FALSE(off.doorsOn);
+    BbsConfig back = parseConfig(formatConfig(off));
+    CHECK_FALSE(back.messagesOn);
+    CHECK_FALSE(back.filesOn);
+    CHECK_FALSE(back.doorsOn);
+    CHECK(parseConfig(formatConfig(BbsConfig{})).messagesOn);
+}
+
+TEST_CASE("a LORD.EXE row with no on/off flag is off, and a later door number replaces") {
+    BbsConfig c = parseConfig("door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys\n"
+                              "door2=lord|LORD Fast|FAST.EXE|%N|doorsys\n"
+                              "door3=four|AXIS FOUR|FOUR.EXE|%N|doorsys\n"
+                              "door1=lord|Legend of the Red Dragon|lord.exe|%N NOEMS /DREW|doorsys\n");
+    REQUIRE(c.doors.size() >= 4);
+    CHECK(c.doors[0].exe == "lord.exe");
+    CHECK_FALSE(c.doors[0].enabled);
+    CHECK(c.doors[1].exe == "FAST.EXE");
+    CHECK(c.doors[1].enabled);
+    CHECK(c.doors[2].exe == "FOUR.EXE");
+    CHECK(c.doors[2].enabled);
+    BbsConfig saved = parseConfig(formatConfig(c));
+    CHECK_FALSE(saved.doors[0].enabled);
+    CHECK(saved.doors[1].enabled);
+    BbsConfig on = parseConfig("door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys|1\n");
+    CHECK(on.doors[0].enabled);
+    CHECK(on.doors[0].exe == "LORD.EXE");
 }

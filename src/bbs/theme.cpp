@@ -51,6 +51,52 @@ std::string titleBar(const std::string& text) {
     return s + "\r\n" + TEXT;
 }
 
+// A short header that still looks like a screen: a half-block lip around a faded title, then a
+// drip line. Section .ANS files replace this when the theme folder has them (see drip / artFor).
+std::string fade(const std::string& text);
+std::string banner(const std::string& title) {
+    std::string up;
+    for (unsigned char c : title) {
+        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+        if (c >= 0x20 && c < 0x7f && up.size() < 28) up += (char)c;
+    }
+    if (up.empty()) up = "AXIS";
+    std::string core = "[ " + up + " ]";
+    int         gap = 68 - (int)core.size();
+    if (gap < 4) gap = 4;
+    int left = gap / 2, right = gap - left;
+    std::string s = "  ";
+    s += HOT;
+    s += "\xdc";
+    s += ORANGE;
+    s += "\xdf";
+    s += std::string((size_t)left, '\xdf');
+    s += DGREY;
+    s += "[ ";
+    s += fade(up);
+    s += DGREY;
+    s += " ]";
+    s += ORANGE;
+    s += std::string((size_t)right, '\xdf');
+    s += HOT;
+    s += "\xdc\r\n  ";
+    s += ORANGE;
+    s += "\xdf\xdf ";
+    s += DGREY;
+    s += std::string(6, '\xb0');
+    s += ORANGE;
+    s += " axis underground cnc ";
+    s += DGREY;
+    s += "\xfa ";
+    s += HOT;
+    s += "rotatocam.com";
+    s += DGREY;
+    s += " \xfa ";
+    s += HOT;
+    s += "jmscnc.com";
+    return s + TEXT + "\r\n";
+}
+
 namespace {
 std::string o2Window(const std::string& title, const std::vector<std::pair<std::string, std::string>>& rows, int width) {
     const int   inner = width - 2;
@@ -95,13 +141,71 @@ std::string artFor(const std::string& title) {
 
 Look look() { return look_; }
 
-Look lookFrom(const std::string& name) {
+struct LookRow {
+    const char* id;
+    const char* label;
+    const char* blurb;
+    Look        chrome;
+    const char* legacy;  // older folder name on the card, or null
+};
+
+// The footer, BBS setup, and the saved setting all walk this one list.
+const LookRow kLooks[] = {
+    {"axis", "Axis", "drippy orange", Look::Axis, nullptr},
+    {"cyan", "Cyan", "grey and cyan", Look::Oblivion, "oblivion"},
+    {"green", "Green", "green and grey", Look::Iniquity, "iniquity"},
+    {"crt", "Crt", "hardcore crt", Look::Axis, nullptr},
+    {"sea", "Sea", "deep sea", Look::Axis, nullptr},
+    {"haunted", "Haunted", "haunted crt", Look::Axis, nullptr},
+    {"cathedral", "Cathedral", "occult cathedral", Look::Axis, nullptr},
+    {"skulls", "Skulls", "skulls", Look::Axis, nullptr},
+    {"underground", "Underground", "underground", Look::Axis, nullptr},
+    {"wasteland", "Wasteland", "wasteland", Look::Axis, nullptr},
+};
+
+const LookRow* findLook(const std::string& name) {
     std::string n;
-    for (char c : name) n += (char)(c | 0x20);
-    return n == "oblivion" ? Look::Oblivion : n == "iniquity" ? Look::Iniquity : Look::Axis;
+    for (unsigned char c : name) n += (char)(c | 0x20);
+    if (n == "oblivion") n = "cyan";
+    if (n == "iniquity") n = "green";
+    for (const LookRow& row : kLooks)
+        if (n == row.id) return &row;
+    return nullptr;
 }
 
-const char* lookName(Look l) { return l == Look::Oblivion ? "oblivion" : l == Look::Iniquity ? "iniquity" : "axis"; }
+const char* knownLook(const std::string& name) {
+    const LookRow* row = findLook(name);
+    return row ? row->id : nullptr;
+}
+
+Look lookFrom(const std::string& name) {
+    const LookRow* row = findLook(name);
+    return row ? row->chrome : Look::Axis;
+}
+
+const char* lookName(Look l) { return l == Look::Oblivion ? "cyan" : l == Look::Iniquity ? "green" : "axis"; }
+
+const char* legacyThemeFolder(const std::string& id) {
+    const LookRow* row = findLook(id);
+    return row ? row->legacy : nullptr;
+}
+
+int lookCount() { return (int)(sizeof kLooks / sizeof kLooks[0]); }
+
+const char* lookId(int index) { return index >= 0 && index < lookCount() ? kLooks[index].id : nullptr; }
+
+const char* lookLabel(int index) { return index >= 0 && index < lookCount() ? kLooks[index].label : ""; }
+
+const char* lookBlurb(const char* id) {
+    const LookRow* row = id ? findLook(id) : nullptr;
+    return row ? row->blurb : "";
+}
+
+const char* nextLook(const std::string& name) {
+    const LookRow* row = findLook(name);
+    int            i = row ? (int)(row - kLooks) : -1;
+    return kLooks[(i + 1) % lookCount()].id;
+}
 
 std::string pipes(const std::string& text) {
     static const char ansi[8] = {'0', '4', '2', '6', '1', '5', '3', '7'};  // DOS colour order to ANSI
@@ -236,6 +340,27 @@ std::string window(const std::string& title, const std::vector<std::pair<std::st
         s += "\r\n";
     }
     return s + TEXT;
+}
+
+WfcColours wfcColours(Look look) {
+    if (look == Look::Axis)  // black, grey, orange, white: a gold diode over orange frames
+        return {12, 14, 7, 15, 8, 8, 6, 6, 8, 13, 15, {14, 14, 12, 12, 6, 6, 6}};
+    if (look == Look::Oblivion)  // grey and cyan, the same accent the caller screens use
+        return {3, 11, 7, 15, 8, 8, 1, 3, 8, 13, 15, {11, 11, 3, 3, 9, 9, 1}};
+    // green frames and a cyan-to-blue diode
+    return {2, 10, 7, 15, 8, 8, 2, 2, 8, 13, 15, {11, 11, 3, 3, 9, 9, 1}};
+}
+
+WfcColours wfcColoursFor(const std::string& name) {
+    const char* id = knownLook(name);
+    if (!id) id = "axis";
+    if (std::string(id) == "cyan") return wfcColours(Look::Oblivion);
+    if (std::string(id) == "green" || std::string(id) == "crt" || std::string(id) == "haunted") return wfcColours(Look::Iniquity);
+    if (std::string(id) == "sea") return {1, 9, 7, 15, 8, 8, 1, 3, 8, 13, 15, {9, 9, 1, 1, 3, 3, 1}};
+    if (std::string(id) == "cathedral") return {5, 13, 7, 15, 8, 8, 5, 5, 8, 13, 15, {13, 13, 5, 5, 4, 4, 5}};
+    if (std::string(id) == "skulls") return {4, 12, 7, 15, 8, 8, 4, 4, 8, 13, 15, {12, 12, 4, 4, 4, 8, 8}};
+    if (std::string(id) == "wasteland") return {6, 14, 7, 15, 8, 8, 6, 6, 8, 13, 14, {14, 6, 6, 6, 8, 8, 6}};
+    return wfcColours(Look::Axis);  // axis and underground
 }
 
 std::string bar(double done, int width) {

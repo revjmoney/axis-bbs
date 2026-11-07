@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/loginseq.h"
 
 #include <cstdlib>
@@ -32,9 +33,18 @@ std::vector<LoginStep> parseLoginSeq(const std::string& text) {
         if (f.size() > 4) s.data = f[4];
         if (!s.cmd.empty()) v.push_back(s);
     }
-    if (v.empty())  // ViSiON/3's configs/login.json template
-        v = {{"SYSOPNOTICES"}, {"NMAILSCAN", "", true, true}, {"FASTLOGIN"}, {"PRINTNEWS"}, {"LASTCALLS"},
-             {"ONELINERS"},    {"USERSTATS"}, {"INFOFORMREQUIRED"}, {"NEWUSERVAL", "", false, false, 255}, {"CHECKNUV"}};
+    if (v.empty())  // ViSiON/3's configs/login.json template, plus the Saylor poster before the fast-login choice
+        v = {{"SYSOPNOTICES"},
+             {"NMAILSCAN", "", true, true},
+             {"DISPLAYFILE", "SAYLOR", true, true},
+             {"FASTLOGIN"},
+             {"PRINTNEWS", "", true, true},
+             {"LASTCALLS"},
+             {"ONELINERS"},
+             {"USERSTATS"},
+             {"INFOFORMREQUIRED"},
+             {"NEWUSERVAL", "", false, false, 255},
+             {"CHECKNUV"}};
     return v;
 }
 

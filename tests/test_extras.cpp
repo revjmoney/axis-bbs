@@ -216,15 +216,16 @@ TEST_CASE("a twit thinks they posted a oneliner and a rumor, but nobody else eve
     CHECK(plain(n.takeOutput()).find("out there") != std::string::npos);  // as far as they know, it worked
 }
 
-TEST_CASE("The board's local logon: straight to the main menu as sysop, no login screens (they cost the main RAM)") {
+TEST_CASE("the board's local logon is a sysop on the full login path") {
     Rig r;
     r.lists["rumor"] = {"one rumor"};
     r.n.beginLocalMenu(0);
     std::string out = plain(r.n.takeOutput());
-    CHECK(r.n.state() == Node::State::Menu);
+    CHECK(r.n.state() == Node::State::Menu);  // no menu files: bulletin, then the main menu
     CHECK(r.n.isSysop());
-    CHECK(out.find("Welcome back") == std::string::npos);
-    CHECK(out.find("one rumor") != std::string::npos);  // the main menu, with its rumor
+    CHECK(out.find("Welcome back") != std::string::npos);
+    CHECK(out.find("Sysop access") != std::string::npos);
+    CHECK(out.find("one rumor") != std::string::npos);
 }
 
 TEST_CASE("a theme's section header art gets its codes filled in (%BN board name, %NN node, %UN handle)") {

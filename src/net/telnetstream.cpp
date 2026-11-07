@@ -31,13 +31,11 @@ void TelnetStream::pump() {
 }
 
 int TelnetStream::available() {
-    flush();  // the door is looking for a key: the caller should see the prompt first
     pump();
     return (int)(in_.size() - inPos_);
 }
 
 int TelnetStream::peek() {
-    flush();
     pump();
     return inPos_ < in_.size() ? (uint8_t)in_[inPos_] : -1;
 }

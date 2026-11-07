@@ -4,8 +4,9 @@
 header for MAIN, MSGMENU, FILEM and DOORSM, and the doors menu pointed at AXIS's own doors. The front door
 (PDMATRIX, FASTLOGN) keeps ViSiON/3's lightbar coordinates and recolours them to AXIS orange. Placeholder
 art covers the matrix, fast login, three pre-logon screens, the login screen (|{P} and |{O} mark the
-handle and password) and the new-user screen. LOGIN.SEQ is the same ten-step template the firmware uses
-when the file is missing. The real art pass replaces the .ANS files later; the menus and keys stay.
+handle and password) and the new-user screen. LOGIN.SEQ is the same template the firmware uses
+when the file is missing, including the Saylor poster before the fast-login choice. The real art pass
+replaces the .ANS files later; the menus and keys stay.
 
 usage: python -I tools/menus/make_starter.py V3_MENU_DIR OUT_DIR
 """
@@ -38,11 +39,13 @@ DOORS = ['cmd=L|DOOR:lord|fD|0|Playing LORD', 'cmd=B|DOOR:blackjack|fD|0|Playing
          'cmd=G|LOGOFF|*|0|']
 
 # ViSiON/3's login.json template, the same steps loginseq.cpp uses when LOGIN.SEQ is empty.
+# SAYLOR is the poster in the theme folder. Fast login still skips everything after FASTLOGIN.
 SEQ = """; AXIS login sequence. step=COMMAND|CLEAR|PAUSE|LEVEL|DATA
 step=SYSOPNOTICES|0|0|0|
 step=NMAILSCAN|1|1|0|
+step=DISPLAYFILE|1|1|0|SAYLOR
 step=FASTLOGIN|0|0|0|
-step=PRINTNEWS|0|0|0|
+step=PRINTNEWS|1|1|0|
 step=LASTCALLS|0|0|0|
 step=ONELINERS|0|0|0|
 step=USERSTATS|0|0|0|

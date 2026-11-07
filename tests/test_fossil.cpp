@@ -67,6 +67,33 @@ TEST_CASE("fossil status drops carrier after the caller hangs up") {
     CHECK((r.cpu.al() & 0x80) == 0);
 }
 
+TEST_CASE("fossil status poll does not flush, and a waiting receive does") {
+    struct Line : ScriptStream {
+        int flushes = 0;
+        void flush() override { flushes++; }
+    } line;
+    PagePool    pool{256 * 1024};
+    GuestMemory mem{pool};
+    Cpu         cpu{mem};
+    Bios        bios{cpu, mem};
+    Fossil      fossil{cpu, mem, line};
+    mem.mapRam(0, 0x2000);
+    mem.mapZero(0x2000, 0x9E000);
+    bios.install();
+    cpu.reset(0x0200, 0x0010, 0x0200, 0xFFFE, 0x0200, 0x0200);
+    cpu.setAx(0x0141);
+    fossil.int14();
+    cpu.setAx(0x0300);
+    fossil.int14();
+    CHECK(line.flushes == 0);
+    uint16_t ip = cpu.ip();
+    cpu.setAx(0x0200);
+    fossil.int14();
+    CHECK(fossil.waitingForInput());
+    CHECK(cpu.ip() == (uint16_t)(ip - 2));
+    CHECK(line.flushes == 1);
+}
+
 TEST_CASE("fossil receive with wait returns a pushed byte, or waits by rewinding") {
     Rig r;
     uint16_t ip = r.cpu.ip();

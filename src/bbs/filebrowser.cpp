@@ -57,10 +57,8 @@ void FileBrowser::showAreas() {
     typedAreas_ = false;
     if (!bars_) {
         out_ += CLS;
-        out_ += "\r\n" + theme::drip("FILES") + "   ";
-        out_ += theme::fade("F I L E   A R E A S");
-        out_ += MAG;
-        out_ += "  \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
+        out_ += listScreenHead("FILES", "FILE AREAS");
+        out_ += std::string("   ") + theme::ORANGE + std::string(70, '\xcd') + "\r\n";
         usingList_ = false;
         for (size_t i = 0; i < areas_.size(); i++) {
             size_t n = lib_.list(areas_[i].id).size();
@@ -126,7 +124,7 @@ void FileBrowser::showPage(int at) {
         }
         for (size_t i = begin; i < end; i++) {
             const FileEntry& f = files_[i];
-            std::string      desc = f.desc.size() > 50 ? f.desc.substr(0, 50) : f.desc;
+            std::string      desc = fileAbout(f.desc, 50);
             std::snprintf(b, sizeof b, "   %s%-13s%s%7s  %s%s\r\n", HI, f.name.substr(0, 13).c_str(), GRN, fileSizeText(f.size).c_str(), DIM,
                           desc.c_str());
             out_ += b;
@@ -138,7 +136,7 @@ void FileBrowser::showPage(int at) {
     rows.reserve(end - begin);
     for (size_t i = begin; i < end; i++) {  // this page only, not the whole area
         const FileEntry& f = files_[i];
-        std::string      desc = f.desc.size() > 40 ? f.desc.substr(0, 40) : f.desc;
+        std::string      desc = fileAbout(f.desc, 40);
         std::snprintf(b, sizeof b, "%-12.12s %7s  %s", f.name.c_str(), fileSizeText(f.size).c_str(), desc.c_str());
         rows.emplace_back(b);
     }

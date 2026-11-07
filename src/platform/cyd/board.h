@@ -9,6 +9,11 @@
 
 extern lgfx::LGFX_Device tft;
 
-// returns "ILI9341" or "ST7789"
+// The bare board shares this image with the two screens. Its MAC is the only safe tell:
+// a panel probe drives the same pins as the old light breakout.
+bool boardIsRing();
+bool boardHasPanel();
+
+// returns "ILI9341", "ST7789", or "none (headless node)" on the ring
 const char* boardInit(uint8_t rotation, uint32_t spiHz);
 bool boardTouch(int& x, int& y);

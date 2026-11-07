@@ -653,7 +653,7 @@ TEST_CASE("while the main waits on a card board, other followers' frames wait fo
         t.c.c->tick(t.now);
     };
     std::string reply;
-    CHECK_FALSE(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 6000));  // longer than a follower waits for a beat
+    CHECK_FALSE(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 6000));  // a long wait; heartbeats still arrive
     CHECK(heardOnA == 0);  // held while the main waited
     CHECK(t.c.c->role() == Role::Follower);  // the heartbeat kept coming: no failover
     run({&t.a, &t.c}, t.now, 100);

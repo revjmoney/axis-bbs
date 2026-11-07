@@ -163,6 +163,63 @@ TEST_CASE("login sequence: user stats and who's online are the existing screens"
     CHECK(out.find("MAIN ->") != std::string::npos);
 }
 
+TEST_CASE("the Saylor poster shows from the theme, then the rest of the sequence") {
+    Rig r;
+    r.fs["LOGIN.SEQ"] = "step=DISPLAYFILE|0|1|0|NEWS\n";
+    r.fs["NEWS.ANS"] = "NEWS ART";
+    r.n.setArt([](const std::string& name) { return name == "SAYLOR.ANS" ? std::string("SAYLOR POSTER") : std::string(); });
+    std::string out = loginAll(r);
+    CHECK(out.find("SAYLOR POSTER") != std::string::npos);
+    CHECK(out.find("press a key") != std::string::npos);
+    CHECK(r.type(" ").find("NEWS ART") != std::string::npos);
+}
+
+TEST_CASE("a missing Saylor poster is skipped") {
+    Rig r;
+    r.fs["LOGIN.SEQ"] = "step=DISPLAYFILE|0|0|0|NEWS\n";
+    r.fs["NEWS.ANS"] = "NEWS ART";
+    std::string out = loginAll(r);
+    CHECK(out.find("SAYLOR") == std::string::npos);
+    CHECK(out.find("NEWS ART") != std::string::npos);
+}
+
+TEST_CASE("sysop local logon runs the sequence, and fast login skips the bulletin") {
+    Rig r;
+    r.fs["LOGIN.SEQ"] = "step=FASTLOGIN|0|0|0|\nstep=PRINTNEWS|0|0|0|\nstep=DISPLAYFILE|0|0|0|LATER\n";
+    r.fs["FASTLOGN.MNU"] = "prompt1=FAST ->\ncmd=1|RUN:FULL_LOGIN_SEQUENCE|*|0|\ncmd=2|GOTO:MAIN|*|0|\n";
+    r.fs["LATER.ANS"] = "LATER ART";
+    auto art = [](const std::string& name) {
+        if (name == "SAYLOR.ANS") return std::string("SAYLOR POSTER");
+        if (name == "BULLETIN.ANS") return std::string("BOARD NEWS");
+        return std::string();
+    };
+    r.n.setArt(art);
+    r.n.setMenus([&](const std::string& f) { return r.fs.count(f) ? r.fs[f] : std::string(); });
+    r.n.beginLocalMenu(0);
+    std::string out = plain(r.n.takeOutput());
+    CHECK(r.n.isSysop());
+    CHECK(out.find("Welcome back") != std::string::npos);
+    CHECK(out.find("SAYLOR POSTER") != std::string::npos);
+    CHECK(r.type(" ").find("FAST ->") != std::string::npos);
+    std::string jump = r.type("2");
+    CHECK(jump.find("BOARD NEWS") == std::string::npos);
+    CHECK(jump.find("LATER ART") == std::string::npos);
+    CHECK(jump.find("MAIN ->") != std::string::npos);
+
+    Rig full;
+    full.fs = r.fs;
+    full.n.setArt(art);
+    full.n.setMenus([&](const std::string& f) { return full.fs.count(f) ? full.fs[f] : std::string(); });
+    full.n.beginLocalMenu(0);
+    full.type(" ");
+    std::string news = full.type("1");
+    CHECK(news.find("BOARD NEWS") != std::string::npos);
+    CHECK(news.find("press a key") != std::string::npos);
+    std::string later = full.type(" ");
+    CHECK(later.find("LATER ART") != std::string::npos);
+    CHECK(later.find("MAIN ->") != std::string::npos);
+}
+
 TEST_CASE("an unknown login sequence step is skipped") {
     Rig r;
     r.fs["LOGIN.SEQ"] = "step=PRINTNEWS|0|0|0|\nstep=DISPLAYFILE|0|0|0|X\n";

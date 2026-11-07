@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "platform/cyd/screen.h"
 
 LGFX_Sprite scr(&tft);
@@ -45,9 +46,8 @@ void screenReturn() { lent = false; }
 bool screenReady() { return scr.getBuffer() != nullptr && !lent; }
 
 void screenPush() {
-#ifndef AXIS_HEADLESS  // no panel on a headless node
+    if (!boardHasPanel()) return;  // the ring runs this same image and has no panel
     if (screenReady()) scr.pushSprite(0, 0);
-#endif
 }
 
 void screenShot(void (*eachRow)()) {

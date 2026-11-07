@@ -1,0 +1,15 @@
+before
+COM18 id=8C:94:DF:4F:1C:4C role=main nodes=2 on=0 heap=102644 largest=86016 up=1504 rssi=-50 sd_mb=14911 ip=192.168.1.164 min=46516 stack=2600 door_peak=0 door=hangup door_stack=2600 reset=poweron
+COM20 id=8C:94:DF:4F:14:18 role=follower nodes=2 on=0 heap=126768 largest=102400 up=1462 rssi=-55 sd_mb=0 ip=192.168.1.165 min=90684 stack=2468 door_peak=0 door=none door_stack=0 reset=poweron
+COM15 id=30:76:F5:A7:03:6C role=follower nodes=3 on=0 heap=119944 largest=110592 up=1421 rssi=-53 sd_mb=0 ip=192.168.1.202 min=89816 stack=2972 door_peak=0 door=none door_stack=0 reset=poweron
+
+in lord
+COM18 id=8C:94:DF:4F:1C:4C role=main nodes=2 on=2 heap=80880 largest=69632 up=1589 rssi=-50 sd_mb=14911 ip=192.168.1.164 min=46516 stack=2568 door_peak=0 door=running door_stack=2568 reset=poweron
+COM20 id=8C:94:DF:4F:14:18 role=follower nodes=2 on=2 heap=101156 largest=94208 up=1546 rssi=-54 sd_mb=0 ip=192.168.1.165 min=79596 stack=2468 door_peak=0 door=running door_stack=2468 reset=poweron
+COM15 id=30:76:F5:A7:03:6C role=follower nodes=3 on=0 heap=119060 largest=110592 up=1506 rssi=-51 sd_mb=0 ip=192.168.1.202 min=89816 stack=2972 door_peak=0 door=none door_stack=0 reset=poweron
+
+after
+COM18 id=8C:94:DF:4F:1C:4C role=main nodes=2 on=0 heap=100656 largest=81920 up=1847 rssi=-53 sd_mb=14911 ip=192.168.1.164 min=46516 stack=2568 door_peak=0 door=hangup door_stack=2568 reset=poweron
+COM20 id=8C:94:DF:4F:14:18 role=follower nodes=2 on=0 heap=127376 largest=102400 up=1805 rssi=-55 sd_mb=0 ip=192.168.1.165 min=52904 stack=2468 door_peak=0 door=hangup door_stack=2468 reset=poweron
+COM15 id=30:76:F5:A7:03:6C role=follower nodes=3 on=0 heap=119912 largest=110592 up=1765 rssi=-52 sd_mb=0 ip=192.168.1.202 min=89816 stack=2972 door_peak=0 door=none door_stack=0 reset=poweron
+

@@ -70,7 +70,8 @@ void MessageReader::showAreas() {
     s_ = St::Areas;
     line_.clear();
     if (!bars_) {
-        out_ += "\x1b[0m\x1b[2J\x1b[H\r\n" + drip("MSGS") + "   " + fade("M E S S A G E   A R E A S") + "\r\n   " + DGREY + std::string(66, '\xc4') + "\r\n";
+        out_ += std::string("\x1b[0m\x1b[2J\x1b[H") + listScreenHead("MSGS", "MESSAGE AREAS") + "   " + ORANGE +
+                std::string(70, '\xcd') + "\r\n";
         usingList_ = false;
         for (size_t i = 0; i < areas_.size(); i++) {
             auto h = headersOf(areas_[i].id);
