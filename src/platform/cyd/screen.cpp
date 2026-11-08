@@ -46,7 +46,7 @@ void screenReturn() { lent = false; }
 bool screenReady() { return scr.getBuffer() != nullptr && !lent; }
 
 void screenPush() {
-    if (!boardHasPanel()) return;  // the ring runs this same image and has no panel
+    if (!boardHasPanel()) return;  // a headless board runs this same image and has no panel
     if (screenReady()) scr.pushSprite(0, 0);
 }
 

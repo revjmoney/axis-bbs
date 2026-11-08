@@ -131,7 +131,7 @@ static const uint8_t kRingOff[] = {23, 22, 19, 18, 12, 14, 25, 33, 26, 27, 32, 1
 static const int     kCydRgb[3] = {4, 16, 17};  // red, green, blue, active low
 
 static void ledBegin() {
-    if (!boardIsRing()) {
+    if (!boardIsHeadless()) {
         // Hold the RGB off until the first loop, which is after the backlight claims
         // channel 7. Active low, so high is dark. Duty 0 on LEDC would be full on.
         for (int p : kCydRgb) {
@@ -3314,6 +3314,21 @@ static void runCommand(const String& cmd, Print& out) {
         bool ok = configSave(cfg);
         if (cluster) cluster->shareSettings();  // every board asks the same one
         logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
+    } else if (cmd == "@HEADLESS" || cmd == "@HEADLESS on" || cmd == "@HEADLESS off") {
+        // "@HEADLESS on": this board is a bare ESP32 (no screen, one LED on GPIO 2); "off": a CYD.
+        // Per board, in NVS, so it survives every reflash; the board restarts to take it up.
+        if (cmd == "@HEADLESS") {
+            out.printf("axis: this board is %s (saved: %s)\n", boardIsHeadless() ? "headless" : "a screen board",
+                       boardHeadlessSaved() ? "headless" : "screen");
+        } else {
+            bool on = cmd.endsWith("on"), ok = boardSetHeadless(on);
+            logEvent(String("sysop: headless ") + (on ? "on" : "off") + (ok ? "" : " (SAVE FAILED)"));
+            out.println(ok ? "axis: saved, restarting" : "axis: headless SAVE FAILED");
+            if (ok && on != boardIsHeadless()) {
+                delay(300);
+                ESP.restart();
+            }
+        }
     } else if (cmd == "@CLUSTERKEY" || cmd.startsWith("@CLUSTERKEY ")) {
         // "@CLUSTERKEY secret": the key every board of this BBS shares (8+ characters, set the same on
         // each board); "@CLUSTERKEY off" forgets it (the board runs alone); alone, says whether one is set.
@@ -3457,7 +3472,7 @@ void setup() {
     pendingSeen = users.pending();
     makeAreaFolders();
     if (!cfg.setupDone) {
-        if (boardIsRing()) {  // nothing to set up on the ring: the main's settings arrive over the link
+        if (boardIsHeadless()) {  // nothing to set up on the ring: the main's settings arrive over the link
             String mac = WiFi.macAddress();
             mac.replace(":", "");
             cfg.boardName = ("axis-" + mac.substring(8)).c_str();
@@ -3470,7 +3485,7 @@ void setup() {
     }
     Serial.printf("axis: settings %s\n", cfg.setupDone ? "loaded" : "not set up yet, first-boot setup");
     if (!wifiJoinSaved()) {
-        if (boardIsRing()) {
+        if (boardIsHeadless()) {
             startHotspot();
         } else {
             Serial.println("axis: no saved WiFi network in range: touch picker");
@@ -3500,7 +3515,7 @@ static void ledUpdate() {
     in.door = in.door || boardHasViewer() || boardHasLord();
     uint32_t now = millis();
     uint8_t bare = axis::bbs::ledDuty(in, now);
-    if (!boardIsRing()) {
+    if (!boardIsHeadless()) {
         static bool pwm = false;
         if (!pwm) {
             ledCydAttach();
@@ -3637,7 +3652,7 @@ void loop() {
         logEvent("loop stalled " + String(millis() - lastLoop) + " ms");
     lastLoop = millis();
     handleSerial();
-    if (boardIsRing() && portal) {  // the AXIS-SETUP hotspot until a network is picked
+    if (boardIsHeadless() && portal) {  // the AXIS-SETUP hotspot until a network is picked
         portal->handleClient();
         delay(2);
         return;

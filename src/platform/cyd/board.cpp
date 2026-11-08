@@ -2,25 +2,45 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "platform/cyd/board.h"
 
+#include <Preferences.h>
 #include <esp_mac.h>
 
 #include <cstring>
 
 lgfx::LGFX_Device tft;
 
-// Rev's ring board. esptool read_mac on that ESP32. Do not add a second guess:
-// an unread MISO line looks like an ILI9341 and the probe would drive the lights.
-bool boardIsRing() {
-    static int known = -1;
-    if (known < 0) {
-        uint8_t mac[6] = {};
-        static const uint8_t kRing[6] = {0x30, 0x76, 0xf5, 0xa7, 0x03, 0x6c};
-        known = esp_efuse_mac_get_default(mac) == ESP_OK && std::memcmp(mac, kRing, 6) == 0;
-    }
+// Rev's ring board (esptool read_mac on that ESP32) is headless without being told. Any other
+// bare ESP32 is set once with @HEADLESS on. Do not add a probe: an unread MISO line looks like an
+// ILI9341 and the probe would drive the lights.
+static bool isRingMac() {
+    uint8_t              mac[6] = {};
+    static const uint8_t kRing[6] = {0x30, 0x76, 0xf5, 0xa7, 0x03, 0x6c};
+    return esp_efuse_mac_get_default(mac) == ESP_OK && std::memcmp(mac, kRing, 6) == 0;
+}
+
+bool boardHeadlessSaved() {
+    Preferences p;
+    p.begin("brd", true);
+    bool on = p.getBool("headless", false);
+    p.end();
+    return on;
+}
+
+bool boardSetHeadless(bool on) {
+    Preferences p;
+    p.begin("brd", false);
+    bool ok = p.putBool("headless", on) > 0;
+    p.end();
+    return ok;
+}
+
+bool boardIsHeadless() {
+    static int known = -1;  // decided once per boot: the panel and pins are set up from it
+    if (known < 0) known = isRingMac() || boardHeadlessSaved();
     return known == 1;
 }
 
-bool boardHasPanel() { return !boardIsRing(); }
+bool boardHasPanel() { return !boardIsHeadless(); }
 
 static lgfx::Bus_SPI       bus;
 static lgfx::Light_PWM     light;
@@ -45,7 +65,7 @@ static uint32_t read_panel_reg(lgfx::IBus* b, int32_t pin_cs, uint_fast16_t cmd)
 }
 
 const char* boardInit(uint8_t rotation, uint32_t spiHz) {
-    if (boardIsRing()) {
+    if (boardIsHeadless()) {
         (void)rotation;
         (void)spiHz;
         return "none (headless node)";  // same image as the screens: no panel, no touch, pins left alone

@@ -9,9 +9,14 @@
 
 extern lgfx::LGFX_Device tft;
 
-// The bare board shares this image with the two screens. Its MAC is the only safe tell:
-// a panel probe drives the same pins as the old light breakout.
-bool boardIsRing();
+// Every board runs this one image. A headless board (a bare ESP32: the ring, a terminal-only
+// node) has no panel and no touch, and its status light is one LED on GPIO 2 instead of the
+// CYD's RGB. A screen can't be detected safely (an unread MISO line looks like an ILI9341, and
+// the probe would drive whatever is wired to those pins), so it is a per-board setting kept in
+// NVS: @HEADLESS on / off, then a reboot. The ring's MAC is headless without being told.
+bool boardIsHeadless();
+bool boardHeadlessSaved();          // what NVS says (the ring is headless either way)
+bool boardSetHeadless(bool on);     // saves it; takes effect at the next boot
 bool boardHasPanel();
 
 // returns "ILI9341", "ST7789", or "none (headless node)" on the ring
