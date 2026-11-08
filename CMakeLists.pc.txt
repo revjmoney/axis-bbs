@@ -19,6 +19,7 @@ add_library(axiscore STATIC
     src/bbs/filebrowser.cpp
     src/bbs/zipreader.cpp
     src/bbs/ansiterm.cpp
+    src/bbs/wfc.cpp
     src/bbs/announce.cpp
     src/bbs/axisnet.cpp
     src/bbs/archive.cpp
@@ -128,6 +129,7 @@ add_executable(axis_tests
     tests/test_files.cpp
     tests/test_zip.cpp
     tests/test_ansiterm.cpp
+    tests/test_wfc.cpp
     tests/test_announce.cpp
     tests/test_archive.cpp
     tests/test_usersettings.cpp
