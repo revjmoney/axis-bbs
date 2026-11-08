@@ -1062,6 +1062,7 @@ bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
 
 void Node::openSysop(bool at, SysopSection s) {
     if (!sysopRun_) {
+        out_ += std::string("\r\n   ") + AMBER + "Sysop menu unavailable." + theme::TEXT;
         prompt();
         return;
     }
@@ -1074,6 +1075,7 @@ void Node::openSysop(bool at, SysopSection s) {
 // A sysop's // at a menu prompt: // then Enter opens the top layer, //U (or S # B F L) a section.
 // Anyone else, and a remote sysop with telnet access off, never gets here. A lone / goes on to the menu.
 bool Node::slashKey(char c) {
+    if (slashPass_) return false;  // delivering a lone / to the menu
     if (slash_.empty()) {
         if (c != '/') return false;
         slash_ = "/";
@@ -1089,7 +1091,9 @@ bool Node::slashKey(char c) {
     if (slash_.size() == 1 && c != '/') {  // not //: the first / was a menu key after all
         slash_.clear();
         out_ += "\b \b";
+        slashPass_ = true;
         key('/');
+        slashPass_ = false;
         return false;
     }
     SysopSection s = SysopSection::Top;
@@ -1097,6 +1101,7 @@ bool Node::slashKey(char c) {
     if (c == '\r') {
         std::string typed = slash_;
         slash_.clear();
+        swallowLf_ = true;  // a CR LF client: the LF must not reach the shell
         if (typed.size() == 2) openSysop(false, s);
         else if (renegadeKey(typed[2], s, soon) && !soon) openSysop(true, s);
         else {
@@ -1117,6 +1122,10 @@ bool Node::slashKey(char c) {
 }
 
 void Node::key(char c) {
+    if (swallowLf_) {
+        swallowLf_ = false;
+        if (c == '\n') return;
+    }
     if (state_ == State::Sysop) {
         if (!shell_ || !shell_->key(c)) {
             shell_.reset();

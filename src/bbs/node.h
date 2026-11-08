@@ -276,7 +276,7 @@ private:
     std::unique_ptr<SysopShell>                    shell_;
     std::function<std::string(const std::string&)> sysopRun_;
     std::string                                    slash_;  // a sysop's // keys so far
-    bool                                           local_ = false;
+    bool                                           local_ = false, slashPass_ = false, swallowLf_ = false;
     bool                                           slashKey(char c);
     void                                           openSysop(bool at, SysopSection s);
     ScriptBack                                     scriptBack_ = ScriptBack::Menu;

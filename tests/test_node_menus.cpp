@@ -88,17 +88,22 @@ TEST_CASE("a GOTO to another menu file shows that menu, and Q style GOTO:MAIN co
 
 namespace {
 struct SysRig {
+    std::map<std::string, std::string> fs;
     UserStore users;
     BbsConfig c;
     std::unique_ptr<Node> n;
-    explicit SysRig(bool telnet = true, bool local = false) {
+    explicit SysRig(bool telnet = true, bool local = false, bool menus = false, bool runner = true) {
         c.sysopHandle = "Rev";
         c.sysopSalt = makeSalt([] { return 0x5A5A5A5Au; });
         c.sysopHash = hashPassword(c.sysopSalt, "pw");
         c.sysopTelnet = telnet;
         n.reset(new Node(1, info, c));
         n->setAccounts(&users, [] {}, [] { return 0x5A5A5A5Au; }, [] { return 1800000000u; });
-        n->setSysopRun([](const std::string&) { return std::string(); });
+        if (runner) n->setSysopRun([](const std::string&) { return std::string(); });
+        if (menus) {
+            fs = {{"MAIN.MNU", "prompt1=AXIS MAIN ->\ncmd=/|RUN:BBSLIST|*|0|BBS List\n"}, {"MAIN.ANS", "MAIN ART"}};
+            n->setMenus([this](const std::string& f) { return fs.count(f) ? fs[f] : std::string(); });
+        }
         n->begin(0);
         if (local) n->beginLocal(0);
         else {
@@ -153,10 +158,41 @@ TEST_CASE("E A and ! are coming soon") {
 }
 
 TEST_CASE("a lone slash still reaches the menu for a sysop") {
-    SysRig r;
+    SysRig r(true, false, true);
     r.type("/");
-    r.type("l");
+    std::string out = r.type("x");
     CHECK(r.n->state() != Node::State::Sysop);
+    CHECK(out.find("/") == std::string::npos);  // erased, not echoed again
+    r.type("a");
+    CHECK(r.type("b").find("/") == std::string::npos);  // no stray slash on later keys
+    r.type("/");
+    r.type("\r");  // a / then Enter reaches the menu: the / command (BBS list) runs
+    CHECK(r.n->state() == Node::State::BbsList);
+}
+
+TEST_CASE("a slash then an arrow key is not lost") {
+    SysRig r(true, false, true);
+    r.type("/");
+    std::string out = r.type("\x1b[A");
+    CHECK(out.find("/") == std::string::npos);
+    CHECK(r.n->state() == Node::State::BbsList);
+}
+
+TEST_CASE("the LF after //U CR does not pick a shell item") {
+    SysRig a;
+    a.type("//U\r");
+    a.type("\n");
+    CHECK(a.n->state() == Node::State::Sysop);
+    SysRig b;
+    CHECK(b.type("//U\r\n").find("USERS") != std::string::npos);
+    CHECK(b.n->state() == Node::State::Sysop);
+}
+
+TEST_CASE("// without a sysop runner says so") {
+    SysRig r(true, false, false, false);
+    std::string out = r.type("//\r");
+    CHECK(out.find("unavailable") != std::string::npos);
+    CHECK(r.n->state() == Node::State::Menu);
 }
 
 TEST_CASE("renegadeKey maps the section keys") {
