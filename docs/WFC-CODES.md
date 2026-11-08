@@ -39,3 +39,15 @@ Each prints the key's letter where it stands and makes that spot a tap target (t
 | `KO` | space | Local logon |
 
 Example: `[|KS]ettings` draws `[S]ettings` with `S` tappable. A node line (`NA`..`NH`) is tappable anywhere on its row.
+
+The same letters work at the keyboard on the WFC and, for sysops, after `//` online (`//` alone opens the WFC, `//U` goes straight to Users). `L` opens the System section of the sysop menu (the event log is there). `E`, `A` and `!` say "coming soon" for now. A line that starts with `@` leaves the WFC on the serial console.
+
+## Art rules
+
+- WFC.ANS is 80x25 and WFCCYD.ANS is 45x24. No row may run past the grid and the art may not be taller than it.
+- Put an SGR reset (`ESC[0m`) before every CR LF, so a background colour never bleeds into the next row.
+- Send no CR LF after a full-width row: the terminal wraps by itself, and a CR LF would leave a blank row.
+- Leave the last column of the last row empty, or the screen scrolls.
+- Do not use `|CL`. The WFC refreshes in place (home, then overwrite), so a clear in the art would make every refresh flicker.
+- A refresh over long values must leave the same screen as a fresh draw, so keep fields to their `@XX####@` width.
+- `tools/art/make_wfc_packs.py` draws all eight looks and checks these rules.

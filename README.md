@@ -40,7 +40,7 @@ Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headle
 | DOS emulator | A separate PC build (`dosemu/`, `doorhost`) for an unmodified EXE such as LORD.EXE or BBS Black Jack. It is not linked into the ESP32 image. | [dosemu](https://revjmoney.github.io/axis-bbs/docs.html#dosemu) |
 | Built-in doors | ANSI Pack Viewer with ANSI movies; password-locked DOS prompt | [ansi-viewer](https://revjmoney.github.io/axis-bbs/docs.html#ansi-viewer) |
 | Accounts | New user application, validation, levels, permissions, time limits, twit flag | [accounts](https://revjmoney.github.io/axis-bbs/docs.html#accounts) |
-| Sysop console | Iniquity-style activity screen, a layered sysop menu inside the BBS (users, file areas and files, message bases and posts, every setting, a menu editor, system) on telnet and the touchscreen, local console | [cyd-console](https://revjmoney.github.io/axis-bbs/docs.html#cyd-console) |
+| Sysop console | A Renegade-style waiting-for-caller screen in every look (80x25 over telnet and serial, 45x24 on the touchscreen; [art codes](docs/WFC-CODES.md)), one layered sysop menu inside the BBS (users, file areas and files, message bases and posts, every setting, a menu editor, system) on telnet and the touchscreen, `//` keys for sysops online, local console | [cyd-console](https://revjmoney.github.io/axis-bbs/docs.html#cyd-console) |
 | Headless nodes | Plain ESP32 boards as extra nodes, set up over the AXIS-SETUP hotspot | [headless](https://revjmoney.github.io/axis-bbs/docs.html#headless) |
 | Sysop control panel | A PC app that serves a panel to your phone or PC on the LAN: every control, a live wall of every node's screen, console login or break-in | [control-panel](https://revjmoney.github.io/axis-bbs/docs.html#control-panel) |
 | Internet extras | No-IP dynamic DNS (asked by the setup wizard), GoDaddy DNS, Discord announcements | [internet](https://revjmoney.github.io/axis-bbs/docs.html#internet) |
@@ -68,6 +68,7 @@ Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headle
 2. **WiFi:** pick your 2.4 GHz network on the touch picker.
 3. **Setup:** tap **OVER TELNET**, call `axis.local` from a computer on the same network, type the 6-digit PIN, answer the wizard.
 4. **Call in** with [SyncTERM](https://syncterm.bbsdev.net/) (80x25, CP437) and log in as the sysop.
+5. **More than one board?** Boards only cluster when they share a secret. On the USB serial console of each board type `@CLUSTERKEY <secret>` (8 or more characters, the same on every board). It stays in that board's own storage and is never shown or synced. Without a key a board runs alone. Flash every board with the same firmware together.
 
 Settings are changed on the board (BBS SETUP), over the USB serial console at 115200 baud with `@SET key=value`, or in `/axis.ini`; the main board shares them with every board. See [first-boot setup](https://revjmoney.github.io/axis-bbs/docs.html#first-setup), [calling in and port forwarding](https://revjmoney.github.io/axis-bbs/docs.html#calling-in), the [settings reference](https://revjmoney.github.io/axis-bbs/docs.html#settings) and the [serial console](https://revjmoney.github.io/axis-bbs/docs.html#serial).
 
