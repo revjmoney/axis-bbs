@@ -200,3 +200,90 @@ TEST_CASE("on the board (40 columns, 7 a page) tapping under the list turns the 
     board.tapRow(11);
     CHECK(plain(r.out).find("Real name") != std::string::npos);  // back to page 1
 }
+
+TEST_CASE("the one sysop menu reaches every touch menu feature") {
+    using axis::bbs::SysopSection;
+    {  // System > Restart, confirmed
+        Rig r;
+        r.shell.beginAt(SysopSection::System);
+        r.type("9");  // Restart this board
+        CHECK_FALSE(r.ranCmd("@RESTART"));
+        r.type("y");
+        CHECK(r.ranCmd("@RESTART"));
+    }
+    {  // System > Rerun setup, confirmed
+        Rig r;
+        r.shell.beginAt(SysopSection::System);
+        r.type("a");
+        CHECK_FALSE(r.ranCmd("@RESETSETUP"));
+        r.type("y");
+        CHECK(r.ranCmd("@RESETSETUP"));
+    }
+    {  // System > Format SD needs FORMAT typed
+        Rig r;
+        r.shell.beginAt(SysopSection::System);
+        r.type("b");
+        r.type("nope\r");
+        CHECK_FALSE(r.ranCmd("@SDFORMAT FORMAT"));
+        r.type("b");
+        r.type("format\r");  // case matters
+        CHECK_FALSE(r.ranCmd("@SDFORMAT FORMAT"));
+        r.type("b");
+        r.type("FORMAT\r");
+        CHECK(r.ranCmd("@SDFORMAT FORMAT"));
+    }
+    {  // System > Station
+        Rig r;
+        r.replies["@STATION"] = "sensor|temp 21.5 (stub)\nrelay|1|0\nrelay|2|1\n";
+        r.shell.beginAt(SysopSection::System);
+        r.type("c");
+        CHECK(plain(r.out).find("Relay 2") != std::string::npos);
+        r.type("3");  // sensor, relay 1, relay 2: the third row is relay 2
+        CHECK(r.ranCmd("@RELAY 2 off"));
+    }
+    {  // Look > theme, and the waiting screen skin
+        Rig r;
+        r.shell.beginAt(SysopSection::Look);
+        r.type("1");  // Theme
+        r.type("8");  // Skulls
+        CHECK(r.ranCmd("@SET theme=skulls"));
+        r.type("2");  // Waiting screen skin
+        r.type("1");  // follow the theme
+        CHECK(r.ranCmd("@SET wfc="));
+        r.type("2");
+        r.type("9");  // 1 follow, then the looks: 9 is skulls
+        CHECK(r.ranCmd("@SET wfc=skulls"));
+    }
+    {  // Settings: the board switches and the telnet sysop switch
+        Rig r;
+        r.replies["@SETTINGS"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
+        r.shell.beginAt(SysopSection::Settings);
+        r.type("b");  // page 1 ends with Files (b), Messages (c), Doors (d), Free downloads (e)
+        CHECK(r.ranCmd("@SET files_on=0"));
+        r.type("c");
+        CHECK(r.ranCmd("@SET messages_on=1"));
+        r.type("e");
+        r.type("750\r");
+        CHECK(r.ranCmd("@SET free_kb=750"));
+        r.type("n");
+        r.type("1");  // page 2: Telnet sysop access
+        CHECK(r.ranCmd("@SET sysop_telnet=0"));
+    }
+    {  // the top layer has a Look entry
+        Rig r;
+        r.shell.begin();
+        r.type("8");
+        CHECK(plain(r.out).find("Waiting screen skin") != std::string::npos);
+    }
+}
+
+TEST_CASE("beginAt opens a section and Esc leaves the shell") {
+    using axis::bbs::SysopSection;
+    Rig r;
+    r.shell.beginAt(SysopSection::Users);
+    CHECK(r.shell.open());
+    CHECK(plain(r.out).find("USERS") != std::string::npos);
+    r.shell.key(0x1b);
+    CHECK_FALSE(r.shell.key('x'));  // the lone ESC resolves on the next key
+    CHECK_FALSE(r.shell.open());
+}

@@ -103,6 +103,7 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "messages_on") c.messagesOn = n != 0;
         else if (k == "files_on") c.filesOn = n != 0;
         else if (k == "doors_on") c.doorsOn = n != 0;
+        else if (k == "sysop_telnet") c.sysopTelnet = n != 0;
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "free_kb") c.freeKb = (int)n;
         else if (k == "theme" || k == "wfc") {
@@ -220,6 +221,7 @@ std::string formatConfig(const BbsConfig& c) {
     kv("messages_on", c.messagesOn ? "1" : "0");
     kv("files_on", c.filesOn ? "1" : "0");
     kv("doors_on", c.doorsOn ? "1" : "0");
+    kv("sysop_telnet", c.sysopTelnet ? "1" : "0");
     kv("theme", c.theme);
     kv("wfc", c.wfc);
     kv("ratio", std::to_string(c.ratio));

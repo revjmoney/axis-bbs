@@ -52,6 +52,7 @@
 #include "cluster/remotefiles.h"
 #include "bbs/config.h"
 #include "bbs/eventlog.h"
+#include "bbs/station.h"
 #include "bbs/sysop_menu.h"
 #include "bbs/transferjob.h"
 #include "bbs/users.h"
@@ -2233,17 +2234,25 @@ static void setLook(const std::string& id) {
     screenDirty = true;
 }
 
+// Erase and re-make the SD card: the touch menu's YES button and "@SDFORMAT FORMAT" (the sysop menu) share this.
+// False when it was refused because a caller is online; `result` says what happened either way.
+static bool sdFormatNow(String& result, bool& ok) {
+    if (callersOnline()) {
+        logEvent("sysop: SD format refused, a caller is online");
+        return false;
+    }
+    ok = storageFormatSd(result);
+    logEvent(String("sysop: SD format ") + (ok ? "done" : "FAILED") + ": " + result);
+    makeAreaFolders();
+    return true;
+}
+
 static void sysopAction(axis::bbs::SysopMenu::Action a) {
     using A = axis::bbs::SysopMenu::Action;
     if (a == A::FormatSd) {
-        if (callersOnline()) {
-            logEvent("sysop: SD format refused, a caller is online");
-            return;
-        }
         String result;
-        bool   ok = storageFormatSd(result);
-        logEvent(String("sysop: SD format ") + (ok ? "done" : "FAILED") + ": " + result);
-        makeAreaFolders();
+        bool   ok = false;
+        sdFormatNow(result, ok);
     } else if (a == A::Restart) {
         logEvent("sysop: restart");
         delay(200);
@@ -3280,15 +3289,25 @@ static void runCommand(const String& cmd, Print& out) {
         SD.end();
         storageInit();
         screenDirty = true;
-    } else if (cmd == "@SDFORMAT FORMAT") {  // bench trigger for the sysop SD tool
-        if (callersOnline()) {
+    } else if (cmd == "@SDFORMAT FORMAT") {  // the sysop menu's Format SD card (it asks for FORMAT to be typed first)
+        String result;
+        bool   ok = false;
+        if (!sdFormatNow(result, ok)) {
             out.println("axis: sd format refused, a caller is online");
         } else {
-            String result;
-            bool   ok = storageFormatSd(result);
             out.printf("axis: sd format %s: %s\n", ok ? "ok" : "FAILED", result.c_str());
             screenDirty = true;
         }
+    } else if (cmd == "@STATION") {  // the sysop menu's Station layer: "sensor|<line>" and "relay|n|0/1"
+        for (const char* n : {"temp", "water", "light", "humid"}) out.printf("sensor|%s\n", axis::bbs::station::line(n).c_str());
+        for (int i = 1; i <= axis::bbs::station::kRelays; i++) out.printf("relay|%d|%d\n", i, axis::bbs::station::relayState(i));
+    } else if (cmd.startsWith("@RELAY ")) {  // "@RELAY 2 on"
+        int n = cmd.substring(7).toInt();
+        if (axis::bbs::station::relay(n, cmd.endsWith(" on") ? 1 : 0)) out.printf("axis: relay %d %s\n", n, cmd.endsWith(" on") ? "on" : "off");
+        else out.println("axis: no such relay");
+    } else if (cmd == "@BEEP") {
+        axis::bbs::station::beep(880, 80);
+        out.println("axis: beep");
     } else if (cmd.startsWith("@DOORLS ")) {  // list a door's folder the way the door sees it
         std::string           dir = std::string(storageRoot()) + "/doors/" + cmd.substring(8).c_str();
         axis::PosixHostFs     fs(dir);

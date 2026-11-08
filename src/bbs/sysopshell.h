@@ -14,11 +14,15 @@
 
 namespace axis::bbs {
 
+// the sysop menu's sections: beginAt() goes straight into one (the Renegade hotkeys and the board's own screen)
+enum class SysopSection { Top, Settings, Users, Menus, MsgBases, FileAreas, System, Look };
+
 class SysopShell {
 public:
     using Run = std::function<std::string(const std::string&)>;  // "@USERS" -> its output
     SysopShell(std::string& out, Run run, int cols = 80);  // cols 40: the board's own screen in big letters
     void begin();
+    void beginAt(SysopSection s);  // straight into a section; Esc from there leaves the shell
     bool key(char c);          // false once the sysop has left the top layer
     void tapRow(int row);      // a tap on that screen row (0 = the top line)
     bool open() const { return !layers_.empty(); }
@@ -44,6 +48,8 @@ private:
     void confirm(const std::string& question, std::function<void()> yes);
     void did(const std::string& reply);  // the last command's answer, shown under the list
     void refresh();
+    void enter(SysopSection s);
+    std::string setting(const std::string& key);  // one axis.ini value ("" if unset)
     std::vector<std::string> lines(const std::string& cmd);
     // the layers
     void users(Layer& l);
@@ -59,6 +65,9 @@ private:
     void system(Layer& l);
     void sections(Layer& l);
     void nodes(Layer& l);
+    void look(Layer& l);
+    void lookPick(Layer& l, const std::string& key, bool follow);
+    void station(Layer& l);
 
     std::string&       out_;
     Run                run_;

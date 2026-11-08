@@ -56,6 +56,7 @@ struct BbsConfig {
     std::string theme = "axis";  // the one look ("theme"): axis, cyan, green, or a card screenset id
     std::string wfc = "axis";    // the waiting screen. Always the same id as theme. Old files still have the key.
     bool        loginSplash = false;  // Rev's RotatoCAM ANSI splash before the login screen ("login_splash", on unless 0)  // callers this board takes at once (1 to 4). Each can be in LORD, a movie, a pack, or a transfer. A deflated piece or a ZIP check needs its own inflate window and is refused when the heap is short.
+    bool        sysopTelnet = true;  // "sysop_telnet": the sysop menu may be opened over telnet. Off: only the board's own screen and serial.
     bool        messagesOn = true, filesOn = true, doorsOn = true;  // board switches ("messages_on", "files_on", "doors_on"); on unless 0. A caller's own access is separate.
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors

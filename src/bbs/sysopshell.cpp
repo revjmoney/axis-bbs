@@ -112,17 +112,47 @@ void SysopShell::refresh() {
     draw();
 }
 
+void SysopShell::enter(SysopSection s) {
+    switch (s) {
+        case SysopSection::Users: push("USERS", [this](Layer& x) { users(x); }); break;
+        case SysopSection::FileAreas: push("FILE AREAS", [this](Layer& x) { areas(x, false); }); break;
+        case SysopSection::MsgBases: push("MSG BASES", [this](Layer& x) { areas(x, true); }); break;
+        case SysopSection::Settings: push("SETTINGS", [this](Layer& x) { settings(x); }); break;
+        case SysopSection::Menus: push("MENUS", [this](Layer& x) { menus(x); }); break;
+        case SysopSection::System: push("SYSTEM", [this](Layer& x) { system(x); }); break;
+        case SysopSection::Look: push("LOOK", [this](Layer& x) { look(x); }); break;
+        case SysopSection::Top: begin(); break;
+    }
+}
+
+void SysopShell::beginAt(SysopSection s) {
+    layers_.clear();
+    note_.clear();
+    asking_ = false;
+    esc_ = 0;
+    enter(s);
+}
+
 void SysopShell::begin() {
     push("SYSOP", [this](Layer& l) {
-        l.items = {{"Users", "", [this] { push("USERS", [this](Layer& x) { users(x); }); }},
-                   {"File areas", "", [this] { push("FILE AREAS", [this](Layer& x) { areas(x, false); }); }},
-                   {"Message bases", "", [this] { push("MSG BASES", [this](Layer& x) { areas(x, true); }); }},
-                   {"Settings", "", [this] { push("SETTINGS", [this](Layer& x) { settings(x); }); }},
-                   {"Menus", "", [this] { push("MENUS", [this](Layer& x) { menus(x); }); }},
-                   {"System", "", [this] { push("SYSTEM", [this](Layer& x) { system(x); }); }},
+        l.items = {{"Users", "", [this] { enter(SysopSection::Users); }},
+                   {"File areas", "", [this] { enter(SysopSection::FileAreas); }},
+                   {"Message bases", "", [this] { enter(SysopSection::MsgBases); }},
+                   {"Settings", "", [this] { enter(SysopSection::Settings); }},
+                   {"Menus", "", [this] { enter(SysopSection::Menus); }},
+                   {"System", "", [this] { enter(SysopSection::System); }},
                    {"Sections", "", [this] { push("SECTIONS", [this](Layer& x) { sections(x); }); }},
+                   {"Look", "", [this] { enter(SysopSection::Look); }},
                    {"Leave the sysop menu", "", [this] { layers_.clear(); }}};
     });
+}
+
+std::string SysopShell::setting(const std::string& key) {
+    for (auto& line : lines("@SETTINGS")) {
+        size_t eq = line.find('=');
+        if (eq != std::string::npos && line.compare(0, eq, key) == 0 && eq == key.size()) return line.substr(eq + 1);
+    }
+    return "";
 }
 
 // ---- drawing: a header (the theme's art for the layer, or its built-in title), then the list
@@ -468,6 +498,16 @@ void SysopShell::settings(Layer& l) {
     l.items.push_back({"DOS prompt password", "(never shown)", [this] {
                            ask("New DOS prompt password", true, [this](const std::string& v) { did(run_("@DOSPASS " + v)); });
                        }});
+    // the board-wide switches (a caller's own access is on the caller's page)
+    std::string files = setting("files_on"), msgs = setting("messages_on"), doors = setting("doors_on"), tel = setting("sysop_telnet"), freekb = setting("free_kb");
+    auto flip = [this](const std::string& key, bool on) { return [this, key, on] { did(run_("@SET " + key + "=" + (on ? "0" : "1"))); }; };
+    l.items.push_back({"Files", files == "0" ? "off" : "on", flip("files_on", files != "0")});
+    l.items.push_back({"Messages", msgs == "0" ? "off" : "on", flip("messages_on", msgs != "0")});
+    l.items.push_back({"Doors", doors == "0" ? "off" : "on", flip("doors_on", doors != "0")});
+    l.items.push_back({"Free downloads (KB)", freekb, [this] {
+                           ask("Free download allowance in KB (0: earn it by uploading)", false, [this](const std::string& v) { did(run_("@SET free_kb=" + v)); });
+                       }});
+    l.items.push_back({"Telnet sysop access", tel == "0" ? "off" : "on", flip("sysop_telnet", tel != "0")});
 }
 
 void SysopShell::settingGroup(Layer& l, int g) {
@@ -610,6 +650,54 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
     l.items.push_back({"Restart this board", "", [this] { confirm("Restart the board now?", [this] { did(run_("@RESTART")); }); }});
+    l.items.push_back({"Rerun setup", "erases the settings", [this] { confirm("Erase the settings and run setup again?", [this] { did(run_("@RESETSETUP")); }); }});
+    l.items.push_back({"Format SD card", "erases everything", [this] {
+                           ask("Type FORMAT to erase the whole SD card", false, [this](const std::string& v) {
+                               if (v == "FORMAT") did(run_("@SDFORMAT FORMAT"));
+                               else did("not formatted");
+                           });
+                       }});
+    l.items.push_back({"Station", "sensors and relays", [this] { push("STATION", [this](Layer& x) { station(x); }); }});
+}
+
+// ---- station: sensors (read only), the relays (pick to flip), a beep
+void SysopShell::station(Layer& l) {
+    for (auto& line : lines("@STATION")) {
+        auto f = split(line, '|');
+        if (f[0] == "sensor" && f.size() >= 2) l.items.push_back({f[1], "", nullptr});
+        else if (f[0] == "relay" && f.size() >= 3) {
+            std::string n = f[1];
+            bool        on = f[2] == "1";
+            l.items.push_back({"Relay " + n, on ? "on" : "off", [this, n, on] { did(run_("@RELAY " + n + (on ? " off" : " on"))); }});
+        }
+    }
+    l.items.push_back({"Beep", "", [this] { did(run_("@BEEP")); }});
+}
+
+// ---- look: the caller theme and the waiting screen's skin (blank: it follows the theme)
+void SysopShell::look(Layer& l) {
+    const char* t = theme::knownLook(setting("theme"));
+    l.items.push_back({"Theme", t ? t : "axis", [this] { push("THEME", [this](Layer& x) { lookPick(x, "theme", false); }); }});
+    const char* w = theme::knownLook(setting("wfc"));
+    l.items.push_back({"Waiting screen skin", w ? w : "follows the theme", [this] { push("WFC SKIN", [this](Layer& x) { lookPick(x, "wfc", true); }); }});
+}
+
+void SysopShell::lookPick(Layer& l, const std::string& key, bool follow) {
+    const char* c = theme::knownLook(setting(key));
+    std::string cur = c ? c : "";
+    if (follow)
+        l.items.push_back({"Follow the theme", cur.empty() ? "now" : "", [this, key] {
+                               did(run_("@SET " + key + "="));
+                               pop();
+                           }});
+    for (int i = 0; i < theme::lookCount(); i++) {
+        std::string id = theme::lookId(i);
+        std::string label = std::string(theme::lookLabel(i)) + ", " + theme::lookBlurb(id.c_str());
+        l.items.push_back({label, id == cur ? "now" : "", [this, key, id] {
+                               did(run_("@SET " + key + "=" + id));
+                               pop();
+                           }});
+    }
 }
 
 void SysopShell::nodes(Layer& l) {

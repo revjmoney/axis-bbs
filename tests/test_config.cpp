@@ -348,3 +348,11 @@ TEST_CASE("a LORD.EXE row with no on/off flag is off, and a later door number re
     CHECK(on.doors[0].enabled);
     CHECK(on.doors[0].exe == "LORD.EXE");
 }
+
+TEST_CASE("sysop_telnet defaults on and round trips") {
+    CHECK(parseConfig("").sysopTelnet);
+    BbsConfig off = parseConfig("sysop_telnet=0\n");
+    CHECK_FALSE(off.sysopTelnet);
+    CHECK_FALSE(parseConfig(formatConfig(off)).sysopTelnet);
+    CHECK(parseConfig(formatConfig(BbsConfig{})).sysopTelnet);
+}
