@@ -1778,6 +1778,33 @@ static int sessionNumber(int i) {  // the node number a session answers as
     return i + 1;
 }
 
+// The waiting-for-caller screen's live values: every node in the cluster, the newest events, today's counters.
+static axis::bbs::WfcSnapshot wfcSnapshot() {
+    axis::bbs::WfcSnapshot w;
+    w.bbsName = cfg.bbsName;
+    w.sysop = cfg.sysopHandle;
+    w.lastCaller = lastCaller.c_str();
+    w.ip = WiFi.localIP().toString().c_str();
+    std::string t = timeText().c_str();  // "YYYY-MM-DD HH:MM"
+    if (t.size() >= 16) w.date = t.substr(0, 10), w.time = t.substr(11, 5);
+    w.page = pageText.c_str();
+    if (cluster && cluster->nodes().size() > 1) {
+        for (auto& n : cluster->nodes()) w.nodes.push_back({n.number, n.handle, n.activity});
+        std::sort(w.nodes.begin(), w.nodes.end(), [](const axis::bbs::WfcNode& a, const axis::bbs::WfcNode& b) { return a.number < b.number; });
+    } else {
+        for (size_t i = 0; i < sessions.size(); i++)
+            w.nodes.push_back({sessionNumber((int)i), sessionNode(i) ? sessionNode(i)->handle() : std::string(), sessionNode(i) ? "Online" : ""});
+    }
+    const auto& ev = events.lines();
+    for (auto it = ev.rbegin(); it != ev.rend() && w.events.size() < 8; ++it) w.events.push_back(*it);
+    w.callsToday = callsToday;
+    w.sdFreeKb = (uint32_t)(storageFreeBytes() >> 10);
+    w.ramFreeKb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
+    w.uptimeS = millis() / 1000;
+    w.main = !asFollower();
+    return w;
+}
+
 static bool panelConsoleNew = false;  // answerIn: the next session is the panel's own sysop console
 static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     if (panelConsoleNew) line.reset(new PanelStream());
@@ -1796,6 +1823,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setWarrior(writeWarrior);
         node->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
         node->setSysopRun(sysopRun);
+        node->setWfcSnapshot(wfcSnapshot);
         node->setChat(
             [slot](const std::string& text, bool page) {  // through the main to every node (or just this board)
                 if (!node) return;
@@ -1902,7 +1930,10 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setDirect([](const char* p, size_t n) {  // the login art, from flash in 1 KB pieces
             if (line) line->write((const uint8_t*)p, n);
         });
-        if (panelConsoleNew) node->beginLocal(millis());  // the sysop, from the panel: no password asked
+        if (panelConsoleNew) {  // the sysop, from the panel: no password asked, and the WFC is the first screen
+            node->beginLocal(millis());
+            node->openWfc(millis());
+        }
         else node->begin(millis());
         sendApp(node->takeOutput());
     } else {
@@ -2648,6 +2679,7 @@ static void handleTap(int x, int y) {
             localNode->setWarrior(writeWarrior);
             localNode->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
             localNode->setSysopRun(sysopRun);
+            localNode->setWfcSnapshot(wfcSnapshot);
             localNode->setMessages(&callerMessages());
             localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
             localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
@@ -3442,10 +3474,52 @@ static void runCommand(const String& cmd, Print& out) {
     }
 }
 
+// "WFC" on the serial port: a terminal on the waiting-for-caller screen, until Q; then the @ commands are back.
+static std::unique_ptr<axis::bbs::Node> serialWfc;
+static void serialWfcPump() {
+    serialWfc->poll(millis());
+    std::string o = serialWfc->takeOutput();
+    if (!o.empty()) Serial.write((const uint8_t*)o.data(), o.size());
+    if (serialWfc->state() == axis::bbs::Node::State::Done || serialWfc->wantsHangup()) {
+        serialWfc.reset();
+        Serial.print("\r\naxis: back to @ commands\r\n");
+    }
+}
+
 static void handleSerial() {
     static String cmd;
+    if (serialWfc) {
+        uint8_t buf[32];
+        while (serialWfc && Serial.available()) {
+            size_t n = 0;
+            while (n < sizeof buf && Serial.available()) buf[n++] = (uint8_t)Serial.read();
+            serialWfc->input(buf, n, millis());
+            serialWfcPump();
+        }
+        if (serialWfc) serialWfcPump();
+        return;
+    }
     while (Serial.available()) {
         char c = Serial.read();
+        if (cmd == "WFC" && (c == 0x0A || c == 0x0D) && mode == Mode::Normal && cfg.setupDone) {
+            cmd = "";
+            serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg, &callerFiles()));
+            serialWfc->setAccounts(&users, saveUsers, hwRandom, unixNow);
+            serialWfc->setWarrior(writeWarrior);
+            serialWfc->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
+            serialWfc->setSysopRun(sysopRun);
+            serialWfc->setWfcSnapshot(wfcSnapshot);
+            serialWfc->setMessages(&callerMessages());
+            serialWfc->setArt([](const std::string& name) { return themeArt(name); });
+            serialWfc->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+            wireScripts(serialWfc.get());
+            serialWfc->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& l) { sharedListAdd(n, l); });
+            serialWfc->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
+            serialWfc->beginLocal(millis());
+            serialWfc->openWfc(millis());
+            serialWfcPump();
+            return;
+        }
         if (c != '\n' && c != '\r') {
             if (cmd.length() < 160) cmd += c;
             continue;
