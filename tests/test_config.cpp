@@ -245,6 +245,19 @@ TEST_CASE("the waiting screen skin (wfc) can differ from the theme") {
     CHECK(mergeSettings(parseConfig(""), formatConfig(c)).wfc == "skulls");
 }
 
+TEST_CASE("an old ini's wfc=<the theme> follows the theme after the upgrade; a different skin stays") {
+    BbsConfig c = parseConfig("wfc=green\ntheme=green\n");  // what older firmware wrote, in either order
+    CHECK(c.wfc.empty());
+    CHECK(parseConfig("theme=green\nwfc=green\n").wfc.empty());
+    CHECK(parseConfig("theme=iniquity\nwfc=green\n").wfc.empty());  // an old theme name is the same look
+    c.theme = "skulls";  // the sysop changes the theme later: the waiting screen follows it
+    CHECK(wfcFolder(parseConfig(formatConfig(c))) == "skulls");
+    BbsConfig rev = parseConfig("theme=green\nwfc=cyan\n");  // board 1: cyan on purpose, theme green
+    CHECK(rev.wfc == "cyan");
+    CHECK(wfcFolder(rev) == "cyan");
+    CHECK(parseConfig(formatConfig(rev)).wfc == "cyan");
+}
+
 TEST_CASE("a blank or unknown wfc follows the theme") {
     BbsConfig b = parseConfig("theme=sea\nwfc=\n");
     CHECK(b.wfc.empty());

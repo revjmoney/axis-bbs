@@ -164,6 +164,9 @@ BbsConfig parseConfig(const std::string& ini) {
     }
     if (const char* id = theme::knownLook(c.theme)) c.theme = id;
     else c.theme = "axis";
+    // older firmware always wrote wfc=<the theme>: that pinned the waiting screen to the old theme. The same look as the
+    // theme is the same as following it, so it is blank (a different look, picked on purpose, stays).
+    if (c.wfc == c.theme) c.wfc.clear();
     return c;
 }
 
