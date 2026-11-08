@@ -53,9 +53,10 @@
 #include "bbs/config.h"
 #include "bbs/eventlog.h"
 #include "bbs/station.h"
-#include "bbs/sysop_menu.h"
+#include "bbs/sysopshell.h"
 #include "bbs/transferjob.h"
 #include "bbs/users.h"
+#include "bbs/wfc.h"
 #include "bbs/wifipicker.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
@@ -68,6 +69,7 @@
 #include "platform/cyd/sdfiles.h"
 #include "platform/cyd/serialfiles.h"
 #include "platform/cyd/storage.h"
+#include "platform/cyd/wfccyd_art.h"
 #include <SD.h>
 #include <LittleFS.h>
 #include "platform/cyd/wfc_art.h"
@@ -108,7 +110,6 @@ static bool                 panelWall = false;  // WALL ON: every node's output 
 static int                  panelConNode = 0;   // the node the panel's console types into (0 = none)
 static bool                 panelConJoined = false;  // broke in on a caller (else its own session)
 static std::unique_ptr<WifiStream>              line;  // the caller, when one is online
-static axis::bbs::SysopMenu                     sysop;   // the touchscreen sysop menu (a tap on the WFC)
 static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
 static axis::bbs::RotatingLog                   eventFile("/littlefs/events.log", "/littlefs/events.old", 8192);  // 16 KB at most
 static bool                                     eventFileReady = false;  // after LittleFS is mounted
@@ -806,22 +807,6 @@ static void makeAreaFolders() {
     for (auto& a : cfg.areas) ::mkdir(("/sd/files/" + a.id).c_str(), 0777);
 }
 
-static std::vector<int> areaFileCounts() {
-    std::vector<int> n;
-    for (auto& a : cfg.areas) {
-        int count = -1;
-        if (storageHasSd())
-            if (DIR* d = opendir(("/sd/files/" + a.id).c_str())) {
-                count = 0;
-                while (dirent* e = readdir(d))  // FILES.BBS is the area's description list, not a file
-                    count += e->d_name[0] != '.' && strcasecmp(e->d_name, "FILES.BBS") != 0;
-                closedir(d);
-            }
-        n.push_back(count);
-    }
-    return n;
-}
-
 // ------------------------------------------------------------------ screens (placeholder look)
 static void title(const char* sub) {
     scr.fillScreen(pal::BLACK);
@@ -846,37 +831,22 @@ static void bigButton(int y, const char* label, uint16_t color) {
     scr.setTextSize(1);
 }
 
-// Waiting-for-caller screen: the drippy ANSI from art/wfc.ans with live status in its panel.
-static BigText    panel;
-// The waiting-for-caller screen: the board's activity at a glance. Blinking status lights, one
-// line per node on this board (tap one for its details), the newest events, a battery spot.
-static int detailSession = -1;  // the node detail screen is up for this session (-1: the WFC)
-
-static String sessionLineText(size_t i) {  // "Spindle Kid  files: ANSI Packs  12m", or waiting
-    axis::bbs::Node* n = sessionNode(i);
-    if (!n) return "waiting for a caller";
-    uint32_t since = (int)i == curSession ? callStartMs : sessions[i].startMs;
-    uint32_t m = (millis() - since) / 60000;
-    String   who = n->handle().empty() ? String("(new caller)") : String(n->handle().c_str());
-    return who + "  " + n->activityText().c_str() + "  " + String(m) + "m";
-}
-
-static void drawBattery() {  // top right: a battery outline; "?" until a sensor (a divider to GPIO35) is fitted
-    const int x = 288, y = 2;
-    scr.drawRect(x, y, 26, 12, pal::DARKGREY);
-    scr.fillRect(x + 26, y + 3, 3, 6, pal::DARKGREY);
-    scr.setFont(&fonts::Font0);
-    scr.setTextDatum(textdatum_t::top_left);
-    scr.setTextColor(pal::DARKGREY, pal::BLACK);
-    scr.drawString("?", x + 10, y + 2);
-    // the local sysop login, under the battery
-    scr.fillRoundRect(272, 18, 46, 18, 4, pal::DIM);
-    scr.drawRoundRect(272, 18, 46, 18, 4, pal::ORANGE);
-    scr.setTextColor(pal::WHITE, pal::DIM);
-    scr.setTextDatum(textdatum_t::middle_center);
-    scr.drawString("LOCAL", 295, 27);
-    scr.setTextDatum(textdatum_t::top_left);
-}
+// The waiting-for-caller screen on the board's own screen: the WFC skin's WFCCYD.ANS (or the built-in art/wfccyd.ans) in 53x30
+// cells of 6x8, the live values of wfcSnapshot(), its keys and node lines tappable. Expanded again every 5 s when the values
+// changed, and whenever it comes back from another screen. The terminal (~5 KB) is only held while the art is drawn.
+static int                                detailSession = -1;  // the node detail screen is up for this session (-1: the WFC)
+static std::vector<axis::bbs::WfcHotspot> wfcSpots;            // where the keys and node lines landed
+static axis::bbs::WfcSnapshot             wfcShown;            // the values on the screen
+static uint32_t                           wfcDrawnMs = 0, wfcSoonUntil = 0;  // last expanded; a "coming soon" line until then
+static bool                               wfcStale = true;     // draw it at the next turn (another screen was up, a key was tapped)
+static axis::bbs::WfcSnapshot             wfcSnapshot();
+// The sysop menu on the board's own screen: the one SysopShell, 40 columns in 8x16 letters, a tap picks the row.
+static std::unique_ptr<axis::bbs::SysopShell> boardShell;
+static std::unique_ptr<axis::bbs::AnsiTerm>   shellTerm;  // 40x15: the footer can wrap without scrolling the list
+static std::string                            shellOut;
+static bool                                   shellKeys = false;  // the touch keyboard is up (a question, or keys for the list)
+static BigText                                bigText;            // the shell's letters, copied from shellTerm
+static const int                              kShellRows = 13;    // 208 pixels of shell, the buttons under it
 
 // The local sysop login: the BBS on the board's own screen, the sysop logged in, an 80x25
 // terminal in 4x8 cells, a touch keyboard for typing (a line at a time, sent with Enter).
@@ -898,8 +868,6 @@ static bool                              localKeys = false;  // the keyboard is 
 static bool                              localZoom = true;   // 40 columns in 8x8 cells (readable), or all 80 in 4x8
 static int                               localPan = 0;       // zoomed: which 40 columns (0 or 40)
 static axis::bbs::TouchKeyboard          localKb("type, then OK", false, 70);
-static axis::bbs::TouchKeyboard          pwKb("new password, then OK", true, 40);  // the sysop menu's SET PASS / SYSOP PW
-static int                               pwFor = -1;  // whose password the keyboard sets: -1 none, 0 the sysop, else a user id
 static void                              runCommand(const String& cmd, Print& out);
 static void localFeed() {
     if (!localNode) return;
@@ -963,213 +931,28 @@ static void drawLocal() {
     localTerm->clean();
 }
 
-// The waiting-for-caller screen (docs/superpowers/specs/2026-11-04-iniquity-wfc-theme-design.md):
-// a title bar, a chunky AXIS logo (the top 3/16), a status line, then a lightbar menu box, a nodes box
-// for the whole cluster, a "today" box, the status lamps, the newest events and a footer. Colours
-// come from the one look (axis, cyan, green), the same id as the caller screens. Words stay one
-// solid colour: a per-letter fade on this small screen looked like noise.
-namespace wfc {
-constexpr int kMenuX = 0, kMenuY = 58, kMenuW = 118, kItemH = 14, kItems = 7;
-const char* const kItemsText[kItems] = {"f1 local logon", "f2 sysop menu", "f3 users", "f4 files", "f5 event log", "f6 bbs setup", "f7 system"};
-uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return palNearest(r, g, b); }  // status lamps keep their own colours
-const axis::bbs::theme::WfcColours* cols = nullptr;
-int lookChipX = 118, lookChipW = 36;  // the footer name, set when the waiting screen is drawn
-const axis::bbs::theme::WfcColours& C() {
-    static const axis::bbs::theme::WfcColours k = axis::bbs::theme::wfcColours(axis::bbs::theme::Look::Axis);
-    return cols ? *cols : k;
-}
-// numbers and values in white, accents in the look's bright colour, everything else light grey
-void fade(int x, int y, const char* s, bool accent = false) {
-    size_t n = strlen(s), i = 0;
-    while (i < n) {
-        size_t j = i;
-        while (j < n && s[j] != ' ') j++;
-        bool value = i < n && (isdigit((unsigned char)s[i]) || s[i] == '(' || s[i] == '-');
-        scr.setTextColor(accent ? C().hot : value ? C().value : C().body);
-        for (size_t k = i; k < j; k++) scr.drawChar(s[k], x + (int)k * 6, y);
-        i = j + 1;
+// The WFC on the board: false when it is unchanged (nothing to push). The art is expanded into a heap terminal that goes again
+// once the screen copy has it, so the loop's stack only holds the snapshot.
+static bool drawWfc() {
+    uint32_t now = millis();
+    bool     soon = wfcSoonUntil && (int32_t)(now - wfcSoonUntil) < 0;
+    if (wfcSoonUntil && !soon) wfcSoonUntil = 0, wfcStale = true;  // the "coming soon" line goes
+    if (!wfcStale && now - wfcDrawnMs < 5000) return false;
+    wfcDrawnMs = now;
+    axis::bbs::WfcSnapshot s = wfcSnapshot();
+    if (!wfcStale && s == wfcShown) return false;
+    std::unique_ptr<axis::bbs::AnsiTerm> t(new (std::nothrow) axis::bbs::AnsiTerm(53, 30));
+    if (!t) return false;  // short on memory: the next turn tries again
+    {
+        std::string art = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
+        if (art.empty()) art = kWfcCydAns;  // the theme has none: the built-in art/wfccyd.ans
+        wfcSpots = axis::bbs::drawWfc(art, s, *t);
     }
-}
-void plain(int x, int y, const char* s, uint16_t c) {
-    scr.setTextColor(c);
-    scr.drawString(s, x, y);
-}
-// an Iniquity frame: "/--: label :--\" on top, "~" down the sides, "\---/" at the bottom
-void frame(int x, int y, int w, int h, const char* label) {
-    uint16_t g = C().accent, d = C().dim, hi = C().hot;
-    scr.drawFastHLine(x + 6, y + 3, w - 12, g);
-    scr.drawFastHLine(x + 6, y + h - 4, w - 12, g);
-    for (int t = x + 14; t < x + w - 8; t += 30) scr.drawPixel(t, y + 3, hi);  // ticks along the top
-    plain(x, y, "/", g);
-    plain(x + w - 6, y, "\\", g);
-    plain(x, y + h - 8, "\\", g);
-    plain(x + w - 6, y + h - 8, "/", g);
-    for (int yy = y + 10; yy < y + h - 10; yy += 10) {
-        plain(x, yy, "~", d);
-        plain(x + w - 6, yy, "~", d);
-    }
-    if (label && *label) {
-        int lx = x + 12, lw = (int)strlen(label) * 6;
-        scr.fillRect(lx - 2, y, lw + 28, 8, TFT_BLACK);
-        plain(lx, y, ":", g);
-        fade(lx + 12, y, label, true);
-        plain(lx + 12 + lw + 6, y, ":", g);
-    }
-}
-// the diode-style AXIS: chunky letters, cyan fading to blue, grey shade cells, a dark drop shadow
-void logo(int x0, int y0) {
-    static const char* const L[4][7] = {
-        {" #### ", "##  ##", "##  ##", "######", "##  ##", "##  ##", "##  ##"},
-        {"##  ##", "##  ##", " #### ", "  ##  ", " #### ", "##  ##", "##  ##"},
-        {"######", "  ##  ", "  ##  ", "  ##  ", "  ##  ", "  ##  ", "######"},
-        {" #####", "##    ", "##    ", " #### ", "    ##", "    ##", "##### "}};
-    const int px = 5, py = 4;  // 7 rows x 4 px = 28 px tall
-    for (int l = 0; l < 4; l++)
-        for (int r = 0; r < 7; r++)
-            for (int c = 0; c < 6; c++) {
-                if (L[l][r][c] != '#') continue;
-                int x = x0 + (l * 7 + c) * px, y = y0 + r * py;
-                scr.fillRect(x + 2, y + 2, px, py, C().shadow);  // the shadow, down and right
-            }
-    for (int l = 0; l < 4; l++)
-        for (int r = 0; r < 7; r++)
-            for (int c = 0; c < 6; c++) {
-                if (L[l][r][c] != '#') continue;
-                int x = x0 + (l * 7 + c) * px, y = y0 + r * py;
-                bool edge = c == 5 || L[l][r][c + 1] != '#';
-                scr.fillRect(x, y, px, py, edge ? C().shade : C().ramp[r]);  // grey shade on right edges
-                if (((l * 13 + r * 7 + c * 3) % 11) == 0) scr.drawPixel(x + 1, y + 1, C().glint);  // glints
-            }
-}
-}  // namespace wfc
-
-static void drawWfc() {
-    using namespace wfc;
-    const char* lookId = axis::bbs::theme::knownLook(axis::bbs::wfcFolder(cfg));
-    if (!lookId) lookId = "axis";
-    axis::bbs::theme::WfcColours ink = axis::bbs::theme::wfcColoursFor(lookId);
-    cols = &ink;
-    scr.fillScreen(TFT_BLACK);
-    scr.setFont(&fonts::Font0);
-    scr.setTextDatum(textdatum_t::top_left);
-    char b[96];
-    bool blink = (millis() / 500) % 2;
-    bool main = !cluster || cluster->role() == axis::cluster::Role::Main;
-    String nums;
-    if (cluster && !cluster->numbers().empty())
-        for (size_t i = 0; i < cluster->numbers().size(); i++) nums += (i ? "+" : "") + String(cluster->numbers()[i]);
-    else
-        for (size_t i = 0; i < sessions.size(); i++) nums += (i ? "+" : "") + String((int)i + 1);
-    // title bar
-    snprintf(b, sizeof b, "axis micro bbs %s ; (c)2026 rev j money ; node %s", axis::bbs::kAxisVersion, nums.c_str());
-    plain(2, 0, "[", C().accent);
-    fade(8, 0, b);
-    // the logo and its caption: y 10..44 (3/16 of the screen)
-    logo(4, 12);
-    fade(150, 14, "u n d e r g r o u n d");
-    fade(150, 24, "c   n   c", true);
-    fade(150, 34, main ? "main board" : "follower board");
-    // status line
-    String now = timeText();
-    String hm = now[4] == '-' ? now.substring(11, 16) : String("--:--"), ymd = now[4] == '-' ? now.substring(0, 10) : String("no clock");
-    snprintf(b, sizeof b, "time: %s   date: %s   event: %s", hm.c_str(), ymd.c_str(), callersOnline() ? "callers on" : "none");
-    plain(0, 47, "[", C().accent);
-    fade(8, 47, b, true);
-    plain(314, 47, "]", C().accent);
-    // the menu box (lightbar: the item under the last tap glows)
-    frame(kMenuX, kMenuY - 4, kMenuW, kItems * kItemH + 12, "axis");
-    for (int i = 0; i < kItems; i++) {
-        int y = kMenuY + 6 + i * kItemH;
-        if (i == 0 && !callersOnline()) scr.fillRect(kMenuX + 6, y - 2, kMenuW - 12, 11, C().bar);  // the bar rests on local logon
-        String t = kItemsText[i];
-        if (i == 2 && users.pending()) t += " (" + String((unsigned)users.pending()) + "!)";
-        fade(kMenuX + 10, y, t.c_str(), true);
-    }
-    // the nodes box: every node in the cluster
-    const int nx = 122, ny = 54, nw = 198;
-    std::vector<axis::cluster::NodeInfo> all;
-    if (cluster && cluster->nodes().size() > 0) all = cluster->nodes();
-    std::sort(all.begin(), all.end(), [](const axis::cluster::NodeInfo& a, const axis::cluster::NodeInfo& c) { return a.number < c.number; });
-    int shown = std::min((int)all.size(), 7);
-    frame(nx, ny, nw, 18 + std::max(shown, (int)sessions.size()) * 10, "nodes");
-    int row = 0;
-    if (all.empty())
-        for (size_t i = 0; i < sessions.size() && row < 7; i++, row++) {
-            snprintf(b, sizeof b, "%d %s", (int)i + 1, sessionNode(i) && !sessionNode(i)->handle().empty() ? sessionNode(i)->handle().c_str() : "waiting");
-            fade(nx + 10, ny + 10 + row * 10, b);
-        }
-    for (int k = 0; k < shown; k++, row++) {
-        const auto& n = all[(size_t)k];
-        snprintf(b, sizeof b, "%d", n.number);
-        plain(nx + 10, ny + 10 + row * 10, b, C().accent);
-        snprintf(b, sizeof b, "%-.12s", n.handle.empty() ? "waiting" : n.handle.c_str());
-        fade(nx + 28, ny + 10 + row * 10, b);
-        snprintf(b, sizeof b, "%-.14s", n.handle.empty() ? IPAddress(n.ip).toString().c_str() : n.activity.c_str());
-        plain(nx + 110, ny + 10 + row * 10, b, C().muted);
-    }
-    // the today box: counters and the board's health
-    int ty = ny + 22 + std::max(shown, (int)sessions.size()) * 10;
-    frame(nx, ty, nw, 240 - 24 - ty, "today");
-    uint32_t up = millis() / 1000;
-    snprintf(b, sizeof b, "calls %u   new users %u", (unsigned)callsToday, (unsigned)users.pending());
-    fade(nx + 10, ty + 10, b);
-    snprintf(b, sizeof b, "last %.20s", lastCaller.length() ? lastCaller.c_str() : "nobody yet");
-    fade(nx + 10, ty + 20, b);
-    snprintf(b, sizeof b, "heap %uk  up %luh%02lum  %d dbm", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024),
-             (unsigned long)(up / 3600), (unsigned long)(up / 60 % 60), (int)WiFi.RSSI());
-    if (ty + 30 < 240 - 32) fade(nx + 10, ty + 30, b);
-    if (storageHasSd()) snprintf(b, sizeof b, "sd %u mb free  %u areas", (unsigned)(storageFreeBytes() >> 20), (unsigned)cfg.areas.size());
-    else snprintf(b, sizeof b, "no sd card  %s:%d", dialName().c_str(), cfg.telnetPort);
-    if (ty + 40 < 240 - 32) fade(nx + 10, ty + 40, b);
-    // the status lamps under the menu: steady = on, blinking = busy, dark = off
-    bool anyDoor = boardHasViewer() || boardHasLord(), anyXfer = boardHasJob();
-    for (size_t i = 0; i < sessions.size(); i++)
-        if (axis::bbs::Node* n = sessionNode(i)) anyDoor = anyDoor || n->state() == axis::bbs::Node::State::Script;
-    if (cluster)
-        for (auto& n : cluster->nodes()) anyDoor = anyDoor || n.activity == "Doors", anyXfer = anyXfer || n.activity == "Transfer";
-    bool paged = pageText.length() && millis() - pageAtMs < 60000;
-    struct Lamp {
-        const char* name;
-        uint16_t    on;
-        bool        lit, busy;
-    } lamps[] = {{"net", rgb(80, 255, 80), WiFi.status() == WL_CONNECTED, callersOnline() > 0},
-                 {"link", rgb(85, 255, 255), cluster && cluster->nodes().size() > 1, false},
-                 {"sd", rgb(255, 180, 0), storageHasSd(), anyXfer},
-                 {"call", rgb(255, 255, 255), callersOnline() > 0, callersOnline() > 0},
-                 {"door", rgb(255, 60, 60), anyDoor, anyDoor},
-                 {"page", rgb(255, 85, 255), paged, paged}};
-    int ly = kMenuY + kItems * kItemH + 12;
-    for (int i = 0; i < 6; i++) {
-        int x = 4 + (i % 3) * 38, y = ly + (i / 3) * 11;
-        bool show = lamps[i].lit && (!lamps[i].busy || blink);
-        scr.fillRect(x, y + 1, 5, 5, show ? lamps[i].on : (uint16_t)pal::DIM);
-        plain(x + 8, y, lamps[i].name, lamps[i].lit ? C().body : C().dim);
-    }
-    // the newest event (or a page for the sysop)
-    const auto& ev = events.lines();
-    if (paged) {
-        plain(0, 218, "page", rgb(255, 85, 85));
-        fade(30, 218, axis::bbs::theme::marquee(pageText.c_str(), 48, millis()).c_str());
-    } else if (!ev.empty()) {
-        fade(0, 218, axis::bbs::theme::marquee(ev.back(), 53, millis()).c_str());
-    }
-    // footer, and the WFC look switch (tap the name in the middle to cycle it)
-    scr.drawFastHLine(0, 228, 320, C().rule);
-    if (users.pending()) {
-        snprintf(b, sizeof b, "%u new user%s waiting", (unsigned)users.pending(), users.pending() == 1 ? "" : "s");
-        plain(2, 231, b, blink ? C().hot : C().accent);
-    } else {
-        fade(2, 231, "(release 11/05/26)", true);
-    }
-    char chip[20];
-    snprintf(chip, sizeof chip, "[%s]", lookId);
-    int cw = (int)strlen(chip) * 6, cx = 156 - cw / 2;
-    lookChipX = cx;
-    lookChipW = cw;
-    scr.fillRect(cx - 1, 230, cw + 2, 9, pal::DIM);
-    plain(cx, 231, chip, C().hot);
-    fade(200, 231, "(c) jmscnc.com", true);
-    cols = nullptr;
+    if (soon) t->feed("\x1b[30;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
+    AnsiScreen::renderCells(scr, *t);
+    wfcShown = std::move(s);
+    wfcStale = false;
+    return true;
 }
 
 // A node's details (tap its line on the WFC): who, where, how long, and a KICK for the sysop.
@@ -1221,58 +1004,117 @@ static void drawNodeDetail(int i) {
     scr.setFont(&fonts::Font0);
 }
 
-// The sysop menu: drippy title, the screen's text in big VGA cells, then the touch buttons.
-static void drawSysop() {
-    if (pwFor >= 0) {  // setting a password: the touch keyboard
-        scr.fillScreen(pal::BLACK);
-        scr.setFont(&fonts::Font2);
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        axis::bbs::User* u = pwFor > 0 ? users.byId(pwFor) : nullptr;
-        scr.drawString((std::string("PASSWORD FOR ") + (pwFor == 0 ? cfg.sysopHandle + " (sysop)" : u ? u->handle : "?")).c_str(), 8, 4);
-        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
-        scr.setTextColor(pal::WHITE, pal::BLACK);
-        scr.drawString((pwKb.shown() + "_").c_str(), 10, 35);
-        scr.setTextDatum(textdatum_t::middle_center);
-        for (auto& k : pwKb.keys()) {
-            uint16_t fill = k.lit ? pal::ORANGE : pal::DIM;
-            scr.fillRoundRect(k.x, k.y, k.w, k.h, 4, fill);
-            scr.drawRoundRect(k.x, k.y, k.w, k.h, 4, pal::ORANGE);
-            scr.setTextColor(k.lit ? pal::BLACK : pal::WHITE, fill);
-            scr.drawString(k.label.c_str(), k.x + k.w / 2, k.y + k.h / 2);
-        }
-        scr.setTextDatum(textdatum_t::top_left);
-        scr.setFont(&fonts::Font0);
+// The sysop menu on the board's own screen (a key tapped on the WFC): the one SysopShell in 40 columns of 8x16 letters, a tap
+// on a row picks it, KEYS / ENTER / BACK / EXIT under it, and the touch keyboard for its questions.
+static void touchButton(int x, int y, int w, int h, const char* label, bool lit) {
+    uint16_t fill = lit ? pal::ORANGE : pal::DIM;
+    scr.fillRoundRect(x, y, w, h, 5, fill);
+    scr.drawRoundRect(x, y, w, h, 5, lit ? pal::WHITE : pal::ORANGE);
+    scr.setTextColor(lit ? pal::BLACK : pal::WHITE, fill);
+    scr.setTextDatum(textdatum_t::middle_center);
+    scr.drawString(label, x + w / 2, y + h / 2);
+    scr.setTextDatum(textdatum_t::top_left);
+}
+static void closeShell() {
+    boardShell.reset();
+    shellTerm.reset();
+    std::string().swap(shellOut);
+    shellKeys = false;
+    screenDirty = true;
+}
+static void shellFeed() {  // what the shell wrote, onto its terminal; a question brings up the keyboard
+    if (shellTerm && !shellOut.empty()) shellTerm->feed(shellOut);
+    shellOut.clear();
+    screenDirty = true;
+    if (!boardShell || !boardShell->open()) {
+        closeShell();
         return;
     }
-    axis::bbs::SysopData d;
-    d.cfg = cfg;
-    d.info = sysInfo();
-    d.log = events;
-    d.users = users;
-    if (sysop.screen() == axis::bbs::SysopMenu::Screen::Files) d.areaFiles = areaFileCounts();
-    static BigText t;
-    t.clear(0x07);
-    std::string ttl = sysop.title();
-    t.text(0, 1, ttl.c_str(), 0x0F);
-    t.text(0, 38 - 10, cfg.boardName.substr(0, 10).c_str(), 0x08);
-    for (int c = 1; c < 1 + (int)ttl.size(); c++)  // paint drips under the title
-        if ((c * 7 + ttl[c - 1]) % 3 == 0) t.text(1, c, (c % 2) ? "\xdb" : "\xdf", 0x06);
-    t.fill(1, 1 + (int)ttl.size() + 1, 38 - (int)ttl.size(), 0xc4, 0x08);
-    auto lines = sysop.lines(d);
-    for (size_t i = 0; i < lines.size(); i++) t.text(2 + (int)i, 1, lines[i].c_str(), 0x0F);
-    t.render(scr, 0, 13);
-    scr.fillRect(0, 208, 320, 32, pal::BLACK);
-    scr.setFont(&fonts::Font2);
-    scr.setTextDatum(textdatum_t::middle_center);
-    for (auto& b : sysop.buttons()) {
-        // Rev's scheme: dark grey buttons outlined in orange; erase/redo buttons solid orange
-        uint16_t fill = b.danger ? pal::ORANGE : pal::DIM, ink = b.danger ? pal::BLACK : pal::WHITE;
-        scr.fillRoundRect(b.x, b.y, b.w, b.h, 6, fill);
-        scr.drawRoundRect(b.x, b.y, b.w, b.h, 6, b.danger ? pal::WHITE : pal::ORANGE);
-        scr.setTextColor(ink, fill);
-        scr.drawString(b.label.c_str(), b.x + b.w / 2, b.y + b.h / 2);
+    if (boardShell->asking() && !boardShell->yesNo() && !shellKeys) {
+        localKb.reset(boardShell->question().substr(0, 40), boardShell->secret());
+        shellKeys = true;
     }
-    scr.setTextDatum(textdatum_t::top_left);
+}
+static void openShell(axis::bbs::SysopSection s) {
+    shellTerm.reset(new (std::nothrow) axis::bbs::AnsiTerm(40, 15));
+    boardShell.reset(new (std::nothrow) axis::bbs::SysopShell(shellOut, sysopRun, 40));
+    if (!shellTerm || !boardShell) {
+        closeShell();
+        logEvent("sysop menu: the board is short on memory, try again in a moment");
+        return;
+    }
+    shellKeys = false;
+    boardShell->beginAt(s);
+    shellFeed();
+}
+static void shellKey(char c) {
+    if (boardShell) boardShell->key(c);
+    shellFeed();
+}
+static void shellTap(int x, int y) {
+    if (shellKeys) {
+        localKb.tap(x, y);
+        if (!localKb.done() && !localKb.cancelled()) return;
+        bool        asked = boardShell->asking(), ok = localKb.done();
+        std::string typed = localKb.text();
+        localKb.reset("type, then OK", false);
+        shellKeys = false;
+        if (!ok) {
+            if (asked) shellKey(0x1b);  // the question is dropped
+            return;
+        }
+        for (char c : typed)
+            if (boardShell) boardShell->key(c);
+        if (boardShell && asked) boardShell->key('\r');  // the answer; keys for the list go as typed
+        shellFeed();
+        return;
+    }
+    if (y < kShellRows * 16) {
+        boardShell->tapRow(y / 16);
+        shellFeed();
+        return;
+    }
+    if (y < 206) return;
+    bool yn = boardShell->yesNo();
+    if (x < 80) {
+        if (yn) {
+            shellKey('y');
+        } else {
+            localKb.reset("keys, then OK", false);
+            shellKeys = true;
+        }
+    } else if (x < 158) {
+        shellKey(yn ? 'n' : '\r');
+    } else if (x < 238) {
+        shellKey(boardShell->asking() ? 0x1b : 'q');  // back a layer (or drop the question); off the top layer: the WFC
+    } else {
+        closeShell();
+    }
+}
+static void drawShell() {
+    scr.fillScreen(pal::BLACK);
+    scr.setFont(&fonts::Font2);
+    if (shellKeys) {
+        scr.setTextColor(pal::ORANGE, pal::BLACK);
+        scr.drawString(localKb.title().c_str(), 8, 4);
+        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
+        scr.setTextColor(pal::WHITE, pal::BLACK);
+        scr.drawString((localKb.shown() + "_").c_str(), 10, 35);
+        for (auto& k : localKb.keys()) touchButton(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
+    } else {
+        bigText.clear(0x07);
+        for (int r = 0; r < kShellRows; r++)
+            for (int c = 0; c < 40; c++) {
+                const auto& cell = shellTerm->cell(r, c);
+                bigText.cells[r][c] = {cell.ch, cell.attr};
+            }
+        bigText.render(scr, 0, kShellRows);
+        bool yn = boardShell->yesNo();
+        touchButton(4, 210, 74, 28, yn ? "YES" : "KEYS", yn);
+        touchButton(82, 210, 74, 28, yn ? "NO" : "ENTER", false);
+        touchButton(160, 210, 76, 28, "BACK", false);
+        touchButton(242, 210, 74, 28, "EXIT", true);
+    }
     scr.setFont(&fonts::Font0);
 }
 
@@ -1357,7 +1199,11 @@ static void drawPicker() {
 }
 
 static void drawScreen() {
-    if (!screenReady()) return;  // a door is running
+    if (!screenReady()) {  // a door is running
+        wfcStale = true;
+        return;
+    }
+    if (mode != Mode::Normal || job || localNode || boardShell || detailSession >= 0) wfcStale = true;  // the WFC is drawn afresh when it is back
     if (mode == Mode::WifiPick) {
         drawPicker();
         screenPush();
@@ -1404,12 +1250,13 @@ static void drawScreen() {
         bigButton(156, "BACK", pal::DIM);
     } else if (localNode) {
         drawLocal();
-    } else if (sysop.isOpen()) {
-        drawSysop();
+    } else if (boardShell) {
+        drawShell();
     } else if (detailSession >= 0) {
         drawNodeDetail(detailSession);
-    } else {
-        drawWfc();
+    } else if (!drawWfc()) {  // the WFC: nothing changed, nothing to push
+        screenDirty = false;
+        return;
     }
     screenPush();
     screenDirty = false;
@@ -2278,17 +2125,6 @@ static void newSetupPin() {
     setupPin = b;
 }
 
-// One look for caller screens and the waiting screen. The footer and BBS setup both call this.
-static void setLook(const std::string& id) {
-    const char* canon = axis::bbs::theme::knownLook(id);
-    if (!canon) return;
-    cfg.theme = canon;  // a blank wfc follows it; a picked wfc skin stays
-    bool ok = configSave(cfg);
-    logEvent(String("sysop: look ") + cfg.theme.c_str() + (ok ? "" : " (SAVE FAILED)"));
-    if (cluster) cluster->shareSettings();
-    screenDirty = true;
-}
-
 // Erase and re-make the SD card: the touch menu's YES button and "@SDFORMAT FORMAT" (the sysop menu) share this.
 // False when it was refused because a caller is online; `result` says what happened either way.
 static bool sdFormatNow(String& result, bool& ok) {
@@ -2300,56 +2136,6 @@ static bool sdFormatNow(String& result, bool& ok) {
     logEvent(String("sysop: SD format ") + (ok ? "done" : "FAILED") + ": " + result);
     makeAreaFolders();
     return true;
-}
-
-static void sysopAction(axis::bbs::SysopMenu::Action a) {
-    using A = axis::bbs::SysopMenu::Action;
-    if (a == A::FormatSd) {
-        String result;
-        bool   ok = false;
-        sdFormatNow(result, ok);
-    } else if (a == A::Restart) {
-        logEvent("sysop: restart");
-        delay(200);
-        ESP.restart();
-    } else if (a == A::ValidateUser || a == A::DenyUser) {
-        axis::bbs::User* u = users.byId(sysop.selectedUser());
-        if (!u) return;
-        bool ok = a == A::ValidateUser;
-        u->status = ok ? axis::bbs::User::Status::Validated : axis::bbs::User::Status::Denied;
-        if (ok && u->security < 20) u->security = 20;
-        if (ok) writeWarrior(u->handle);
-        logEvent(String("sysop: ") + (ok ? "validated " : "denied ") + u->handle.c_str());
-        saveUsers();
-    } else if (a == A::ToggleSysop) {
-        axis::bbs::User* u = users.byId(sysop.selectedUser());
-        if (!u) return;
-        bool up = u->security < axis::bbs::kSysopSecurity;
-        u->security = up ? axis::bbs::kSysopSecurity : 20;
-        if (up) u->status = axis::bbs::User::Status::Validated;
-        if (up) writeWarrior(u->handle);
-        logEvent(String("sysop: ") + u->handle.c_str() + (up ? " is now a sysop" : " is no longer a sysop"));
-        saveUsers();
-    } else if (a == A::ToggleFiles || a == A::ToggleMessages || a == A::ToggleDoors || a == A::ToggleFreeDownloads) {
-        axis::bbs::User* u = users.byId(sysop.selectedUser());
-        if (!u) return;
-        bool& f = a == A::ToggleFiles ? u->permFiles : a == A::ToggleMessages ? u->permMessages : a == A::ToggleDoors ? u->permDoors
-                                                                                                         : u->freeDownloads;
-        f = !f;
-        logEvent(String("sysop: ") + u->handle.c_str() + (a == A::ToggleFiles ? " files " : a == A::ToggleMessages ? " messages "
-                                                           : a == A::ToggleDoors ? " doors " : " free downloads ") + (f ? "on" : "off"));
-        saveUsers();  // and on to every board
-    } else if (a == A::SetUserPassword || a == A::SetSysopPassword) {  // the touch keyboard takes it from here
-        pwFor = a == A::SetSysopPassword ? 0 : sysop.selectedUser();
-        pwKb.reset("new password, then OK", true);
-    } else if (a == A::SetTheme) {  // the look list: callers and the waiting screen, every board
-        if (!sysop.chosenTheme().empty()) setLook(sysop.chosenTheme());
-    } else if (a == A::RerunSetup) {  // nothing changes until the wizard saves
-        logEvent("sysop: setup again");
-        newSetupPin();
-        mode = Mode::SetupChoice;
-        sysop = axis::bbs::SysopMenu();
-    }
 }
 
 // The cluster: find the other AXIS boards on this LAN (or become main), keep our node number.
@@ -2617,6 +2403,47 @@ static void startPicker(Mode after) {
     screenDirty = true;
 }
 
+// Space on the WFC: the sysop logs on at the board's own screen.
+static void startLocal() {
+    // the local console needs ~35 KB; while the cluster reshuffles (a board restarting) the main can have far less
+    if (ESP.getFreeHeap() < 40000 || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 30000) {
+        logEvent("local logon: the board is busy, try again in a moment");
+        return;
+    }
+    localTerm.reset(new axis::bbs::AnsiTerm());
+    localScreen.reset(new AnsiScreen());
+    localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,
+                                        &callerFiles()));
+    localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
+    localNode->setWarrior(writeWarrior);
+    localNode->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
+    localNode->setSysopRun(sysopRun);
+    localNode->setWfcSnapshot(wfcSnapshot);
+    localNode->setMessages(&callerMessages());
+    localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
+    localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+    wireScripts(localNode.get());
+    localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
+    localNode->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
+    localPan = 0;
+    localZoom = false;  // start with the whole screen (crisp); ZOOM for big letters
+    localNode->setChat(
+        [](const std::string& text, bool page) {
+            if (!localNode) return;
+            if (cluster) page ? cluster->page(localNode->handle(), text) : cluster->chat(localNode->handle(), text);
+            else localNode->chatIn(1, localNode->handle(), text, page);
+        },
+        [] {
+            std::vector<axis::bbs::Node::WhoLine> v;
+            if (cluster)
+                for (auto& n : cluster->nodes()) v.push_back({n.number, n.handle, n.activity});
+            return v;
+        });
+    localNode->beginLocalMenu(millis());
+    logEvent(String("local sysop login: ") + localNode->handle().c_str());
+    localFeed();
+}
+
 static void handleTap(int x, int y) {
     if (!screenReady()) return;  // a door has the screen's memory
     if (mode == Mode::WifiPick) {
@@ -2656,76 +2483,8 @@ static void handleTap(int x, int y) {
             screenDirty = true;
             return;
         }
-        if (sysop.isOpen() && pwFor >= 0) {  // the password keyboard
-            pwKb.tap(x, y);
-            if (pwKb.done() || pwKb.cancelled()) {
-                if (pwKb.done()) {  // the same code as @SYSOPPASS / @USERPASS (4+ characters)
-                    axis::bbs::User* u = pwFor > 0 ? users.byId(pwFor) : nullptr;
-                    String c = pwFor == 0 ? String("@SYSOPPASS ") + pwKb.text().c_str()
-                                          : String("@USERPASS ") + (u ? u->handle.c_str() : "") + " " + pwKb.text().c_str();
-                    String reply;
-                    struct Sink : Print {
-                        String& s;
-                        explicit Sink(String& r) : s(r) {}
-                        size_t write(uint8_t b) override { s += (char)b; return 1; }
-                    } sink(reply);
-                    runCommand(c, sink);
-                }
-                pwKb.reset("new password, then OK", true);
-                pwFor = -1;
-            }
-            return;
-        }
-        if (sysop.isOpen()) {
-            sysopAction(sysop.tap(x, y));
-            return;
-        }
-        int item = x < wfc::kMenuW && y >= wfc::kMenuY && y < wfc::kMenuY + wfc::kItems * wfc::kItemH ? (y - wfc::kMenuY) / wfc::kItemH : -1;
-        if (detailSession < 0 && item >= 0) {  // f1 local logon; f2..f7 the touch sysop menu
-            if (item > 0) {
-                using Scr = axis::bbs::SysopMenu::Screen;
-                static const Scr kScreens[] = {Scr::Main, Scr::Main, Scr::Users, Scr::Files, Scr::Logs, Scr::Setup, Scr::System};
-                if (item == 1) sysop.open();
-                else sysop.openAt(kScreens[item]);
-                return;
-            }
-            // the local console needs ~35 KB; while the cluster reshuffles (a board restarting) the main can have far less
-            if (ESP.getFreeHeap() < 40000 || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 30000) {
-                logEvent("local logon: the board is busy, try again in a moment");
-                return;
-            }
-            localTerm.reset(new axis::bbs::AnsiTerm());
-            localScreen.reset(new AnsiScreen());
-            localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,
-                                                &callerFiles()));
-            localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
-            localNode->setWarrior(writeWarrior);
-            localNode->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
-            localNode->setSysopRun(sysopRun);
-            localNode->setWfcSnapshot(wfcSnapshot);
-            localNode->setMessages(&callerMessages());
-            localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
-            localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
-            wireScripts(localNode.get());
-            localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
-            localNode->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
-            localPan = 0;
-            localZoom = false;  // start with the whole screen (crisp); ZOOM for big letters
-            localNode->setChat(
-                [](const std::string& text, bool page) {
-                    if (!localNode) return;
-                    if (cluster) page ? cluster->page(localNode->handle(), text) : cluster->chat(localNode->handle(), text);
-                    else localNode->chatIn(1, localNode->handle(), text, page);
-                },
-                [] {
-                    std::vector<axis::bbs::Node::WhoLine> v;
-                    if (cluster)
-                        for (auto& n : cluster->nodes()) v.push_back({n.number, n.handle, n.activity});
-                    return v;
-                });
-            localNode->beginLocalMenu(millis());
-            logEvent(String("local sysop login: ") + localNode->handle().c_str());
-            localFeed();
+        if (boardShell) {  // the sysop menu: a row, the buttons, or the keyboard
+            shellTap(x, y);
             return;
         }
         if (detailSession >= 0) {  // the node detail screen: BACK, or KICK the caller
@@ -2738,23 +2497,29 @@ static void handleTap(int x, int y) {
             }
             return;
         }
-        if (x >= 122 && y >= 64 && y < 64 + 7 * 10) {  // a node line in the nodes box: its details, if it's on this board
-            int k = (y - 64) / 10;
-            std::vector<axis::cluster::NodeInfo> all = cluster ? cluster->nodes() : std::vector<axis::cluster::NodeInfo>();
-            std::sort(all.begin(), all.end(), [](const axis::cluster::NodeInfo& a, const axis::cluster::NodeInfo& c) { return a.number < c.number; });
-            int num = k < (int)all.size() ? all[(size_t)k].number : (all.empty() ? k + 1 : 0);
+        // the WFC: a key opens the sysop menu at its section, a node line its details, Space the local logon
+        int  num = 0;
+        char k = axis::bbs::wfcKeyAt(wfcSpots, y / 8, x / 6, &num);
+        if (k == 'N') {  // its details, if the node is on this board
             for (size_t i = 0; i < sessions.size(); i++)
-                if (sessionNumber((int)i) == num) {
-                    detailSession = (int)i;
-                    return;
-                }
-        }
-        // the name in the footer cycles the one look. BBS setup's THEME button writes the same id.
-        if (y >= 226 && x >= wfc::lookChipX - 4 && x < wfc::lookChipX + wfc::lookChipW + 4) {
-            setLook(axis::bbs::theme::nextLook(cfg.theme));
+                if (sessionNumber((int)i) == num) detailSession = (int)i;
             return;
         }
-        // anywhere else: nothing (the sysop menu is f2, inside the BBS)
+        if (k == ' ') {
+            startLocal();
+            return;
+        }
+        axis::bbs::SysopSection sec = axis::bbs::SysopSection::Top;
+        bool                    soon = false;
+        if (k && axis::bbs::renegadeKey(k, sec, soon)) {
+            if (!soon) {
+                openShell(sec);
+                return;
+            }
+            wfcSoonUntil = millis() + 2500;  // "That one is coming soon." for a moment
+            if (!wfcSoonUntil) wfcSoonUntil = 1;
+            wfcStale = true;
+        }
         return;
     }
     bool top = y >= 92 && y < 144, bottom = y >= 156 && y < 208;

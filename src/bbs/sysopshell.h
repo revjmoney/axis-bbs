@@ -26,6 +26,10 @@ public:
     bool key(char c);          // false once the sysop has left the top layer
     void tapRow(int row);      // a tap on that screen row (0 = the top line)
     bool open() const { return !layers_.empty(); }
+    bool asking() const { return asking_; }  // a question is waiting for a typed answer and Enter
+    bool yesNo() const { return asking_ && yesNo_; }  // ... or for one key, Y or N
+    bool secret() const { return asking_ && secret_; }  // the answer is a password
+    const std::string& question() const { return question_; }
 
     struct Item {
         std::string label, value;
