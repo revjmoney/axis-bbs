@@ -172,3 +172,26 @@ TEST_CASE("a huge area's listing stops short of the link's frame limit instead o
     CHECK(v.size() < 400);
     CHECK(v.back().desc == std::string(40, 'd'));  // and the last one whole
 }
+
+TEST_CASE("file and area names can't climb out of the file areas") {
+    CHECK(safeFileName("ACID-96.ZIP"));
+    CHECK(safeFileName("ansi"));
+    for (const char* bad : {"", ".", "..", ".hidden", "../users.dat", "..\\users.dat", "a/b", "a\\b", "C:AUTOEXEC.BAT", "x\ny"})
+        CHECK_FALSE(safeFileName(bad));
+    CHECK_FALSE(safeFileName(std::string(65, 'a')));
+}
+
+TEST_CASE("the main refuses a follower's request with a path in an area or file name") {
+    Rig         r;
+    r.sd.areas[".."]["users.dat"] = "secret";
+    std::string out;
+    CHECK_FALSE(r.remote.read("..", "users.dat", out, 4096));
+    CHECK_FALSE(r.remote.read("ansi", "../../users.dat", out, 4096));
+    CHECK(r.remote.list("..").empty());
+    CHECK(r.remote.open("ansi", "..\\README.TXT") == nullptr);
+    CHECK(r.remote.create("ansi", "../evil.bin") == nullptr);
+    CHECK_FALSE(r.remote.remove("..", "users.dat"));
+    CHECK_FALSE(r.remote.rename("ansi", "README.TXT", "../README.TXT"));
+    CHECK(r.sd.areas["ansi"].count("README.TXT") == 1);
+    CHECK(r.sd.areas[".."].count("users.dat") == 1);
+}

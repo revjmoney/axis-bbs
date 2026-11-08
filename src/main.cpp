@@ -3118,7 +3118,7 @@ static void runCommand(const String& cmd, Print& out) {
         if (cmd.startsWith("@FDESC ")) ok = callerFiles().describe(area, name, third);
         else if (cmd.startsWith("@FREN ")) ok = !third.empty() && callerFiles().rename(area, name, third);
         else if (cmd.startsWith("@FDEL ")) ok = callerFiles().remove(area, name);
-        else if (storageHasSd() && !third.empty() && name.find('/') == std::string::npos) {  // a move: same card, another folder
+        else if (storageHasSd() && axis::bbs::safeFileName(area) && axis::bbs::safeFileName(name) && axis::bbs::safeFileName(third)) {  // a move: same card, another folder
             ok = ::rename(("/sd/files/" + area + "/" + name).c_str(), ("/sd/files/" + third + "/" + name).c_str()) == 0;
             if (ok) {  // carry its description over: scan the old FILES.BBS a line at a time (a big area's list costs the main too much RAM)
                 File   fb = SD.open(("/files/" + area + "/FILES.BBS").c_str());

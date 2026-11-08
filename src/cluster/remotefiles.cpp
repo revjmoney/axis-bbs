@@ -36,6 +36,10 @@ std::string FileServer::handle(const std::string& req) {
     if (op != 'S' && op != 'A') open_.reset();  // a download is over: an open file holds SD buffers
     auto f = splitN(req.size() > 1 ? req.substr(2) : std::string(), op == 'W' ? 2 : 8);
     auto arg = [&](size_t i) { return i < f.size() ? f[i] : std::string(); };
+    // the area and file names a follower sends must stay inside the file areas, whatever the store does
+    size_t names = op == 'L' ? 1 : op == 'N' ? 3 : (op == 'R' || op == 'S' || op == 'A' || op == 'C' || op == 'D' || op == 'X') ? 2 : 0;
+    for (size_t i = 0; i < names; i++)
+        if (!bbs::safeFileName(arg(i))) return no();
     switch (op) {
         case 'L': {  // list: name, size, description per line
             std::string out;

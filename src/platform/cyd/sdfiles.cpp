@@ -61,9 +61,7 @@ struct SdWrite : axis::bbs::WriteFile {
     }
 };
 
-bool safeName(const std::string& n) {  // one name inside the area, never a path out of it
-    return !n.empty() && n.find('/') == std::string::npos && n.find('\\') == std::string::npos && n != "." && n != "..";
-}
+bool safeName(const std::string& n) { return axis::bbs::safeFileName(n); }  // one name inside the area, never a path out of it
 }  // namespace
 
 std::vector<FileEntry> SdFileLibrary::list(const std::string& areaId) {

@@ -59,6 +59,13 @@ std::vector<FileEntry> mergeFilesBbs(const std::string& filesBbs,
     return out;
 }
 
+bool safeFileName(const std::string& n) {
+    if (n.empty() || n.size() > 64 || n[0] == '.') return false;
+    for (unsigned char c : n)
+        if (c < 0x20 || c == 0x7f || c == '/' || c == '\\' || c == ':') return false;
+    return true;
+}
+
 std::string fileSizeText(uint32_t bytes) {
     char b[16];
     if (bytes < 1024) std::snprintf(b, sizeof b, "%u", (unsigned)bytes);

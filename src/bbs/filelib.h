@@ -55,6 +55,11 @@ public:
 std::vector<FileEntry> mergeFilesBbs(const std::string& filesBbs,
                                      const std::vector<std::pair<std::string, uint32_t>>& folder);
 
+// One file or area name inside the file areas, never a path out of them: not empty, at most 64
+// characters, no '/', '\' or ':', no control characters, and not starting with '.' (so "." and
+// ".." are out). Every store checks names with this, and so does the main for a follower's request.
+bool safeFileName(const std::string& name);
+
 std::string fileSizeText(uint32_t bytes);  // "512", "48K", "21.0M"
 // A file list only has room for `width` columns. A description that says "movie" past that
 // cut starts with "ANSI movies:" so the pack is obvious. Anything else keeps its front.
