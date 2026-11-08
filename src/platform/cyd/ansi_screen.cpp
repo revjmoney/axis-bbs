@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include "bbs/ansiterm.h"
 #include "platform/cyd/screen.h"
 
 #include "../../../third_party/vga_font/font8x16.h"  // IBM VGA 8x16 by VileR, CC BY-SA 4.0
@@ -25,7 +26,7 @@ inline int cover(uint8_t top, uint8_t bottom, int x) { return kPairBits[(top >> 
 
 // cells(r, c) -> {ch, attr}: an AnsiScreen's cells, or art straight from flash
 template <typename Cells>
-void renderCells(LGFX_Sprite& dst, int rows, Cells cells);
+void renderGrid(LGFX_Sprite& dst, int rows, Cells cells);
 
 void build() {
     for (int a = 0; a < 256; a++) {
@@ -54,7 +55,7 @@ void AnsiScreen::fill(int row, int col, int len, uint8_t ch, uint8_t attr) {
 
 namespace {
 template <typename Cells>
-void renderCells(LGFX_Sprite& dst, int rows, Cells cells) {
+void renderGrid(LGFX_Sprite& dst, int rows, Cells cells) {
     if (!ready) build();
     uint8_t* fb = (uint8_t*)dst.getBuffer();
     if (!fb) return;
@@ -74,11 +75,35 @@ void renderCells(LGFX_Sprite& dst, int rows, Cells cells) {
 }  // namespace
 
 void AnsiScreen::render(LGFX_Sprite& dst, int rows) const {
-    renderCells(dst, rows, [this](int r, int c) { return cells[r][c]; });
+    renderGrid(dst, rows, [this](int r, int c) { return cells[r][c]; });
 }
 
 void AnsiScreen::renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int rows) {
-    renderCells(dst, rows, [art](int r, int c) { return AnsiCell{art[r][c][0], art[r][c][1]}; });
+    renderGrid(dst, rows, [art](int r, int c) { return AnsiCell{art[r][c][0], art[r][c][1]}; });
+}
+
+void AnsiScreen::renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t) {
+    if (!ready) build();
+    uint8_t* fb = (uint8_t*)dst.getBuffer();
+    if (!fb) return;
+    // each of a cell's 6 pixels is two neighbouring font columns: 4 font columns make 3 pixels, twice
+    static const uint8_t kMask[6] = {0xC0, 0x60, 0x30, 0x0C, 0x06, 0x03};
+    int cols = t.cols() < 53 ? t.cols() : 53, rows = t.rows() < 30 ? t.rows() : 30;
+    for (int r = 0; r < rows; r++)
+        for (int y = 0; y < 8; y++) {
+            uint8_t* out = fb + (r * 8 + y) * 160;
+            for (int c = 0; c < cols; c++, out += 3) {
+                const auto&    cell = t.cell(r, c);
+                const uint8_t* g = &vga_font8x16[cell.ch * 16 + y * 2];
+                const uint8_t* l = lut[cell.attr];
+                uint8_t        px[6];
+                for (int x = 0; x < 6; x++) px[x] = l[__builtin_popcount(g[0] & kMask[x]) + __builtin_popcount(g[1] & kMask[x])];
+                out[0] = (uint8_t)(px[0] << 4 | px[1]);
+                out[1] = (uint8_t)(px[2] << 4 | px[3]);
+                out[2] = (uint8_t)(px[4] << 4 | px[5]);
+            }
+            memset(out, 0, (size_t)(160 - cols * 3));  // the 2 pixels past 53 cells (black)
+        }
 }
 
 void BigText::clear(uint8_t attr) {

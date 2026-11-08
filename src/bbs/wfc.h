@@ -43,6 +43,11 @@ struct WfcHotspot {
 // Expands WFC art into `term`, recording where the |K? and |N? codes landed.
 std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, AnsiTerm& term);
 
+// A theme's WFC art made safe to draw or send: cut at kWfcArtCap and at a SAUCE/EOF mark, no escape left open at the end, bare LF
+// made CR LF.
+constexpr size_t kWfcArtCap = 12288;  // a theme's WFC.ANS past this is cut, as the board's theme loader does
+std::string      cleanWfcArt(std::string a);
+
 // The key tapped at (row, col), or 0 for none. A key hits on its cell or one cell either side; a node line hits anywhere on its
 // row (and sets *node to its number, else 0).
 char wfcKeyAt(const std::vector<WfcHotspot>& spots, int row, int col, int* node);

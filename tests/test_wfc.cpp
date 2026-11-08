@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "bbs/wfc.h"
 
+#include "platform/cyd/wfccyd_art.h"
+
 #include "doctest.h"
 
 using namespace axis::bbs;
@@ -101,4 +103,34 @@ TEST_CASE("long art is drawn in pieces with the same result") {
     auto     spots = drawWfc(art, s, term);
     CHECK(wfcKeyAt(spots, 4, 1, nullptr) == 'S');
     CHECK(term.cell(4, 4).ch == '1');
+}
+
+TEST_CASE("a control byte in the art is not a hotspot") {
+    WfcSnapshot s;
+    AnsiTerm    term(53, 30);
+    auto        spots = drawWfc(std::string("abc[|KU]"), s, term);
+    CHECK(spots.size() == 1);
+    CHECK(term.cell(0, 1).ch == ' ');
+    CHECK(wfcKeyAt(spots, 0, 7, nullptr) == 'U');
+}
+
+TEST_CASE("the built-in CYD WFC fills 53x30 without scrolling, every key tappable") {
+    WfcSnapshot s;
+    s.bbsName = "AXIS UNDERGROUND";
+    for (int i = 1; i <= 7; i++) s.nodes.push_back({i, i == 2 ? "Rev" : "", ""});
+    AnsiTerm term(53, 30);
+    auto     spots = drawWfc(kWfcCydAns, s, term);
+    std::string top, keys;
+    for (int c = 0; c < 53; c++) top += (char)term.cell(0, c).ch;
+    CHECK(top.find("AXIS UNDERGROUND") != std::string::npos);  // row 0 is still the title: nothing scrolled
+    for (const auto& h : spots)
+        if (h.node == 0) keys += h.key;
+    CHECK(keys == " SU#BFLEA!");
+    int n = 0;
+    for (const auto& h : spots) n += h.node > 0;
+    CHECK(n == 7);
+    int node = 0;
+    for (const auto& h : spots)
+        if (h.node == 2) CHECK(wfcKeyAt(spots, h.row, 40, &node) == 'N');
+    CHECK(node == 2);
 }

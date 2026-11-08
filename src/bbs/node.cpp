@@ -1062,7 +1062,6 @@ bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
 }
 
 namespace {
-const size_t kWfcArtCap = 12288;  // a theme's WFC.ANS past this is cut, as the board's theme loader does
 
 // the built-in screen: art/wfc80.ans as compiled into wfc80_art.h (CGA cells), back to ANSI text. A row that fills all 80 columns
 // wraps by itself; any other row ends in a CR LF.
@@ -1095,41 +1094,6 @@ std::string builtinWfcArt() {
     return out + "\x1b[0m";
 }
 
-// whatever a theme file holds, made safe to send: cut at the cap and at a SAUCE/EOF mark, no escape left open at the end (it would
-// swallow what comes next), and a bare LF made a CR LF
-std::string cleanWfcArt(std::string a) {
-    if (a.size() > kWfcArtCap) a.resize(kWfcArtCap);
-    size_t eof = a.find('\x1a');
-    if (eof != std::string::npos) a.resize(eof);
-    size_t esc = a.rfind('\x1b');
-    if (esc != std::string::npos) {
-        size_t i = esc + 1;
-        bool   open = true;
-        if (i < a.size() && a[i] == '[') {
-            for (i++; i < a.size(); i++) {
-                unsigned char ch = (unsigned char)a[i];
-                if (ch >= 0x40 && ch <= 0x7e) {
-                    open = false;
-                    break;
-                }
-                if (ch < 0x20 || ch > 0x3f) {  // not part of a sequence: the escape is already broken, not open
-                    open = false;
-                    break;
-                }
-            }
-        } else if (i < a.size()) {
-            open = false;  // ESC and one more byte
-        }
-        if (open) a.resize(esc);
-    }
-    std::string out;
-    out.reserve(a.size() + 64);
-    for (size_t i = 0; i < a.size(); i++) {
-        if (a[i] == '\n' && (i == 0 || a[i - 1] != '\r')) out += '\r';
-        out += a[i];
-    }
-    return out;
-}
 }  // namespace
 
 WfcSnapshot Node::wfcSnapshot() {

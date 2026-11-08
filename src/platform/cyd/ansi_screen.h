@@ -7,6 +7,10 @@
 
 #include "platform/cyd/board.h"
 
+namespace axis::bbs {
+class AnsiTerm;
+}
+
 struct AnsiCell {
     uint8_t ch, attr;  // CP437 character, CGA attribute (fg | bg << 4)
 };
@@ -26,6 +30,8 @@ public:
     void renderSharp(LGFX_Sprite& dst, int rows) const;
     // art straight from flash (rows x 80 x {ch, attr}): no copy in RAM
     static void renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int rows);
+    // a whole terminal in 6x8 cells (the 8x16 font squeezed 4:3 across, 2:1 down, blended): 53x30 fills 320x240
+    static void renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t);
 };
 
 // A 40-column grid of full-size 8x16 cells, for text that has to be easy to read (15 rows fill

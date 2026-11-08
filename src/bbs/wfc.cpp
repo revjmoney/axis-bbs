@@ -131,6 +131,7 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
         else if (c == '{' && art.compare(i, 2, "{{") == 0) depth++;
         else if (c == '|' && art.compare(i, 2, "|}") == 0) depth = depth > 0 ? depth - 1 : 0;
         else if (c == '|' && art.compare(i, 2, "|{") == 0 && art.compare(i, 4, "|{P}") != 0 && art.compare(i, 4, "|{O}") != 0) depth++;
+        if (idForMarker(c) >= 0) c = ' ';  // a stray control byte in the art must not read as a hotspot
         chunk += c;
         if (c == '@') {
             size_t j = i + 1;
@@ -151,6 +152,42 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
     }
     if (!chunk.empty()) expandArt(chunk, AcsUser{}, value, emit);
     return spots;
+}
+
+// whatever a theme file holds, made safe to send: cut at the cap and at a SAUCE/EOF mark, no escape left open at the end (it would
+// swallow what comes next), and a bare LF made a CR LF
+std::string cleanWfcArt(std::string a) {
+    if (a.size() > kWfcArtCap) a.resize(kWfcArtCap);
+    size_t eof = a.find('\x1a');
+    if (eof != std::string::npos) a.resize(eof);
+    size_t esc = a.rfind('\x1b');
+    if (esc != std::string::npos) {
+        size_t i = esc + 1;
+        bool   open = true;
+        if (i < a.size() && a[i] == '[') {
+            for (i++; i < a.size(); i++) {
+                unsigned char ch = (unsigned char)a[i];
+                if (ch >= 0x40 && ch <= 0x7e) {
+                    open = false;
+                    break;
+                }
+                if (ch < 0x20 || ch > 0x3f) {  // not part of a sequence: the escape is already broken, not open
+                    open = false;
+                    break;
+                }
+            }
+        } else if (i < a.size()) {
+            open = false;  // ESC and one more byte
+        }
+        if (open) a.resize(esc);
+    }
+    std::string out;
+    out.reserve(a.size() + 64);
+    for (size_t i = 0; i < a.size(); i++) {
+        if (a[i] == '\n' && (i == 0 || a[i - 1] != '\r')) out += '\r';
+        out += a[i];
+    }
+    return out;
 }
 
 char wfcKeyAt(const std::vector<WfcHotspot>& spots, int row, int col, int* node) {
