@@ -14,7 +14,6 @@ add_library(axiscore STATIC
     src/net/xmodem.cpp
     src/net/zmodem.cpp
     src/bbs/node.cpp
-    src/bbs/sysop_menu.cpp
     src/bbs/filelib.cpp
     src/bbs/filebrowser.cpp
     src/bbs/zipreader.cpp
@@ -125,7 +124,6 @@ add_executable(axis_tests
     tests/test_pathresolve.cpp
     tests/test_imagekey.cpp
     tests/test_telnetstream.cpp
-    tests/test_sysop_menu.cpp
     tests/test_files.cpp
     tests/test_zip.cpp
     tests/test_ansiterm.cpp
