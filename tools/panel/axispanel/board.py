@@ -4,7 +4,7 @@ import hashlib
 import time
 
 PANEL_PORT = 2326
-QUIET_S = 15  # no STAT this long: the board is gone
+QUIET_S = 15
 
 
 def sha(text: str) -> str:
@@ -30,7 +30,7 @@ class BoardLink:
         self.stat = {}
         self.last_seen = 0.0
         self.reader = self.writer = None
-        self._lines = asyncio.Queue()  # replies to our own lines (not EVT / STAT)
+        self._lines = asyncio.Queue()
         self._pump = None
         self._lock = asyncio.Lock()
 
@@ -47,11 +47,26 @@ class BoardLink:
         nonce = hello.split()[2]
         self.last_seen = time.monotonic()
         self._pump = asyncio.create_task(self._read())
-        salt = await self._ask('SALT ' + handle)
-        if salt == 'SALT -':
+        response = await self._ask('SALT ' + handle)
+        if response == 'SALT -':
             await self.close()
             return False
-        proof = sha(nonce + sha(salt[5:] + password))
+        parts = response.split()
+        if len(parts) < 2 or parts[0] != 'SALT':
+            await self.close()
+            raise LoginFailed('invalid salt response')
+        salt = parts[1]
+        scheme = parts[2] if len(parts) > 2 else 'SHA256'
+        if scheme == 'PBKDF2-SHA256-200000':
+            stored_hash = 'pbkdf2-sha256$200000$' + hashlib.pbkdf2_hmac(
+                'sha256', password.encode('latin-1'), salt.encode('latin-1'), 200000, dklen=32
+            ).hex()
+        elif scheme == 'SHA256':
+            stored_hash = sha(salt + password)
+        else:
+            await self.close()
+            raise LoginFailed('unsupported password hash scheme')
+        proof = sha(nonce + stored_hash)
         ok = await self._ask('AUTH %s %s' % (handle, proof)) == 'OK'
         if not ok:
             await self.close()
@@ -69,12 +84,10 @@ class BoardLink:
                 out.append(line)
 
     async def ask(self, line, timeout=5):
-        """A screen wall or console line (WALL / CON); returns the board's one-line answer."""
         async with self._lock:
             return await self._ask(line, timeout)
 
     async def send(self, line):
-        """A line with no answer (KEY)."""
         self.writer.write((line + '\n').encode('latin-1'))
         await self.writer.drain()
 
@@ -91,7 +104,7 @@ class BoardLink:
                     break
                 line = raw.decode('latin-1').rstrip('\r\n')
                 self.last_seen = time.monotonic()
-                if line.startswith('SCR '):  # a node's screen bytes (base64): the wall and the console
+                if line.startswith('SCR '):
                     _, node, data = (line.split(' ', 2) + [''])[:3]
                     await self.events.put(('scr', (int(node), data)))
                 elif line.startswith('EVT '):

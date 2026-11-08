@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Rev. J. Money
-# PC build: the portable BBS and door code plus its tests. The CYD firmware is built by PlatformIO.
 cmake_minimum_required(VERSION 3.20)
 project(axis_bbs C CXX)
 set(CMAKE_CXX_STANDARD 17)
@@ -155,6 +154,7 @@ add_executable(axis_tests
     tests/test_accounts.cpp
     tests/test_wifipicker.cpp
     tests/test_cluster.cpp
+    tests/test_cluster_protocol_bounds.cpp
     tests/test_remotefiles.cpp
     tests/test_pooledlib.cpp
     tests/test_relay.cpp
@@ -167,10 +167,10 @@ if(WIN32)
   target_link_libraries(axiscore PUBLIC ws2_32)
 endif()
 
+target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data")
+
 add_executable(doorhost tools/doorhost/main.cpp)
 target_link_libraries(doorhost PRIVATE axiscore)
-
-target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data")
 
 add_executable(xfertest tools/xfertest/main.cpp)
 target_link_libraries(xfertest PRIVATE axiscore)
@@ -178,4 +178,4 @@ if(WIN32)
   target_link_libraries(xfertest PRIVATE ws2_32)
 endif()
 
-target_compile_definitions(axiscore PUBLIC AXIS_SD_POOL=1)  # the PC build and tests cover the pool build too
+target_compile_definitions(axiscore PUBLIC AXIS_SD_POOL=1)

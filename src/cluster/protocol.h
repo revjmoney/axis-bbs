@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // The words AXIS boards say to each other. Discovery is one line per UDP datagram on port 2325
-// ("AXIS? <id>" asks who is main, "AXIS! <ip> <epoch>" answers). Between a follower and the main
-// there is one TCP link on port 2324 carrying frames: a 4-byte length (little endian), a type byte,
-// then the body, which is plain text fields separated by 0x1F (so handles and chat can hold spaces).
+// ("AXIS? <id>" asks who is main, "AXIS! <ip> <epoch>" answers). TCP on port 2324 carries
+// length-prefixed frames. This is a framing limit, not peer authentication or encryption.
 #pragma once
 #include <cstdint>
 #include <string>
@@ -12,35 +11,22 @@
 namespace axis::cluster {
 
 constexpr uint16_t kDiscoveryPort = 2325, kLinkPort = 2324;
-constexpr uint32_t kMaxFrame = 8 * 1024;  // file pieces are 2 KB; anything bigger is not ours
+constexpr uint32_t kMaxFrame = 8 * 1024;
+constexpr size_t   kMaxBuffered = 32 * 1024;
 constexpr char     kFieldSep = '\x1f';
 
 enum class Frame : uint8_t {
-    Hello = 1,      // follower -> main: id, node number it had before (0 = none), has a user replica, has an SD card, its IP
-    Welcome = 2,    // main -> follower: node number, epoch
-    Heartbeat = 3,  // main -> all: epoch, then per node: number, id, ip, handle, activity
-    Status = 4,     // follower -> main: handle, activity
-    Chat = 5,       // either way: node, handle, text, page (0/1)
-    Users = 6,      // main -> all: the whole user base (users.dat text)
-    UserChange = 7, // follower -> main: one user block in users.dat form
-    FileReq = 8,    // follower -> main: request id, operation, arguments
-    FileResp = 9,   // main -> follower: request id, ok, data
-    Yield = 10,     // main -> follower: you have the SD card, be main (this one has none)
-    Settings = 11,  // main -> follower: the BBS settings (axis.ini text), so the cluster is one BBS
-    Renumber = 12,  // main -> follower: your node numbers now (nobody was on a call: the main took node 1)
-    MainReq = 13,   // main -> follower: request id, request (the main asks a board for its SD card's files)
-    MainResp = 14,  // follower -> main: request id, data
-    CardInfo = 15,  // follower -> main: has an SD card (0/1), its free bytes
+    Hello = 1, Welcome = 2, Heartbeat = 3, Status = 4, Chat = 5, Users = 6, UserChange = 7,
+    FileReq = 8, FileResp = 9, Yield = 10, Settings = 11, Renumber = 12, MainReq = 13,
+    MainResp = 14, CardInfo = 15,
 };
 
 std::string              frame(Frame type, const std::vector<std::string>& fields);
 std::vector<std::string> fields(const std::string& body);
 
-// Pulls whole frames out of a byte stream; false when no complete frame is waiting, or (bad set)
-// the stream is not one of ours.
 class FrameReader {
 public:
-    void add(const std::string& bytes) { buf_ += bytes; }
+    void add(const std::string& bytes);
     bool next(Frame& type, std::string& body);
     bool bad() const { return bad_; }
 

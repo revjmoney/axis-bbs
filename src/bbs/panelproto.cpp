@@ -7,13 +7,15 @@
 #include "bbs/password.h"
 
 namespace axis::bbs {
-
 namespace {
 bool same(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); i++)
+    for (size_t i = 0; i < a.size(); ++i)
         if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
     return true;
+}
+const char* scheme(const std::string& hash) {
+    return hash.rfind("pbkdf2-sha256$200000$", 0) == 0 ? "PBKDF2-SHA256-200000" : "SHA256";
 }
 }  // namespace
 
@@ -39,12 +41,14 @@ std::string PanelSession::line(const std::string& raw) {
     if (closed_) return "";
     if (in.rfind("SALT ", 0) == 0) {
         std::string salt, hash, name;
-        return lookup(in.substr(5), salt, hash, name) ? "SALT " + salt + "\n" : "SALT -\n";
+        if (!lookup(in.substr(5), salt, hash, name)) return "SALT -\n";
+        return "SALT " + salt + " " + scheme(hash) + "\n";
     }
     if (in.rfind("AUTH ", 0) == 0) {
-        size_t      sp = in.find(' ', 5);
-        std::string handle = in.substr(5, sp == std::string::npos ? std::string::npos : sp - 5);
-        std::string got = sp == std::string::npos ? "" : in.substr(sp + 1), salt, hash, name;
+        const size_t sp = in.find(' ', 5);
+        const std::string handle = in.substr(5, sp == std::string::npos ? std::string::npos : sp - 5);
+        const std::string got = sp == std::string::npos ? "" : in.substr(sp + 1);
+        std::string salt, hash, name;
         if (lookup(handle, salt, hash, name) && got == sha256Hex(nonce_ + hash)) {
             authed_ = true;
             who_ = name;
@@ -67,5 +71,4 @@ std::string PanelSession::line(const std::string& raw) {
     if (!authed_) return "NO\n";
     return extra ? extra(in) : "?\n";
 }
-
 }  // namespace axis::bbs
