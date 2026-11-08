@@ -10,7 +10,7 @@ using namespace axis::bbs;
 namespace {
 std::string row(const AnsiTerm& t, int r) {
     std::string s;
-    for (int c = 0; c < AnsiTerm::kCols; c++) s += (char)t.cell(r, c).ch;
+    for (int c = 0; c < t.cols(); c++) s +=(char)t.cell(r, c).ch;
     while (!s.empty() && s.back() == ' ') s.pop_back();
     return s;
 }
@@ -42,7 +42,7 @@ TEST_CASE("an 80-column row wraps by itself, and the bottom line scrolls the scr
     CHECK(row(t, 1) == "b");
     AnsiTerm s;
     for (int i = 0; i < 30; i++) s.feed("line " + std::to_string(i) + "\r\n");
-    CHECK(row(s, AnsiTerm::kRows - 2) == "line 29");
+    CHECK(row(s, s.rows() - 2) == "line 29");
     CHECK(row(s, 0) == "line 6");
 }
 
@@ -54,4 +54,20 @@ TEST_CASE("backspace, erase to end of line, and saved cursor positions work") {
     CHECK(row(t, 0).empty());
     t.feed("\x1b[3;3H\x1b[s\x1b[10;10H\x1b[uQ");
     CHECK(t.cell(2, 2).ch == 'Q');
+}
+
+TEST_CASE("a 53 column terminal wraps at 53") {
+    AnsiTerm t(53, 30);
+    t.feed(std::string(54, 'x'));
+    CHECK(t.cell(1, 0).ch == 'x');
+    CHECK(t.row() == 1);
+    CHECK(t.cols() == 53);
+    CHECK(t.rows() == 30);
+}
+
+TEST_CASE("cursor moves clamp to the terminal's size") {
+    AnsiTerm t(53, 30);
+    t.feed("\x1b[40;99H");
+    CHECK(t.row() == 29);
+    CHECK(t.col() == 52);
 }

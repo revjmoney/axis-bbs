@@ -915,8 +915,8 @@ static void drawLocal() {
         scr.drawString((localKb.shown() + "_").c_str(), 10, 35);
         for (auto& k : localKb.keys()) button(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
     } else {
-        for (int r = 0; r < axis::bbs::AnsiTerm::kRows; r++)
-            for (int c = 0; c < axis::bbs::AnsiTerm::kCols; c++) {
+        for (int r = 0; r < localTerm->rows(); r++)
+            for (int c = 0; c < localTerm->cols(); c++) {
                 const auto& cell = localTerm->cell(r, c);
                 localScreen->cells[r][c] = {cell.ch, cell.attr};
             }
@@ -927,9 +927,9 @@ static void drawLocal() {
                 if (lastCol >= localPan + 40) localPan = 40;
                 else if (lastCol < localPan) localPan = 0;
             }
-            localScreen->renderZoom(scr, axis::bbs::AnsiTerm::kRows, localPan);  // 200 pixels, 40 columns
+            localScreen->renderZoom(scr, localTerm->rows(), localPan);  // 200 pixels, 40 columns
         } else {
-            localScreen->renderSharp(scr, axis::bbs::AnsiTerm::kRows);  // 200 pixels of the BBS, all 80 columns, crisp
+            localScreen->renderSharp(scr, localTerm->rows());  // 200 pixels of the BBS, all 80 columns, crisp
         }
         button(4, 206, 58, 30, "KEYS", false);
         button(66, 206, 58, 30, "ENTER", false);
@@ -2575,7 +2575,7 @@ static void handleTap(int x, int y) {
                     localKeys = false;
                 }
             } else if (y < 200) {
-                localNode->tapRow(y * axis::bbs::AnsiTerm::kRows / 200);
+                localNode->tapRow(y * localTerm->rows() / 200);
                 localFeed();
             } else if (y >= 206 && x < 64) {
                 localKeys = true;
@@ -2898,10 +2898,10 @@ static void runCommand(const String& cmd, Print& out) {
         if (!localTerm) {
             out.println("axis: no local console open");
         } else {
-            for (int r = 0; r < axis::bbs::AnsiTerm::kRows; r++) {
-                char row[axis::bbs::AnsiTerm::kCols + 1];
-                for (int c = 0; c < axis::bbs::AnsiTerm::kCols; c++) row[c] = (char)localTerm->cell(r, c).ch;
-                row[axis::bbs::AnsiTerm::kCols] = 0;
+            for (int r = 0; r < localTerm->rows(); r++) {
+                char row[axis::bbs::AnsiTerm::kMaxCols + 1];
+                for (int c = 0; c < localTerm->cols(); c++) row[c] = (char)localTerm->cell(r, c).ch;
+                row[localTerm->cols()] = 0;
                 out.printf("%02d|%s\n", r + 1, row);
             }
         }

@@ -368,8 +368,8 @@ void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the ha
         std::string drawn = expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); });
         std::unique_ptr<AnsiTerm> t(new AnsiTerm());
         t->feed(drawn);
-        for (int r = 0; r < AnsiTerm::kRows; r++)
-            for (int c = 0; c + 3 < AnsiTerm::kCols; c++)
+        for (int r = 0; r < t->rows(); r++)
+            for (int c = 0; c + 3 < t->cols(); c++)
                 if (t->cell(r, c).ch == '|' && t->cell(r, c + 1).ch == '{' && t->cell(r, c + 3).ch == '}') {
                     int which = t->cell(r, c + 2).ch == 'P' ? 0 : t->cell(r, c + 2).ch == 'O' ? 1 : -1;
                     if (which >= 0) loginAt_[which][0] = r + 1, loginAt_[which][1] = c + 1;
@@ -593,8 +593,8 @@ void Node::showMatrix() {
     if (art.find("|01%01") != std::string::npos) {  // O/2 pulldown marks: find each on the drawn screen, then blank it
         std::unique_ptr<AnsiTerm> t(new AnsiTerm());
         t->feed(art);
-        for (int r = 0; r < AnsiTerm::kRows; r++)
-            for (int c = 0; c + 2 < AnsiTerm::kCols; c++) {
+        for (int r = 0; r < t->rows(); r++)
+            for (int c = 0; c + 2 < t->cols(); c++) {
                 char k = (char)t->cell(r, c + 2).ch;
                 if (t->cell(r, c).ch == '|' && t->cell(r, c + 1).ch == '0' && k >= '1' && k <= '4') barAt_[k - '1'][0] = r + 1, barAt_[k - '1'][1] = c + 1;
             }

@@ -14,20 +14,20 @@ const uint8_t kCga[8] = {0, 4, 2, 6, 1, 5, 3, 7};  // ANSI colour number to CGA'
 
 void AnsiTerm::clear() {
     for (auto& r : cells_)
-        for (auto& c : r) c = Cell();
+        for (auto& c : r) c = Cell();  // the whole array, whatever the size
     dirty_ = true;
 }
 
 void AnsiTerm::newline() {
-    if (++y_ < kRows) return;
-    y_ = kRows - 1;  // scroll everything up a line
-    for (int r = 1; r < kRows; r++)
-        for (int c = 0; c < kCols; c++) cells_[r - 1][c] = cells_[r][c];
-    for (int c = 0; c < kCols; c++) cells_[kRows - 1][c] = Cell();
+    if (++y_ < rows_) return;
+    y_ = rows_ - 1;  // scroll everything up a line
+    for (int r = 1; r < rows_; r++)
+        for (int c = 0; c < cols_; c++) cells_[r - 1][c] = cells_[r][c];
+    for (int c = 0; c < cols_; c++) cells_[rows_ - 1][c] = Cell();
 }
 
 void AnsiTerm::put(uint8_t ch) {
-    if (x_ >= kCols) {  // the last column was written: wrap now
+    if (x_ >= cols_) {  // the last column was written: wrap now
         x_ = 0;
         newline();
     }
@@ -73,22 +73,22 @@ void AnsiTerm::csi(char f) {
                 clear();
                 x_ = y_ = 0;
             } else {  // from the cursor to the end of the screen
-                for (int c = x_; c < kCols; c++) cells_[y_][c] = Cell();
-                for (int r = y_ + 1; r < kRows; r++)
-                    for (int c = 0; c < kCols; c++) cells_[r][c] = Cell();
+                for (int c = x_; c < cols_; c++) cells_[y_][c] = Cell();
+                for (int r = y_ + 1; r < rows_; r++)
+                    for (int c = 0; c < cols_; c++) cells_[r][c] = Cell();
                 dirty_ = true;
             }
             break;
         case 'K':
-            for (int c = x_ < 0 ? 0 : x_; c < kCols; c++) cells_[y_][c] = Cell();
+            for (int c = x_ < 0 ? 0 : x_; c < cols_; c++) cells_[y_][c] = Cell();
             dirty_ = true;
             break;
         default: break;
     }
     if (x_ < 0) x_ = 0;
-    if (x_ > kCols - 1 && f != 'm') x_ = kCols - 1;
+    if (x_ > cols_ - 1 && f != 'm') x_ = cols_ - 1;
     if (y_ < 0) y_ = 0;
-    if (y_ > kRows - 1) y_ = kRows - 1;
+    if (y_ > rows_ - 1) y_ = rows_ - 1;
 }
 
 void AnsiTerm::feed(const std::string& bytes) {
