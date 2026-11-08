@@ -31,6 +31,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | File areas | planned | Default areas: RotatoCAM Pro, RotatoCAM Free, CNC Freeware, CNC Shareware/Trials, CNC Pro Demos, G-code and Toolpaths, 3D Models, Text Files, Freeware, Shareware/Free Trials, Abandonware, BBS Doors. |
 | File areas (old note) | planned | FILES.BBS-style lists, ZMODEM download; uploads in v1.1 |
 | WFC screen (CYD) | working | Original drippy ANSI AXIS logo (art/wfc.ans, editable in PabloDraw/Moebius, rebuilt with tools/art/ans2header.py) in 4x8 CP437 cells, live panel in full-size 8x16 text: dial, ip, wifi, storage, calls, uptime + free RAM, sysop + time, caller online |
+| WFC screens for all eight looks | working (2026-11-08, board 1) | `tools/art/make_wfc_packs.py` draws WFC.ANS (80x25) and WFCCYD.ANS (45x24) for axis, crt, haunted, sea, cathedral, skulls, underground and wasteland in each pack's palette; checks size, no scroll, codes and CYD tap areas; files go in `/sd/themes/<look>/` |
 | BBS config menu | planned | From the WFC (tap the CYD, sysop password or PIN) or a local sysop login; edits all settings, doors, areas, WiFi, SD tools |
 | Sysop console | planned | CYD screen: waiting-for-caller and live caller mirror (off during doors); telnet sysop screens |
 | SD card tools | in progress | FAT32 format works (bench command `@SDFORMAT FORMAT`, card re-check `@SDCHECK`); sysop menu entry comes with the sysop menu | Sysop screen: card info and Format SD card (FAT32, optional full erase), with password + typed confirmation |
