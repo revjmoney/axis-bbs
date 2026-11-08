@@ -205,7 +205,8 @@ private:
     // only steps down once that main proves the key (a replayed announcement alone changes nothing)
     Link                  probe_{-1, FrameReader()};
     bool                  probing_ = false, stepDown_ = false;
-    uint32_t              probeIp_ = 0, probeEpoch_ = 0, probeEnd_ = 0, lastProbeIp_ = 0;
+    uint32_t              probeIp_ = 0, probeEpoch_ = 0, probeEnd_ = 0, probeFailAt_ = 0;
+    bool                  probeTried_ = false, probedThisTick_ = false, probeFailOnce_ = false;  // probeEnd_: end of the last attempt, any address
     uint32_t              turnedAt_ = 0;  // the last "turned away" event
     bool                  turnedOnce_ = false;
     bool                  inTick_ = false, restart_ = false, keyPending_ = false;  // restart_: start() again at the top of the next tick

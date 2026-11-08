@@ -138,8 +138,8 @@ bool Cluster::take(Link& l, Frame& t, std::string& body) {
             continue;
         }
         // (a main's link that failed is reported when tick() drops it, at most once a minute)
-        if (l.probe) event("another main's announcement, but it didn't prove the cluster key: staying main");
-        else if (!asMainHere) event("the main didn't prove the cluster key: not joining it");
+        // (a failed probe is reported by serveProbe(), at most once a minute)
+        if (!l.probe && !asMainHere) event("the main didn't prove the cluster key: not joining it");
         l.dead = true;
     }
     return false;
@@ -368,10 +368,13 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
 }
 
 void Cluster::probeMain(uint32_t ip, uint32_t epoch, uint32_t now) {
-    if (probing_ || (ip == lastProbeIp_ && now - probeEnd_ < kProbeAgainMs)) return;  // one at a time, and not the same one again at once
-    lastProbeIp_ = ip;
-    probeEnd_ = now;
+    // one at a time, one per tick, and at most one per kProbeAgainMs whatever the address (a replayer must not
+    // be able to make this board sit in connect() for every datagram); measured from the end of the last attempt
+    if (probing_ || probedThisTick_ || (probeTried_ && now - probeEnd_ < kProbeAgainMs)) return;
+    probedThisTick_ = true;
+    probeTried_ = true;
     int link = net_.connect(ip);
+    probeEnd_ = now;  // (a failed connect counts as an attempt too)
     if (link < 0) return;
     probe_ = Link{link, FrameReader()};
     probe_.probe = true;
@@ -408,6 +411,11 @@ void Cluster::serveProbe(uint32_t now) {
         minEpoch_ = epoch;
         discover(now);
     } else if (n < 0 || probe_.in.bad() || probe_.dead || now - probe_.since > kAuthMs) {
+        if ((probe_.in.bad() || probe_.dead) && (!probeFailOnce_ || now - probeFailAt_ >= kTurnedAwayMs)) {  // at most once a minute
+            probeFailOnce_ = true;
+            probeFailAt_ = now;
+            event("another main's announcement, but it didn't prove the cluster key: staying main");
+        }
         closeProbe(now);  // nothing there, or no key: stay main
     }
 }
@@ -691,6 +699,7 @@ void Cluster::tick(uint32_t now) {
     }
     std::string d;
     uint32_t    from;
+    probedThisTick_ = false;
     while (net_.recvDatagram(d, from)) handleDatagram(d, from, now);
 
     if (role_ == Role::Main) {

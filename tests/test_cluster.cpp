@@ -26,6 +26,7 @@ struct FakeNet : Net {
     std::map<int, std::pair<std::shared_ptr<Wire>, bool>> wires;  // link -> wire, true if I dialed
     std::deque<int>                            incoming;
     int                                        next = 1;
+    std::vector<uint32_t>                      dialed;  // every connect() asked for, found or not
 
     void broadcast(const std::string& d) override;
     bool recvDatagram(std::string& d, uint32_t& from) override {
@@ -79,6 +80,7 @@ void FakeNet::broadcast(const std::string& d) {
         if (n != this && n->powered) n->datagrams.emplace_back(d, ip);
 }
 int FakeNet::connect(uint32_t to) {
+    dialed.push_back(to);
     for (FakeNet* n : lan->nets)
         if (n->ip == to && n->powered) {
             auto w = std::make_shared<Wire>();
@@ -801,6 +803,56 @@ TEST_CASE("a replayed, validly signed announcement from where no main answers ch
     CHECK(t.a.c->nodes().size() == 2);
     CHECK(t.b.c->role() == Role::Follower);
     CHECK(silent.incoming.size() <= 2);  // one check at a time, and not again at once after it failed
+}
+
+TEST_CASE("replayed winning announcements from many addresses cost at most one connect attempt per 10 s") {
+    TwoBoards t;
+    // three validly signed announcements with a higher epoch, from three boards on other LANs (same key)
+    std::vector<std::string> captured;
+    for (uint32_t ip : {103u, 104u, 105u}) {
+        FakeLan other;
+        Board   old(other, ip, ("board-old" + std::to_string(ip)).c_str());
+        FakeNet sniffer;
+        sniffer.lan = &other;
+        sniffer.ip = 200;
+        other.nets.push_back(&sniffer);
+        uint32_t then = 0;
+        old.c->start(then);
+        run({&old}, then, 4000);
+        old.c->start(then, 1);
+        run({&old}, then, 4000);
+        REQUIRE(old.c->epoch() > t.a.c->epoch());
+        std::string last;
+        for (auto& d : sniffer.datagrams)
+            if (d.first.rfind("AXIS! ", 0) == 0) last = d.first;
+        REQUIRE(!last.empty());
+        captured.push_back(last);
+        other.nets.clear();  // (the locals go away before the LAN does)
+    }
+    REQUIRE(captured.size() == 3);
+    t.a.net.dialed.clear();
+    // all three in one tick: nothing answers at any of them
+    for (auto& c : captured) t.a.net.datagrams.emplace_back(c, 103);
+    t.a.c->tick(t.now);
+    t.now += 50;
+    CHECK(t.a.net.dialed.size() == 1);
+    // and a steady stream across ticks for just under 10 s from the end of that attempt
+    for (int i = 0; i < 190; i++) {
+        for (auto& c : captured) t.a.net.datagrams.emplace_back(c, 103);
+        run({&t.a, &t.b}, t.now, 50);
+    }
+    CHECK(t.a.net.dialed.size() == 1);
+    CHECK(t.a.c->role() == Role::Main);
+    CHECK(t.a.c->nodes().size() == 2);
+    CHECK(t.b.c->role() == Role::Follower);
+    // once the 10 s are over, one more attempt is allowed, still only one
+    for (int i = 0; i < 20; i++) {
+        for (auto& c : captured) t.a.net.datagrams.emplace_back(c, 103);
+        run({&t.a, &t.b}, t.now, 50);
+    }
+    CHECK(t.a.net.dialed.size() == 2);
+    CHECK(t.a.c->role() == Role::Main);
+    CHECK(t.b.c->role() == Role::Follower);
 }
 
 TEST_CASE("a connection that never proves the cluster key is dropped after 5 s, and the event is said once a minute") {
