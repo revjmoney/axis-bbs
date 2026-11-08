@@ -1174,7 +1174,7 @@ void Node::openSysop(bool at, SysopSection s) {
         prompt();
         return;
     }
-    shell_.reset(new SysopShell(out_, sysopRun_, 80));
+    shell_.reset(new SysopShell(out_, sysopRun_, 80, local_));  // (telnet: no board-only items)
     state_ = State::Sysop;
     if (at) shell_->beginAt(s);
     else shell_->begin();

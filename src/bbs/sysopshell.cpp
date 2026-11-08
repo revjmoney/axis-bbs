@@ -54,7 +54,22 @@ bool inGroups(const std::string& k) {
 }
 }  // namespace
 
-SysopShell::SysopShell(std::string& out, Run run, int cols) : out_(out), run_(std::move(run)), cols_(cols) {}
+bool boardOnlyCommand(const std::string& cmd) {
+    static const char* const kMine[] = {"@CLUSTERKEY", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
+                                        "@BEEP",       "@STATION", "@LED",       "@SHOT",       "@TAP",     "@LKEY",    "@LSCREEN", "@WIFIPICK"};
+    std::string word = cmd.substr(0, cmd.find(' '));
+    for (char& c : word) c = (char)std::toupper((unsigned char)c);
+    for (const char* m : kMine)
+        if (word == m) return true;
+    return false;
+}
+
+std::string followerCommand(const std::string& cmd, const std::function<std::string(const std::string&)>& run) {
+    if (boardOnlyCommand(cmd)) return "axis: refused: that command runs only on the board where it is typed\n";
+    return run ? run(cmd) : std::string();
+}
+
+SysopShell::SysopShell(std::string& out, Run run, int cols, bool local) : out_(out), run_(std::move(run)), cols_(cols), local_(local) {}
 
 // the theme's header art (80 columns) online; one bright title line on the board's 40-column screen
 std::string SysopShell::header(const std::string& title) const {
@@ -105,6 +120,7 @@ void SysopShell::pop() {
 
 void SysopShell::refresh() {
     Layer& l = layers_.back();
+    haveSettings_ = false;  // a change may have just gone out: ask again, once, for this build
     if (l.build) {
         l.items.clear();
         l.build(l);
@@ -148,8 +164,16 @@ void SysopShell::begin() {
     });
 }
 
+const std::vector<std::string>& SysopShell::settingLines() {
+    if (!haveSettings_) {
+        settings_ = lines("@SETTINGS");
+        haveSettings_ = true;
+    }
+    return settings_;
+}
+
 std::string SysopShell::setting(const std::string& key) {
-    for (auto& line : lines("@SETTINGS")) {
+    for (auto& line : settingLines()) {
         size_t eq = line.find('=');
         if (eq != std::string::npos && line.compare(0, eq, key) == 0 && eq == key.size()) return line.substr(eq + 1);
     }
@@ -493,9 +517,10 @@ void SysopShell::settings(Layer& l) {
                            ask("New user password (Enter alone: none)", true, [this](const std::string& v) { did(run_("@NUP " + v)); });
                        }});
     l.items.push_back({"Clear the NUP", "anyone can apply", [this] { did(run_("@NUP")); }});
-    l.items.push_back({"Cluster key", "(never shown; the same on every board)", [this] {
-                           ask("Cluster key, 8+ (off: this board runs alone)", true, [this](const std::string& v) { did(run_("@CLUSTERKEY " + v)); });
-                       }});
+    if (local_)  // this board's own key: set at the board, never over telnet
+        l.items.push_back({"Cluster key", "(never shown; the same on every board)", [this] {
+                               ask("Cluster key, 8+ (off: this board runs alone)", true, [this](const std::string& v) { did(run_("@CLUSTERKEY " + v)); });
+                           }});
     l.items.push_back({"DOS prompt password", "(never shown)", [this] {
                            ask("New DOS prompt password", true, [this](const std::string& v) { did(run_("@DOSPASS " + v)); });
                        }});
@@ -512,7 +537,7 @@ void SysopShell::settings(Layer& l) {
 }
 
 void SysopShell::settingGroup(Layer& l, int g) {
-    for (auto& line : lines("@SETTINGS")) {
+    for (auto& line : settingLines()) {
         size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
@@ -610,7 +635,7 @@ void SysopShell::sections(Layer& l) {
         bool        on = true;
     };
     std::vector<DoorRow> doorRows;
-    for (auto& line : lines("@SETTINGS")) {
+    for (auto& line : settingLines()) {
         size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
@@ -651,6 +676,7 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"Update No-IP now", "", show("NO-IP", "@NOIPNOW")});
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
+    if (!local_) return;  // the rest is for the sysop at the board: never over telnet
     l.items.push_back({"Restart this board", "", [this] { confirm("Restart the board now?", [this] { did(run_("@RESTART")); }); }});
     // setup again on the board's screen; the settings stay as they are until the wizard saves (@RESETSETUP is the erase, serial only)
     l.items.push_back({"Rerun setup", "kept till saved", [this] { confirm("Run setup again? Settings stay until it saves", [this] { did(run_("@RERUNSETUP")); }); }});

@@ -17,10 +17,20 @@ namespace axis::bbs {
 // the sysop menu's sections: beginAt() goes straight into one (the Renegade hotkeys and the board's own screen)
 enum class SysopSection { Top, Settings, Users, Menus, MsgBases, FileAreas, System, Look };
 
+// An @ command that only means something on the board where it was typed (its cluster key, a restart,
+// setup, its SD card, its relays and screen). A follower runs these itself; the main never runs one
+// a follower sends it ("@CLUSTERKEY", "@RESTART force" ... ; any case).
+bool boardOnlyCommand(const std::string& cmd);
+// The main's answer to a follower's "C" request: a board-only command is refused, anything else is run.
+std::string followerCommand(const std::string& cmd, const std::function<std::string(const std::string&)>& run);
+
 class SysopShell {
 public:
     using Run = std::function<std::string(const std::string&)>;  // "@USERS" -> its output
-    SysopShell(std::string& out, Run run, int cols = 80);  // cols 40: the board's own screen in big letters
+    // cols 40: the board's own screen in big letters. local: the sysop is at the board (its touchscreen, the
+    // serial console, the PC panel's console); false over telnet, where restart, setup, format, the cluster
+    // key and the station's relays are not offered.
+    SysopShell(std::string& out, Run run, int cols = 80, bool local = false);
     void begin();
     void beginAt(SysopSection s);  // straight into a section; Esc from there leaves the shell
     bool key(char c);          // false once the sysop has left the top layer
@@ -54,6 +64,7 @@ private:
     void refresh();
     void enter(SysopSection s);
     std::string setting(const std::string& key);  // one axis.ini value ("" if unset)
+    const std::vector<std::string>& settingLines();  // @SETTINGS, asked once per layer build
     std::vector<std::string> lines(const std::string& cmd);
     // the layers
     void users(Layer& l);
@@ -83,6 +94,9 @@ private:
     std::function<void(const std::string&)> answer_;
     int                                    esc_ = 0;  // 1 after ESC, 2 after ESC [
     int                                    cols_ = 80;
+    bool                                   local_ = false;
+    std::vector<std::string>               settings_;  // @SETTINGS for the layer being built
+    bool                                   haveSettings_ = false;
     std::string                            header(const std::string& title) const;
     size_t page_() const { return cols_ >= 80 ? 14 : 7; }  // items a page: 14 online, 7 on the board's 12-line screen
 };

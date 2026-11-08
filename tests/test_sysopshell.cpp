@@ -24,11 +24,12 @@ struct Rig {
         {"@MENU", ""},
         {"@LOG", "12:00 boot\n12:01 call from 10.0.0.2\n"},
     };
-    SysopShell shell{out, [this](const std::string& c) {
-                         ran.push_back(c);
-                         auto it = replies.find(c);
-                         return it == replies.end() ? std::string("axis: ok\n") : it->second;
-                     }};
+    SysopShell::Run run = [this](const std::string& c) {
+        ran.push_back(c);
+        auto it = replies.find(c);
+        return it == replies.end() ? std::string("axis: ok\n") : it->second;
+    };
+    SysopShell shell{out, run, 80, true};  // local: the board's own screen, the serial console or the panel's console
     void type(const std::string& s) {
         for (char c : s) shell.key(c);
     }
@@ -201,7 +202,7 @@ TEST_CASE("on the board (40 columns, 7 a page) tapping under the list turns the 
                          auto it = r.replies.find(c);
                          return it == r.replies.end() ? std::string("axis: ok\n") : it->second;
                      },
-                     40};
+                     40, true};
     board.begin();
     board.key('1');  // Users
     board.key('3');  // Kid (after "Add a user" and Rev)
@@ -300,4 +301,66 @@ TEST_CASE("beginAt opens a section and Esc leaves the shell") {
     r.shell.key(0x1b);
     CHECK_FALSE(r.shell.key('x'));  // the lone ESC resolves on the next key
     CHECK_FALSE(r.shell.open());
+}
+
+TEST_CASE("over telnet the board-only items are not there: no restart, setup, format, cluster key or station") {
+    using axis::bbs::SysopSection;
+    Rig        r;
+    SysopShell remote{r.out, r.run, 80, false};
+    remote.beginAt(SysopSection::System);
+    std::string o = plain(r.out);
+    CHECK(o.find("Event log") != std::string::npos);
+    for (const char* s : {"Restart this board", "Rerun setup", "Format SD card", "Station"}) CHECK(o.find(s) == std::string::npos);
+    r.out.clear();
+    remote.beginAt(SysopSection::Settings);
+    o = plain(r.out);
+    CHECK(o.find("Sysop password") != std::string::npos);
+    CHECK(o.find("Cluster key") == std::string::npos);
+    r.out.clear();
+    r.shell.beginAt(SysopSection::System);  // the same layers on the board itself have them
+    o = plain(r.out);
+    for (const char* s : {"Restart this board", "Rerun setup", "Format SD card", "Station"}) CHECK(o.find(s) != std::string::npos);
+    r.out.clear();
+    r.shell.beginAt(SysopSection::Settings);
+    CHECK(plain(r.out).find("Cluster key") != std::string::npos);
+}
+
+TEST_CASE("a board's own commands are never run for another board") {
+    using axis::bbs::boardOnlyCommand;
+    for (const char* c : {"@CLUSTERKEY secret-key", "@CLUSTERKEY", "@RESTART", "@RESTART force", "@RERUNSETUP", "@RESETSETUP",
+                          "@SDFORMAT FORMAT", "@SDCHECK", "@HEADLESS on", "@RELAY 2 on", "@BEEP", "@STATION", "@SHOT", "@clusterkey x"})
+        CHECK(boardOnlyCommand(c));
+    for (const char* c : {"@SET bbs_name=AXIS", "@USERS", "@SETTINGS", "@KICK 3", "@NODES", "@CLUSTERKEYS", "@LOG"}) CHECK_FALSE(boardOnlyCommand(c));
+    int  ran = 0;
+    auto run = [&](const std::string&) {
+        ran++;
+        return std::string("axis: ok\n");
+    };
+    std::string r = axis::bbs::followerCommand("@CLUSTERKEY secret-key", run);  // a "C" request from a follower
+    CHECK(ran == 0);
+    CHECK(r.find("refused") != std::string::npos);
+    CHECK(axis::bbs::followerCommand("@RESTART", run).find("refused") != std::string::npos);
+    CHECK(ran == 0);
+    CHECK(axis::bbs::followerCommand("@SET location=Conway", run) == "axis: ok\n");
+    CHECK(ran == 1);
+}
+
+TEST_CASE("a layer asks for the settings once however many it shows") {
+    using axis::bbs::SysopSection;
+    Rig r;
+    r.replies["@SETTINGS"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
+    r.shell.beginAt(SysopSection::Settings);
+    int n = 0;
+    for (auto& c : r.ran) n += c == "@SETTINGS";
+    CHECK(n == 1);
+    r.ran.clear();
+    r.type("b");  // Files off: the layer is built again, and asks again (once)
+    n = 0;
+    for (auto& c : r.ran) n += c == "@SETTINGS";
+    CHECK(n == 1);
+    r.ran.clear();
+    r.shell.beginAt(SysopSection::Look);
+    n = 0;
+    for (auto& c : r.ran) n += c == "@SETTINGS";
+    CHECK(n == 1);
 }

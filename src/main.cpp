@@ -1048,7 +1048,7 @@ static void shellFeed() {  // what the shell wrote, onto its terminal; a questio
 }
 static void openShell(axis::bbs::SysopSection s) {
     shellTerm.reset(new (std::nothrow) axis::bbs::AnsiTerm(40, 15));
-    boardShell.reset(new (std::nothrow) axis::bbs::SysopShell(shellOut, sysopRun, 40));
+    boardShell.reset(new (std::nothrow) axis::bbs::SysopShell(shellOut, sysopRun, 40, true));  // (at the board: every item)
     if (!shellTerm || !boardShell) {
         closeShell();
         logEvent("sysop menu: the board is short on memory, try again in a moment");
@@ -2140,10 +2140,19 @@ static void newSetupPin() {
     setupPin = b;
 }
 
+// Callers on this board, not counting the panel's own sysop console (the sysop doing the restart or format).
+static int callersBesideSysop() {
+    int n = 0;
+    for (size_t i = 0; i < sessions.size(); i++)
+        if (sessionLine(i) && !(panelConNode && !panelConJoined && sessionNumber((int)i) == panelConNode)) n++;
+    return n;
+}
+
 // Erase and re-make the SD card: the touch menu's YES button and "@SDFORMAT FORMAT" (the sysop menu) share this.
-// False when it was refused because a caller is online; `result` says what happened either way.
-static bool sdFormatNow(String& result, bool& ok) {
-    if (callersOnline()) {
+// False when it was refused because a caller is online; `result` says what happened either way. force: the
+// serial console's "@SDFORMAT FORMAT force" goes ahead anyway.
+static bool sdFormatNow(String& result, bool& ok, bool force = false) {
+    if (!force && callersBesideSysop()) {
         logEvent("sysop: SD format refused, a caller is online");
         return false;
     }
@@ -2288,7 +2297,7 @@ static void startCluster() {
             }
             return std::string("1") + scriptFile(name);
         }
-        if (req.rfind("C\x1f", 0) == 0) return "1" + sysopRun(req.substr(2));      // an @ command from a follower
+        if (req.rfind("C\x1f", 0) == 0) return "1" + axis::bbs::followerCommand(req.substr(2), sysopRun);  // a follower's @ command (never a board-only one)
         if (req == "AN") {  // a follower asked the main to speak to the Axis Net
             axisProbeSoon = true;
             return std::string("1");
@@ -2553,9 +2562,10 @@ static void handleTap(int x, int y) {
 // the same command always does the same thing). Replies go to `out`.
 static void runCommand(const String& cmd, Print& out);
 
-// The in-BBS sysop menu's commands: run on the main (so a change is shared like @SET); a follower asks it.
+// The in-BBS sysop menu's commands: run on the main (so a change is shared like @SET); a follower asks it,
+// except for a board-only command (its cluster key, a restart, its card, its relays), which runs right here.
 static std::string sysopRun(const std::string& cmd) {
-    if (cluster && cluster->role() == axis::cluster::Role::Follower) {
+    if (cluster && cluster->role() == axis::cluster::Role::Follower && !axis::bbs::boardOnlyCommand(cmd)) {
         std::string reply;
         return cluster->request("C\x1f" + cmd, reply, 8000) && !reply.empty() ? reply.substr(1) : std::string("axis: the main didn't answer\n");
     }
@@ -3125,11 +3135,13 @@ static void runCommand(const String& cmd, Print& out) {
         SD.end();
         storageInit();
         screenDirty = true;
-    } else if (cmd == "@SDFORMAT FORMAT") {  // the sysop menu's Format SD card (it asks for FORMAT to be typed first)
+    } else if (cmd == "@SDFORMAT FORMAT" || (cmd == "@SDFORMAT FORMAT force" && &out == &Serial)) {
+        // the sysop menu's Format SD card (it asks for FORMAT to be typed first); "force", from the serial console only,
+        // formats with callers on
         String result;
         bool   ok = false;
-        if (!sdFormatNow(result, ok)) {
-            out.println("axis: sd format refused, a caller is online");
+        if (!sdFormatNow(result, ok, cmd.endsWith(" force"))) {
+            out.println("axis: sd format refused, a caller is online (serial: @SDFORMAT FORMAT force)");
         } else {
             out.printf("axis: sd format %s: %s\n", ok ? "ok" : "FAILED", result.c_str());
             screenDirty = true;
@@ -3202,10 +3214,9 @@ static void runCommand(const String& cmd, Print& out) {
             p.begin("clu", false);
             bool ok = key == "off" ? p.remove("key") : p.putString("key", key) > 0;
             p.end();
-            if (cluster) {  // start over with the new key: drop every link, find the others again
-                cluster->setKey(key == "off" ? "" : key.c_str());
-                cluster->start(millis(), cluster->nodeNumber());
-            }
+            // start over with the new key: drop every link, find the others again. Never here: the cluster does it at
+            // the top of its next tick (loop()), so no command can clear its links while tick() is looping over them.
+            if (cluster) cluster->restartSoon(key == "off" ? "" : key.c_str());
             logEvent(String("sysop: cluster key ") + (key == "off" ? "cleared" : "set") + (ok ? "" : " (SAVE FAILED)"));
             out.println(ok ? "axis: cluster key saved" : "axis: cluster key SAVE FAILED");
         }
@@ -3261,7 +3272,9 @@ static void runCommand(const String& cmd, Print& out) {
             if (cluster) cluster->shareSettings();  // every board takes the same sysop login
             logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
         }
-    } else if (cmd == "@RESTART") {  // restart this board (the sysop menu's System layer)
+    } else if (cmd == "@RESTART" && callersBesideSysop()) {
+        out.println("axis: restart refused, a caller is online (serial: @RESTART force)");
+    } else if (cmd == "@RESTART" || (cmd == "@RESTART force" && &out == &Serial)) {  // restart this board (the sysop menu's System layer)
         logEvent("sysop: restart");
         out.println("axis: restarting");
         delay(300);
@@ -3269,6 +3282,10 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
     } else if (&out == &Serial && serialFileCommand(cmd)) {  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py)
+    } else if (cmd == "@RERUNSETUP" && boardIsHeadless()) {  // the wizard is on a screen this board hasn't got
+        out.println("axis: setup refused: this board is headless (no screen to run setup on)");
+    } else if (cmd == "@RERUNSETUP" && callersBesideSysop()) {
+        out.println("axis: setup refused, a caller is online");
     } else if (cmd == "@RERUNSETUP") {  // the sysop menu's Rerun setup: the wizard again; nothing changes until it saves
         logEvent("sysop: setup again");
         newSetupPin();
