@@ -50,4 +50,5 @@ The same letters work at the keyboard on the WFC and, for sysops, after `//` onl
 - Leave the last column of the last row empty, or the screen scrolls.
 - Do not use `|CL`. The WFC refreshes in place (home, then overwrite), so a clear in the art would make every refresh flicker.
 - A refresh over long values must leave the same screen as a fresh draw, so keep fields to their `@XX####@` width.
+- Do not draw with the CP437 glyphs on the low control bytes (the faces, suits, arrows and so on). The WFC marks its hotspots with control bytes, so bytes 1 to 7, 11, 14 to 26 and 28 in the art are blanked to spaces before it is drawn. Bytes 8, 9, 10, 12, 13 and 27 are terminal controls anyway; 29, 30 and 31 are left as they are.
 - `tools/art/make_wfc_packs.py` draws all eight looks and checks these rules.

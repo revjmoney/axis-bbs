@@ -335,28 +335,52 @@ static std::string themeArtLocal(const std::string& name) {
     if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name);
     return s;
 }
-static std::string themeArt(const std::string& name) {
-    if (posterName(name)) {
-        if (!asFollower()) return themeArtLocal(name);
-        std::string all;
-        for (size_t off = 0; all.size() < kPosterCap;) {
-            std::string reply;
-            bool ok = cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off), reply, 3000);
-            if (!ok || reply.empty() || reply[0] != '1') break;
-            std::string chunk = reply.substr(1);
-            if (chunk.empty()) break;
-            all += chunk;
-            if (chunk.size() < kPosterChunk) break;
-            off += chunk.size();
+// The main's answer to "T name offset": one piece of a theme file, at most kPosterChunk bytes, so the reply stays under the
+// cluster's 8 KB frame (a bigger one drops the link). *opened: the file is there.
+static std::string themeArtPiece(const std::string& name, size_t off, bool* opened) {
+    *opened = false;
+    if (!storageHasSd() || name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return "";
+    size_t cap = posterName(name) ? kPosterCap : kThemeArtCap;
+    if (off >= cap) return "";
+    size_t want = cap - off < kPosterChunk ? cap - off : kPosterChunk;
+    // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme
+    const std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme;
+    std::string s = readThemeFile(folder.c_str(), name, want, off, opened);
+    if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name, want, off, opened);
+    return s;
+}
+// A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
+static std::string themeArtRemote(const std::string& name, bool* answered) {
+    size_t      cap = posterName(name) ? kPosterCap : kThemeArtCap;
+    std::string all;
+    *answered = false;
+    for (size_t off = 0; all.size() < cap;) {
+        std::string reply;
+        if (!cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off), reply, 3000) || reply.empty()) {
+            *answered = false;  // (a piece went missing: not a whole answer)
+            return all;
         }
-        return all;  // not cached: it is one login screen, then it can go
+        *answered = true;
+        if (reply[0] != '1') break;
+        std::string chunk = reply.substr(1);
+        if (chunk.empty()) break;
+        all += chunk;
+        if (chunk.size() < kPosterChunk) break;
+        off += chunk.size();
     }
+    if (all.size() > cap) all.resize(cap);
+    return all;
+}
+static std::string themeArt(const std::string& name) {
     if (!asFollower()) return themeArtLocal(name);
-    auto it = artCache.find(name);
-    if (it != artCache.end()) return it->second;
-    std::string reply;
-    std::string art = cluster->request(std::string("T\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1' ? reply.substr(1) : "";
-    artCache[name] = art;
+    bool poster = posterName(name);
+    if (!poster) {
+        auto it = artCache.find(name);
+        if (it != artCache.end()) return it->second;
+    }
+    bool        answered = false;
+    std::string art = themeArtRemote(name, &answered);
+    if (!poster && answered) artCache[name] = art;  // (the poster is one login screen, then it can go; a failed ask is asked again)
     return art;
 }
 // ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): this board's own /menus first (its SD card or flash),
@@ -954,9 +978,11 @@ static bool drawWfc() {
     }
     std::string folder = axis::bbs::wfcFolder(cfg);
     if (wfcArt.empty() || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
-        wfcArt = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
-        if (wfcArt.empty()) wfcArt = kWfcCydAns;  // the theme has none: the built-in art/wfccyd.ans
-        wfcArtFolder = folder;
+        std::string art = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
+        wfcArt = art.empty() ? std::string(kWfcCydAns) : art;  // the theme has none: the built-in art/wfccyd.ans
+        // a follower's empty answer may be a request that failed: the built-in for now, and ask again at the next redraw
+        // (a theme that really has none is answered from the art cache then, without asking the main)
+        if (!art.empty() || !asFollower()) wfcArtFolder = folder;
     }
     wfcSpots = axis::bbs::drawWfc(wfcArt, s, *t);
     if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
@@ -2267,25 +2293,21 @@ static void startCluster() {
             for (auto& l : oneLiners) out += l + "\n";
             return out;
         }
-        if (req.rfind("T\x1f", 0) == 0) {  // a theme screen. The poster is pulled in pieces so the frame stays under 8 KB.
+        if (req.rfind("T\x1f", 0) == 0) {  // a theme screen, "T name offset": every file in pieces, so the frame stays under 8 KB
             std::string rest = req.substr(2);
             size_t      sep = rest.find('\x1f');
             std::string name = sep == std::string::npos ? rest : rest.substr(0, sep);
-            if (posterName(name)) {
-                size_t off = 0;
-                if (sep != std::string::npos)
-                    for (char ch : rest.substr(sep + 1)) {
-                        if (ch < '0' || ch > '9') break;
-                        off = off * 10 + (size_t)(ch - '0');
-                    }
-                if (off > kPosterCap) return std::string("0");
-                bool        opened = false;
-                std::string chunk = readThemeFile(cfg.theme.c_str(), name, kPosterChunk, off, &opened);
-                if (!opened) chunk = readThemeFile(axis::bbs::theme::legacyThemeFolder(cfg.theme), name, kPosterChunk, off, &opened);
-                if (!opened) return std::string("0");
-                return "1" + chunk;
-            }
-            return "1" + themeArtLocal(name);
+            size_t      off = 0;
+            if (sep != std::string::npos)
+                for (char ch : rest.substr(sep + 1)) {
+                    if (ch < '0' || ch > '9' || off > kPosterCap) break;
+                    off = off * 10 + (size_t)(ch - '0');
+                }
+            if (off > (posterName(name) ? kPosterCap : kThemeArtCap)) return std::string("0");
+            bool        opened = false;
+            std::string piece = themeArtPiece(name, off, &opened);
+            if (!opened && posterName(name)) return std::string("0");
+            return "1" + piece;
         }
         if (req.rfind("U\x1f", 0) == 0) return "1" + menuFileLocal(req.substr(2));  // a menu file or its art
         if (req.rfind("S\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
@@ -3312,7 +3334,7 @@ static void serialWfcPump() {
     if (serialWfc->state() == axis::bbs::Node::State::Done || serialWfc->wantsHangup()) serialWfcClose();
 }
 
-// "WFC" (any case) opens it. An "@" as the first character of a line, or 10 minutes without input, leaves it.
+// "WFC" (any case) opens it. An "@" as the first character of a line on the WFC screen, or 10 minutes without input, leaves it.
 static void handleSerial() {
     static String   cmd;
     static bool     lineStart = true;
@@ -3321,7 +3343,9 @@ static void handleSerial() {
         char c = Serial.read();
         if (serialWfc) {
             lastIn = millis();
-            if (c == '@' && lineStart) {  // a tool or script talking @ commands: hand the line back
+            // a tool or script talking @ commands: hand the line back. Only on the WFC screen itself: in the sysop menu an
+            // @ is part of an answer (a password, FORMAT ...)
+            if (c == '@' && lineStart && serialWfc->state() == axis::bbs::Node::State::Wfc) {
                 serialWfcClose();
                 cmd = "@";
                 continue;
