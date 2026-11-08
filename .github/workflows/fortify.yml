@@ -43,7 +43,7 @@ jobs:
     steps:
       - name: Fortify not set up
         if: env.HAVE_FOD != 'true'
-        run: echo "::notice::Fortify scan skipped: no FOD_USER secret in this repository."
+        run: 'echo "::notice::Fortify scan skipped, no FOD_USER secret in this repository."'
       # Check out source code
       - name: Check Out Source Code
         if: env.HAVE_FOD == 'true'
