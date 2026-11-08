@@ -389,7 +389,7 @@ TEST_CASE("file areas are a classic list: title bar, columns, and the highlight'
     FileBrowser b(cfg.areas, lib, out);
     b.begin();
     std::string p = plain(out);
-    CHECK(p.find("A R E A S") != std::string::npos);
+    CHECK(p.find("FILE AREAS") != std::string::npos);
     CHECK(p.find("Files") != std::string::npos);
     CHECK(out.find("\x1b[21;1H") != std::string::npos);
     out.clear();

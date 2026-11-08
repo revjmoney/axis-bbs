@@ -157,7 +157,7 @@ TEST_CASE("login sequence: user stats and who's online are the existing screens"
     r.fs["LOGIN.SEQ"] = "step=USERSTATS|0|0|0|\nstep=WHOISONLINE|0|0|0|\nstep=DISPLAYFILE|0|0|0|AFTER\n";
     r.fs["AFTER.ANS"] = "AFTER ART";
     std::string out = loginAll(r);
-    CHECK(out.find("free RAM") != std::string::npos);
+    CHECK(out.find("KB free") != std::string::npos);
     CHECK(out.find("WHO'S ONLINE") != std::string::npos);
     CHECK(out.find("AFTER ART") != std::string::npos);
     CHECK(out.find("MAIN ->") != std::string::npos);
