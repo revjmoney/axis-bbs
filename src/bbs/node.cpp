@@ -218,6 +218,7 @@ void Node::beginLocal(uint32_t nowMs) {
     theme::use(theme::lookFrom(cfg_.theme));
     handle_ = cfg_.sysopHandle.empty() ? "Sysop" : cfg_.sysopHandle;
     sysop_ = true;
+    local_ = true;
     loggedIn();
 }
 
@@ -227,6 +228,7 @@ void Node::beginLocalQuiet(uint32_t nowMs) {  // (the bulletin, oneliners and me
     theme::use(theme::lookFrom(cfg_.theme));
     handle_ = cfg_.sysopHandle.empty() ? "Sysop" : cfg_.sysopHandle;
     sysop_ = true;
+    local_ = true;
     state_ = State::Menu;
 }
 
@@ -1041,7 +1043,87 @@ void Node::input(const uint8_t* p, size_t n, uint32_t nowMs) {
     for (size_t i = 0; i < n && state_ != State::Done; i++) key((char)p[i]);
 }
 
+bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
+    comingSoon = false;
+    char k = key >= 'A' && key <= 'Z' ? (char)(key | 0x20) : key;
+    switch (k) {
+        case 's': section = SysopSection::Settings; return true;
+        case 'u': section = SysopSection::Users; return true;
+        case '#': section = SysopSection::Menus; return true;
+        case 'b': section = SysopSection::MsgBases; return true;
+        case 'f': section = SysopSection::FileAreas; return true;
+        case 'l': section = SysopSection::Look; return true;
+        case 'e':
+        case 'a':
+        case '!': comingSoon = true; return true;
+    }
+    return false;
+}
+
+void Node::openSysop(bool at, SysopSection s) {
+    if (!sysopRun_) {
+        prompt();
+        return;
+    }
+    shell_.reset(new SysopShell(out_, sysopRun_, 80));
+    state_ = State::Sysop;
+    if (at) shell_->beginAt(s);
+    else shell_->begin();
+}
+
+// A sysop's // at a menu prompt: // then Enter opens the top layer, //U (or S # B F L) a section.
+// Anyone else, and a remote sysop with telnet access off, never gets here. A lone / goes on to the menu.
+bool Node::slashKey(char c) {
+    if (slash_.empty()) {
+        if (c != '/') return false;
+        slash_ = "/";
+        out_ += '/';
+        return true;
+    }
+    if (c == '\n' || c == 0) return true;
+    if (c == 8 || c == 127) {
+        slash_.pop_back();
+        out_ += "\b \b";
+        return true;
+    }
+    if (slash_.size() == 1 && c != '/') {  // not //: the first / was a menu key after all
+        slash_.clear();
+        out_ += "\b \b";
+        key('/');
+        return false;
+    }
+    SysopSection s = SysopSection::Top;
+    bool         soon = false;
+    if (c == '\r') {
+        std::string typed = slash_;
+        slash_.clear();
+        if (typed.size() == 2) openSysop(false, s);
+        else if (renegadeKey(typed[2], s, soon) && !soon) openSysop(true, s);
+        else {
+            out_ += std::string("\r\n   ") + AMBER + (soon ? "That one is coming soon." : "Not on this menu.") + theme::TEXT;
+            prompt();
+        }
+        return true;
+    }
+    if (slash_.size() == 1 || (slash_.size() == 2 && renegadeKey(c, s, soon))) {
+        slash_ += c;
+        out_ += c;
+        return true;
+    }
+    slash_.clear();  // anything else cancels
+    out_ += "\r\n";
+    prompt();
+    return true;
+}
+
 void Node::key(char c) {
+    if (state_ == State::Sysop) {
+        if (!shell_ || !shell_->key(c)) {
+            shell_.reset();
+            showMainMenu();
+        }
+        return;
+    }
     if (state_ == State::Script) {
         scriptKey(c);
         return;
@@ -1452,6 +1534,7 @@ void Node::key(char c) {
         return;
     }
     if (state_ != State::Menu) return;
+    if (sysop_ && (local_ || cfg_.sysopTelnet) && slashKey(c)) return;
     bool fromMenus = false;
     if (menu_ && !builtin_) {
         MenuAction a = menu_->key(c, lastInput_);
@@ -2623,6 +2706,7 @@ std::string Node::activityText() const {
         case State::Bulletin: return "bulletin";
         case State::Voting: return "voting booth";
         case State::UserEdit: return "user editor";
+        case State::Sysop: return "sysop menu";
         case State::Script: return "script";
         case State::Split: return "split-screen chat";
         case State::Done: return "leaving";

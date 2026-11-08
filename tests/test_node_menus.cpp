@@ -8,6 +8,7 @@
 
 #include "doctest.h"
 #include "bbs/node.h"
+#include "bbs/password.h"
 
 using namespace axis::bbs;
 
@@ -83,4 +84,88 @@ TEST_CASE("a GOTO to another menu file shows that menu, and Q style GOTO:MAIN co
     r.login();
     CHECK(r.type("m").find("MSG ->") != std::string::npos);
     CHECK(r.type("q").find("MAIN ->") != std::string::npos);
+}
+
+namespace {
+struct SysRig {
+    UserStore users;
+    BbsConfig c;
+    std::unique_ptr<Node> n;
+    explicit SysRig(bool telnet = true, bool local = false) {
+        c.sysopHandle = "Rev";
+        c.sysopSalt = makeSalt([] { return 0x5A5A5A5Au; });
+        c.sysopHash = hashPassword(c.sysopSalt, "pw");
+        c.sysopTelnet = telnet;
+        n.reset(new Node(1, info, c));
+        n->setAccounts(&users, [] {}, [] { return 0x5A5A5A5Au; }, [] { return 1800000000u; });
+        n->setSysopRun([](const std::string&) { return std::string(); });
+        n->begin(0);
+        if (local) n->beginLocal(0);
+        else {
+            type("Rev\rpw\r");
+            if (n->state() == Node::State::SeqPause) type(" ");
+        }
+    }
+    std::string type(const std::string& s) {
+        n->input((const uint8_t*)s.data(), s.size(), 1000);
+        return plain(n->takeOutput());
+    }
+};
+}  // namespace
+
+TEST_CASE("a sysop's //U opens the user section") {
+    SysRig r;
+    CHECK(r.n->isSysop());
+    std::string out = r.type("//U\r");
+    CHECK(out.find("USERS") != std::string::npos);
+    CHECK(r.n->state() == Node::State::Sysop);
+}
+
+TEST_CASE("// is nothing special for a caller") {
+    Rig r;
+    r.login();
+    std::string out = r.type("//\r");
+    CHECK(out.find("USERS") == std::string::npos);
+    CHECK(out.find("WFC") == std::string::npos);
+    CHECK(r.n.state() == Node::State::Menu);
+    out = r.type("//U\r");
+    CHECK(out.find("USERS") == std::string::npos);
+    CHECK(r.n.state() == Node::State::Menu);
+}
+
+TEST_CASE("telnet sysop access off") {
+    SysRig off(false);
+    CHECK(off.n->isSysop());
+    std::string out = off.type("//U\r");
+    CHECK(out.find("USERS") == std::string::npos);
+    CHECK(off.n->state() == Node::State::Menu);
+    SysRig loc(false, true);
+    out = loc.type("//U\r");
+    CHECK(out.find("USERS") != std::string::npos);
+    CHECK(loc.n->state() == Node::State::Sysop);
+}
+
+TEST_CASE("E A and ! are coming soon") {
+    SysRig r;
+    CHECK(r.type("//E\r").find("coming soon") != std::string::npos);
+    CHECK(r.n->state() == Node::State::Menu);
+    CHECK(r.type("//!\r").find("coming soon") != std::string::npos);
+}
+
+TEST_CASE("a lone slash still reaches the menu for a sysop") {
+    SysRig r;
+    r.type("/");
+    r.type("l");
+    CHECK(r.n->state() != Node::State::Sysop);
+}
+
+TEST_CASE("renegadeKey maps the section keys") {
+    SysopSection s = SysopSection::Top;
+    bool         soon = true;
+    CHECK(renegadeKey('b', s, soon));
+    CHECK(s == SysopSection::MsgBases);
+    CHECK_FALSE(soon);
+    CHECK(renegadeKey('!', s, soon));
+    CHECK(soon);
+    CHECK_FALSE(renegadeKey('z', s, soon));
 }

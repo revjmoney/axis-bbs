@@ -12,6 +12,7 @@
 
 #include "bbs/config.h"
 #include "bbs/script.h"
+#include "bbs/sysopshell.h"
 #include "bbs/email.h"
 #include "bbs/filebrowser.h"
 #include "bbs/filelib.h"
@@ -37,12 +38,15 @@ struct SysInfo {
 
 class AxisNetMenu;
 
+// Renegade sysop keys: S U # B F L open a section; E A ! are coming soon
+bool renegadeKey(char key, SysopSection& section, bool& comingSoon);
+
 class Node {
 public:
     ~Node();
     Node(Node&&);
     Node& operator=(Node&&);
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Sysop, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -59,7 +63,7 @@ public:
     bool isSysop() const { return sysop_; }
     // Kept so a caller can still hand in an @ runner. The telnet sysop shell is gone.
     // * opens the user editor. The touch sysop menu is the panel, not this session.
-    void setSysopRun(std::function<std::string(const std::string&)>) {}
+    void setSysopRun(std::function<std::string(const std::string&)> run) { sysopRun_ = std::move(run); }
     void tapRow(int) {}
     // /scripts/name.axs. An empty name lists the folder. False when that file is not on the card.
     void setScripts(std::function<std::string(const std::string&)> load, std::function<std::vector<std::string>()> list) {
@@ -269,6 +273,12 @@ private:
     std::function<std::string(const std::string&)> scriptLoad_;
     std::function<std::vector<std::string>()>      scriptList_;
     std::unique_ptr<ScriptProg>                    script_;
+    std::unique_ptr<SysopShell>                    shell_;
+    std::function<std::string(const std::string&)> sysopRun_;
+    std::string                                    slash_;  // a sysop's // keys so far
+    bool                                           local_ = false;
+    bool                                           slashKey(char c);
+    void                                           openSysop(bool at, SysopSection s);
     ScriptBack                                     scriptBack_ = ScriptBack::Menu;
     uint32_t                  holdUntil_ = 0;  // after a wrong password, typing is ignored until then (2 s, then 4 s)
     bool                      failedLogin_ = false;
