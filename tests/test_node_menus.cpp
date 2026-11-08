@@ -303,18 +303,18 @@ TEST_CASE("Q on the wfc leaves like a logoff") {
     CHECK(r.n->wantsHangup());
 }
 
-TEST_CASE("hanging up on the wfc frees the node") {
-    SysRig r;
+TEST_CASE("the wfc over telnet idles out like any screen; at the board it stays up") {
+    SysRig r;  // a telnet sysop
     r.type("//\r");
-    CHECK(r.n->state() == Node::State::Wfc);
-    r.n->carrierLost();
+    REQUIRE(r.n->state() == Node::State::Wfc);
+    uint32_t late = 1000 + (uint32_t)(r.c.idleMinutes + 1) * 60000u;
+    r.n->poll(late);
     CHECK(r.n->state() == Node::State::Done);
-    CHECK(r.n->wantsHangup());
-    SysRig s;  // and from inside a section opened from the wfc
-    s.type("//\r");
-    s.type("u");
-    s.n->carrierLost();
-    CHECK(s.n->wantsHangup());
+    SysRig s(true, true);  // the sysop at the board (the touchscreen, serial or the panel's console)
+    s.n->openWfc(1000);
+    REQUIRE(s.n->state() == Node::State::Wfc);
+    s.n->poll(late);
+    CHECK(s.n->state() == Node::State::Wfc);
 }
 
 TEST_CASE("the wfc redraws every 5 s only when the snapshot changed") {
@@ -341,8 +341,8 @@ TEST_CASE("the wfc redraws every 5 s only when the snapshot changed") {
     CHECK(again.find("[H") != std::string::npos);
     r.n->poll(18000);
     CHECK(r.n->takeOutput().empty());
-    r.n->poll(1000 + 60u * 60000u);  // an hour with no key: the wfc does not time out
-    CHECK(r.n->state() == Node::State::Wfc);
+    r.n->poll(1000 + 60u * 60000u);  // an hour with no key: over telnet the wfc idles out like any screen
+    CHECK(r.n->state() == Node::State::Done);
 }
 
 TEST_CASE("a snapshot compares by value") {
@@ -352,5 +352,16 @@ TEST_CASE("a snapshot compares by value") {
     CHECK_FALSE(a == b);
     a = b;
     b.events.push_back("e");
+    CHECK_FALSE(a == b);
+}
+
+TEST_CASE("an idle wfc is the same screen until the minute turns: uptime by the minute, free RAM in 8 KB steps") {
+    WfcSnapshot a = snap3(), b = snap3();
+    a.uptimeS = 600, b.uptimeS = 655;  // the same minute
+    a.ramFreeKb = 80, b.ramFreeKb = 86;  // the same 8 KB step
+    CHECK(a == b);
+    b.uptimeS = 660;
+    CHECK_FALSE(a == b);
+    b.uptimeS = 600, b.ramFreeKb = 88;
     CHECK_FALSE(a == b);
 }

@@ -1128,12 +1128,6 @@ void Node::openWfc(uint32_t nowMs) {
     wfcDraw(wfcSnapshot(), true);
 }
 
-void Node::carrierLost() {
-    shell_.reset();
-    wfcReturn_ = false;
-    state_ = State::Done;
-}
-
 void Node::wfcKey(char c) {
     if (wfcEsc_) {  // an arrow key or other escape sequence: nothing here
         if (wfcEsc_ == 1) wfcEsc_ = (c == '[' || c == 'O') ? 2 : 0;
@@ -2888,7 +2882,9 @@ void Node::poll(uint32_t nowMs) {
         WfcSnapshot s = wfcSnapshot();
         if (!(s == wfcLast_)) wfcDraw(s, false);
     }
-    if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && state_ != State::Wfc && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
+    // the WFC at the board (touchscreen, serial, the panel's console) waits for callers for ever; over telnet it idles out
+    bool wfcHere = state_ == State::Wfc && local_;
+    if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && !wfcHere && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";
         out_ += AMBER;
         out_ += "Logged off: idle too long.";

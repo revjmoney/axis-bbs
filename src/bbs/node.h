@@ -70,7 +70,6 @@ public:
     // E A ! are coming soon, Space goes to the main menu as this sysop, Q leaves (State::Done).
     void setWfcSnapshot(std::function<WfcSnapshot()> snap) { wfcSnap_ = std::move(snap); }
     void openWfc(uint32_t nowMs);
-    void carrierLost();  // the line dropped: the node is done, wherever it was
     void tapRow(int) {}
     // /scripts/name.axs. An empty name lists the folder. False when that file is not on the card.
     void setScripts(std::function<std::string(const std::string&)> load, std::function<std::vector<std::string>()> list) {
