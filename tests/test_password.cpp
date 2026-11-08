@@ -23,6 +23,7 @@ TEST_CASE("check accepts the right password and rejects others") {
     CHECK_FALSE(checkPassword(salt, hash, "tool path 43"));
     CHECK_FALSE(checkPassword(salt, hash, ""));
     CHECK(hash.find("tool") == std::string::npos);
+    CHECK(hash.rfind("pbkdf2-sha256$200000$", 0) == 0);
 }
 
 TEST_CASE("salt is 32 hex chars and differs per call") {
@@ -30,4 +31,14 @@ TEST_CASE("salt is 32 hex chars and differs per call") {
     CHECK(a.size() == 32);
     CHECK(a.find_first_not_of("0123456789abcdef") == std::string::npos);
     CHECK(a != b);
+}
+
+TEST_CASE("pbkdf2 hashes are deterministic and upgrade legacy accounts") {
+    const std::string salt = "0123456789abcdef";
+    const std::string pw = "correct horse battery staple";
+    const std::string hash = hashPassword(salt, pw);
+    CHECK(hash.rfind("pbkdf2-sha256$200000$", 0) == 0);
+    CHECK(checkPassword(salt, hash, pw));
+    CHECK_FALSE(checkPassword(salt, hash, "correct horse battery stable"));
+    CHECK(checkPassword(salt, sha256Hex(salt + pw), pw));
 }
