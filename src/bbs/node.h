@@ -24,6 +24,7 @@
 #include "bbs/version.h"
 #include "bbs/menurunner.h"
 #include "bbs/loginseq.h"
+#include "bbs/wfc.h"
 
 namespace axis::bbs {
 
@@ -46,7 +47,7 @@ public:
     ~Node();
     Node(Node&&);
     Node& operator=(Node&&);
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Sysop, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Sysop, Wfc, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -64,6 +65,12 @@ public:
     // Kept so a caller can still hand in an @ runner. The telnet sysop shell is gone.
     // * opens the user editor. The touch sysop menu is the panel, not this session.
     void setSysopRun(std::function<std::string(const std::string&)> run) { sysopRun_ = std::move(run); }
+    // The 80x25 waiting-for-caller screen (State::Wfc): the theme's WFC.ANS (through setArt) or the built-in one, filled with this
+    // snapshot, redrawn every 5 s when it changed. Keys: S U # B F L open the sysop shell at that section (Esc comes back here),
+    // E A ! are coming soon, Space goes to the main menu as this sysop, Q leaves (State::Done).
+    void setWfcSnapshot(std::function<WfcSnapshot()> snap) { wfcSnap_ = std::move(snap); }
+    void openWfc(uint32_t nowMs);
+    void carrierLost();  // the line dropped: the node is done, wherever it was
     void tapRow(int) {}
     // /scripts/name.axs. An empty name lists the folder. False when that file is not on the card.
     void setScripts(std::function<std::string(const std::string&)> load, std::function<std::vector<std::string>()> list) {
@@ -278,6 +285,14 @@ private:
     std::string                                    slash_;  // a sysop's // keys so far
     bool                                           local_ = false, slashPass_ = false, swallowLf_ = false;
     bool                                           slashKey(char c);
+    std::function<WfcSnapshot()>                   wfcSnap_;
+    WfcSnapshot                                    wfcLast_;
+    uint32_t                                       wfcDrawn_ = 0;
+    bool                                           wfcReturn_ = false;  // the shell was opened from the WFC: Esc comes back to it
+    int                                            wfcEsc_ = 0;         // 1 after ESC, 2 inside a CSI (arrow keys are nothing)
+    WfcSnapshot                                    wfcSnapshot();
+    void                                           wfcDraw(const WfcSnapshot& s);
+    void                                           wfcKey(char c);
     void                                           openSysop(bool at, SysopSection s);
     ScriptBack                                     scriptBack_ = ScriptBack::Menu;
     uint32_t                  holdUntil_ = 0;  // after a wrong password, typing is ignored until then (2 s, then 4 s)

@@ -8,6 +8,7 @@
 #include "bbs/login_art.h"
 #include "bbs/password.h"
 #include "bbs/theme.h"
+#include "bbs/wfc80_art.h"
 
 #include <algorithm>
 #include <cstring>
@@ -1060,6 +1061,143 @@ bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
     return false;
 }
 
+namespace {
+const size_t kWfcArtCap = 12288;  // a theme's WFC.ANS past this is cut, as the board's theme loader does
+
+// the built-in screen: art/wfc80.ans as compiled into wfc80_art.h (CGA cells), back to ANSI text. A row that fills all 80 columns
+// wraps by itself; any other row ends in a CR LF.
+std::string builtinWfcArt() {
+    std::string out;
+    int         last = kWfc80Rows - 1;
+    auto        blank = [](int r) {
+        for (int c = 0; c < 80; c++)
+            if (kWfc80Art[r][c][0] != ' ') return false;
+        return true;
+    };
+    while (last > 0 && blank(last)) last--;
+    int cur = -1;
+    for (int r = 0; r <= last; r++) {
+        int n = 80;
+        while (n > 0 && kWfc80Art[r][n - 1][0] == ' ' && (kWfc80Art[r][n - 1][1] >> 4) == 0) n--;
+        for (int c = 0; c < n; c++) {
+            int attr = kWfc80Art[r][c][1];
+            if (attr != cur) {
+                static const char kAnsi[8] = {0, 4, 2, 6, 1, 5, 3, 7};  // CGA colour number <-> ANSI colour number
+                char              b[24];
+                std::snprintf(b, sizeof b, "\x1b[0;%d;3%d;4%dm", (attr & 8) ? 1 : 0, kAnsi[attr & 7], kAnsi[(attr >> 4) & 7]);
+                out += b;
+                cur = attr;
+            }
+            out += (char)kWfc80Art[r][c][0];
+        }
+        if (n < 80 && r < last) out += "\r\n";
+    }
+    return out + "\x1b[0m";
+}
+
+// whatever a theme file holds, made safe to send: cut at the cap and at a SAUCE/EOF mark, no escape left open at the end (it would
+// swallow what comes next), and a bare LF made a CR LF
+std::string cleanWfcArt(std::string a) {
+    if (a.size() > kWfcArtCap) a.resize(kWfcArtCap);
+    size_t eof = a.find('\x1a');
+    if (eof != std::string::npos) a.resize(eof);
+    size_t esc = a.rfind('\x1b');
+    if (esc != std::string::npos) {
+        size_t i = esc + 1;
+        bool   open = true;
+        if (i < a.size() && a[i] == '[') {
+            for (i++; i < a.size(); i++) {
+                unsigned char ch = (unsigned char)a[i];
+                if (ch >= 0x40 && ch <= 0x7e) {
+                    open = false;
+                    break;
+                }
+                if (ch < 0x20 || ch > 0x3f) {  // not part of a sequence: the escape is already broken, not open
+                    open = false;
+                    break;
+                }
+            }
+        } else if (i < a.size()) {
+            open = false;  // ESC and one more byte
+        }
+        if (open) a.resize(esc);
+    }
+    std::string out;
+    out.reserve(a.size() + 64);
+    for (size_t i = 0; i < a.size(); i++) {
+        if (a[i] == '\n' && (i == 0 || a[i - 1] != '\r')) out += '\r';
+        out += a[i];
+    }
+    return out;
+}
+}  // namespace
+
+WfcSnapshot Node::wfcSnapshot() {
+    if (wfcSnap_) return wfcSnap_();
+    WfcSnapshot s;  // no provider (a bare node): what this node itself knows
+    s.bbsName = cfg_.bbsName;
+    s.sysop = cfg_.sysopHandle;
+    s.nodes.push_back({node_, "", ""});
+    return s;
+}
+
+void Node::wfcDraw(const WfcSnapshot& s) {
+    wfcLast_ = s;
+    std::string art = art_ ? cleanWfcArt(art_("WFC.ANS")) : "";
+    if (art.empty()) art = builtinWfcArt();
+    out_ += CLS;
+    expandArt(art, AcsUser{}, wfcValues(s), [this](const char* d, size_t n) { out_.append(d, n); });
+    out_ += RST;
+}
+
+void Node::openWfc(uint32_t nowMs) {
+    shell_.reset();
+    wfcEsc_ = 0;
+    state_ = State::Wfc;
+    wfcDrawn_ = nowMs;
+    wfcDraw(wfcSnapshot());
+}
+
+void Node::carrierLost() {
+    shell_.reset();
+    wfcReturn_ = false;
+    state_ = State::Done;
+}
+
+void Node::wfcKey(char c) {
+    if (wfcEsc_) {  // an arrow key or other escape sequence: nothing here
+        if (wfcEsc_ == 1) wfcEsc_ = (c == '[' || c == 'O') ? 2 : 0;
+        else if ((unsigned char)c >= 0x40 && (unsigned char)c <= 0x7e) wfcEsc_ = 0;
+        return;
+    }
+    if (c == 0x1b) {
+        wfcEsc_ = 1;
+        return;
+    }
+    if (c == ' ') {  // the sysop logs on here
+        showMainMenu();
+        return;
+    }
+    if (c == 'q' || c == 'Q') {
+        out_ += std::string(RST) + "\r\n";
+        state_ = State::Done;
+        return;
+    }
+    SysopSection s = SysopSection::Top;
+    bool         soon = false;
+    if (!renegadeKey(c, s, soon)) return;
+    if (soon) {
+        out_ += std::string("\x1b[25;1H\x1b[0;33m   That one is coming soon.") + RST + "\x1b[K";
+        return;
+    }
+    if (!sysopRun_) {
+        out_ += std::string("\x1b[25;1H\x1b[0;33m   Sysop menu unavailable.") + RST + "\x1b[K";
+        return;
+    }
+    wfcReturn_ = true;
+    openSysop(true, s);
+}
+
 void Node::openSysop(bool at, SysopSection s) {
     if (!sysopRun_) {
         out_ += std::string("\r\n   ") + AMBER + "Sysop menu unavailable." + theme::TEXT;
@@ -1102,7 +1240,10 @@ bool Node::slashKey(char c) {
         std::string typed = slash_;
         slash_.clear();
         swallowLf_ = true;  // a CR LF client: the LF must not reach the shell
-        if (typed.size() == 2) openSysop(false, s);
+        if (typed.size() == 2) {
+            if (sysopRun_) openWfc(lastInput_);  // // alone: the waiting-for-caller screen
+            else openSysop(false, s);            // (says the sysop menu is unavailable)
+        }
         else if (renegadeKey(typed[2], s, soon) && !soon) openSysop(true, s);
         else {
             out_ += std::string("\r\n   ") + AMBER + (soon ? "That one is coming soon." : "Not on this menu.") + theme::TEXT;
@@ -1126,10 +1267,19 @@ void Node::key(char c) {
         swallowLf_ = false;
         if (c == '\n') return;
     }
+    if (state_ == State::Wfc) {
+        wfcKey(c);
+        return;
+    }
     if (state_ == State::Sysop) {
         if (!shell_ || !shell_->key(c)) {
             shell_.reset();
-            showMainMenu();
+            if (wfcReturn_) {
+                wfcReturn_ = false;
+                openWfc(lastInput_);
+            } else {
+                showMainMenu();
+            }
         }
         return;
     }
@@ -2716,6 +2866,7 @@ std::string Node::activityText() const {
         case State::Voting: return "voting booth";
         case State::UserEdit: return "user editor";
         case State::Sysop: return "sysop menu";
+        case State::Wfc: return "waiting for caller";
         case State::Script: return "script";
         case State::Split: return "split-screen chat";
         case State::Done: return "leaving";
@@ -2762,7 +2913,12 @@ void Node::poll(uint32_t nowMs) {
         showWelcome();
         return;
     }
-    if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
+    if (state_ == State::Wfc && nowMs - wfcDrawn_ >= 5000) {  // redraw when something on it changed
+        wfcDrawn_ = nowMs;
+        WfcSnapshot s = wfcSnapshot();
+        if (!(s == wfcLast_)) wfcDraw(s);
+    }
+    if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && state_ != State::Wfc && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";
         out_ += AMBER;
         out_ += "Logged off: idle too long.";

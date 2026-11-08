@@ -205,3 +205,145 @@ TEST_CASE("renegadeKey maps the section keys") {
     CHECK(soon);
     CHECK_FALSE(renegadeKey('z', s, soon));
 }
+
+// ---- the terminal WFC (// then Enter)
+namespace {
+WfcSnapshot snap3() {
+    WfcSnapshot s;
+    s.bbsName = "AXIS";
+    s.callsToday = 3;
+    return s;
+}
+}  // namespace
+
+TEST_CASE("the wfc draws the theme's art with live values") {
+    SysRig r;
+    r.n->setArt([](const std::string& f) { return f == "WFC.ANS" ? std::string("|BN calls |CT") : std::string(); });
+    r.n->setWfcSnapshot(snap3);
+    std::string out = r.type("//\r");
+    CHECK(out.find("AXIS calls 3") != std::string::npos);
+    CHECK(r.n->state() == Node::State::Wfc);
+}
+
+TEST_CASE("no WFC.ANS: the built-in screen") {
+    SysRig r;
+    r.n->setArt([](const std::string&) { return std::string(); });
+    r.n->setWfcSnapshot(snap3);
+    std::string out = r.type("//\r");
+    CHECK(out.find("W A I T I N G   F O R   C A L L E R") != std::string::npos);
+    CHECK(out.find("AXIS") != std::string::npos);
+    CHECK(out.find("[S]ettings") != std::string::npos);
+    CHECK(out.find("|") == std::string::npos);  // every code was filled in
+    SysRig none;  // and without a loader at all
+    CHECK(none.type("//\r").find("W A I T I N G") != std::string::npos);
+}
+
+TEST_CASE("a broken WFC file still draws") {
+    for (std::string bad : {std::string(20000, 'x'), std::string("ESC[1;"), std::string("hello \x1b[1;"), std::string("hello \x1b"), std::string("A\x1a" "SAUCE00")}) {
+        if (bad == "ESC[1;") bad = "\x1b[1;";
+        SysRig r;
+        r.n->setArt([bad](const std::string&) { return bad; });
+        r.n->setWfcSnapshot(snap3);
+        r.type("//");
+        r.n->input((const uint8_t*)"\r", 1, 1000);
+        std::string raw = r.n->takeOutput();
+        CHECK_FALSE(raw.empty());
+        CHECK(raw.find("\x1b[1;\x1b") == std::string::npos);  // no escape left open for what follows
+        CHECK(r.n->state() == Node::State::Wfc);
+        CHECK(r.type("u").find("USERS") != std::string::npos);  // and the keys still answer
+    }
+    SysRig z;  // 0 bytes
+    z.n->setArt([](const std::string&) { return std::string(); });
+    CHECK_FALSE(z.type("//\r").empty());
+}
+
+TEST_CASE("U from the wfc and back") {
+    SysRig r;
+    r.n->setArt([](const std::string&) { return std::string("|BN calls |CT"); });
+    r.n->setWfcSnapshot(snap3);
+    r.type("//\r");
+    CHECK(r.type("U").find("USERS") != std::string::npos);
+    CHECK(r.n->state() == Node::State::Sysop);
+    std::string back;
+    for (int i = 0; i < 4 && r.n->state() == Node::State::Sysop; i++) back += r.type("\x1b");
+    CHECK(r.n->state() == Node::State::Wfc);
+    CHECK(back.find("AXIS calls 3") != std::string::npos);
+}
+
+TEST_CASE("E A and ! are coming soon on the wfc and stay there") {
+    SysRig r;
+    r.n->setWfcSnapshot(snap3);
+    r.type("//\r");
+    CHECK(r.type("e").find("coming soon") != std::string::npos);
+    CHECK(r.n->state() == Node::State::Wfc);
+    CHECK(r.type("!").find("coming soon") != std::string::npos);
+    CHECK(r.n->state() == Node::State::Wfc);
+    r.type("\x1b[A");  // an arrow key is nothing
+    CHECK(r.n->state() == Node::State::Wfc);
+}
+
+TEST_CASE("space logs the sysop on") {
+    SysRig r;
+    r.n->setWfcSnapshot(snap3);
+    r.type("//\r");
+    CHECK(r.n->state() == Node::State::Wfc);
+    r.type(" ");
+    CHECK(r.n->state() == Node::State::Menu);
+}
+
+TEST_CASE("Q on the wfc leaves like a logoff") {
+    SysRig r;
+    r.type("//\r");
+    r.type("q");
+    CHECK(r.n->state() == Node::State::Done);
+    CHECK(r.n->wantsHangup());
+}
+
+TEST_CASE("hanging up on the wfc frees the node") {
+    SysRig r;
+    r.type("//\r");
+    CHECK(r.n->state() == Node::State::Wfc);
+    r.n->carrierLost();
+    CHECK(r.n->state() == Node::State::Done);
+    CHECK(r.n->wantsHangup());
+    SysRig s;  // and from inside a section opened from the wfc
+    s.type("//\r");
+    s.type("u");
+    s.n->carrierLost();
+    CHECK(s.n->wantsHangup());
+}
+
+TEST_CASE("the wfc redraws every 5 s only when the snapshot changed") {
+    SysRig r;
+    int calls = 3;
+    r.n->setArt([](const std::string&) { return std::string("|BN calls |CT"); });
+    r.n->setWfcSnapshot([&] {
+        WfcSnapshot s = snap3();
+        s.callsToday = calls;
+        return s;
+    });
+    r.type("//\r");
+    r.n->poll(3000);
+    CHECK(r.n->takeOutput().empty());
+    r.n->poll(7000);  // 5 s on, nothing changed
+    CHECK(r.n->takeOutput().empty());
+    calls = 4;
+    r.n->poll(8000);  // changed, but not 5 s yet
+    CHECK(r.n->takeOutput().empty());
+    r.n->poll(12500);
+    CHECK(plain(r.n->takeOutput()).find("AXIS calls 4") != std::string::npos);
+    r.n->poll(18000);
+    CHECK(r.n->takeOutput().empty());
+    r.n->poll(1000 + 60u * 60000u);  // an hour with no key: the wfc does not time out
+    CHECK(r.n->state() == Node::State::Wfc);
+}
+
+TEST_CASE("a snapshot compares by value") {
+    WfcSnapshot a = snap3(), b = snap3();
+    CHECK(a == b);
+    b.nodes.push_back({1, "x", "y"});
+    CHECK_FALSE(a == b);
+    a = b;
+    b.events.push_back("e");
+    CHECK_FALSE(a == b);
+}

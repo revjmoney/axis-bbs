@@ -15,6 +15,7 @@ namespace axis::bbs {
 struct WfcNode {
     int         number = 0;
     std::string handle, activity;  // handle "" = waiting
+    bool        operator==(const WfcNode& o) const { return number == o.number && handle == o.handle && activity == o.activity; }
 };
 
 struct WfcSnapshot {
@@ -23,6 +24,11 @@ struct WfcSnapshot {
     std::vector<std::string> events;  // newest first
     uint32_t                 callsToday = 0, postsToday = 0, uploadsToday = 0, sdFreeKb = 0, ramFreeKb = 0, uptimeS = 0;
     bool                     main = true;  // "main board" / "follower board"
+    bool                     operator==(const WfcSnapshot& o) const {
+        return bbsName == o.bbsName && sysop == o.sysop && lastCaller == o.lastCaller && ip == o.ip && time == o.time && date == o.date &&
+               page == o.page && nodes == o.nodes && events == o.events && callsToday == o.callsToday && postsToday == o.postsToday &&
+               uploadsToday == o.uploadsToday && sdFreeKb == o.sdFreeKb && ramFreeKb == o.ramFreeKb && uptimeS == o.uptimeS && main == o.main;
+    }
 };
 
 // the |XX / @XX###@ value function for expandArt
