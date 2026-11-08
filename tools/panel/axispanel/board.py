@@ -47,11 +47,26 @@ class BoardLink:
         nonce = hello.split()[2]
         self.last_seen = time.monotonic()
         self._pump = asyncio.create_task(self._read())
-        salt = await self._ask('SALT ' + handle)
-        if salt == 'SALT -':
+        salt_reply = await self._ask('SALT ' + handle)
+        if salt_reply == 'SALT -':
             await self.close()
             return False
-        proof = sha(nonce + sha(salt[5:] + password))
+        parts = salt_reply.split()
+        if len(parts) < 2 or parts[0] != 'SALT':
+            await self.close()
+            raise LoginFailed('invalid salt response')
+        salt = parts[1]
+        scheme = parts[2] if len(parts) > 2 else 'SHA256'  # compatibility with older boards
+        if scheme == 'PBKDF2-SHA256-200000':
+            stored_hash = 'pbkdf2-sha256$200000$' + hashlib.pbkdf2_hmac(
+                'sha256', password.encode('latin-1'), salt.encode('latin-1'), 200000, dklen=32
+            ).hex()
+        elif scheme == 'SHA256':
+            stored_hash = sha(salt + password)
+        else:
+            await self.close()
+            raise LoginFailed('unsupported password hash scheme')
+        proof = sha(nonce + stored_hash)
         ok = await self._ask('AUTH %s %s' % (handle, proof)) == 'OK'
         if not ok:
             await self.close()

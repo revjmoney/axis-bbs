@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rev. J. Money
 #include "bbs/panelproto.h"
 
 #include "doctest.h"
@@ -19,31 +21,40 @@ struct Rig {
         u.handle = "Kid";
         u.salt = makeSalt(rng);
         u.hash = hashPassword(u.salt, "kidpass");
-        u.security = 20;
+        u.security = 255;
         users.all().push_back(u);
     }
 };
 
-std::string saltOf(const std::string& reply) { return reply.substr(5, reply.find('\n') - 5); }
-
+std::string saltOf(const std::string& reply) { return reply.substr(5, reply.find(' ') - 5); }
 std::string proof(const std::string& nonce, const std::string& salt, const std::string& pw) {
     return sha256Hex(nonce + hashPassword(salt, pw));
 }
 }  // namespace
 
-TEST_CASE("a sysop gets the salt and logs in with the proof") {
+TEST_CASE("panel advertises the hash scheme and accepts a PBKDF2 proof") {
     Rig          r;
     PanelSession s(r.cfg, r.users, "n0nce");
     CHECK(s.greeting() == "AXISPANEL 1 n0nce\n");
-    std::string salt = saltOf(s.line("SALT Rev"));
-    CHECK(salt == r.cfg.sysopSalt);
-    CHECK(s.line("AUTH Rev " + proof("n0nce", salt, "sysop1")) == "OK\n");
+    std::string response = s.line("SALT Rev");
+    CHECK(response == "SALT " + r.cfg.sysopSalt + " PBKDF2-SHA256-200000\n");
+    CHECK(s.line("AUTH Rev " + proof("n0nce", r.cfg.sysopSalt, "sysop1")) == "OK\n");
     CHECK(s.authed());
     CHECK(s.who() == "Rev");
 }
 
+TEST_CASE("panel advertises legacy SHA-256 for existing stored hashes") {
+    Rig r;
+    r.cfg.sysopSalt = "0123456789abcdef0123456789abcdef";
+    r.cfg.sysopHash = sha256Hex(r.cfg.sysopSalt + "legacy-password");
+    PanelSession s(r.cfg, r.users, "legacy-nonce");
+    CHECK(s.line("SALT Rev") == "SALT " + r.cfg.sysopSalt + " SHA256\n");
+    CHECK(s.line("AUTH Rev " + sha256Hex("legacy-nonce" + r.cfg.sysopHash)) == "OK\n");
+}
+
 TEST_CASE("a non-sysop user is refused") {
-    Rig          r;
+    Rig r;
+    r.users.all()[0].security = 20;
     PanelSession s(r.cfg, r.users, "n");
     CHECK(s.line("SALT Kid") == "SALT -\n");
     CHECK(s.line("AUTH Kid " + proof("n", r.users.all()[0].salt, "kidpass")) == "NO\n");

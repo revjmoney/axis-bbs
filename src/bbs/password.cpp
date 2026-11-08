@@ -3,7 +3,6 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/password.h"
 
-#include <array>
 #include <vector>
 
 extern "C" {
@@ -15,6 +14,7 @@ namespace axis::bbs {
 namespace {
 constexpr uint32_t kPbkdf2Iterations = 200000;
 constexpr size_t   kKeyBytes = 32;
+constexpr char     kPbkdf2Prefix[] = "pbkdf2-sha256$200000$";
 
 std::string hex(const uint8_t* p, size_t n) {
     static const char* d = "0123456789abcdef";
@@ -59,26 +59,15 @@ std::vector<uint8_t> hmacSha256(const std::string& key, const std::string& data)
 }
 
 std::string pbkdf2HmacSha256Hex(const std::string& password, const std::string& salt) {
-    std::vector<uint8_t> out(kKeyBytes, 0);
-    std::vector<uint8_t> block(kKeyBytes, 0);
-    std::string          u;
-    for (uint32_t blockIndex = 1; blockIndex <= 1; ++blockIndex) {
-        u = salt;
-        u.push_back((char)((blockIndex >> 24) & 0xff));
-        u.push_back((char)((blockIndex >> 16) & 0xff));
-        u.push_back((char)((blockIndex >> 8) & 0xff));
-        u.push_back((char)(blockIndex & 0xff));
-
-        auto u1 = hmacSha256(password, u);
-        block = u1;
-        for (uint32_t i = 1; i < kPbkdf2Iterations; ++i) {
-            auto prev = u1;
-            u1 = hmacSha256(password, std::string(prev.begin(), prev.end()));
-            for (size_t j = 0; j < block.size(); ++j) block[j] ^= u1[j];
-        }
+    std::string input = salt;
+    input.append("\0\0\0\1", 4);  // PBKDF2 block index, big-endian
+    auto u = hmacSha256(password, input);
+    auto t = u;
+    for (uint32_t i = 1; i < kPbkdf2Iterations; ++i) {
+        u = hmacSha256(password, std::string(u.begin(), u.end()));
+        for (size_t j = 0; j < t.size(); ++j) t[j] ^= u[j];
     }
-    for (size_t i = 0; i < out.size(); ++i) out[i] ^= block[i];
-    return hex(out.data(), out.size());
+    return hex(t.data(), kKeyBytes);
 }
 
 bool constantTimeEquals(const std::string& a, const std::string& b) {
@@ -105,11 +94,15 @@ std::string makeSalt(uint32_t (*rng)()) {
     return hex(b, sizeof b);
 }
 
-std::string hashPassword(const std::string& salt, const std::string& password) { return pbkdf2HmacSha256Hex(password, salt); }
+std::string hashPassword(const std::string& salt, const std::string& password) {
+    return std::string(kPbkdf2Prefix) + pbkdf2HmacSha256Hex(password, salt);
+}
 
 bool checkPassword(const std::string& salt, const std::string& hash, const std::string& password) {
-    std::string h = hashPassword(salt, password);
-    if (constantTimeEquals(h, hash)) return true;
+    if (hash.compare(0, sizeof(kPbkdf2Prefix) - 1, kPbkdf2Prefix) == 0) {
+        const std::string encoded = hash.substr(sizeof(kPbkdf2Prefix) - 1);
+        return constantTimeEquals(pbkdf2HmacSha256Hex(password, salt), encoded);
+    }
     return constantTimeEquals(legacyHashPassword(salt, password), hash);
 }
 
