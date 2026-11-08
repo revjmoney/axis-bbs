@@ -54,7 +54,7 @@ struct BbsConfig {
     int         sessions = 2;
     int         ratio = 0, freeKb = 0;  // downloads up to ratio x uploads + freeKb ("ratio", "free_kb"; 0 = no ratio)
     std::string theme = "axis";  // the one look ("theme"): axis, cyan, green, or a card screenset id
-    std::string wfc = "axis";    // the waiting screen. Always the same id as theme. Old files still have the key.
+    std::string wfc;             // the waiting screen skin: a look id, or blank to follow the theme. Use wfcFolder().
     bool        loginSplash = false;  // Rev's RotatoCAM ANSI splash before the login screen ("login_splash", on unless 0)  // callers this board takes at once (1 to 4). Each can be in LORD, a movie, a pack, or a transfer. A deflated piece or a ZIP check needs its own inflate window and is refused when the heap is short.
     bool        sysopTelnet = true;  // "sysop_telnet": the sysop menu may be opened over telnet. Off: only the board's own screen and serial.
     bool        messagesOn = true, filesOn = true, doorsOn = true;  // board switches ("messages_on", "files_on", "doors_on"); on unless 0. A caller's own access is separate.
@@ -80,6 +80,7 @@ struct BbsConfig {
 
 BbsConfig   parseConfig(const std::string& ini);
 std::string formatConfig(const BbsConfig& c);
+std::string wfcFolder(const BbsConfig& c);  // c.wfc when it is a known look id, else c.theme
 // A cluster follower's settings: the main's (one BBS), keeping this board's own name, session count
 // and telnet port; set up, since the main was.
 BbsConfig   mergeSettings(const BbsConfig& mine, const std::string& mainIni);

@@ -106,8 +106,11 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "sysop_telnet") c.sysopTelnet = n != 0;
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "free_kb") c.freeKb = (int)n;
-        else if (k == "theme" || k == "wfc") {
-            if (const char* id = theme::knownLook(v)) c.theme = id;  // either key is the one look
+        else if (k == "theme") {
+            if (const char* id = theme::knownLook(v)) c.theme = id;
+        } else if (k == "wfc") {  // a look id, or blank to follow the theme. Anything else is ignored.
+            if (v.empty()) c.wfc.clear();
+            else if (const char* id = theme::knownLook(v)) c.wfc = id;
         }
         else if (k == "sessions") c.sessions = n < 1 ? 1 : n > 4 ? 4 : n;
         else if (k == "setup_done") c.setupDone = n == 1;
@@ -161,8 +164,12 @@ BbsConfig parseConfig(const std::string& ini) {
     }
     if (const char* id = theme::knownLook(c.theme)) c.theme = id;
     else c.theme = "axis";
-    c.wfc = c.theme;  // the waiting screen and the caller look are the same switch
     return c;
+}
+
+std::string wfcFolder(const BbsConfig& c) {
+    const char* id = theme::knownLook(c.wfc);
+    return id ? id : c.theme;
 }
 
 namespace {

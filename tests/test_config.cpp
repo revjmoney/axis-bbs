@@ -223,30 +223,42 @@ TEST_CASE("the look is axis, cyan, or green, and an old name still loads") {
     CHECK(parseConfig("").theme == "axis");
     BbsConfig c = parseConfig("theme=oblivion\n");
     CHECK(c.theme == "cyan");
-    CHECK(c.wfc == "cyan");
+    CHECK(wfcFolder(c) == "cyan");
     CHECK(parseConfig(formatConfig(c)).theme == "cyan");
     CHECK(mergeSettings(parseConfig(""), formatConfig(c)).theme == "cyan");  // one look for the whole cluster
     CHECK(parseConfig("theme=INIQUITY\n").theme == "green");
-    CHECK(parseConfig("theme=green\n").wfc == "green");
+    CHECK(wfcFolder(parseConfig("theme=green\n")) == "green");
     CHECK(parseConfig("theme=nope\n").theme == "axis");
     CHECK(parseConfig("theme=skulls\n").theme == "skulls");
-    CHECK(parseConfig("theme=skulls\n").wfc == "skulls");
+    CHECK(wfcFolder(parseConfig("theme=skulls\n")) == "skulls");
     CHECK(parseConfig("theme=CRT\n").theme == "crt");
-    CHECK(parseConfig("wfc=wasteland\n").theme == "wasteland");
-    CHECK(parseConfig("wfc=wasteland\n").wfc == "wasteland");
+    CHECK(parseConfig("wfc=wasteland\n").theme == "axis");  // wfc no longer sets the theme
+    CHECK(wfcFolder(parseConfig("wfc=wasteland\n")) == "wasteland");
 }
 
-TEST_CASE("the waiting screen follows the look, including an old wfc line") {
-    CHECK(parseConfig("").wfc == "axis");
-    CHECK(parseConfig("wfc=Axis\n").wfc == "axis");
-    CHECK(parseConfig("wfc=oblivion\n").theme == "cyan");
-    CHECK(parseConfig("wfc=oblivion\n").wfc == "cyan");
-    CHECK(parseConfig("wfc=nope\n").wfc == "axis");
-    BbsConfig c = parseConfig("theme=oblivion\nwfc=axis\n");  // the later line wins, then both match
-    CHECK(c.theme == "axis");
-    CHECK(c.wfc == "axis");
-    CHECK(parseConfig(formatConfig(c)).wfc == c.theme);
-    CHECK(mergeSettings(parseConfig(""), formatConfig(c)).wfc == "axis");
+TEST_CASE("the waiting screen skin (wfc) can differ from the theme") {
+    BbsConfig c = parseConfig("theme=sea\nwfc=skulls\n");
+    CHECK(c.theme == "sea");
+    CHECK(c.wfc == "skulls");
+    CHECK(wfcFolder(c) == "skulls");
+    CHECK(parseConfig(formatConfig(c)).wfc == "skulls");
+    CHECK(mergeSettings(parseConfig(""), formatConfig(c)).wfc == "skulls");
+}
+
+TEST_CASE("a blank or unknown wfc follows the theme") {
+    BbsConfig b = parseConfig("theme=sea\nwfc=\n");
+    CHECK(b.wfc.empty());
+    CHECK(wfcFolder(b) == "sea");
+    CHECK(formatConfig(b).find("wfc=\n") != std::string::npos);
+    CHECK(parseConfig(formatConfig(b)).wfc.empty());
+    BbsConfig n = parseConfig("theme=sea\nwfc=nosuch\n");
+    CHECK(wfcFolder(n) == "sea");
+    CHECK(parseConfig("").wfc.empty());
+    CHECK(wfcFolder(parseConfig("")) == "axis");
+    CHECK(parseConfig("wfc=Skulls\n").wfc == "skulls");
+    CHECK(parseConfig("wfc=oblivion\n").wfc == "cyan");  // an old name canonicalises
+    CHECK(wfcFolder(parseConfig("theme=sea\nwfc=skulls\nwfc=\n")) == "sea");  // a later blank resets it
+    CHECK(wfcFolder(parseConfig("theme=sea\nwfc=skulls\ntheme=crt\n")) == "skulls");
 }
 
 TEST_CASE("an area can need a security level: id|name|level, kept when saved") {

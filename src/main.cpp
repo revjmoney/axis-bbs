@@ -328,8 +328,10 @@ static std::string themePoster(const std::string& name, size_t offset, size_t ca
 static std::string themeArtLocal(const std::string& name) {
     if (!storageHasSd() || name.find('/') != std::string::npos) return "";
     if (posterName(name)) return themePoster(name, 0, kPosterCap);
-    std::string s = readThemeFile(cfg.theme.c_str(), name);
-    if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(cfg.theme), name);
+    // The waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme.
+    const std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme;
+    std::string s = readThemeFile(folder.c_str(), name);
+    if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name);
     return s;
 }
 static std::string themeArt(const std::string& name) {
@@ -1024,7 +1026,7 @@ void logo(int x0, int y0) {
 
 static void drawWfc() {
     using namespace wfc;
-    const char* lookId = axis::bbs::theme::knownLook(cfg.theme);
+    const char* lookId = axis::bbs::theme::knownLook(axis::bbs::wfcFolder(cfg));
     if (!lookId) lookId = "axis";
     axis::bbs::theme::WfcColours ink = axis::bbs::theme::wfcColoursFor(lookId);
     cols = &ink;
@@ -2226,8 +2228,7 @@ static void newSetupPin() {
 static void setLook(const std::string& id) {
     const char* canon = axis::bbs::theme::knownLook(id);
     if (!canon) return;
-    cfg.theme = canon;
-    cfg.wfc = canon;
+    cfg.theme = canon;  // a blank wfc follows it; a picked wfc skin stays
     bool ok = configSave(cfg);
     logEvent(String("sysop: look ") + cfg.theme.c_str() + (ok ? "" : " (SAVE FAILED)"));
     if (cluster) cluster->shareSettings();
