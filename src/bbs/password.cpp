@@ -80,6 +80,11 @@ bool constantTimeEquals(const std::string& a, const std::string& b) {
 std::string legacyHashPassword(const std::string& salt, const std::string& password) { return sha256Hex(salt + password); }
 }  // namespace
 
+std::string hmacSha256Raw(const std::string& key, const std::string& data) {
+    auto d = hmacSha256(key, data);
+    return std::string(d.begin(), d.end());
+}
+
 std::string sha256Hex(const std::string& data) {
     auto digest = sha256Bytes(data);
     return hex(digest.data(), digest.size());

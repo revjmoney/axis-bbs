@@ -31,7 +31,15 @@ enum class Frame : uint8_t {
     MainReq = 13,   // main -> follower: request id, request (the main asks a board for its SD card's files)
     MainResp = 14,  // follower -> main: request id, data
     CardInfo = 15,  // follower -> main: has an SD card (0/1), its free bytes
+    Challenge = 16, // main -> follower, first on a new link: the main's nonce (hex)
+    Auth = 17,      // follower -> main: its nonce, its proof; then main -> follower: the main's proof
 };
+
+// The cluster key (spec: every board in one BBS shares it, set with @CLUSTERKEY). Datagrams carry
+// " ~" and a tag; a link starts with Challenge / Auth / Auth, both sides proving they hold the key
+// for these two nonces, and from then on every frame's body ends in a 16-byte tag over a per-link
+// key, the direction, a counter and the frame, so a frame can't be forged, changed or replayed.
+constexpr size_t kTagBytes = 16;
 
 std::string              frame(Frame type, const std::vector<std::string>& fields);
 std::vector<std::string> fields(const std::string& body);

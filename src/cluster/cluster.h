@@ -67,6 +67,12 @@ public:
     uint32_t                     mainIp() const { return mainIp_; }
     const std::vector<NodeInfo>& nodes() const { return nodes_; }
 
+    // The shared cluster key and a source of random numbers (the board's hardware RNG). Without
+    // both, the board runs alone: it never answers or joins another board (set them before start()).
+    void setKey(const std::string& key) { key_ = key; }
+    void setRandom(uint32_t (*rng)()) { rng_ = rng; }
+    bool alone() const { return alone_; }
+
     void setSlots(int sessions) { slots_ = sessions < 1 ? 1 : sessions > 4 ? 4 : sessions; }  // callers this board takes at once
     void setStatus(const std::string& handle, const std::string& activity) { setStatus(0, handle, activity); }
     void setStatus(int slot, const std::string& handle, const std::string& activity);
@@ -115,7 +121,22 @@ private:
         FrameReader in;
         int         node = 0;
         std::string board;  // the board's id (its numbers are every node with this id)
+        // the key handshake: 0 waiting for the other side's proof, 1 (follower) sent ours, 2 trusted
+        int         auth = 0;
+        bool        dead = false;  // failed the handshake or a frame's tag: tick() drops it
+        std::string mainNonce, followerNonce, linkKey;
+        uint32_t    sent = 0, got = 0;  // frames sealed / opened on this link
     };
+    // one frame on a link, sealed with its tag once the link is trusted
+    bool put(Link& l, Frame t, const std::vector<std::string>& f);
+    // the next frame from a link that is for the BBS; the handshake is handled in here
+    bool take(Link& l, Frame& t, std::string& body);
+    void sendHello(Link& l);
+    std::string sign(const std::string& datagram);
+    bool        unsign(std::string& datagram);
+    void        shout(const std::string& datagram) { net_.broadcast(sign(datagram)); }
+    std::string nonce();
+    bool        mainSide() const { return role_ == Role::Main; }
     void becomeMain(uint32_t now, uint32_t epoch, int number);
     void discover(uint32_t now);
     void say(const std::string& handle, const std::string& text, bool page, int slot, int kind = 0, int to = 0);
@@ -140,6 +161,9 @@ private:
     int                   number_ = 0, wantNumber_ = 0, lastMain_ = 0;
     uint32_t              epoch_ = 0, mainIp_ = 0, since_ = 0, lastBeat_ = 0, lastAnnounce_ = 0, minEpoch_ = 0, idleSince_ = 0;
     uint32_t              listenMs_ = 3000;  // how long discovery waits for a main before becoming one
+    std::string           key_;
+    uint32_t              (*rng_)() = nullptr;
+    bool                  alone_ = false;  // no key: no cluster
     bool                  hasFiles_ = false, yield_ = false;  // yield_: the main handed over, act at the end of tick()
     uint32_t              nextReq_ = 1;
     uint32_t              wantReq_ = 0;      // request() is waiting for this reply

@@ -462,6 +462,9 @@ void SysopShell::settings(Layer& l) {
                            ask("New user password (Enter alone: none)", true, [this](const std::string& v) { did(run_("@NUP " + v)); });
                        }});
     l.items.push_back({"Clear the NUP", "anyone can apply", [this] { did(run_("@NUP")); }});
+    l.items.push_back({"Cluster key", "(never shown; the same on every board)", [this] {
+                           ask("Cluster key, 8+ (off: this board runs alone)", true, [this](const std::string& v) { did(run_("@CLUSTERKEY " + v)); });
+                       }});
     l.items.push_back({"DOS prompt password", "(never shown)", [this] {
                            ask("New DOS prompt password", true, [this](const std::string& v) { did(run_("@DOSPASS " + v)); });
                        }});

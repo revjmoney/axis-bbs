@@ -8,6 +8,7 @@
 namespace axis::bbs {
 
 std::string sha256Hex(const std::string& data);
+std::string hmacSha256Raw(const std::string& key, const std::string& data);  // 32 raw bytes
 std::string makeSalt(uint32_t (*rng)());  // 32 hex characters (16 random bytes)
 std::string hashPassword(const std::string& salt, const std::string& password);
 bool        checkPassword(const std::string& salt, const std::string& hash, const std::string& password);

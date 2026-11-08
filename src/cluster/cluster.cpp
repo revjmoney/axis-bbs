@@ -3,6 +3,8 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "cluster/cluster.h"
 
+#include "bbs/password.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <map>
@@ -19,7 +21,124 @@ std::string num(uint32_t v) { return std::to_string(v); }
 std::string num64(uint64_t v) { return std::to_string((unsigned long long)v); }
 uint32_t    toU(const std::string& s) { return (uint32_t)std::strtoul(s.c_str(), nullptr, 10); }
 uint64_t    toU64(const std::string& s) { return (uint64_t)std::strtoull(s.c_str(), nullptr, 10); }
+
+std::string hex(const std::string& b) {
+    static const char* d = "0123456789abcdef";
+    std::string        s;
+    for (unsigned char c : b) s += d[c >> 4], s += d[c & 15];
+    return s;
+}
+std::string unhex(const std::string& h) {
+    auto        v = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+    std::string b;
+    if (h.size() % 2) return b;
+    for (size_t i = 0; i < h.size(); i += 2) {
+        int x = v(h[i]), y = v(h[i + 1]);
+        if (x < 0 || y < 0) return std::string();
+        b += (char)(x << 4 | y);
+    }
+    return b;
+}
+bool sameBytes(const std::string& a, const std::string& b) {  // in constant time: no early out on the first wrong byte
+    if (a.size() != b.size() || a.empty()) return false;
+    unsigned char d = 0;
+    for (size_t i = 0; i < a.size(); i++) d |= (unsigned char)(a[i] ^ b[i]);
+    return d == 0;
+}
+std::string proof(const std::string& key, const char* what, const std::string& mainNonce, const std::string& followerNonce) {
+    return bbs::hmacSha256Raw(key, std::string(what) + mainNonce + followerNonce);
+}
+std::string frameTag(const std::string& linkKey, char from, uint32_t seq, Frame t, const std::string& body) {
+    std::string m(1, from);
+    for (int i = 0; i < 4; i++) m += (char)(seq >> (8 * i));
+    m += (char)t;
+    m += body;
+    return bbs::hmacSha256Raw(linkKey, m).substr(0, kTagBytes);
+}
 }  // namespace
+
+std::string Cluster::nonce() {
+    std::string n;
+    for (int i = 0; i < 4; i++) {
+        uint32_t r = rng_();
+        for (int k = 0; k < 4; k++) n += (char)(r >> (8 * k));
+    }
+    return n;
+}
+
+std::string Cluster::sign(const std::string& d) { return d + " ~" + hex(bbs::hmacSha256Raw(key_, "datagram " + d).substr(0, kTagBytes)); }
+
+bool Cluster::unsign(std::string& d) {
+    size_t at = d.rfind(" ~");
+    if (at == std::string::npos) return false;
+    std::string body = d.substr(0, at);
+    if (!sameBytes(unhex(d.substr(at + 2)), bbs::hmacSha256Raw(key_, "datagram " + body).substr(0, kTagBytes))) return false;
+    d = body;
+    return true;
+}
+
+bool Cluster::put(Link& l, Frame t, const std::vector<std::string>& f) {
+    if (l.auth != 2 || l.dead) return false;
+    std::string out = frame(t, f);
+    out += frameTag(l.linkKey, mainSide() ? 'M' : 'F', l.sent++, t, out.substr(5));
+    uint32_t n = (uint32_t)(out.size() - 4);
+    for (int i = 0; i < 4; i++) out[(size_t)i] = (char)(n >> (8 * i));
+    return net_.send(l.id, out);
+}
+
+bool Cluster::take(Link& l, Frame& t, std::string& body) {
+    while (!l.dead && l.in.next(t, body)) {
+        if (l.auth == 2) {  // trusted: every frame must carry the right tag, in order
+            if (body.size() < kTagBytes) {
+                l.dead = true;
+                break;
+            }
+            std::string tag = body.substr(body.size() - kTagBytes);
+            body.resize(body.size() - kTagBytes);
+            if (!sameBytes(tag, frameTag(l.linkKey, mainSide() ? 'F' : 'M', l.got, t, body))) {
+                event("a frame with a bad cluster tag: dropping the link");
+                l.dead = true;
+                break;
+            }
+            l.got++;
+            return true;
+        }
+        std::vector<std::string> f = fields(body);
+        if (mainSide() && l.auth == 0 && t == Frame::Auth && f.size() >= 2) {  // the follower's proof
+            std::string fn = unhex(f[0]);
+            if (fn.size() == 16 && sameBytes(unhex(f[1]), proof(key_, "follower", l.mainNonce, fn))) {
+                l.followerNonce = fn;
+                l.linkKey = proof(key_, "link", l.mainNonce, fn);
+                l.auth = 2;
+                net_.send(l.id, frame(Frame::Auth, {hex(proof(key_, "main", l.mainNonce, fn))}));
+                continue;
+            }
+        } else if (!mainSide() && l.auth == 0 && t == Frame::Challenge && !f.empty()) {
+            std::string mn = unhex(f[0]);
+            if (mn.size() == 16) {
+                l.mainNonce = mn;
+                l.followerNonce = nonce();
+                l.linkKey = proof(key_, "link", mn, l.followerNonce);
+                l.auth = 1;
+                net_.send(l.id, frame(Frame::Auth, {hex(l.followerNonce), hex(proof(key_, "follower", mn, l.followerNonce))}));
+                continue;
+            }
+        } else if (!mainSide() && l.auth == 1 && t == Frame::Auth && !f.empty() &&
+                   sameBytes(unhex(f[0]), proof(key_, "main", l.mainNonce, l.followerNonce))) {
+            l.auth = 2;  // the main holds the key too: now say hello
+            sendHello(l);
+            continue;
+        }
+        event(mainSide() ? "a board without the cluster key was turned away" : "the main didn't prove the cluster key: not joining it");
+        l.dead = true;
+    }
+    return false;
+}
+
+void Cluster::sendHello(Link& l) {
+    put(l, Frame::Hello, {id_, num((uint32_t)(wantNumber_ ? wantNumber_ : number_)), "1", hasFiles_ ? "1" : "0", num(net_.myIp()),
+                          num((uint32_t)slots_), num64(freeBytes_)});
+}
 
 NodeInfo* Cluster::node(int number) {
     for (NodeInfo& n : nodes_)
@@ -29,6 +148,12 @@ NodeInfo* Cluster::node(int number) {
 
 void Cluster::start(uint32_t now, int previousNumber) {
     wantNumber_ = previousNumber;
+    alone_ = key_.empty() || !rng_;
+    if (alone_) {  // no shared key: never answer or join another board
+        becomeMain(now, epoch_ + 1, previousNumber ? previousNumber : 1);
+        event("no cluster key: this board runs alone (set the same @CLUSTERKEY on every board to cluster them)");
+        return;
+    }
     discover(now);
 }
 
@@ -39,7 +164,7 @@ void Cluster::discover(uint32_t now) {
     role_ = Role::Discovering;
     since_ = now;
     lastAnnounce_ = now;
-    net_.broadcast("AXIS? " + id_);
+    shout("AXIS? " + id_);
 }
 
 std::vector<int> Cluster::allocate(const std::vector<int>& want) {
@@ -85,7 +210,7 @@ void Cluster::setStatus(int slot, const std::string& handle, const std::string& 
                 me->activity = activity;
             }
     } else if (role_ == Role::Follower && !links_.empty()) {
-        net_.send(links_[0].id, frame(Frame::Status, {handle, activity, num((uint32_t)slot)}));
+        put(links_[0], Frame::Status, {handle, activity, num((uint32_t)slot)});
     }
 }
 
@@ -93,7 +218,7 @@ void Cluster::setFreeBytes(uint64_t bytes) {
     if (bytes == freeBytes_) return;
     freeBytes_ = bytes;
     if (role_ == Role::Follower && !links_.empty() && hasFiles_)
-        net_.send(links_[0].id, frame(Frame::CardInfo, {"1", num64(freeBytes_)}));
+        put(links_[0], Frame::CardInfo, {"1", num64(freeBytes_)});
 }
 
 std::vector<CardBoard> Cluster::cardBoards() const {
@@ -108,14 +233,14 @@ void Cluster::say(const std::string& handle, const std::string& text, bool page,
     ChatLine line{me, handle, text, page, kind, to};
     if (role_ == Role::Main) deliver(line);
     else if (role_ == Role::Follower && !links_.empty())
-        net_.send(links_[0].id, frame(Frame::Chat, {num((uint32_t)me), handle, text, page ? "1" : "0", num((uint32_t)kind), num((uint32_t)to)}));
+        put(links_[0], Frame::Chat, {num((uint32_t)me), handle, text, page ? "1" : "0", num((uint32_t)kind), num((uint32_t)to)});
     else if (onChat) onChat(line);  // on our own: just this board
 }
 
 void Cluster::deliver(const ChatLine& line) {
     if (onChat) onChat(line);
-    std::string f = frame(Frame::Chat, {num(line.node), line.handle, line.text, line.page ? "1" : "0", num((uint32_t)line.kind), num((uint32_t)line.to)});
-    for (Link& l : links_) net_.send(l.id, f);
+    std::vector<std::string> f = {num(line.node), line.handle, line.text, line.page ? "1" : "0", num((uint32_t)line.kind), num((uint32_t)line.to)};
+    for (Link& l : links_) put(l, Frame::Chat, f);
 }
 
 void Cluster::heartbeat() {
@@ -127,13 +252,13 @@ void Cluster::heartbeat() {
         f.push_back(n.handle);
         f.push_back(n.activity);
     }
-    std::string b = frame(Frame::Heartbeat, f);
     for (Link& l : links_)
-        if (!net_.send(l.id, b)) event("heartbeat to node " + num((uint32_t)l.node) + " failed");
+        if (l.auth == 2 && !put(l, Frame::Heartbeat, f)) event("heartbeat to node " + num((uint32_t)l.node) + " failed");
 }
 
 void Cluster::announce() {  // "AXIS! ip epoch node sd": where the main is, and whether it holds the SD card
-    net_.broadcast("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_) + (hasFiles_ ? " 1" : " 0"));
+    if (alone_) return;
+    shout("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_) + (hasFiles_ ? " 1" : " 0"));
 }
 
 void Cluster::tidyNumbers(uint32_t now) {
@@ -179,13 +304,15 @@ void Cluster::tidyNumbers(uint32_t now) {
         for (const NodeInfo& n : nodes_)
             if (n.id == o.second->board) nums.push_back(num((uint32_t)n.number));
         o.second->node = (int)toU(nums[0]);
-        net_.send(o.second->id, frame(Frame::Renumber, nums));
+        put(*o.second, Frame::Renumber, nums);
     }
     event("nobody on: renumbered, this board is node " + num((uint32_t)number_));
     heartbeat();
 }
 
-void Cluster::handleDatagram(const std::string& d, uint32_t from, uint32_t now) {
+void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t now) {
+    std::string d = signedD;
+    if (!unsign(d)) return;  // not signed with our key: not one of this BBS's boards
     if (d.rfind("AXIS? ", 0) == 0) {
         if (role_ == Role::Main) announce();
         return;
@@ -223,9 +350,7 @@ void Cluster::handleDatagram(const std::string& d, uint32_t from, uint32_t now) 
     links_.push_back({link, FrameReader(), 0});
     role_ = Role::Joining;
     mainIp_ = ip;
-    since_ = now;
-    net_.send(link, frame(Frame::Hello, {id_, num((uint32_t)(wantNumber_ ? wantNumber_ : number_)), "1", hasFiles_ ? "1" : "0",
-                                         num(net_.myIp()), num((uint32_t)slots_), num64(freeBytes_)}));
+    since_ = now;  // the main's Challenge comes first; take() answers it, then says Hello
     (void)from;
 }
 
@@ -283,18 +408,18 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
             l.board = f[0];
             std::vector<std::string> welcome = {num((uint32_t)give), num(epoch_)};
             for (size_t i = 1; i < mine.size(); i++) welcome.push_back(num((uint32_t)mine[i]));
-            net_.send(l.id, frame(Frame::Welcome, welcome));
+            put(l, Frame::Welcome, welcome);
             event("node " + num((uint32_t)give) + " joined");
             heartbeat();
-            if (settings) net_.send(l.id, frame(Frame::Settings, {settings()}));
+            if (settings) put(l, Frame::Settings, {settings()});
             if (allUsers)  // its replica of the user base
-                for (const std::string& rec : allUsers()) net_.send(l.id, frame(Frame::UserChange, {rec}));
+                for (const std::string& rec : allUsers()) put(l, Frame::UserChange, {rec});
             // a card for the pool; only from a board that sends its free space (it answers MainReq: older ones never would)
             if (f.size() >= 7 && f[3] == "1") cards_[f[0]] = {ip, toU64(f[6]), true};
             else cards_.erase(f[0]);
             if (!hasFiles_ && f.size() >= 4 && f[3] == "1") {  // the file areas live on its card: it should be main
                 event("node " + num((uint32_t)give) + " has the SD card: handing main to it");
-                net_.send(l.id, frame(Frame::Yield, {}));
+                put(l, Frame::Yield, {});
             }
         } else if (t == Frame::Status && f.size() >= 2 && !l.board.empty()) {
             std::vector<int> mine;  // that board's numbers, in order: a session's slot picks one
@@ -322,7 +447,7 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
         } else if (t == Frame::FileReq) {
             size_t      sep = body.find(kFieldSep);
             std::string id = body.substr(0, sep), req = sep == std::string::npos ? "" : body.substr(sep + 1);
-            net_.send(l.id, frame(Frame::FileResp, {id, onRequest ? onRequest(l.node, req) : std::string("0")}));
+            put(l, Frame::FileResp, {id, onRequest ? onRequest(l.node, req) : std::string("0")});
         }
         return;
     }
@@ -336,7 +461,7 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
         lastBeat_ = now;
         if (onNumber) onNumber(number_);
         for (size_t i = 0; i < status_.size(); i++)
-            net_.send(l.id, frame(Frame::Status, {status_[i].first, status_[i].second, num((uint32_t)i)}));
+            put(l, Frame::Status, {status_[i].first, status_[i].second, num((uint32_t)i)});
         std::string all;
         for (size_t i = 0; i < numbers_.size(); i++) all += (i ? "+" : "") + num((uint32_t)numbers_[i]);
         event("joined as node " + all);
@@ -373,7 +498,7 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
     } else if (t == Frame::MainReq) {  // the main asks about this board's card
         size_t      sep = body.find(kFieldSep);
         std::string id = body.substr(0, sep), req = sep == std::string::npos ? "" : body.substr(sep + 1);
-        net_.send(l.id, frame(Frame::MainResp, {id, onMainRequest ? onMainRequest(req) : std::string("0")}));
+        put(l, Frame::MainResp, {id, onMainRequest ? onMainRequest(req) : std::string("0")});
     } else if (t == Frame::Yield && role_ == Role::Follower) {
         yield_ = true;  // not here: becoming main closes the link we are reading
     } else if (t == Frame::FileResp) {
@@ -387,13 +512,14 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
 
 bool Cluster::requestTo(const std::string& boardId, const std::string& req, std::string& reply, uint32_t timeoutMs) {
     if (role_ != Role::Main || !clockMs || !sleepMs || inRequest_ || boardId.empty()) return false;  // (never nested)
-    int target = -1;
-    for (const Link& l : links_)
-        if (l.board == boardId) target = l.id;
+    int   target = -1;
+    Link* to = nullptr;
+    for (Link& l : links_)
+        if (l.board == boardId) target = l.id, to = &l;
     auto card = cards_.find(boardId);
     if (target < 0 || (card != cards_.end() && !card->second.alive)) return false;
     uint32_t id = nextReq_++, start = clockMs();
-    if (!net_.send(target, frame(Frame::MainReq, {num(id), req}))) return false;
+    if (!put(*to, Frame::MainReq, {num(id), req})) return false;
     bool done = false;
     inRequest_ = true;
     // never accept or drop a link in here: tick() may be in the middle of its loop over links_
@@ -407,7 +533,7 @@ bool Cluster::requestTo(const std::string& boardId, const std::string& req, std:
             if (n < 0) lost = true;
             Frame       t;
             std::string body;
-            while (!done && l.in.next(t, body)) {
+            while (!done && take(l, t, body)) {
                 size_t sep = body.find(kFieldSep);
                 if (t == Frame::MainResp && sep != std::string::npos && toU(body.substr(0, sep)) == id) {
                     reply = body.substr(sep + 1);
@@ -416,6 +542,7 @@ bool Cluster::requestTo(const std::string& boardId, const std::string& req, std:
                     held_.push_back({l.id, t, body});
                 }
             }
+            if (l.dead) lost = true;
         }
         if (done || lost) break;
         uint32_t now = clockMs();
@@ -433,7 +560,7 @@ bool Cluster::requestTo(const std::string& boardId, const std::string& req, std:
 bool Cluster::request(const std::string& req, std::string& reply, uint32_t timeoutMs) {
     if (role_ != Role::Follower || links_.empty() || !clockMs || !sleepMs || inRequest_) return false;  // (never nested)
     uint32_t id = nextReq_++, start = clockMs();
-    if (!net_.send(links_[0].id, frame(Frame::FileReq, {num(id), req}))) return false;
+    if (!put(links_[0], Frame::FileReq, {num(id), req})) return false;
     wantReq_ = id;
     replyTo_ = &reply;
     replied_ = false;
@@ -445,7 +572,8 @@ bool Cluster::request(const std::string& req, std::string& reply, uint32_t timeo
         if (n > 0) links_[0].in.add(bytes);
         Frame       t;
         std::string body;
-        while (!links_.empty() && links_[0].in.next(t, body)) handleFrame(links_[0], t, body, clockMs());
+        while (!links_.empty() && take(links_[0], t, body)) handleFrame(links_[0], t, body, clockMs());
+        if (links_.empty() || links_[0].dead) break;
         if (!replied_ && n == 0) sleepMs(1);
     }
     wantReq_ = 0;
@@ -456,20 +584,26 @@ bool Cluster::request(const std::string& req, std::string& reply, uint32_t timeo
 
 void Cluster::shareSettings() {
     if (role_ != Role::Main || !settings) return;
-    std::string f = frame(Frame::Settings, {settings()});
-    for (Link& l : links_) net_.send(l.id, f);
+    std::string s = settings();
+    for (Link& l : links_) put(l, Frame::Settings, {s});
 }
 
 void Cluster::sendUser(const std::string& record) {
-    std::string f = frame(Frame::UserChange, {record});
     if (role_ == Role::Main)
-        for (Link& l : links_) net_.send(l.id, f);
+        for (Link& l : links_) put(l, Frame::UserChange, {record});
     else if (role_ == Role::Follower && !links_.empty())
-        net_.send(links_[0].id, f);
+        put(links_[0], Frame::UserChange, {record});
 }
 
 void Cluster::tick(uint32_t now) {
     if (role_ == Role::Off) return;
+    if (alone_) {  // no key: hear nothing, let nobody in
+        std::string d;
+        uint32_t    from;
+        while (net_.recvDatagram(d, from)) {}
+        for (int id; (id = net_.accept()) >= 0;) net_.close(id);
+        return;
+    }
     if (!held_.empty()) {  // frames that came in while a request waited, on links still here
         std::vector<Held> h;
         h.swap(held_);
@@ -485,7 +619,11 @@ void Cluster::tick(uint32_t now) {
     while (net_.recvDatagram(d, from)) handleDatagram(d, from, now);
 
     if (role_ == Role::Main) {
-        for (int id; (id = net_.accept()) >= 0;) links_.push_back({id, FrameReader(), 0});
+        for (int id; (id = net_.accept()) >= 0;) {  // a new link proves it holds the key before anything else
+            links_.push_back({id, FrameReader(), 0});
+            links_.back().mainNonce = nonce();
+            net_.send(id, frame(Frame::Challenge, {hex(links_.back().mainNonce)}));
+        }
         if (NodeInfo* me = node(number_)) me->ip = net_.myIp();
     }
     for (size_t i = 0; i < links_.size();) {
@@ -494,10 +632,10 @@ void Cluster::tick(uint32_t now) {
         if (n > 0) links_[i].in.add(bytes);
         Frame       t;
         std::string body;
-        while (links_[i].in.next(t, body)) handleFrame(links_[i], t, body, now);
-        if (n < 0 || links_[i].in.bad()) {  // the other board went away
+        while (take(links_[i], t, body)) handleFrame(links_[i], t, body, now);
+        if (n < 0 || links_[i].in.bad() || links_[i].dead) {  // the other board went away
             if (role_ != Role::Main) {
-                event(links_[i].in.bad() ? "link to the main: garbled frame" : "link to the main closed");
+                event(links_[i].dead ? "link to the main: failed the cluster key" : links_[i].in.bad() ? "link to the main: garbled frame" : "link to the main closed");
                 if (onMainGone) onMainGone();
             }
             net_.close(links_[i].id);
@@ -536,7 +674,7 @@ void Cluster::tick(uint32_t now) {
                 event("node " + num((uint32_t)number_) + " is main");
             } else if (now - lastAnnounce_ > kAskMs) {
                 lastAnnounce_ = now;
-                net_.broadcast("AXIS? " + id_);
+                shout("AXIS? " + id_);
             }
             break;
         case Role::Joining:
@@ -557,7 +695,7 @@ void Cluster::tick(uint32_t now) {
         case Role::Follower:
             if (hasFiles_ && !links_.empty() && now - lastCard_ >= kCardMs) {
                 lastCard_ = now;
-                net_.send(links_[0].id, frame(Frame::CardInfo, {"1", num64(freeBytes_)}));
+                put(links_[0], Frame::CardInfo, {"1", num64(freeBytes_)});
             }
             if (now - lastBeat_ > kLostMs || links_.empty()) {  // the main is gone
                 int lowest = 0;  // the lowest node on a surviving board (the lost main's sessions don't count)

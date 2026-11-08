@@ -2497,7 +2497,11 @@ static void startCluster() {
     Preferences p;
     p.begin("clu", true);
     int previous = p.getInt("num", 0);
+    // the cluster key lives in this board's flash, never in axis.ini: settings travel to every board
+    String key = p.getString("key", "");
     p.end();
+    cluster->setRandom(hwRandom);
+    cluster->setKey(key.c_str());
     cluster->start(millis(), previous);
 }
 
@@ -3310,6 +3314,31 @@ static void runCommand(const String& cmd, Print& out) {
         bool ok = configSave(cfg);
         if (cluster) cluster->shareSettings();  // every board asks the same one
         logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
+    } else if (cmd == "@CLUSTERKEY" || cmd.startsWith("@CLUSTERKEY ")) {
+        // "@CLUSTERKEY secret": the key every board of this BBS shares (8+ characters, set the same on
+        // each board); "@CLUSTERKEY off" forgets it (the board runs alone); alone, says whether one is set.
+        // Per board, in flash: it never goes out with the settings and is never shown or logged.
+        String key = cmd.length() > 12 ? cmd.substring(12) : String();
+        key.trim();
+        Preferences p;
+        if (!key.length()) {
+            p.begin("clu", true);
+            bool set = p.getString("key", "").length() > 0;
+            p.end();
+            out.println(set ? "axis: cluster key is set" : "axis: no cluster key: this board runs alone");
+        } else if (key != "off" && key.length() < 8) {
+            out.println("axis: a cluster key needs 8 or more characters");
+        } else {
+            p.begin("clu", false);
+            bool ok = key == "off" ? p.remove("key") : p.putString("key", key) > 0;
+            p.end();
+            if (cluster) {  // start over with the new key: drop every link, find the others again
+                cluster->setKey(key == "off" ? "" : key.c_str());
+                cluster->start(millis(), cluster->nodeNumber());
+            }
+            logEvent(String("sysop: cluster key ") + (key == "off" ? "cleared" : "set") + (ok ? "" : " (SAVE FAILED)"));
+            out.println(ok ? "axis: cluster key saved" : "axis: cluster key SAVE FAILED");
+        }
     } else if (cmd == "@AXIS" || cmd.startsWith("@AXIS ")) {  // "@AXIS host:port" adds a board, "@AXIS" lists, "@AXIS probe" asks one
         String rest = cmd.length() > 6 ? cmd.substring(6) : String();
         rest.trim();

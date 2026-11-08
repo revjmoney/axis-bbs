@@ -91,16 +91,37 @@ int FakeNet::connect(uint32_t to) {
     return -1;
 }
 
+uint32_t testRandom() {  // any numbers will do for the tests' nonces
+    static uint32_t x = 2463534242u;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return x;
+}
+const char* kTestKey = "test-cluster-key";
+
 struct Board {
     FakeNet                  net;
     std::unique_ptr<Cluster> c;
     std::vector<std::string> heard;
-    Board(FakeLan& lan, uint32_t ip, const char* id) {
+    std::vector<std::string> events;
+    Board(FakeLan& lan, uint32_t ip, const char* id, const char* key = kTestKey) {
         net.lan = &lan;
         net.ip = ip;
         lan.nets.push_back(&net);
+        make(id, key);
+    }
+    void make(const char* id, const char* key = kTestKey) {  // a fresh Cluster (the board reboots)
         c.reset(new Cluster(net, id));
+        c->setKey(key);
+        c->setRandom(testRandom);
         c->onChat = [this](const ChatLine& l) { heard.push_back(std::string(l.page ? "page " : "chat ") + l.handle + ": " + l.text); };
+        c->onEvent = [this](const std::string& e) { events.push_back(e); };
+    }
+    bool saw(const std::string& part) const {
+        for (auto& e : events)
+            if (e.find(part) != std::string::npos) return true;
+        return false;
     }
 };
 
@@ -350,7 +371,7 @@ TEST_CASE("a node that reboots and rejoins before its old link dies stays listed
     TwoBoards t;
     auto      old = t.b.net.wires;  // its old link, not yet noticed as dead by the main
     t.b.net.wires.clear();
-    t.b.c.reset(new Cluster(t.b.net, "board-b"));  // board B restarts
+    t.b.make("board-b");  // board B restarts
     t.b.c->start(t.now, 2);
     run({&t.a, &t.b}, t.now, 4000);
     REQUIRE(t.b.c->role() == Role::Follower);
@@ -404,7 +425,7 @@ TEST_CASE("a board that rejoins with more sessions than before gets the extra nu
     t.a.c->setSlots(1);
     auto old = t.b.net.wires;
     t.b.net.wires.clear();
-    t.b.c.reset(new Cluster(t.b.net, "board-b"));  // new firmware: two sessions
+    t.b.make("board-b");  // new firmware: two sessions
     t.b.c->setSlots(2);
     t.b.c->start(t.now, 2);
     run({&t.a, &t.b}, t.now, 4000);
@@ -622,23 +643,21 @@ TEST_CASE("a follower answers the main even while it waits on its own request, s
     CardBoards t;
     t.b.c->onMainRequest = [](const std::string&) { return std::string("1here"); };
     // the main is busy asking b something when b's own request goes out: the main's question is
-    // already on the wire to b
-    Wire* w = nullptr;
-    for (auto& link : t.b.net.wires) w = link.second.first.get();
-    REQUIRE(w);
-    w->toFollower += frame(Frame::MainReq, {"77", "L\x1f" "ansi"});
+    // already on the wire to b, and the main won't answer b until its own question is answered
+    t.a.c->clockMs = [&t] { return t.now; };
     t.b.c->clockMs = [&t] { return t.now; };
-    t.b.c->sleepMs = [&t](uint32_t ms) { t.now += ms ? ms : 1; };  // the main never answers b
+    t.b.c->sleepMs = [&t](uint32_t ms) { t.now += ms ? ms : 1; };
+    bool        asked = false, bGot = true;
+    std::string bReply;
+    t.a.c->sleepMs = [&](uint32_t) {
+        t.now += 1;
+        if (!asked) asked = true, bGot = t.b.c->request("q", bReply, 300);  // b asks while the main waits on it
+    };
     std::string reply;
-    CHECK_FALSE(t.b.c->request("q", reply, 300));
-    FrameReader r;
-    r.add(w->toMain);
-    Frame       ty;
-    std::string body;
-    bool        answered = false;
-    while (r.next(ty, body))
-        if (ty == Frame::MainResp) answered = fields(body)[0] == "77" && body.substr(3) == "1here";
-    CHECK(answered);  // answered from inside the wait
+    CHECK(t.a.c->requestTo("board-b", "L\x1f" "ansi", reply, 2000));
+    CHECK(asked);
+    CHECK(reply == "1here");  // b answered the main from inside its own wait
+    CHECK_FALSE(bGot);        // and the main held b's request for later instead of nesting
 }
 
 TEST_CASE("while the main waits on a card board, other followers' frames wait for after it and heartbeats keep going") {
@@ -660,23 +679,28 @@ TEST_CASE("while the main waits on a card board, other followers' frames wait fo
     CHECK(heardOnA == 1);
 }
 
-TEST_CASE("an older follower with an SD card (no free space in its Hello) is not put in the pool") {
+TEST_CASE("a board on firmware from before the cluster key, or any device that just says Hello, is turned away") {
     FakeLan  lan;
     Board    a(lan, 101, "board-a");
     uint32_t now = 0;
     a.c->setHasFiles(true);
     a.c->start(now);
     run({&a}, now, 4000);
-    FakeNet old;  // speaks the old Hello: id, number, replica, SD, ip, sessions
+    FakeNet old;  // speaks the old protocol: Hello straight away, no proof of the key
     old.lan = &lan;
     old.ip = 104;
     lan.nets.push_back(&old);
     int link = old.connect(101);
     REQUIRE(link >= 0);
-    old.send(link, frame(Frame::Hello, {"board-old", "0", "1", "1", "104", "1"}));
+    old.send(link, frame(Frame::Hello, {"board-old", "0", "1", "1", "104", "1", "999999"}));
     run({&a}, now, 200);
-    CHECK(a.c->nodes().size() == 2);  // it joined
-    CHECK(a.c->cardBoards().empty());  // but it would never answer the main's questions
+    CHECK(a.c->nodes().size() == 1);  // it never joined
+    CHECK(a.c->cardBoards().empty());
+    CHECK(a.saw("turned away"));
+    std::string bytes;
+    run({&a}, now, 200);
+    old.recv(link, bytes);             // the main's Challenge, which it never answered
+    CHECK(old.recv(link, bytes) < 0);  // and the main hung up on it
 }
 
 TEST_CASE("a card board that stops answering is marked down at once, and up again when it is heard from") {
@@ -692,4 +716,91 @@ TEST_CASE("a card board that stops answering is marked down at once, and up agai
     CHECK(t.now == start);
     run({&t.a, &t.b, &t.c}, t.now, 11000);  // b wakes up: it tells the main about its card now and then
     CHECK(t.a.c->cardBoards()[0].alive);
+}
+
+// ---------------------------------------------------------------- the cluster key
+
+TEST_CASE("boards with the same cluster key cluster, and every frame between them is signed") {
+    TwoBoards t;
+    CHECK(t.a.c->role() == Role::Main);
+    CHECK(t.b.c->role() == Role::Follower);
+    CHECK(t.a.c->nodes().size() == 2);
+    t.b.c->chat("Spindle Kid", "anyone cutting aluminum?");
+    run({&t.a, &t.b}, t.now, 200);
+    REQUIRE(t.a.heard.size() == 1);
+    CHECK(t.a.heard[0] == "chat Spindle Kid: anyone cutting aluminum?");
+}
+
+TEST_CASE("a board with the wrong cluster key can't join, and the main's node list doesn't change") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b", "some-other-key");
+    uint32_t now = 0;
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 8000);
+    CHECK(a.c->role() == Role::Main);
+    CHECK(a.c->nodes().size() == 1);  // only itself
+    CHECK(b.c->role() != Role::Follower);  // it never heard a main it could trust: it is on its own
+}
+
+TEST_CASE("a forged announcement doesn't make the real main step down") {
+    TwoBoards t;
+    FakeNet   rogue;  // a laptop on the Wi-Fi: no key
+    rogue.lan = &t.lan;
+    rogue.ip = 9;
+    t.lan.nets.push_back(&rogue);
+    for (int i = 0; i < 5; i++) {
+        rogue.broadcast("AXIS! 9 4000000000 1 1");             // "I'm main, newer, with the card"
+        rogue.broadcast("AXIS! 9 4000000000 1 1 ~0123456789abcdef0123456789abcdef");  // with a made-up tag
+        run({&t.a, &t.b}, t.now, 100);
+    }
+    CHECK(t.a.c->role() == Role::Main);
+    CHECK(t.b.c->role() == Role::Follower);
+    CHECK(t.a.c->nodes().size() == 2);
+    CHECK(rogue.incoming.empty());  // nobody dialed it
+}
+
+TEST_CASE("a frame changed on the wire drops the link") {
+    TwoBoards t;
+    Wire*     w = nullptr;
+    for (auto& link : t.b.net.wires) w = link.second.first.get();
+    REQUIRE(w);
+    t.b.c->chat("Spindle Kid", "hello");  // b's frame is now on the wire to the main
+    REQUIRE(w->toMain.size() > 5 + kTagBytes);
+    w->toMain[6] ^= 0x01;  // one bit flipped in the body
+    run({&t.a, &t.b}, t.now, 200);
+    CHECK(t.a.heard.empty());
+    CHECK(t.a.saw("bad cluster tag"));
+}
+
+TEST_CASE("a frame replayed on the wire drops the link") {
+    TwoBoards t;
+    Wire*     w = nullptr;
+    for (auto& link : t.b.net.wires) w = link.second.first.get();
+    REQUIRE(w);
+    t.b.c->chat("Spindle Kid", "hello");
+    std::string copy = w->toMain;
+    run({&t.a, &t.b}, t.now, 100);
+    REQUIRE(t.a.heard.size() == 1);
+    w->toMain += copy;  // the same, signed frame again
+    run({&t.a, &t.b}, t.now, 100);
+    CHECK(t.a.heard.size() == 1);
+    CHECK(t.a.saw("bad cluster tag"));
+}
+
+TEST_CASE("with no cluster key a board runs alone: it hears nobody and lets nobody in") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a", ""), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    a.c->start(now);
+    CHECK(a.c->alone());
+    CHECK(a.c->role() == Role::Main);
+    CHECK(a.c->nodeNumber() == 1);
+    CHECK(a.saw("no cluster key"));
+    b.c->start(now);
+    run({&a, &b}, now, 8000);
+    CHECK(a.c->nodes().size() == 1);
+    CHECK(b.c->role() == Role::Main);  // b found no main it could join
+    CHECK(b.net.datagrams.empty());    // and a never announced itself
 }
