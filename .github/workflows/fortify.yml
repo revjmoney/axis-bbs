@@ -36,10 +36,18 @@ jobs:
       security-events: write
       # pull-requests: write     # Required if DO_PR_COMMENT is set to true
 
+    # No Fortify on Demand account secrets in this repo yet: skip the scan instead of failing.
+    # Add FOD_TENANT, FOD_USER and FOD_PAT (repo secrets) and it runs again.
+    env:
+      HAVE_FOD: ${{ secrets.FOD_USER != '' }}
     steps:
+      - name: Fortify not set up
+        if: env.HAVE_FOD != 'true'
+        run: echo "::notice::Fortify scan skipped: no FOD_USER secret in this repository."
       # Check out source code
       - name: Check Out Source Code
-        uses: actions/checkout@v4
+        if: env.HAVE_FOD == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # Perform SAST and/or SCA scan via Fortify on Demand/Fortify Hosted/ScanCentral SAST/Debricked. Based on
       # configuration, the Fortify GitHub Action can optionally set up the application version/release, generate
@@ -50,6 +58,7 @@ jobs:
       # documentation at https://github.com/fortify/github-action#readme for more information on the various
       # configuration options and available sub-actions.
       - name: Run Fortify Scan
+        if: env.HAVE_FOD == 'true'
         # Specify Fortify GitHub Action version to run. As per GitHub starter workflow requirements, this example
         # uses the commit id corresponding to version 1.6.2. It is recommended to check whether any later releases
         # are available at https://github.com/fortify/github-action/releases. Depending on the amount of stability
