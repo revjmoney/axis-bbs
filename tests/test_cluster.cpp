@@ -761,6 +761,109 @@ TEST_CASE("a forged announcement doesn't make the real main step down") {
     CHECK(rogue.incoming.empty());  // nobody dialed it
 }
 
+TEST_CASE("a replayed, validly signed announcement from where no main answers changes nothing") {
+    TwoBoards t;
+    // capture a real announcement with a higher epoch: a board with the same key on another LAN, restarted once
+    FakeLan  other;
+    Board    old(other, 103, "board-old");
+    FakeNet  sniffer;
+    sniffer.lan = &other;
+    sniffer.ip = 200;
+    other.nets.push_back(&sniffer);
+    uint32_t then = 0;
+    old.c->start(then);
+    run({&old}, then, 4000);
+    old.c->start(then, 1);
+    run({&old}, then, 4000);
+    REQUIRE(old.c->role() == Role::Main);
+    REQUIRE(old.c->epoch() > t.a.c->epoch());
+    std::string captured;
+    for (auto& d : sniffer.datagrams)
+        if (d.first.rfind("AXIS! ", 0) == 0) captured = d.first;
+    REQUIRE(!captured.empty());
+    // replayed on the real LAN, first where nothing is at 103, then where a silent device sits there
+    for (int i = 0; i < 20; i++) {
+        t.a.net.datagrams.emplace_back(captured, 103);
+        run({&t.a, &t.b}, t.now, 100);
+    }
+    CHECK(t.a.c->role() == Role::Main);
+    CHECK(t.a.c->nodes().size() == 2);
+    CHECK(t.b.c->role() == Role::Follower);
+    FakeNet silent;  // answers the dial, never says a word
+    silent.lan = &t.lan;
+    silent.ip = 103;
+    t.lan.nets.push_back(&silent);
+    for (int i = 0; i < 100; i++) {  // 10 s of replays, one every 100 ms
+        t.a.net.datagrams.emplace_back(captured, 103);
+        run({&t.a, &t.b}, t.now, 100);
+    }
+    CHECK(t.a.c->role() == Role::Main);
+    CHECK(t.a.c->nodes().size() == 2);
+    CHECK(t.b.c->role() == Role::Follower);
+    CHECK(silent.incoming.size() <= 2);  // one check at a time, and not again at once after it failed
+}
+
+TEST_CASE("a connection that never proves the cluster key is dropped after 5 s, and the event is said once a minute") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a");
+    uint32_t now = 0;
+    a.c->start(now);
+    run({&a}, now, 4000);
+    FakeNet quiet;
+    quiet.lan = &lan;
+    quiet.ip = 104;
+    lan.nets.push_back(&quiet);
+    int link = quiet.connect(101);
+    REQUIRE(link >= 0);
+    std::string bytes;
+    run({&a}, now, 4000);
+    CHECK(quiet.recv(link, bytes) >= 0);  // still open at 4 s (the Challenge came)
+    run({&a}, now, 1500);
+    bytes.clear();
+    CHECK(quiet.recv(link, bytes) < 0);  // dropped after 5 s
+    int said = 0;
+    for (auto& e : a.events) said += e.find("turned away") != std::string::npos;
+    CHECK(said == 1);
+    for (int i = 0; i < 5; i++) {  // more bad peers inside the minute: nothing more in the log
+        int l = quiet.connect(101);
+        quiet.send(l, frame(Frame::Hello, {"board-old", "0", "1", "1", "104", "1", "999999"}));
+        run({&a}, now, 500);
+    }
+    said = 0;
+    for (auto& e : a.events) said += e.find("turned away") != std::string::npos;
+    CHECK(said == 1);
+    run({&a}, now, 60000);
+    int l = quiet.connect(101);
+    quiet.send(l, frame(Frame::Hello, {"board-old", "0", "1", "1", "104", "1", "999999"}));
+    run({&a}, now, 500);
+    said = 0;
+    for (auto& e : a.events) said += e.find("turned away") != std::string::npos;
+    CHECK(said == 2);  // a minute later it is said again
+}
+
+TEST_CASE("a cluster restart asked for in the middle of a tick waits until the tick is done") {
+    TwoBoards t;
+    bool      intact = false;
+    t.a.c->onRequest = [&](int, const std::string&) {
+        t.a.c->restartSoon("another-cluster-key");  // @CLUSTERKEY on the main
+        t.a.c->start(t.now, 1);                     // and a plain start() is held the same way
+        intact = t.a.c->role() == Role::Main && t.a.c->nodes().size() == 2;
+        return std::string("1ok");
+    };
+    t.b.c->clockMs = [&t] { return t.now; };
+    t.b.c->sleepMs = [&t](uint32_t) {
+        t.now += 5;
+        t.a.c->tick(t.now);
+    };
+    std::string reply;
+    REQUIRE(t.b.c->request("C\x1f" "@CLUSTERKEY another-cluster-key", reply));
+    CHECK(intact);  // nothing changed under the tick's loop
+    run({&t.a}, t.now, 100);
+    CHECK(t.a.c->role() == Role::Discovering);  // then it started over
+    run({&t.a, &t.b}, t.now, 15000);
+    CHECK(t.a.c->nodes().size() == 1);  // with the new key: b (old key) can't join it
+}
+
 TEST_CASE("a frame changed on the wire drops the link") {
     TwoBoards t;
     Wire*     w = nullptr;

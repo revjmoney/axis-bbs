@@ -17,6 +17,9 @@ namespace {
 constexpr uint32_t kListenMs = 3000, kBeatMs = 1000, kLostMs = 12000, kAnnounceMs = 2000, kAskMs = 1000;
 constexpr uint32_t kCardMs = 10000;      // a follower with a card tells the main about it this often (it is alive)
 constexpr uint32_t kTidyIdleMs = 10000;  // every node idle this long: the main renumbers itself to node 1
+constexpr uint32_t kAuthMs = 5000;       // a link that hasn't proved the key by now is dropped
+constexpr uint32_t kProbeAgainMs = 10000;  // a main that failed a check on another main's address waits this long to check it again
+constexpr uint32_t kTurnedAwayMs = 60000;  // "turned away" goes in the log at most this often
 std::string num(uint32_t v) { return std::to_string(v); }
 std::string num64(uint64_t v) { return std::to_string((unsigned long long)v); }
 uint32_t    toU(const std::string& s) { return (uint32_t)std::strtoul(s.c_str(), nullptr, 10); }
@@ -80,7 +83,7 @@ bool Cluster::unsign(std::string& d) {
 bool Cluster::put(Link& l, Frame t, const std::vector<std::string>& f) {
     if (l.auth != 2 || l.dead) return false;
     std::string out = frame(t, f);
-    out += frameTag(l.linkKey, mainSide() ? 'M' : 'F', l.sent++, t, out.substr(5));
+    out += frameTag(l.linkKey, asMain(l) ? 'M' : 'F', l.sent++, t, out.substr(5));
     uint32_t n = (uint32_t)(out.size() - 4);
     for (int i = 0; i < 4; i++) out[(size_t)i] = (char)(n >> (8 * i));
     return net_.send(l.id, out);
@@ -95,7 +98,7 @@ bool Cluster::take(Link& l, Frame& t, std::string& body) {
             }
             std::string tag = body.substr(body.size() - kTagBytes);
             body.resize(body.size() - kTagBytes);
-            if (!sameBytes(tag, frameTag(l.linkKey, mainSide() ? 'F' : 'M', l.got, t, body))) {
+            if (!sameBytes(tag, frameTag(l.linkKey, asMain(l) ? 'F' : 'M', l.got, t, body))) {
                 event("a frame with a bad cluster tag: dropping the link");
                 l.dead = true;
                 break;
@@ -104,7 +107,8 @@ bool Cluster::take(Link& l, Frame& t, std::string& body) {
             return true;
         }
         std::vector<std::string> f = fields(body);
-        if (mainSide() && l.auth == 0 && t == Frame::Auth && f.size() >= 2) {  // the follower's proof
+        bool                     asMainHere = asMain(l);
+        if (asMainHere && l.auth == 0 && t == Frame::Auth && f.size() >= 2) {  // the follower's proof
             std::string fn = unhex(f[0]);
             if (fn.size() == 16 && sameBytes(unhex(f[1]), proof(key_, "follower", l.mainNonce, fn))) {
                 l.followerNonce = fn;
@@ -113,7 +117,7 @@ bool Cluster::take(Link& l, Frame& t, std::string& body) {
                 net_.send(l.id, frame(Frame::Auth, {hex(proof(key_, "main", l.mainNonce, fn))}));
                 continue;
             }
-        } else if (!mainSide() && l.auth == 0 && t == Frame::Challenge && !f.empty()) {
+        } else if (!asMainHere && l.auth == 0 && t == Frame::Challenge && !f.empty()) {
             std::string mn = unhex(f[0]);
             if (mn.size() == 16) {
                 l.mainNonce = mn;
@@ -123,13 +127,19 @@ bool Cluster::take(Link& l, Frame& t, std::string& body) {
                 net_.send(l.id, frame(Frame::Auth, {hex(l.followerNonce), hex(proof(key_, "follower", mn, l.followerNonce))}));
                 continue;
             }
-        } else if (!mainSide() && l.auth == 1 && t == Frame::Auth && !f.empty() &&
+        } else if (!asMainHere && l.auth == 1 && t == Frame::Auth && !f.empty() &&
                    sameBytes(unhex(f[0]), proof(key_, "main", l.mainNonce, l.followerNonce))) {
             l.auth = 2;  // the main holds the key too: now say hello
+            if (l.probe) {  // (a main checking another main: it is real, so step down at the end of the tick)
+                stepDown_ = true;
+                return false;
+            }
             sendHello(l);
             continue;
         }
-        event(mainSide() ? "a board without the cluster key was turned away" : "the main didn't prove the cluster key: not joining it");
+        // (a main's link that failed is reported when tick() drops it, at most once a minute)
+        if (l.probe) event("another main's announcement, but it didn't prove the cluster key: staying main");
+        else if (!asMainHere) event("the main didn't prove the cluster key: not joining it");
         l.dead = true;
     }
     return false;
@@ -147,6 +157,12 @@ NodeInfo* Cluster::node(int number) {
 }
 
 void Cluster::start(uint32_t now, int previousNumber) {
+    if (inTick_) {  // called from inside tick (a command a follower asked for): the links can't change under its loop
+        restart_ = true;
+        restartNumber_ = previousNumber;
+        return;
+    }
+    closeProbe(now);
     wantNumber_ = previousNumber;
     alone_ = key_.empty() || !rng_;
     if (alone_) {  // no shared key: never answer or join another board
@@ -158,6 +174,7 @@ void Cluster::start(uint32_t now, int previousNumber) {
 }
 
 void Cluster::discover(uint32_t now) {
+    closeProbe(now);
     for (Link& l : links_) net_.close(l.id);
     links_.clear();
     cards_.clear();
@@ -178,6 +195,7 @@ std::vector<int> Cluster::allocate(const std::vector<int>& want) {
 }
 
 void Cluster::becomeMain(uint32_t now, uint32_t epoch, int number) {
+    closeProbe(now);
     for (Link& l : links_) net_.close(l.id);
     links_.clear();
     cards_.clear();
@@ -335,14 +353,9 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
                      : epoch != epoch_      ? epoch > epoch_
                      : number != number_    ? number < number_
                                             : ip < net_.myIp();
-        if (theyWin) {
-            event("another main with epoch " + num(epoch) + ": joining it");
-            wantNumber_ = number_;
-            minEpoch_ = epoch;
-            discover(now);
-        } else {
-            return;
-        }
+        // never on the announcement alone (it may be a recording): check that main holds the key first
+        if (theyWin) probeMain(ip, epoch, now);
+        return;
     }
     if (role_ != Role::Discovering || (epoch < minEpoch_ && !theirSd)) return;
     int link = net_.connect(ip);
@@ -352,6 +365,58 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
     mainIp_ = ip;
     since_ = now;  // the main's Challenge comes first; take() answers it, then says Hello
     (void)from;
+}
+
+void Cluster::probeMain(uint32_t ip, uint32_t epoch, uint32_t now) {
+    if (probing_ || (ip == lastProbeIp_ && now - probeEnd_ < kProbeAgainMs)) return;  // one at a time, and not the same one again at once
+    lastProbeIp_ = ip;
+    probeEnd_ = now;
+    int link = net_.connect(ip);
+    if (link < 0) return;
+    probe_ = Link{link, FrameReader()};
+    probe_.probe = true;
+    probe_.since = now;
+    probing_ = true;
+    probeIp_ = ip;
+    probeEpoch_ = epoch;
+}
+
+void Cluster::closeProbe(uint32_t now) {
+    if (!probing_) return;
+    net_.close(probe_.id);
+    probe_ = Link{-1, FrameReader()};
+    probing_ = stepDown_ = false;
+    probeEnd_ = now;
+}
+
+void Cluster::serveProbe(uint32_t now) {
+    if (role_ != Role::Main) {
+        closeProbe(now);
+        return;
+    }
+    std::string bytes;
+    int         n = net_.recv(probe_.id, bytes);
+    if (n > 0) probe_.in.add(bytes);
+    Frame       t;
+    std::string body;
+    while (take(probe_, t, body)) {}  // only the handshake comes before our Hello, which a probe never sends
+    if (stepDown_) {  // it proved the key: it is a real main that wins, so join it
+        uint32_t epoch = probeEpoch_;
+        closeProbe(now);
+        event("another main with epoch " + num(epoch) + " proved the cluster key: joining it");
+        wantNumber_ = number_;
+        minEpoch_ = epoch;
+        discover(now);
+    } else if (n < 0 || probe_.in.bad() || probe_.dead || now - probe_.since > kAuthMs) {
+        closeProbe(now);  // nothing there, or no key: stay main
+    }
+}
+
+void Cluster::turnedAway(uint32_t now) {
+    if (turnedOnce_ && now - turnedAt_ < kTurnedAwayMs) return;
+    turnedOnce_ = true;
+    turnedAt_ = now;
+    event("a board without the cluster key was turned away");
 }
 
 void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t now) {
@@ -596,7 +661,17 @@ void Cluster::sendUser(const std::string& record) {
 }
 
 void Cluster::tick(uint32_t now) {
+    if (restart_) {  // a new key or a start() asked for during the last tick: here nothing is looping over the links
+        restart_ = false;
+        if (keyPending_) key_ = newKey_, keyPending_ = false;
+        start(now, restartNumber_);
+    }
     if (role_ == Role::Off) return;
+    struct Busy {
+        bool& b;
+        explicit Busy(bool& x) : b(x) { b = true; }
+        ~Busy() { b = false; }
+    } busy(inTick_);
     if (alone_) {  // no key: hear nothing, let nobody in
         std::string d;
         uint32_t    from;
@@ -621,6 +696,7 @@ void Cluster::tick(uint32_t now) {
     if (role_ == Role::Main) {
         for (int id; (id = net_.accept()) >= 0;) {  // a new link proves it holds the key before anything else
             links_.push_back({id, FrameReader(), 0});
+            links_.back().since = now;
             links_.back().mainNonce = nonce();
             net_.send(id, frame(Frame::Challenge, {hex(links_.back().mainNonce)}));
         }
@@ -633,7 +709,9 @@ void Cluster::tick(uint32_t now) {
         Frame       t;
         std::string body;
         while (take(links_[i], t, body)) handleFrame(links_[i], t, body, now);
-        if (n < 0 || links_[i].in.bad() || links_[i].dead) {  // the other board went away
+        bool unproved = asMain(links_[i]) && links_[i].auth != 2;
+        if (n < 0 || links_[i].in.bad() || links_[i].dead || (unproved && now - links_[i].since > kAuthMs)) {  // the other board went away
+            if (unproved) turnedAway(now);  // (it never proved the key: a stranger, or a board with another key)
             if (role_ != Role::Main) {
                 event(links_[i].dead ? "link to the main: failed the cluster key" : links_[i].in.bad() ? "link to the main: garbled frame" : "link to the main closed");
                 if (onMainGone) onMainGone();
@@ -658,6 +736,7 @@ void Cluster::tick(uint32_t now) {
         i++;
     }
 
+    if (probing_) serveProbe(now);
     if (yield_) {
         yield_ = false;
         if (role_ == Role::Follower) {

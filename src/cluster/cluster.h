@@ -72,6 +72,14 @@ public:
     void setKey(const std::string& key) { key_ = key; }
     void setRandom(uint32_t (*rng)()) { rng_ = rng; }
     bool alone() const { return alone_; }
+    // A new key (@CLUSTERKEY): drop every link and find the others again, at the top of the next
+    // tick, never in the middle of one (a command can run inside tick, from a follower's request).
+    void restartSoon(const std::string& key) {
+        newKey_ = key;
+        keyPending_ = true;
+        restart_ = true;
+        restartNumber_ = number_;
+    }
 
     void setSlots(int sessions) { slots_ = sessions < 1 ? 1 : sessions > 4 ? 4 : sessions; }  // callers this board takes at once
     void setStatus(const std::string& handle, const std::string& activity) { setStatus(0, handle, activity); }
@@ -126,7 +134,14 @@ private:
         bool        dead = false;  // failed the handshake or a frame's tag: tick() drops it
         std::string mainNonce, followerNonce, linkKey;
         uint32_t    sent = 0, got = 0;  // frames sealed / opened on this link
+        uint32_t    since = 0;          // when it opened: a link that hasn't proved the key in 5 s goes
+        bool        probe = false;      // a main checking another main holds the key (it speaks as a follower)
     };
+    bool asMain(const Link& l) const { return mainSide() && !l.probe; }  // which side of the handshake this link is
+    void probeMain(uint32_t ip, uint32_t epoch, uint32_t now);  // main: does that other main really hold the key?
+    void closeProbe(uint32_t now);
+    void serveProbe(uint32_t now);
+    void turnedAway(uint32_t now);  // the "turned away" event, at most once a minute
     // one frame on a link, sealed with its tag once the link is trusted
     bool put(Link& l, Frame t, const std::vector<std::string>& f);
     // the next frame from a link that is for the BBS; the handshake is handled in here
@@ -186,6 +201,16 @@ private:
     std::map<std::string, Card> cards_;  // main: the followers with SD cards, by board id
     std::vector<NodeInfo> nodes_;
     std::vector<Link>     links_;  // main: one per follower; follower: one, to the main
+    // a main that hears a winning announcement checks first: it dials that main as a follower would and
+    // only steps down once that main proves the key (a replayed announcement alone changes nothing)
+    Link                  probe_{-1, FrameReader()};
+    bool                  probing_ = false, stepDown_ = false;
+    uint32_t              probeIp_ = 0, probeEpoch_ = 0, probeEnd_ = 0, lastProbeIp_ = 0;
+    uint32_t              turnedAt_ = 0;  // the last "turned away" event
+    bool                  turnedOnce_ = false;
+    bool                  inTick_ = false, restart_ = false, keyPending_ = false;  // restart_: start() again at the top of the next tick
+    int                   restartNumber_ = 0;
+    std::string           newKey_;
 };
 
 }  // namespace axis::cluster
