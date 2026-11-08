@@ -37,9 +37,10 @@ async def main(args):
         asyncio.ensure_future(hub.login(*store.creds()))
     runner = web.AppRunner(make_app(hub, store))
     await runner.setup()
-    await web.TCPSite(runner, '0.0.0.0', args.port).start()
-    url = 'http://%s:%d/' % (lan_ip(), args.port)
-    print('AXIS sysop panel on', url, '(phone or PC on this network)')
+    host = args.host or '127.0.0.1'
+    await web.TCPSite(runner, host, args.port).start()
+    url = 'http://%s:%d/' % (lan_ip() if host in ('0.0.0.0', '::') else host, args.port)
+    print('AXIS sysop panel on', url, '(phone or PC on this network)' if host in ('0.0.0.0', '::') else '(local browser only)')
     stop = asyncio.Event()
     if not args.no_tray:
         from axispanel import tray
@@ -53,6 +54,7 @@ async def main(args):
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', type=int, default=PORT)
+    ap.add_argument('--host', default='127.0.0.1', help='bind address; use 0.0.0.0 to expose the panel on the LAN')
     ap.add_argument('--board', action='append', help='a board IP to add without waiting for its announcement')
     ap.add_argument('--no-tray', action='store_true')
     asyncio.run(main(ap.parse_args()))
