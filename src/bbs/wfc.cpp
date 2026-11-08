@@ -87,38 +87,25 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
     // expandArt buffers its output, so the terminal has not seen the text before a code when its value is asked for. The value of a
     // K? or N? code therefore leads with a one-byte marker; the emit callback feeds the text up to each marker to the terminal and
     // records where the cursor stands. The marker takes one column inside an @XX###@ field, so those fields are made one wider.
-    std::string wide;
-    wide.reserve(art.size() + 16);
-    for (size_t i = 0; i < art.size(); i++) {
-        wide += art[i];
-        if (art[i] != '@') continue;
-        size_t j = i + 1;
-        while (j < art.size() && std::isupper((unsigned char)art[j])) j++;
-        size_t k = j;
-        while (k < art.size() && art[k] == '#') k++;
-        if (j > i + 1 && k > j && k < art.size() && art[k] == '@') {
-            std::string name = art.substr(i + 1, j - i - 1);
-            wide.append(art, i + 1, k - i - 1);
-            if (name.size() == 2 && (name[0] == 'K' || name[0] == 'N')) wide += '#';
-            wide += '@';
-            i = k;
-        }
-    }
-
+    // The art is handed to expandArt in pieces of about 400 bytes (cut only where no {{ACS}} or |{ group is open), so the screen is
+    // never held twice.
     ArtValue base = wfcValues(s);
     ArtValue value = [&](const std::string& k) -> std::string {
+        std::string v = base(k);
+        for (char& c : v)  // free text (handles, page text) must never look like a marker
+            if (idForMarker(c) >= 0) c = ' ';
         if (k.size() == 2 && k[0] == 'K')
             for (int i = 0; i < kKeyCount; i++)
-                if (k == kKeys[i].code) return std::string(1, markerFor(i)) + base(k);
+                if (k == kKeys[i].code) return std::string(1, markerFor(i)) + v;
         if (nodeCode(k)) {
             size_t i = k[1] - 'A';
-            return std::string(1, markerFor(i < s.nodes.size() ? kKeyCount + (int)i : kNone)) + base(k);
+            return std::string(1, markerFor(i < s.nodes.size() ? kKeyCount + (int)i : kNone)) + v;
         }
-        return base(k);
+        return v;
     };
 
     std::vector<WfcHotspot> spots;
-    expandArt(wide, AcsUser{}, value, [&](const char* d, size_t n) {
+    ArtEmit emit = [&](const char* d, size_t n) {
         std::string run;
         for (size_t i = 0; i < n; i++) {
             int id = idForMarker(d[i]);
@@ -129,23 +116,54 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
             term.feed(run);
             run.clear();
             if (id < kKeyCount) spots.push_back({term.row(), term.col(), kKeys[id].key, 0});
-            else if (id < kNone) spots.push_back({term.row(), term.col(), 'N', s.nodes[id - kKeyCount].number});
+            else if (id < kNone && (size_t)(id - kKeyCount) < s.nodes.size())
+                spots.push_back({term.row(), term.col(), 'N', s.nodes[id - kKeyCount].number});
         }
         term.feed(run);
-    });
+    };
+
+    std::string chunk;
+    chunk.reserve(460);
+    int depth = 0;  // open {{ACS}} blocks and |{ groups
+    for (size_t i = 0; i < art.size(); i++) {
+        char c = art[i];
+        if (c == '{' && art.compare(i, 5, "{{/}}") == 0) depth = depth > 0 ? depth - 1 : 0;
+        else if (c == '{' && art.compare(i, 2, "{{") == 0) depth++;
+        else if (c == '|' && art.compare(i, 2, "|}") == 0) depth = depth > 0 ? depth - 1 : 0;
+        else if (c == '|' && art.compare(i, 2, "|{") == 0 && art.compare(i, 4, "|{P}") != 0 && art.compare(i, 4, "|{O}") != 0) depth++;
+        chunk += c;
+        if (c == '@') {
+            size_t j = i + 1;
+            while (j < art.size() && std::isupper((unsigned char)art[j])) j++;
+            size_t k = j;
+            while (k < art.size() && art[k] == '#') k++;
+            if (j > i + 1 && k > j && k < art.size() && art[k] == '@') {
+                chunk.append(art, i + 1, k - i - 1);
+                if (j - i - 1 == 2 && (art[i + 1] == 'K' || art[i + 1] == 'N')) chunk += '#';
+                chunk += '@';
+                i = k;
+            }
+        }
+        if (chunk.size() >= 400 && depth == 0 && (c == '\n' || c == ' ')) {
+            expandArt(chunk, AcsUser{}, value, emit);
+            chunk.clear();
+        }
+    }
+    if (!chunk.empty()) expandArt(chunk, AcsUser{}, value, emit);
     return spots;
 }
 
 char wfcKeyAt(const std::vector<WfcHotspot>& spots, int row, int col, int* node) {
     if (node) *node = 0;
-    for (const auto& h : spots) {
-        if (h.row != row) continue;
-        if (h.node > 0) {
+    for (const auto& h : spots)  // the key's own cell first
+        if (h.node == 0 && h.row == row && h.col == col) return h.key;
+    for (const auto& h : spots)  // then a cell either side
+        if (h.node == 0 && h.row == row && (col == h.col - 1 || col == h.col + 1)) return h.key;
+    for (const auto& h : spots)  // then a node line anywhere on its row
+        if (h.node > 0 && h.row == row) {
             if (node) *node = h.node;
             return h.key;
         }
-        if (col >= h.col - 1 && col <= h.col + 1) return h.key;
-    }
     return 0;
 }
 
