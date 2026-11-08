@@ -4,6 +4,7 @@
 #include "bbs/sysopshell.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 
 #include "bbs/config.h"
@@ -651,10 +652,13 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
     l.items.push_back({"Restart this board", "", [this] { confirm("Restart the board now?", [this] { did(run_("@RESTART")); }); }});
-    l.items.push_back({"Rerun setup", "erases the settings", [this] { confirm("Erase the settings and run setup again?", [this] { did(run_("@RESETSETUP")); }); }});
+    // setup again on the board's screen; the settings stay as they are until the wizard saves (@RESETSETUP is the erase, serial only)
+    l.items.push_back({"Rerun setup", "kept till saved", [this] { confirm("Run setup again? Settings stay until it saves", [this] { did(run_("@RERUNSETUP")); }); }});
     l.items.push_back({"Format SD card", "erases everything", [this] {
                            ask("Type FORMAT to erase the whole SD card", false, [this](const std::string& v) {
-                               if (v == "FORMAT") did(run_("@SDFORMAT FORMAT"));
+                               std::string w = v;  // any case: the touch keyboard has no caps lock
+                               for (char& c : w) c = (char)std::toupper((unsigned char)c);
+                               if (w == "FORMAT") did(run_("@SDFORMAT FORMAT"));
                                else did("not formatted");
                            });
                        }});

@@ -44,8 +44,10 @@ TEST_CASE("hotkeys and node lines become tap targets") {
     CHECK(wfcKeyAt(spots, 2, 5, &n) == 'S');
     CHECK(n == 0);
     CHECK(wfcKeyAt(spots, 2, 6, &n) == 'S');
-    CHECK(wfcKeyAt(spots, 2, 8, &n) == 0);
-    CHECK(wfcKeyAt(spots, 9, 20, &n) == 'N');
+    CHECK(wfcKeyAt(spots, 2, 8, &n) == 'S');  // the label "ettings" is the key too
+    CHECK(wfcKeyAt(spots, 2, 13, &n) == 'S');  // its last letter
+    CHECK(wfcKeyAt(spots, 2, 15, &n) == 0);    // past it
+    CHECK(wfcKeyAt(spots, 9, 4, &n) == 'N');
     CHECK(n == 1);
     CHECK(term.cell(2, 5).ch == 'S');
     CHECK(term.cell(2, 4).ch == '[');
@@ -89,8 +91,26 @@ TEST_CASE("a key beats a node line on the same row") {
     int      n = -1;
     CHECK(wfcKeyAt(spots, 1, 39, &n) == 'S');
     CHECK(n == 0);
-    CHECK(wfcKeyAt(spots, 1, 5, &n) == 'N');
+    CHECK(wfcKeyAt(spots, 1, 3, &n) == 'N');
     CHECK(n == 1);
+    CHECK(wfcKeyAt(spots, 1, 20, &n) == 0);  // past the node's text
+}
+
+TEST_CASE("a key's label and a node's field share a row without overlapping") {
+    WfcSnapshot s;
+    s.nodes.push_back({1, "Rev", "menu"});
+    AnsiTerm term(45, 24);
+    // the built-in layout: a key box on the left, the nodes box on the right of the same row
+    auto spots = drawWfc("|XY01,08\xb3 [|KS] settings    \xb3|XY20,08\xb3 @NA##############@ \xb3", s, term);
+    int  n = -1;
+    CHECK(wfcKeyAt(spots, 7, 8, &n) == 'S');  // a letter of "settings", not the node
+    CHECK(n == 0);
+    CHECK(wfcKeyAt(spots, 7, 13, &n) == 'S');
+    CHECK(wfcKeyAt(spots, 7, 25, &n) == 'N');  // inside the node's field
+    CHECK(n == 1);
+    CHECK(wfcKeyAt(spots, 7, 16, &n) == 0);    // between the boxes
+    CHECK(wfcKeyAt(spots, 7, 19, &n) == 0);    // the box line
+    CHECK(wfcKeyAt(spots, 7, 40, &n) == 0);    // past the field
 }
 
 TEST_CASE("long art is drawn in pieces with the same result") {
@@ -107,8 +127,8 @@ TEST_CASE("long art is drawn in pieces with the same result") {
 
 TEST_CASE("a control byte in the art is not a hotspot") {
     WfcSnapshot s;
-    AnsiTerm    term(53, 30);
-    auto        spots = drawWfc(std::string("abc[|KU]"), s, term);
+    AnsiTerm    term(45, 24);
+    auto        spots = drawWfc(std::string("a\x01" "b\x05" "c[|KU]"), s, term);
     CHECK(spots.size() == 1);
     CHECK(term.cell(0, 1).ch == ' ');
     CHECK(wfcKeyAt(spots, 0, 7, nullptr) == 'U');
@@ -133,4 +153,8 @@ TEST_CASE("the built-in CYD WFC fills 45x24 without scrolling, every key tappabl
     for (const auto& h : spots)
         if (h.node == 2) CHECK(wfcKeyAt(spots, h.row, 30, &node) == 'N');
     CHECK(node == 2);
+    for (const auto& h : spots)  // every key's label: the cell 4 past the key ("[S] settings" -> 'e') is still the key
+        if (h.node == 0 && h.key != ' ') CHECK(wfcKeyAt(spots, h.row, h.col + 4, nullptr) == h.key);
+    for (const auto& h : spots)
+        if (h.node == 0 && h.key == ' ') CHECK(wfcKeyAt(spots, h.row, h.col + 6, nullptr) == ' ');  // "local logon"
 }

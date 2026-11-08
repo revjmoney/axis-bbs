@@ -224,13 +224,14 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         r.type("y");
         CHECK(r.ranCmd("@RESTART"));
     }
-    {  // System > Rerun setup, confirmed
+    {  // System > Rerun setup, confirmed: setup again, the settings kept until the wizard saves (no erase)
         Rig r;
         r.shell.beginAt(SysopSection::System);
         r.type("a");
-        CHECK_FALSE(r.ranCmd("@RESETSETUP"));
+        CHECK_FALSE(r.ranCmd("@RERUNSETUP"));
         r.type("y");
-        CHECK(r.ranCmd("@RESETSETUP"));
+        CHECK(r.ranCmd("@RERUNSETUP"));
+        CHECK_FALSE(r.ranCmd("@RESETSETUP"));
     }
     {  // System > Format SD needs FORMAT typed
         Rig r;
@@ -239,10 +240,10 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         r.type("nope\r");
         CHECK_FALSE(r.ranCmd("@SDFORMAT FORMAT"));
         r.type("b");
-        r.type("format\r");  // case matters
+        r.type("formats\r");
         CHECK_FALSE(r.ranCmd("@SDFORMAT FORMAT"));
         r.type("b");
-        r.type("FORMAT\r");
+        r.type("format\r");  // any case (the touch keyboard has no caps lock)
         CHECK(r.ranCmd("@SDFORMAT FORMAT"));
     }
     {  // System > Station

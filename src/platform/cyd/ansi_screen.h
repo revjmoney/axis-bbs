@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Rev. J. Money
 // An 80x30 CP437 text screen drawn with 4x8 cells (the VGA 8x16 font averaged 2x2),
 // which fills the CYD's 320x240 panel exactly. Same idea as the CYD Demoscene ANSI player.
+// renderCells draws any AnsiTerm in bigger 7x10 cells (the font sampled 2x2 a pixel): the waiting screen's 45x24 is 315x240.
 #pragma once
 #include <stdint.h>
 

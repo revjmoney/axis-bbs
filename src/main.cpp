@@ -945,7 +945,13 @@ static bool drawWfc() {
     axis::bbs::WfcSnapshot s = wfcSnapshot();
     if (!wfcStale && s == wfcShown) return false;
     std::unique_ptr<axis::bbs::AnsiTerm> t(new (std::nothrow) axis::bbs::AnsiTerm(45, 24));
-    if (!t) return false;  // short on memory: the next turn tries again
+    if (!t) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
+        scr.fillScreen(pal::BLACK);
+        scr.setFont(&fonts::Font0);
+        scr.setTextColor(pal::ORANGE, pal::BLACK);
+        scr.drawString("low memory: the waiting screen will be back", 8, 116);
+        return true;
+    }
     std::string folder = axis::bbs::wfcFolder(cfg);
     if (wfcArt.empty() || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
         wfcArt = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
@@ -1031,7 +1037,7 @@ static void shellFeed() {  // what the shell wrote, onto its terminal; a questio
     if (shellTerm && !shellOut.empty()) shellTerm->feed(shellOut);
     shellOut.clear();
     screenDirty = true;
-    if (!boardShell || !boardShell->open()) {
+    if (!boardShell || !boardShell->open() || mode != Mode::Normal) {  // left, or Rerun setup took the screen
         closeShell();
         return;
     }
@@ -3263,6 +3269,12 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
     } else if (&out == &Serial && serialFileCommand(cmd)) {  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py)
+    } else if (cmd == "@RERUNSETUP") {  // the sysop menu's Rerun setup: the wizard again; nothing changes until it saves
+        logEvent("sysop: setup again");
+        newSetupPin();
+        mode = Mode::SetupChoice;
+        screenDirty = true;
+        out.println("axis: setup again on the board's screen (the settings stay until it saves)");
     } else if (cmd == "@RESETSETUP") {
         configErase();
         out.println("axis: settings erased, restarting into setup");

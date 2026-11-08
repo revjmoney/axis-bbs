@@ -37,7 +37,8 @@ ArtValue wfcValues(const WfcSnapshot& s);
 struct WfcHotspot {
     int  row, col;
     char key;   // S U # B F L E A ! space; 'N' for a node line
-    int  node;  // > 0 for a node line
+    int  node;      // > 0 for a node line
+    int  span = 1;  // cells from col that hit it: a key's label ("[S] settings"), a node line's field
 };
 
 // Expands WFC art into `term`, recording where the |K? and |N? codes landed.
@@ -48,8 +49,9 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
 constexpr size_t kWfcArtCap = 12288;  // a theme's WFC.ANS past this is cut, as the board's theme loader does
 std::string      cleanWfcArt(std::string a);
 
-// The key tapped at (row, col), or 0 for none. A key hits on its cell or one cell either side; a node line hits anywhere on its
-// row (and sets *node to its number, else 0).
+// The key tapped at (row, col), or 0 for none. A key hits on its cell, across its label (up to 14 cells, until two spaces, a box
+// line or the next hotspot) and on the cell to its left; a node line hits across its field (sets *node to its number, else 0).
+// Keys come first.
 char wfcKeyAt(const std::vector<WfcHotspot>& spots, int row, int col, int* node);
 
 }  // namespace axis::bbs

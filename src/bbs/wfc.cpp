@@ -89,6 +89,8 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
     // records where the cursor stands. The marker takes one column inside an @XX###@ field, so those fields are made one wider.
     // The art is handed to expandArt in pieces of about 400 bytes (cut only where no {{ACS}} or |{ group is open), so the screen is
     // never held twice.
+    int      fieldW[kNodeSlots], plainW[kNodeSlots];  // a node line's @NA###@ width, or its plain |NA value's length
+    for (int i = 0; i < kNodeSlots; i++) fieldW[i] = -1, plainW[i] = 1;
     ArtValue base = wfcValues(s);
     ArtValue value = [&](const std::string& k) -> std::string {
         std::string v = base(k);
@@ -99,6 +101,7 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
                 if (k == kKeys[i].code) return std::string(1, markerFor(i)) + v;
         if (nodeCode(k)) {
             size_t i = k[1] - 'A';
+            plainW[i] = v.empty() ? 1 : (int)v.size();
             return std::string(1, markerFor(i < s.nodes.size() ? kKeyCount + (int)i : kNone)) + v;
         }
         return v;
@@ -116,8 +119,10 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
             term.feed(run);
             run.clear();
             if (id < kKeyCount) spots.push_back({term.row(), term.col(), kKeys[id].key, 0});
-            else if (id < kNone && (size_t)(id - kKeyCount) < s.nodes.size())
-                spots.push_back({term.row(), term.col(), 'N', s.nodes[id - kKeyCount].number});
+            else if (id < kNone && (size_t)(id - kKeyCount) < s.nodes.size()) {
+                int slot = id - kKeyCount;
+                spots.push_back({term.row(), term.col(), 'N', s.nodes[slot].number, fieldW[slot] > 0 ? fieldW[slot] : plainW[slot]});
+            }
         }
         term.feed(run);
     };
@@ -139,6 +144,8 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
             size_t k = j;
             while (k < art.size() && art[k] == '#') k++;
             if (j > i + 1 && k > j && k < art.size() && art[k] == '@') {
+                if (j - i - 1 == 2 && art[i + 1] == 'N' && art[i + 2] >= 'A' && art[i + 2] < 'A' + kNodeSlots)
+                    fieldW[art[i + 2] - 'A'] = (int)(k - i + 1);  // the field's width on screen, @ signs included
                 chunk.append(art, i + 1, k - i - 1);
                 if (j - i - 1 == 2 && (art[i + 1] == 'K' || art[i + 1] == 'N')) chunk += '#';
                 chunk += '@';
@@ -151,6 +158,20 @@ std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, An
         }
     }
     if (!chunk.empty()) expandArt(chunk, AcsUser{}, value, emit);
+    // a key's label is tappable too: from the key to two spaces, a box line (or any non-ASCII), the next hotspot, or 14 cells
+    for (auto& h : spots) {
+        if (h.node) continue;
+        int end = h.col;
+        for (int c = h.col + 1; c < term.cols() && c <= h.col + 14; c++) {
+            bool other = false;
+            for (const auto& o : spots) other = other || (o.row == h.row && o.col == c);
+            unsigned char ch = term.cell(h.row, c).ch;
+            if (other || ch < 0x20 || ch >= 0x7f) break;
+            if (ch == ' ' && (c + 1 >= term.cols() || term.cell(h.row, c + 1).ch == ' ')) break;
+            end = c;
+        }
+        h.span = end - h.col + 1;
+    }
     return spots;
 }
 
@@ -194,10 +215,10 @@ char wfcKeyAt(const std::vector<WfcHotspot>& spots, int row, int col, int* node)
     if (node) *node = 0;
     for (const auto& h : spots)  // the key's own cell first
         if (h.node == 0 && h.row == row && h.col == col) return h.key;
-    for (const auto& h : spots)  // then a cell either side
-        if (h.node == 0 && h.row == row && (col == h.col - 1 || col == h.col + 1)) return h.key;
-    for (const auto& h : spots)  // then a node line anywhere on its row
-        if (h.node > 0 && h.row == row) {
+    for (const auto& h : spots)  // then its label, or the cell either side
+        if (h.node == 0 && h.row == row && (col == h.col - 1 || (col > h.col && col < h.col + (h.span > 2 ? h.span : 2)))) return h.key;
+    for (const auto& h : spots)  // then a node line, across its field
+        if (h.node > 0 && h.row == row && col >= h.col && col < h.col + h.span) {
             if (node) *node = h.node;
             return h.key;
         }
