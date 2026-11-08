@@ -578,7 +578,17 @@ static constexpr size_t     kZipWindow = 32768;
 static std::unique_ptr<axis::bbs::Node>         node;
 static std::unique_ptr<axis::bbs::SetupGate>    gate;
 static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
-static uint32_t callStartMs = 0, callsToday = 0;
+static uint32_t callStartMs = 0, callsToday = 0, postsToday = 0, uploadsToday = 0;
+// The day counters roll at local midnight; until the clock is set they just keep counting.
+static void rollDayCounters() {
+    static int dayKey = 0;
+    time_t     now = time(nullptr);
+    if (now < 1700000000) return;
+    struct tm* t = localtime(&now);
+    int        key = (t->tm_year + 1900) * 400 + t->tm_yday;
+    if (dayKey && key != dayKey) callsToday = postsToday = uploadsToday = 0;
+    dayKey = key;
+}
 
 // Several callers per board. Each loop turn serves one session at a time: its line, node, game,
 // movie, and transfer are moved into the globals above, then moved back.
@@ -725,13 +735,14 @@ static String heapText() {
 }
 
 static void announceOut(const std::string& line);
+static std::unique_ptr<axis::bbs::Node> serialWfc;  // the serial port's WFC terminal, while it is open
 static void logEvent(const String& what) {
     time_t now = time(nullptr);
     char   stamp[8] = "--:--";
     if (now > 1700000000) strftime(stamp, sizeof stamp, "%H:%M", localtime(&now));
     events.add(std::string(stamp) + " " + what.c_str());
     if (eventFileReady) eventFile.append(std::string(stamp) + " " + what.c_str());
-    Serial.printf("axis: %s\n", what.c_str());
+    if (!serialWfc) Serial.printf("axis: %s\n", what.c_str());  // (not while the serial WFC owns the screen)
     if (panelSession && panelSession->authed() && panelClient.connected())  // the control panel's event feed
         panelClient.print(String("EVT ") + stamp + " " + what + "\n");
     std::string a = axis::bbs::announceLine(what.c_str());  // scene news for the Discord channel
@@ -751,7 +762,15 @@ static bool asFollower() { return cluster && cluster->role() == axis::cluster::R
 
 // The message base: on the main (SD card, or internal flash), and the main's over the link on every
 // follower, so the whole cluster is one conversation.
-static std::unique_ptr<axis::bbs::FileMessageStore> localMsgs;
+struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for the WFC's today box
+    using axis::bbs::FileMessageStore::FileMessageStore;
+    int post(const std::string& area, const axis::bbs::Message& m) override {
+        int n = axis::bbs::FileMessageStore::post(area, m);
+        if (n && area != "email") postsToday++;
+        return n;
+    }
+};
+static std::unique_ptr<CountingMsgs> localMsgs;
 static axis::bbs::RemoteMessageStore remoteMsgs([](const std::string& req, std::string& reply) {
     return cluster && cluster->request(req, reply, 4000);
 });
@@ -759,7 +778,7 @@ static axis::bbs::MessageStore& callerMessages() {
     if (!localMsgs) {
         std::string root = std::string(storageRoot()) + "/msgs";
         ::mkdir(root.c_str(), 0777);
-        localMsgs.reset(new axis::bbs::FileMessageStore(root));
+        localMsgs.reset(new CountingMsgs(root));
     }
     if (asFollower()) return remoteMsgs;
     return *localMsgs;
@@ -1797,7 +1816,10 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     }
     const auto& ev = events.lines();
     for (auto it = ev.rbegin(); it != ev.rend() && w.events.size() < 8; ++it) w.events.push_back(*it);
+    rollDayCounters();
     w.callsToday = callsToday;
+    w.postsToday = postsToday;
+    w.uploadsToday = uploadsToday;
     w.sdFreeKb = (uint32_t)(storageFreeBytes() >> 10);
     w.ramFreeKb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
     w.uptimeS = millis() / 1000;
@@ -1816,6 +1838,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     line->start();
     if (!giveBack.empty()) line->inject(giveBack);
     if (cfg.setupDone && mode == Mode::Normal) {
+        rollDayCounters();
         callsToday++;
         node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, cfg, &callerFiles()));
         int slot = curSession;
@@ -3475,34 +3498,44 @@ static void runCommand(const String& cmd, Print& out) {
 }
 
 // "WFC" on the serial port: a terminal on the waiting-for-caller screen, until Q; then the @ commands are back.
-static std::unique_ptr<axis::bbs::Node> serialWfc;
+static void serialWfcClose() {
+    serialWfc.reset();
+    Serial.print("\r\naxis: back to @ commands\r\n");
+}
 static void serialWfcPump() {
     serialWfc->poll(millis());
     std::string o = serialWfc->takeOutput();
     if (!o.empty()) Serial.write((const uint8_t*)o.data(), o.size());
-    if (serialWfc->state() == axis::bbs::Node::State::Done || serialWfc->wantsHangup()) {
-        serialWfc.reset();
-        Serial.print("\r\naxis: back to @ commands\r\n");
-    }
+    if (serialWfc->state() == axis::bbs::Node::State::Done || serialWfc->wantsHangup()) serialWfcClose();
 }
 
+// "WFC" (any case) opens it. An "@" as the first character of a line, or 10 minutes without input, leaves it.
 static void handleSerial() {
-    static String cmd;
-    if (serialWfc) {
-        uint8_t buf[32];
-        while (serialWfc && Serial.available()) {
-            size_t n = 0;
-            while (n < sizeof buf && Serial.available()) buf[n++] = (uint8_t)Serial.read();
-            serialWfc->input(buf, n, millis());
-            serialWfcPump();
-        }
-        if (serialWfc) serialWfcPump();
-        return;
-    }
+    static String   cmd;
+    static bool     lineStart = true;
+    static uint32_t lastIn = 0;
     while (Serial.available()) {
         char c = Serial.read();
-        if (cmd == "WFC" && (c == 0x0A || c == 0x0D) && mode == Mode::Normal && cfg.setupDone) {
+        if (serialWfc) {
+            lastIn = millis();
+            if (c == '@' && lineStart) {  // a tool or script talking @ commands: hand the line back
+                serialWfcClose();
+                cmd = "@";
+                continue;
+            }
+            lineStart = (c == '\r' || c == '\n');
+            uint8_t byte = (uint8_t)c;
+            serialWfc->input(&byte, 1, millis());
+            serialWfcPump();
+            continue;
+        }
+        if ((c == 0x0A || c == 0x0D) && cmd.equalsIgnoreCase("WFC")) {
             cmd = "";
+            if (mode != Mode::Normal || !cfg.setupDone) {
+                Serial.println(cfg.setupDone ? "axis: WFC is not available right now (the board is not at its normal screen)"
+                                             : "axis: WFC is not available until setup is done");
+                continue;
+            }
             serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg, &callerFiles()));
             serialWfc->setAccounts(&users, saveUsers, hwRandom, unixNow);
             serialWfc->setWarrior(writeWarrior);
@@ -3517,8 +3550,10 @@ static void handleSerial() {
             serialWfc->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
             serialWfc->beginLocal(millis());
             serialWfc->openWfc(millis());
+            lineStart = true;
+            lastIn = millis();
             serialWfcPump();
-            return;
+            continue;
         }
         if (c != '\n' && c != '\r') {
             if (cmd.length() < 160) cmd += c;
@@ -3526,6 +3561,10 @@ static void handleSerial() {
         }
         runCommand(cmd, Serial);
         cmd = "";
+    }
+    if (serialWfc) {
+        if (millis() - lastIn > 600000u) serialWfcClose();
+        else serialWfcPump();
     }
 }
 
@@ -3672,6 +3711,7 @@ static void serviceSession(int i) {
         }
         if (!running) {
             const auto& r = job->request();
+            if (r.upload && job->ok()) rollDayCounters(), uploadsToday++;
             logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
                      (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
             if (line && line->carrier()) {
