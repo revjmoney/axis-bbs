@@ -32,6 +32,11 @@ struct Rig {
     void type(const std::string& s) {
         for (char c : s) shell.key(c);
     }
+    bool ranCmdPrefix(const std::string& p) const {
+        for (auto& r : ran)
+            if (r.rfind(p, 0) == 0) return true;
+        return false;
+    }
     bool ranCmd(const std::string& c) const {
         for (auto& r : ran)
             if (r == c) return true;
@@ -59,14 +64,22 @@ TEST_CASE("the look is picked from a numbered list, not typed") {
     CHECK(r.ranCmd("@SET theme=cyan"));
 }
 
-TEST_CASE("the waiting screen row writes the same look") {
+TEST_CASE("Settings > Look has no wfc row, so no settings path changes the theme for the WFC skin") {
     Rig r;
     r.shell.begin();
-    r.type("442");  // Settings, Look, the wfc row
-    CHECK(plain(r.out).find("Axis, drippy orange") != std::string::npos);
-    r.type("1");
-    CHECK(r.ranCmd("@SET theme=axis"));
-    CHECK_FALSE(r.ranCmd("@SET wfc=axis"));
+    r.type("44");  // Settings, then Look
+    std::string o = plain(r.out);
+    CHECK(o.find("wfc") == std::string::npos);
+    CHECK(o.find("look") != std::string::npos);
+}
+
+TEST_CASE("the Look section's waiting screen skin sends @SET wfc=, never @SET theme=") {
+    Rig r;
+    r.shell.beginAt(axis::bbs::SysopSection::Look);
+    r.type("2");  // Waiting screen skin
+    r.type("5");  // a look (1 is follow the theme)
+    CHECK(r.ranCmdPrefix("@SET wfc="));
+    CHECK_FALSE(r.ranCmdPrefix("@SET theme="));
 }
 
 TEST_CASE("the sysop menu opens on its top layer") {

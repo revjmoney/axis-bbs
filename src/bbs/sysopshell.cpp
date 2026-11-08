@@ -42,7 +42,7 @@ const Group kGroups[] = {
     {"BBS and sysop", {"bbs_name", "location", "sysop_handle", "sysop_real_name", "board_name", "ftn_address", "timezone", nullptr}},
     {"Network", {"telnet_port", "public_host", "sessions", nullptr}},
     {"Callers and limits", {"new_user_security", "daily_minutes", "idle_minutes", "ratio", "free_kb", nullptr}},
-    {"Look", {"theme", "wfc", "login_splash", nullptr}},
+    {"Look", {"theme", "login_splash", nullptr}},
 };
 bool inGroups(const std::string& k) {
     for (auto& g : kGroups)
@@ -520,9 +520,10 @@ void SysopShell::settingGroup(Layer& l, int g) {
         else
             for (int i = 0; kGroups[g].keys[i]; i++) mine = mine || k == kGroups[g].keys[i];
         if (!mine) continue;
-        if (k == "theme" || k == "wfc") {  // both rows write the one look. The waiting screen follows it.
+        if (k == "wfc") continue;  // the waiting screen skin is picked in the Look section, never here
+        if (k == "theme") {
             std::string cur = theme::knownLook(v) ? theme::knownLook(v) : "axis";
-            l.items.push_back({k == "wfc" ? "wfc" : "look", cur, [this, cur] {
+            l.items.push_back({"look", cur, [this, cur] {
                                    push("LOOK", [this, cur](Layer& x) {
                                        for (int i = 0; i < theme::lookCount(); i++) {
                                            std::string id = theme::lookId(i);
