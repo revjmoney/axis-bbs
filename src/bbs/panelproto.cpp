@@ -15,6 +15,10 @@ bool same(const std::string& a, const std::string& b) {
         if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
     return true;
 }
+
+std::string passwordScheme(const std::string& hash) {
+    return hash.rfind("pbkdf2-sha256$200000$", 0) == 0 ? "PBKDF2-SHA256-200000" : "SHA256";
+}
 }  // namespace
 
 PanelSession::PanelSession(const BbsConfig& cfg, const UserStore& users, std::string nonce)
@@ -39,7 +43,8 @@ std::string PanelSession::line(const std::string& raw) {
     if (closed_) return "";
     if (in.rfind("SALT ", 0) == 0) {
         std::string salt, hash, name;
-        return lookup(in.substr(5), salt, hash, name) ? "SALT " + salt + "\n" : "SALT -\n";
+        if (!lookup(in.substr(5), salt, hash, name)) return "SALT -\n";
+        return "SALT " + salt + " " + passwordScheme(hash) + "\n";
     }
     if (in.rfind("AUTH ", 0) == 0) {
         size_t      sp = in.find(' ', 5);
