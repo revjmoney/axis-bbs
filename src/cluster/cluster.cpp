@@ -358,8 +358,17 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
         return;
     }
     if (role_ != Role::Discovering || (epoch < minEpoch_ && !theirSd)) return;
+    // one join dial per tick, and after a failed one no more for kProbeAgainMs whatever the address
+    // (replayed announcements from dead addresses must not keep this board inside connect())
+    if (joinedThisTick_ || (joinFailed_ && now - joinFailEnd_ < kProbeAgainMs)) return;
+    joinedThisTick_ = true;
     int link = net_.connect(ip);
-    if (link < 0) return;
+    if (link < 0) {
+        joinFailed_ = true;
+        joinFailEnd_ = now;
+        return;
+    }
+    joinFailed_ = false;
     links_.push_back({link, FrameReader(), 0});
     role_ = Role::Joining;
     mainIp_ = ip;
@@ -699,7 +708,7 @@ void Cluster::tick(uint32_t now) {
     }
     std::string d;
     uint32_t    from;
-    probedThisTick_ = false;
+    probedThisTick_ = joinedThisTick_ = false;
     while (net_.recvDatagram(d, from)) handleDatagram(d, from, now);
 
     if (role_ == Role::Main) {

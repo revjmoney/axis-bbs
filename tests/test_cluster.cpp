@@ -855,6 +855,54 @@ TEST_CASE("replayed winning announcements from many addresses cost at most one c
     CHECK(t.b.c->role() == Role::Follower);
 }
 
+TEST_CASE("a discovering board hearing replayed winners from dead addresses dials once per tick and once per 10 s, then still joins a real main") {
+    TwoBoards t;
+    Board     d(t.lan, 107, "board-d");  // a third board, node 3
+    d.c->start(t.now);
+    run({&t.a, &t.b, &d}, t.now, 3000);
+    REQUIRE(d.c->role() == Role::Follower);
+    std::vector<std::string> captured;
+    for (uint32_t ip : {103u, 104u, 105u}) {
+        FakeLan other;
+        Board   old(other, ip, ("board-old" + std::to_string(ip)).c_str());
+        FakeNet sniffer;
+        sniffer.lan = &other;
+        sniffer.ip = 200;
+        other.nets.push_back(&sniffer);
+        uint32_t then = 0;
+        old.c->start(then);
+        run({&old}, then, 4000);
+        old.c->start(then, 1);
+        run({&old}, then, 4000);
+        std::string last;
+        for (auto& d : sniffer.datagrams)
+            if (d.first.rfind("AXIS! ", 0) == 0) last = d.first;
+        REQUIRE(!last.empty());
+        captured.push_back(last);
+        other.nets.clear();
+    }
+    // the main goes away; node 3 is left discovering (node 2 has not noticed yet, it is not ticked)
+    t.a.net.powerOff();
+    for (int i = 0; i < 400 && d.c->role() == Role::Follower; i++) run({&d}, t.now, 50);
+    REQUIRE(d.c->role() == Role::Discovering);
+    d.net.dialed.clear();
+    for (auto& c : captured) d.net.datagrams.emplace_back(c, 103);
+    d.c->tick(t.now);
+    t.now += 50;
+    CHECK(d.net.dialed.size() == 1);
+    for (int i = 0; i < 150; i++) {  // about 7.5 s more of replays
+        for (auto& c : captured) d.net.datagrams.emplace_back(c, 103);
+        run({&d}, t.now, 50);
+    }
+    CHECK(d.net.dialed.size() == 1);
+    CHECK(d.c->role() == Role::Discovering);
+    // node 2 notices the loss, becomes main (epoch above node 3's floor) and announces: node 3 joins it
+    run({&t.b, &d}, t.now, 4000);
+    CHECK(t.b.c->role() == Role::Main);
+    CHECK(d.c->role() == Role::Follower);
+    CHECK(t.b.c->nodes().size() == 2);
+}
+
 TEST_CASE("a connection that never proves the cluster key is dropped after 5 s, and the event is said once a minute") {
     FakeLan  lan;
     Board    a(lan, 101, "board-a");

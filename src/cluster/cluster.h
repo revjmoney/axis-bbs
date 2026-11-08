@@ -206,7 +206,9 @@ private:
     Link                  probe_{-1, FrameReader()};
     bool                  probing_ = false, stepDown_ = false;
     uint32_t              probeIp_ = 0, probeEpoch_ = 0, probeEnd_ = 0, probeFailAt_ = 0;
-    bool                  probeTried_ = false, probedThisTick_ = false, probeFailOnce_ = false;  // probeEnd_: end of the last attempt, any address
+    bool                  probeTried_ = false, probedThisTick_ = false, probeFailOnce_ = false;
+    bool                  joinedThisTick_ = false, joinFailed_ = false;  // a Discovering board's join dials
+    uint32_t              joinFailEnd_ = 0;  // probeEnd_: end of the last attempt, any address
     uint32_t              turnedAt_ = 0;  // the last "turned away" event
     bool                  turnedOnce_ = false;
     bool                  inTick_ = false, restart_ = false, keyPending_ = false;  // restart_: start() again at the top of the next tick
