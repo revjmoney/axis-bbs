@@ -74,7 +74,7 @@
 <div class="side-group"><div class="side-g">Sysop</div><ul>
 <li><a href="#accounts" data-k="accounts and security accounts application validate security level permissions time limit idle twit sysop applications, validation, levels, permissions, time limits, twits.">Accounts and security</a></li>
 <li><a href="#user-editor" data-k="sysop user editor user editor star sysop edit any caller over telnet with *.">Sysop user editor</a></li>
-<li><a href="#cyd-console" data-k="the cyd console cyd wfc activity screen kick sysop menu touch activity screen, node detail and kick, the touch sysop menu.">The CYD console</a></li>
+<li><a href="#cyd-console" data-k="the cyd console cyd wfc activity screen kick sysop menu the Renegade-style WFC in every look, sysop keys and //, node detail and kick, the sysop menu.">The CYD console</a></li>
 <li><a href="#local-console" data-k="local console local console zoom keys the bbs on the board&#x27;s own screen: 80 columns crisp, or zoom.">Local console</a></li>
 <li><a href="#leds" data-k="rgb led and ring led rgb ring lights what the led colours and the headless led ring mean.">RGB LED and ring</a></li>
 <li><a href="#headless" data-k="headless nodes headless node esp32 hotspot axis-setup ring plain esp32 boards as extra nodes, set up over axis-setup.">Headless nodes</a></li>
@@ -138,7 +138,7 @@
 <div class="hub-group" id="area-sysop" data-group="Sysop"><h2 class="hub-g">Sysop</h2><div class="cards-grid">
 <a class="tcard" href="#accounts" data-k="accounts and security accounts application validate security level permissions time limit idle twit sysop applications, validation, levels, permissions, time limits, twits."><span class="tcard-thumb"><img src="media/cyd-users.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Accounts and security</span><span class="tcard-sum">Applications, validation, levels, permissions, time limits, twits.</span></a>
 <a class="tcard" href="#user-editor" data-k="sysop user editor user editor star sysop edit any caller over telnet with *."><span class="tcard-thumb"><img src="media/user-editor-caller.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Sysop user editor</span><span class="tcard-sum">Edit any caller over telnet with *.</span></a>
-<a class="tcard" href="#cyd-console" data-k="the cyd console cyd wfc activity screen kick sysop menu touch activity screen, node detail and kick, the touch sysop menu."><span class="tcard-thumb"><img src="media/cyd-sysop.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">The CYD console</span><span class="tcard-sum">Activity screen, node detail and KICK, the touch sysop menu.</span></a>
+<a class="tcard" href="#cyd-console" data-k="the cyd console cyd wfc activity screen kick sysop menu the Renegade-style WFC in every look, sysop keys and //, node detail and kick, the sysop menu."><span class="tcard-thumb"><img src="media/cyd-sysop.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">The CYD console</span><span class="tcard-sum">Activity screen, node detail and KICK, the touch sysop menu.</span></a>
 <a class="tcard" href="#local-console" data-k="local console local console zoom keys the bbs on the board&#x27;s own screen: 80 columns crisp, or zoom."><span class="tcard-thumb"><img src="media/cyd-local-sharp.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Local console</span><span class="tcard-sum">The BBS on the board's own screen: 80 columns crisp, or ZOOM.</span></a>
 <a class="tcard" href="#leds" data-k="rgb led and ring led rgb ring lights what the led colours and the headless led ring mean."><span class="tcard-thumb"><img src="media/cyd-wfc.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">RGB LED and ring</span><span class="tcard-sum">What the LED colours and the headless LED ring mean.</span></a>
 <a class="tcard" href="#headless" data-k="headless nodes headless node esp32 hotspot axis-setup ring plain esp32 boards as extra nodes, set up over axis-setup."><span class="tcard-thumb"><img src="media/multinode-who.png" alt="" loading="lazy" width="320" height="212"></span><span class="tcard-title">Headless nodes</span><span class="tcard-sum">Plain ESP32 boards as extra nodes, set up over AXIS-SETUP.</span></a>
@@ -204,7 +204,7 @@ pio run -e cyd -t upload --upload-port COM5</code></pre>
 <div class="lead"><div class="lead-text"><p class="lede">The 6-digit setup PIN, the telnet wizard and your sysop account.</p><p>Once it is on your network, the board asks how you want to set the BBS up: <strong>ON THIS SCREEN</strong> or <strong>OVER TELNET</strong>.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/setup-pin.png"><div class="screen"><img src="media/setup-pin.png" alt="The CYD first-boot setup screen: telnet axis.local and a six digit setup PIN in big yellow numbers" loading="lazy" width="640" height="480"></div></a><figcaption>Setup over telnet: the one-time PIN</figcaption></figure></div></div>
 <div class="topic-body"><ul>
     <li><strong>Over telnet</strong> is the easy way: the screen shows <code>telnet axis.local</code>, the board's address, and a 6-digit <strong>setup PIN</strong>. Call in from a computer on the same network, type the PIN, and answer the wizard. Anyone who calls before setup is done only sees "This BBS is being set up" and a PIN prompt.</li>
-    <li><strong>On this screen</strong> is reserved for an on-screen wizard. In version 0.5 it still only says the on-screen setup is coming in a later build and offers a way back, so use telnet.</li>
+    <li><strong>On this screen</strong> is reserved for an on-screen wizard. In version 0.51 it still only says the on-screen setup is coming in a later build and offers a way back, so use telnet.</li>
   </ul>
   <div class="figs">
     
@@ -615,10 +615,10 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
 </article>
 
 <article class="topic" id="multinode" data-group="Multinode" aria-labelledby="multinode-title">
-<header class="topic-head"><div class="eyebrow">Multinode</div><h2 id="multinode-title">Nodes and clustering</h2><dl class="msghead"><dt>Topic</dt><dd>Nodes and clustering</dd><dt>Area</dt><dd>Multinode</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>17 of 34</dd></dl></header>
+<header class="topic-head"><div class="eyebrow">Multinode</div><h2 id="multinode-title">Nodes and clustering</h2><dl class="msghead"><dt>Topic</dt><dd>Nodes and clustering</dd><dt>Area</dt><dd>Multinode</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-08</dd><dt>Msg</dt><dd>17 of 34</dd></dl></header>
 <div class="lead"><div class="lead-text"><p class="lede">Several callers per board, and boards that join into one BBS.</p><p>One board takes several callers at once, and several boards on one LAN join into one BBS with shared users, settings, files, messages and lists. Each caller slot is a <strong>node</strong>.</p><figure class="family"><a class="lb" href="media/cluster-family.jpg"><img src="media/cluster-family.jpg" alt="The AXIS cluster family: two CYD boards and a headless ESP32 on a terminal breakout, seven nodes of one BBS" loading="lazy" width="900" height="1200"></a><figcaption>The cluster family: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headless ESP32 on a breakout (nodes 5 to 7). Seven nodes, one BBS.</figcaption></figure></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen showing node 1+2, status lights and the system ticker" loading="lazy" width="640" height="480"></div></a><figcaption>The main board serving nodes 1 and 2</figcaption></figure></div></div>
 <details class="sub" id="sessions" open><summary>Sessions per board</summary><div class="sub-body"><p><code>sessions</code> sets how many callers a board takes at once: 1 to 4, default 2 on a CYD (a headless node defaults to 3). Each session is its own node number; the activity screen shows them as, for example, <code>node 1+2</code>. Native LORD does not take the single door slot, so more than one caller on the same board can be in it. The ANSI viewer, the DOS prompt, and a file transfer still share one slot per board. Everything else (menus, messages, chat, browsing) runs side by side.</p></div></details>
-<details class="sub" id="cluster"><summary>How boards join</summary><div class="sub-body"><p>Flash another board, put it on the same network, and it finds the others by itself (mDNS service <code>_axisbbs._tcp</code> plus UDP broadcast). There is nothing to configure.</p>
+<details class="sub" id="cluster"><summary>How boards join</summary><div class="sub-body"><p>Flash another board, put it on the same network, and it finds the others by itself (mDNS service <code>_axisbbs._tcp</code> plus UDP broadcast). The one thing to set is the shared <a href="#cluster-key">cluster key</a>: from version 0.51 boards only link with boards that hold the same key.</p>
   <ul>
     <li><strong>The SD board is main and node 1.</strong> The board with the SD card is the main: it owns the files, messages and lists, and serves them to the others over the link. A main without a card hands the role to a board that has one as soon as it joins. More boards with cards add their cards to the file areas; see <a href="#sd-pool">SD card clustering</a>.</li>
     <li><strong>One set of settings.</strong> Every other board takes the main's settings over the link, keeping only its own <code>board_name</code>, <code>sessions</code> and <code>telnet_port</code>. A change on the main (from <code>@SET</code> or the THEME button) reaches every board at once.</li>
@@ -632,6 +632,19 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     
     <figure class="crt"><a class="lb" href="media/multinode-who.png"><div class="screen"><img src="media/multinode-who.png" alt="Who's online listing every node across the boards with caller handles and what they are doing" loading="lazy" width="640" height="424"></div></a><figcaption>Who's online across every board</figcaption></figure>
   </div></div></details>
+<details class="sub" id="cluster-key"><summary>Linking boards: the cluster key</summary><div class="sub-body"><p>Boards only join a cluster when they share a secret, the <strong>cluster key</strong>. Discovery is signed, a new link proves the key in both directions, and every frame on the link carries a tag, so a stranger on your network cannot join, forge, change or replay what the boards say to each other. A board with no key runs alone.</p>
+  <ol>
+    <li><strong>Pick a secret</strong> of 8 or more characters. The same one goes on every board. Keep it somewhere private; do not post it or commit it to a repository.</li>
+    <li><strong>Connect to each board</strong> over USB and open its serial console at 115200 baud.</li>
+    <li><strong>On each board</strong> type <code>@CLUSTERKEY</code> followed by a space and your secret, then Enter. Or use the cluster key line in the sysop menu's System layer on the board itself.</li>
+    <li><strong>Check it:</strong> <code>@CLUSTERKEY</code> alone says whether a key is set (it never shows the key). <code>@CLUSTERKEY off</code> clears it.</li>
+  </ol>
+  <ul>
+    <li><strong>Stored on the board only.</strong> The key lives in that board's own storage, not in <code>axis.ini</code>, and is never shown or sent in the settings sync. You enter it once per board.</li>
+    <li><strong>Upgrade rule:</strong> older firmware cannot join a keyed board. Flash every board with 0.51 together, then give each the same key. A board on 0.51 with no key runs alone until it has one.</li>
+    <li><strong>Replacing a board?</strong> Flash it, then set the same key on it. Changing the key means setting the new one on every board.</li>
+  </ul>
+  <div class="note"><strong>Note</strong>Cluster key commands run only at the board or on its serial console, never over telnet.</div></div></details>
 <details class="sub" id="sd-pool"><summary>SD card clustering (pool and mirror)</summary><div class="sub-body"><p>Put an SD card in more than one board and the cards work together. There is nothing to set up for the pool; mirroring is one letter per area.</p>
   <ul>
     <li><strong>Every card adds to one library.</strong> The main lists each area across every card in the cluster as one list. A file that is on two cards shows once (the larger copy, if they differ), with the description from whichever card has one. Callers on any board, with or without a card, see the same lists.</li>
@@ -849,22 +862,46 @@ build/axis_tests</code></pre>
 </article>
 
 <article class="topic" id="cyd-console" data-group="Sysop" aria-labelledby="cyd-console-title">
-<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="cyd-console-title">The CYD console</h2><dl class="msghead"><dt>Topic</dt><dd>The CYD console</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-04</dd><dt>Msg</dt><dd>25 of 34</dd></dl></header>
-<div class="lead"><div class="lead-text"><p class="lede">The Iniquity-style activity screen, node detail and KICK, the sysop menu, the control panel.</p><p>The board's own touchscreen is the sysop's control panel. Nothing here needs a password: whoever can touch the board is the sysop.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen: AXIS logo, LOCAL button, battery spot, status lights NET LINK SD CALL DOOR PAGE, two node lines, a ticker and the newest events" loading="lazy" width="640" height="480"></div></a><figcaption>The activity screen (CYD panel at 2x)</figcaption></figure></div></div>
-<details class="sub" id="wfc" open><summary>The activity screen</summary><div class="sub-body"><p>When idle the board shows an Iniquity-style activity screen: a title bar with the version and this board's nodes, a chunky AXIS logo across the top 3/16, a status line (time, date, event), then three framed boxes.</p>
-  <ul>
-    <li><strong>The menu box</strong> (a lightbar, every line a touch target): <strong>f1 local logon</strong> opens the <a href="#local-console">local console</a>; <strong>f2 sysop menu</strong> opens the <a href="#sysop-menu">sysop menu</a>; f3 users, f4 files, f5 event log, f6 bbs setup and f7 system open the sysop menu at that layer. f3 shows how many applications wait.</li>
-    <li><strong>The nodes box:</strong> every node on every board in the cluster, headless boards included, with who is on and what they are doing (or the board's address while it waits). Tap a node on this board for its detail screen.</li>
-    <li><strong>The today box:</strong> calls today, new users, the last caller, free RAM, uptime, WiFi signal, SD space and file areas.</li>
-    <li><strong>Status lamps:</strong> net, link (other boards), sd, call, door and page. Steady means on, blinking means busy, dark means off.</li>
-    <li><strong>The newest event</strong> (a page from a caller takes its place for a minute) and a footer that blinks "N new users waiting" while applications wait.</li>
-  </ul></div></details>
-<details class="sub" id="node-detail"><summary>Node detail and KICK</summary><div class="sub-body"><p>Tap a node's line for its detail screen: the caller, what they are doing, time online, their IP, whether they are a sysop, their calls and upload and download totals. <strong>BACK</strong> returns; <strong>KICK</strong> hangs that caller up (and logs it). Tap anywhere else on the activity screen for the sysop menu.</p></div></details>
-<details class="sub" id="sysop-menu" open><summary>The sysop menu</summary><div class="sub-body"><p>The sysop menu is part of the BBS itself: lightbar screens in the board's look, the same menu whether you are called in or at the board. Online, press <kbd>*</kbd> at the main menu (sysop only). On the board, tap <strong>f2</strong> (or f3 to f7 to land on a layer): it opens straight into the menu in big 8x16 letters, and you tap a line to pick it, or use KEYS. Move with the arrow keys or the item's number, <kbd>Enter</kbd> picks, <kbd>Q</kbd> or <kbd>Esc</kbd> goes back a layer, <kbd>N</kbd>/<kbd>P</kbd> page.</p>
-  <div class="figs one">
-    <figure class="crt cyd"><a class="lb" href="media/cyd-sysopmenu.png"><div class="screen"><img src="media/cyd-sysopmenu.png" alt="The sysop menu on the board in big letters: Users, File areas, Message bases, Settings, Menus, System" loading="lazy" width="640" height="480"></div></a><figcaption>The sysop menu on the board (f2)</figcaption></figure>
+<header class="topic-head"><div class="eyebrow">Sysop</div><h2 id="cyd-console-title">The CYD console</h2><dl class="msghead"><dt>Topic</dt><dd>The CYD console</dd><dt>Area</dt><dd>Sysop</dd><dt>From</dt><dd>Rev. J. Money</dd><dt>To</dt><dd>All</dd><dt>Updated</dt><dd>2026-11-08</dd><dt>Msg</dt><dd>25 of 34</dd></dl></header>
+<div class="lead"><div class="lead-text"><p class="lede">The Renegade-style WFC screen, WFC skins, sysop keys, node detail and KICK, the sysop menu, the control panel.</p><p>The board's own touchscreen is the sysop's control panel. Nothing here needs a password: whoever can touch the board is the sysop.</p></div><div class="lead-fig"><figure class="crt cyd"><a class="lb" href="media/cyd-wfc.png"><div class="screen"><img src="media/cyd-wfc.png" alt="The CYD activity screen: AXIS logo, LOCAL button, battery spot, status lights NET LINK SD CALL DOOR PAGE, two node lines, a ticker and the newest events" loading="lazy" width="640" height="480"></div></a><figcaption>The activity screen (CYD panel at 2x)</figcaption></figure></div></div>
+<details class="sub" id="wfc" open><summary>The waiting-for-caller screen (WFC)</summary><div class="sub-body"><p>When idle the board shows a Renegade-style waiting-for-caller screen drawn in the board's look: a title bar with the version, the board's nodes with who is on, the numbers for today and a row of sysop keys. Its live values (calls, posts and uploads today, free RAM, uptime, the last caller, every node) come from pipe codes in the art, so each look draws its own. The same screen appears in four places: on the touchscreen (45x24 in 7x10 pixel cells), for a sysop over telnet, on the panel console and on the serial console (80x25).</p>
+  <div class="figs">
+    <figure class="crt cyd"><a class="lb" href="media/wfc-cyd.png"><div class="screen"><img src="media/wfc-cyd.png" alt="The Renegade-style waiting-for-caller screen on the CYD touchscreen" loading="lazy" width="640" height="480"></div></a><figcaption>The WFC on the touchscreen</figcaption></figure>
+    <figure class="crt"><a class="lb" href="media/wfc-panel.png"><div class="screen"><img src="media/wfc-panel.png" alt="The same waiting-for-caller screen at 80x25 on the panel console" loading="lazy" width="640" height="424"></div></a><figcaption>The WFC at 80x25 (panel console, serial and telnet)</figcaption></figure>
   </div>
-  <details class="ref"><summary>Reference table: layer, what you can do (6 rows)</summary><div class="table-wrap"><table>
+  <ul>
+    <li><strong>On the touchscreen</strong> tap a key's label to use it, or tap a node's line for its detail screen (the caller, time online, IP, calls and transfers, with BACK and KICK). The art stays on screen while the WFC is up.</li>
+    <li><strong>Over telnet, on the panel and on the serial console</strong> the WFC opens for a sysop (on serial, type <code>wfc</code>). A line starting with <code>@</code> leaves it for the command prompt, and ten idle minutes close it. Over telnet it needs the <code>sysop_telnet</code> setting on (the default); with it off, sysop screens stay on the board's own screen and serial.</li>
+    <li><strong>The counters</strong> for calls, posts and uploads today roll over at local midnight.</li>
+    <li><strong>No art for the look?</strong> A built-in WFC is used, so every board has one.</li>
+  </ul></div></details>
+<details class="sub" id="wfc-skins"><summary>WFC skins</summary><div class="sub-body"><p>Every one of the eight looks (axis, crt, haunted, sea, cathedral, skulls, underground and wasteland) comes with its own WFC art, drawn in that look's colours: <code>WFC.ANS</code> at 80x25 and <code>WFCCYD.ANS</code> at 45x24 for the touchscreen. The skin is its own setting, <code>wfc</code>, kept apart from <code>theme</code>. Leave it blank and the WFC follows the theme; set a look's id and the WFC keeps that look whatever the callers see. Change it under <strong>Settings > Look</strong> in the sysop menu, or with <code>@SET wfc=sea</code>.</p>
+  <div class="figs one">
+    <figure class="crt"><a class="lb" href="media/wfc-skins-cyd.png"><div class="screen"><img src="media/wfc-skins-cyd.png" alt="The touchscreen WFC in all eight looks side by side" loading="lazy" width="1480" height="864"></div></a><figcaption>The touchscreen WFC in all eight looks</figcaption></figure>
+    <figure class="crt"><a class="lb" href="media/wfc-skins-80.png"><div class="screen"><img src="media/wfc-skins-80.png" alt="The 80x25 WFC in all eight looks side by side" loading="lazy" width="2600" height="896"></div></a><figcaption>The 80x25 WFC in all eight looks</figcaption></figure>
+  </div>
+  <p>Your own skin goes in <code>/sd/themes/&lt;look&gt;/</code> as <code>WFC.ANS</code> and <code>WFCCYD.ANS</code>. The pipe codes for live values are listed in <code>docs/WFC-CODES.md</code> in the repository.</p></div></details>
+<details class="sub" id="sysop-keys"><summary>Sysop keys and //</summary><div class="sub-body"><p>The WFC takes Renegade-style single keys, and online a sysop reaches the same places by typing <code>//</code>.</p>
+  <details class="ref"><summary>Reference table: key, where it goes (8 rows)</summary><div class="table-wrap"><table>
+    <thead><tr><th>Key</th><th>Goes to</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>S</kbd></td><td>Settings</td></tr>
+      <tr><td><kbd>U</kbd></td><td>Users</td></tr>
+      <tr><td><kbd>#</kbd></td><td>Menus</td></tr>
+      <tr><td><kbd>B</kbd></td><td>Message bases</td></tr>
+      <tr><td><kbd>F</kbd></td><td>File areas</td></tr>
+      <tr><td><kbd>L</kbd></td><td>Logs (the System section)</td></tr>
+      <tr><td><kbd>Space</kbd></td><td>Local logon</td></tr>
+      <tr><td><kbd>Q</kbd></td><td>Quit the WFC</td></tr>
+    </tbody>
+  </table></div></details>
+  <p>Online, a sysop types <code>//</code> alone to open the WFC, or <code>//U</code> (and the other letters) to land straight in that section of the <a href="#sysop-menu">sysop menu</a>. E (events), A (archive) and ! (validate) say "coming soon" for now. Over telnet <code>//</code> works only while <code>sysop_telnet</code> is on.</p></div></details>
+<details class="sub" id="node-detail"><summary>Node detail and KICK</summary><div class="sub-body"><p>Tap a node's line for its detail screen: the caller, what they are doing, time online, their IP, whether they are a sysop, their calls and upload and download totals. <strong>BACK</strong> returns; <strong>KICK</strong> hangs that caller up (and logs it). The WFC's other keys open the sysop menu.</p></div></details>
+<details class="sub" id="sysop-menu" open><summary>The sysop menu</summary><div class="sub-body"><p>The sysop menu is part of the BBS itself: lightbar screens in the board's look, one menu for every screen: online, on the board's touchscreen, on the panel console and on the serial console. Online, press <kbd>*</kbd> at the main menu or type <code>//</code> (sysop only; see <a href="#sysop-keys">sysop keys</a>). On the board, tap a key on the <a href="#wfc">WFC</a> (S, U, #, B, F or L) to land on that layer, and tap a line to pick it. Move with the arrow keys or the item's number, <kbd>Enter</kbd> picks, <kbd>Q</kbd> or <kbd>Esc</kbd> goes back a layer, <kbd>N</kbd>/<kbd>P</kbd> page.</p>
+  <div class="figs one">
+    <figure class="crt cyd"><a class="lb" href="media/cyd-sysopmenu.png"><div class="screen"><img src="media/cyd-sysopmenu.png" alt="The sysop menu on the board in big letters: Users, File areas, Message bases, Settings, Menus, System" loading="lazy" width="640" height="480"></div></a><figcaption>The sysop menu on the board</figcaption></figure>
+  </div>
+  <details class="ref"><summary>Reference table: layer, what you can do (7 rows)</summary><div class="table-wrap"><table>
     <thead><tr><th>Layer</th><th>What you can do</th></tr></thead>
     <tbody>
       <tr><td>Users</td><td>Every caller. Pick one to change real name, location, email, tagline and security level; validate or deny; set a password; turn files, messages, doors, free downloads and twit on or off; make a sysop; delete (asks first). Add a user.</td></tr>
@@ -872,7 +909,8 @@ build/axis_tests</code></pre>
       <tr><td>Message bases</td><td>The same for message areas, plus purge posts older than N days. Inside a base: every post, newest first; delete or move one.</td></tr>
       <tr><td>Settings</td><td>Every setting, in groups (BBS and sysop, network, callers and limits, look, other), plus the sysop password, the <a href="#accounts">new user password</a> and the DOS prompt password (set, never shown).</td></tr>
       <tr><td>Menus</td><td>The main menu's items: start from a copy of the built-in menu, then change each item's hotkey, name and command (picked from the list), move items, remove them, add new ones, or go back to the built-in menu. A theme's MAIN.ANS on the card keeps its own letters.</td></tr>
-      <tr><td>System</td><td>The event log, every node (send a note, 15 more minutes, send to the teleconference, kick), status, SD cards, web and No-IP (update now), SD check, the doors on the card, restart.</td></tr>
+      <tr><td>System</td><td>The event log, every node (send a note, 15 more minutes, send to the teleconference, kick), status, SD cards, web and No-IP (update now), SD check, the doors on the card, restart, rerun setup (the settings stay until the wizard saves), format SD (type FORMAT to confirm), station, and the cluster key line (see <a href="#cluster-key">linking boards</a>). Restart, setup, format, cluster key and station run only at the board or on its serial console, never over telnet.</td></tr>
+      <tr><td>Look</td><td>The theme the callers see and the <a href="#wfc-skins">WFC skin</a>, picked from the list of looks.</td></tr>
     </tbody>
   </table></div></details>
   <p>Every change goes through the same <code>@</code> command the serial console uses, and runs on the main board, which shares it with every board. A follower board passes its sysop menu's commands to the main.</p></div></details>
@@ -1172,7 +1210,7 @@ build/axis_tests</code></pre>
     <div class="titleblock" role="contentinfo" aria-label="Title block">
       <div class="tb title wide"><span>Title</span><b>Axis Micro BBS Firmware</b></div>
       <div class="tb"><span>Part</span><b>AXIS-BBS</b></div>
-      <div class="tb"><span>Rev</span><b>0.5</b></div>
+      <div class="tb"><span>Rev</span><b>0.51</b></div>
       <div class="tb wide"><span>Drawn</span><b>Rev. J. Money, the maker of RotatoCAM</b></div>
       <div class="tb"><span>Scale</span><b>1:1</b></div>
       <div class="tb"><span>Sheet</span><b>1 OF 1</b></div>

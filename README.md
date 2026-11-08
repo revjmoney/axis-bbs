@@ -33,7 +33,7 @@ Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headle
 | Transfers | ZMODEM, XMODEM, XMODEM-1K both ways; ZIP uploads CRC-checked; download gate and ratio | [transfers](https://revjmoney.github.io/axis-bbs/docs.html#transfers) |
 | Messages | Areas, quoted replies, taglines, new scan, private email | [messages](https://revjmoney.github.io/axis-bbs/docs.html#messages) |
 | Community | Oneliners, rumors, BBS list, top ten, voting booth, last callers | [community](https://revjmoney.github.io/axis-bbs/docs.html#community) |
-| Multinode | Up to 4 callers per board; more boards join as nodes of one BBS with failover | [multinode](https://revjmoney.github.io/axis-bbs/docs.html#multinode) |
+| Multinode | Up to 4 callers per board; more boards join as nodes of one BBS with failover; boards link only with a shared cluster key (`@CLUSTERKEY`) | [multinode](https://revjmoney.github.io/axis-bbs/docs.html#cluster-key) |
 | SD card clustering | Every card in the cluster as one library, with mirrored areas (built, PC tested). **Work in progress:** the SD disc changer, each card a hot-swappable disc with FILE_ID.DIZ descriptions | [sd-pool](https://revjmoney.github.io/axis-bbs/docs.html#sd-pool) |
 | Chat | Teleconference, node messages, broadcasts, split-screen chat | [chat](https://revjmoney.github.io/axis-bbs/docs.html#chat) |
 | Native LORD | Legend of the Red Dragon in C++, on the board, over telnet. Several callers can play at once. Art and warriors come from the installed LORD folder. | [lord](https://revjmoney.github.io/axis-bbs/docs.html#lord) |

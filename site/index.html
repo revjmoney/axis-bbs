@@ -82,7 +82,7 @@
       <section class="box" aria-labelledby="the-system">
         <h2 class="box-title" id="the-system">THE SYSTEM</h2>
         <dl>
-          <dt>software</dt><dd>Axis Micro BBS Firmware 0.5</dd>
+          <dt>software</dt><dd>Axis Micro BBS Firmware 0.51</dd>
           <dt>license</dt><dd>GPL-3.0+ by Rev. J. Money</dd>
           <dt>hardware</dt><dd>ESP32-2432S028R, 240 MHz, 4 MB flash</dd>
           <dt>doors</dt><dd>Native LORD, in C++, over telnet</dd>
@@ -123,6 +123,7 @@
     <div class="box callers">
       <h2 class="box-title" id="updates-title">LAST UPDATES</h2>
       <ul class="callers-list">
+        <li><span class="cl-date">2026-11-08</span><span class="cl-what">Version 0.51: a Renegade-style waiting-for-caller screen in every look, one sysop menu, and a shared cluster key for linked boards</span></li>
         <li><span class="cl-date">2026-11-07</span><span class="cl-what">LORD on the board is the native C++ door. The DOS emulator is a separate PC build.</span></li>
         <li><span class="cl-date">2026-11-04</span><span class="cl-what">Local console opens on all 80 columns drawn crisp; ZOOM gives 40 big columns</span></li>
         <li><span class="cl-date">2026-11-04</span><span class="cl-what">File search, quoted replies, a call time limit, the voting booth, a user editor and the twit flag</span></li>
@@ -201,7 +202,7 @@
         <div class="fcard-body">
           <h3>Multinode cluster</h3>
           <p class="fcard-line">Our family: 3 boards, 7 nodes, one BBS.</p>
-          <div class="fcard-extra"><div><p>More boards on your LAN become extra nodes of one BBS with shared users, files and messages. One address for callers, and failover if the main drops. SD cards in several boards pool into one library with mirrored areas. Work in progress: an SD disc changer where every card is a hot-swappable disc, Night Owl style.</p></div></div>
+          <div class="fcard-extra"><div><p>More boards on your LAN become extra nodes of one BBS with shared users, files and messages. One address for callers, and failover if the main drops. Boards link only when they share a secret cluster key, so a stranger on your network cannot join. SD cards in several boards pool into one library with mirrored areas. Work in progress: an SD disc changer where every card is a hot-swappable disc, Night Owl style.</p></div></div>
           <div class="fcard-foot"><a href="docs.html#multinode">Clustering</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
         </div>
       </article>
@@ -237,11 +238,21 @@
       </article>
 
       <article class="fcard">
+        <a class="fcard-thumb lb" href="media/wfc-skins-cyd.png"><img src="media/wfc-skins-cyd.png" alt="The Renegade-style waiting-for-caller screen drawn in eight different looks" loading="lazy" width="1480" height="864"></a>
+        <div class="fcard-body">
+          <h3>Waiting for caller</h3>
+          <p class="fcard-line">A Renegade-style WFC in all eight looks.</p>
+          <div class="fcard-extra"><div><p>An idle board shows a Renegade-style waiting-for-caller screen with live values: nodes, calls today, free RAM, the last caller. It runs on the touchscreen (45x24), over telnet for a sysop, on the panel console and on the serial console, and it has its own skin setting apart from the theme. Sysops get Renegade keys on it (S, U, #, B, F, L, Space, Q) and type // online.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#wfc">Waiting for caller</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
         <a class="fcard-thumb lb" href="media/cyd-wfc.png"><img src="media/cyd-wfc.png" alt="The CYD activity screen with status lights" loading="lazy" width="640" height="480"></a>
         <div class="fcard-body">
           <h3>Sysop console</h3>
-          <p class="fcard-line">An Iniquity-style board, a sysop menu inside the BBS.</p>
-          <div class="fcard-extra"><div><p>The activity screen shows every node in the cluster. f2 opens a layered sysop menu, the same one you get online with *: users, file areas and files, message bases and posts, every setting, a menu editor. Plus a PC/phone control panel with a live wall of every node's screen.</p></div></div>
+          <p class="fcard-line">One sysop menu, on the board and online.</p>
+          <div class="fcard-extra"><div><p>One layered sysop menu, the same one on the touchscreen (f2), online with * or //, and on the serial console: users, file areas and files, message bases and posts, every setting, a menu editor, a Look section for the theme and the WFC skin. Plus a PC/phone control panel with a live wall of every node's screen.</p></div></div>
           <div class="fcard-foot"><a href="docs.html#cyd-console">Sysop console</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
         </div>
       </article>
@@ -335,7 +346,7 @@
     <div class="titleblock" role="contentinfo" aria-label="Title block">
       <div class="tb title wide"><span>Title</span><b>Axis Micro BBS Firmware</b></div>
       <div class="tb"><span>Part</span><b>AXIS-BBS</b></div>
-      <div class="tb"><span>Rev</span><b>0.5</b></div>
+      <div class="tb"><span>Rev</span><b>0.51</b></div>
       <div class="tb wide"><span>Drawn</span><b>Rev. J. Money, the maker of RotatoCAM</b></div>
       <div class="tb"><span>Scale</span><b>1:1</b></div>
       <div class="tb"><span>Sheet</span><b>1 OF 1</b></div>
