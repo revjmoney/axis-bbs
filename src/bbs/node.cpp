@@ -1141,13 +1141,19 @@ WfcSnapshot Node::wfcSnapshot() {
     return s;
 }
 
-void Node::wfcDraw(const WfcSnapshot& s) {
+void Node::wfcDraw(const WfcSnapshot& s, bool clear) {
     wfcLast_ = s;
     std::string art = art_ ? cleanWfcArt(art_("WFC.ANS")) : "";
     if (art.empty()) art = builtinWfcArt();
-    out_ += CLS;
+    if (clear) {
+        out_ += CLS;
+    } else {  // a refresh: home and overwrite, so the screen does not flash; clear each line's tail first
+        out_ += std::string(RST) + "\x1b[H";
+        for (size_t i = art.find("\r\n"); i != std::string::npos; i = art.find("\r\n", i + 5)) art.insert(i, "\x1b[K");
+    }
     expandArt(art, AcsUser{}, wfcValues(s), [this](const char* d, size_t n) { out_.append(d, n); });
     out_ += RST;
+    if (!clear) out_ += "\x1b[J";  // whatever was below (a coming soon line)
 }
 
 void Node::openWfc(uint32_t nowMs) {
@@ -1155,7 +1161,7 @@ void Node::openWfc(uint32_t nowMs) {
     wfcEsc_ = 0;
     state_ = State::Wfc;
     wfcDrawn_ = nowMs;
-    wfcDraw(wfcSnapshot());
+    wfcDraw(wfcSnapshot(), true);
 }
 
 void Node::carrierLost() {
@@ -2916,7 +2922,7 @@ void Node::poll(uint32_t nowMs) {
     if (state_ == State::Wfc && nowMs - wfcDrawn_ >= 5000) {  // redraw when something on it changed
         wfcDrawn_ = nowMs;
         WfcSnapshot s = wfcSnapshot();
-        if (!(s == wfcLast_)) wfcDraw(s);
+        if (!(s == wfcLast_)) wfcDraw(s, false);
     }
     if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && state_ != State::Wfc && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";

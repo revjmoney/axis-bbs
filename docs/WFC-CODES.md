@@ -34,7 +34,7 @@ Each prints the key's letter where it stands and makes that spot a tap target (t
 | `KF` | F | Files |
 | `KL` | L | Logs |
 | `KE` | E | Events |
-| `KA` | A | Account |
+| `KA` | A | Archive editor |
 | `KV` | ! | Validate |
 | `KO` | space | Local logon |
 

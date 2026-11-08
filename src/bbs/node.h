@@ -291,7 +291,7 @@ private:
     bool                                           wfcReturn_ = false;  // the shell was opened from the WFC: Esc comes back to it
     int                                            wfcEsc_ = 0;         // 1 after ESC, 2 inside a CSI (arrow keys are nothing)
     WfcSnapshot                                    wfcSnapshot();
-    void                                           wfcDraw(const WfcSnapshot& s);
+    void                                           wfcDraw(const WfcSnapshot& s, bool clear);
     void                                           wfcKey(char c);
     void                                           openSysop(bool at, SysopSection s);
     ScriptBack                                     scriptBack_ = ScriptBack::Menu;

@@ -66,7 +66,7 @@ def main(path):
             out += sgr(LABEL) + b'[' + sgr(KEY) + label[0].encode() + sgr(LABEL) + b']' + label[1].encode() + b'  '
         return out
     rows.append(keys([('|KS', 'ettings'), ('|KU', 'sers'), ('|KM', ' Menus'), ('|KB', 'oards'), ('|KF', 'iles'), ('|KL', 'ogs')]))
-    rows.append(keys([('|KE', 'vents'), ('|KA', 'ccount'), ('|KV', ' Validate'), ('Space', ' Log on here'), ('Q', 'uit')]))
+    rows.append(keys([('|KE', 'vents'), ('|KA', 'rchive'), ('|KV', ' Validate'), ('Space', ' Log on here'), ('Q', 'uit')]))
     rows.append(b'')
     assert len(rows) == 25
     # a full 80-column row wraps by itself (BBS style): a CR LF after it would leave a blank line

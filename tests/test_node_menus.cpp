@@ -233,6 +233,7 @@ TEST_CASE("no WFC.ANS: the built-in screen") {
     CHECK(out.find("W A I T I N G   F O R   C A L L E R") != std::string::npos);
     CHECK(out.find("AXIS") != std::string::npos);
     CHECK(out.find("[S]ettings") != std::string::npos);
+    CHECK(out.find("[A]rchive") != std::string::npos);
     CHECK(out.find("|") == std::string::npos);  // every code was filled in
     SysRig none;  // and without a loader at all
     CHECK(none.type("//\r").find("W A I T I N G") != std::string::npos);
@@ -331,7 +332,10 @@ TEST_CASE("the wfc redraws every 5 s only when the snapshot changed") {
     r.n->poll(8000);  // changed, but not 5 s yet
     CHECK(r.n->takeOutput().empty());
     r.n->poll(12500);
-    CHECK(plain(r.n->takeOutput()).find("AXIS calls 4") != std::string::npos);
+    std::string again = r.n->takeOutput();
+    CHECK(plain(again).find("AXIS calls 4") != std::string::npos);
+    CHECK(again.find("[2J") == std::string::npos);  // no clear screen: it homes and overwrites
+    CHECK(again.find("[H") != std::string::npos);
     r.n->poll(18000);
     CHECK(r.n->takeOutput().empty());
     r.n->poll(1000 + 60u * 60000u);  // an hour with no key: the wfc does not time out
