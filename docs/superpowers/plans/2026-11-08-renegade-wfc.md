@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A Renegade-style waiting-for-caller (WFC) screen drawn from themeable ANSI art with live pipe/MCI values, in an 80x25 terminal version and a 53x30 CYD version, opening one unified sysop menu by Renegade keys from the WFC and through `//` online.
+**Goal:** A Renegade-style waiting-for-caller (WFC) screen drawn from themeable ANSI art with live pipe/MCI values, in an 80x25 terminal version and a 45x24 CYD version (Rev: was 53x30, made bigger), opening one unified sysop menu by Renegade keys from the WFC and through `//` online.
 
-**Architecture:** Portable pieces first, all tested on the PC build: the WFC's live values and tap hotspots (`bbs/wfc.*`), a resizable `AnsiTerm`, the unified sysop menu (`SysopShell` grows the touch menu's sections; `SysopMenu` is deleted), and a `Wfc` state in `Node` so every terminal (telnet sysop, panel console, serial) shows the same screen. The CYD then draws `WFCCYD.ANS` through `AnsiTerm(53,30)` and a new 6x8 cell renderer instead of the pixel-drawn WFC.
+**Architecture:** Portable pieces first, all tested on the PC build: the WFC's live values and tap hotspots (`bbs/wfc.*`), a resizable `AnsiTerm`, the unified sysop menu (`SysopShell` grows the touch menu's sections; `SysopMenu` is deleted), and a `Wfc` state in `Node` so every terminal (telnet sysop, panel console, serial) shows the same screen. The CYD then draws `WFCCYD.ANS` through `AnsiTerm(45,24)` and a new 7x10 cell renderer instead of the pixel-drawn WFC.
 
 **Tech Stack:** C++17, ESP32 CYD (Arduino + ESP-IDF via PlatformIO env `cyd`), doctest PC tests (`axis_tests`), Python 3 for art tools.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Two skins per theme: `WFC.ANS` 80x25 (terminal), `WFCCYD.ANS` 53x30 in 6x8 cells (CYD, 320x240).
+- Two skins per theme: `WFC.ANS` 80x25 (terminal), `WFCCYD.ANS` 45x24 in 7x10 cells (CYD, 315x240 centred; Rev changed it from 53x30 of 6x8).
 - Theme files live in `/sd/themes/<look>/`; each WFC file stays under 7 KB (`kThemeArtCap` is 12 KB).
 - Missing `WFCCYD.ANS`: the built-in CYD WFC art is shown. Missing `WFC.ANS`: a built-in 80x25 default.
 - Keys from the WFC and `//`: S Settings (and Setup), U Users, # Menus, B Message bases, F File areas, L System / event log, Space local logon; E, A, ! show "coming soon".
@@ -181,12 +181,12 @@
 
 **Files:**
 - Modify: `src/platform/cyd/ansi_screen.h/.cpp`, `src/main.cpp` (`namespace wfc`, `drawWfc`, the WFC tap handler near line 2615, the `SysopMenu` paths)
-- Create: `art/wfccyd.ans` (built-in 53x30 default, made from today's look) and its compiled header
+- Create: `art/wfccyd.ans` (built-in 45x24 default, made from today's look) and its compiled header
 - Delete: `src/bbs/sysop_menu.*`, `tests/test_sysop_menu.cpp`, and the old pixel WFC code
 
 **Interfaces:**
-- Consumes: `drawWfc`, `wfcKeyAt` (Task 2), `AnsiTerm(53,30)` (Task 1), `SysopShell` 40 columns with `tapRow` (Task 3), `wfcFolder` (Task 6), `wfcSnapshot()` (Task 7).
-- Produces: `static void AnsiScreen::renderCells(LGFX_Sprite& dst, const AnsiTerm& t)`: draws a `cols x rows` terminal in 6x8 cells (the VGA 8x16 font scaled to 6x8), 53x30 filling 320x240.
+- Consumes: `drawWfc`, `wfcKeyAt` (Task 2), `AnsiTerm(45,24)` (Task 1), `SysopShell` 40 columns with `tapRow` (Task 3), `wfcFolder` (Task 6), `wfcSnapshot()` (Task 7).
+- Produces: `static void AnsiScreen::renderCells(LGFX_Sprite& dst, const AnsiTerm& t)`: draws a `cols x rows` terminal in 7x10 cells (the VGA 8x16 font scaled to 7x10), 45x24 is 315x240, centred.
 - Taps: a hotspot key opens the unified shell at that section in 40 columns (`BigText`, `tapRow`); a node line opens today's node detail screen; Space starts the local logon. Redraw every 5 s when the snapshot changed.
 
 - [ ] **Step 1: Implement** `renderCells` and the new `drawWfc` path; keep the old one behind until it draws.
@@ -206,7 +206,7 @@
 - Each screen has: a title in the pack's style, the key list with `|K?` markers (S U # B F L E A ! Space), node slots `|N1`..`|N8` (CYD: `|N1`..`|N4`), today's counts, SD, RAM, IP, uptime, time and date, `|E1`..`|E3`, `|PG`.
 
 - [ ] **Step 1: Write** the generator; one style function per pack.
-- [ ] **Step 2: Check** every file: 80x25 or 53x30 exactly, under 7 KB, CP437, every required code present (the script asserts these).
+- [ ] **Step 2: Check** every file: 80x25 or 45x24 exactly, under 7 KB, CP437, every required code present (the script asserts these).
 - [ ] **Step 3: Render previews** (PNG per screen, both sizes, with sample values) and send them to Rev for approval before staging.
 - [ ] **Step 4: Stage** to `local/sdstage/themes/*`, copy to the card, check one pack live on the board and in a terminal.
 - [ ] **Step 5: Commit** `"WFC screens for all eight looks"`.

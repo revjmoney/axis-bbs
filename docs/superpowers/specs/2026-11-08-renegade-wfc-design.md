@@ -21,7 +21,7 @@ work.
 
 1. A WFC drawn from ANSI art, in two sizes:
    - `WFC.ANS`, 80x25, for telnet and the sysop console (the terminal side).
-   - `WFCCYD.ANS`, 53x30 (6x8 cells filling the 320x240 CYD screen), for the board's own
+   - `WFCCYD.ANS`, 45x24 (7x10 cells, 315x240 centred on the 320x240 CYD screen; Rev changed it from 53x30 of 6x8 for bigger text), for the board's own
      touchscreen (the local side). Sized for the CYD, not a scrolled 80x25 screen.
 2. The same pipe/MCI codes work in both files and fill in live values.
 3. The WFC skin follows the theme by default, or the sysop picks a WFC skin separately
@@ -80,7 +80,7 @@ work.
 
 ## Decided
 
-- Two files per skin (80x25 terminal, 53x30 CYD). Missing CYD file: the built-in CYD WFC is
+- Two files per skin (80x25 terminal, 45x24 CYD). Missing CYD file: the built-in CYD WFC is
   shown. Missing terminal file: a built-in 80x25 default WFC is shown.
 - The WFC skin defaults to the current theme; a separate `wfc` setting can name another theme
   folder. (`BbsConfig::wfc` already exists, currently forced equal to `theme`.)

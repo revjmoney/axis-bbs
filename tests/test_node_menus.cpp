@@ -201,6 +201,9 @@ TEST_CASE("renegadeKey maps the section keys") {
     CHECK(renegadeKey('b', s, soon));
     CHECK(s == SysopSection::MsgBases);
     CHECK_FALSE(soon);
+    CHECK(renegadeKey('L', s, soon));
+    CHECK(s == SysopSection::System);  // logs
+    CHECK_FALSE(soon);
     CHECK(renegadeKey('!', s, soon));
     CHECK(soon);
     CHECK_FALSE(renegadeKey('z', s, soon));

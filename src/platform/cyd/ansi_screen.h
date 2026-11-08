@@ -30,7 +30,7 @@ public:
     void renderSharp(LGFX_Sprite& dst, int rows) const;
     // art straight from flash (rows x 80 x {ch, attr}): no copy in RAM
     static void renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int rows);
-    // a whole terminal in 6x8 cells (the 8x16 font squeezed 4:3 across, 2:1 down, blended): 53x30 fills 320x240
+    // a whole terminal in 7x10 cells (the 8x16 font sampled 2x2 a pixel, blended): 45x24 is 315x240, centred
     static void renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t);
 };
 

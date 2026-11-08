@@ -1,6 +1,6 @@
 # WFC art codes
 
-Waiting-for-caller (WFC) screens are ANSI art with pipe codes, the same `|XX` style as the other BBS art. `@XX####@` pads or cuts the value to the field's width (the `@` signs count). Put a non-letter after a code, because a code followed straight by letters can be read as a longer name (`|NAME`, `|NODE`, `|TIME`, `|DATE`).
+Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WFC skin) folder can hold two: `WFC.ANS`, 80x25, for telnet and the sysop consoles, and `WFCCYD.ANS`, 45x24, for the CYD's own screen (cells of 7x10 pixels, 315x240, centred). Without one, a built-in screen is shown (`art/wfc80.ans`, `art/wfccyd.ans`). Keep a full-width row free of CR LF (it wraps by itself) and leave the last column of the last row empty, or the screen scrolls. They use the same `|XX` style as the other BBS art. `@XX####@` pads or cuts the value to the field's width (the `@` signs count). Put a non-letter after a code, because a code followed straight by letters can be read as a longer name (`|NAME`, `|NODE`, `|TIME`, `|DATE`).
 
 | Code | Shows |
 |---|---|
@@ -32,7 +32,7 @@ Each prints the key's letter where it stands and makes that spot a tap target (t
 | `KM` | # | Menus |
 | `KB` | B | Boards |
 | `KF` | F | Files |
-| `KL` | L | Logs |
+| `KL` | L | Logs (the sysop menu's System section, where the event log is) |
 | `KE` | E | Events |
 | `KA` | A | Archive editor |
 | `KV` | ! | Validate |

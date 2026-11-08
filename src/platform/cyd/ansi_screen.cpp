@@ -86,23 +86,27 @@ void AnsiScreen::renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t) {
     if (!ready) build();
     uint8_t* fb = (uint8_t*)dst.getBuffer();
     if (!fb) return;
-    // each of a cell's 6 pixels is two neighbouring font columns: 4 font columns make 3 pixels, twice
-    static const uint8_t kMask[6] = {0xC0, 0x60, 0x30, 0x0C, 0x06, 0x03};
-    int cols = t.cols() < 53 ? t.cols() : 53, rows = t.rows() < 30 ? t.rows() : 30;
+    // each 7x10 pixel samples the 8x16 glyph at 2x2 points (a quarter and three quarters across the pixel); how many of the 4 are
+    // lit picks the blend. 45 cells are 315 pixels: 2 black columns on the left, 3 on the right.
+    static const uint8_t kCol[7][2] = {{0, 0}, {1, 2}, {2, 3}, {3, 4}, {4, 5}, {6, 6}, {7, 7}};
+    static const uint8_t kRow[10][2] = {{0, 1}, {2, 2}, {3, 4}, {5, 6}, {6, 7}, {8, 9}, {10, 10}, {11, 12}, {13, 14}, {14, 15}};
+    const int kLeft = 2;
+    int cols = t.cols() < 45 ? t.cols() : 45, rows = t.rows() < 24 ? t.rows() : 24;
     for (int r = 0; r < rows; r++)
-        for (int y = 0; y < 8; y++) {
-            uint8_t* out = fb + (r * 8 + y) * 160;
-            for (int c = 0; c < cols; c++, out += 3) {
+        for (int y = 0; y < 10; y++) {
+            uint8_t* out = fb + (r * 10 + y) * 160;
+            memset(out, 0, 160);
+            int px = kLeft;
+            for (int c = 0; c < cols; c++) {
                 const auto&    cell = t.cell(r, c);
-                const uint8_t* g = &vga_font8x16[cell.ch * 16 + y * 2];
+                uint8_t        a = vga_font8x16[cell.ch * 16 + kRow[y][0]], b = vga_font8x16[cell.ch * 16 + kRow[y][1]];
                 const uint8_t* l = lut[cell.attr];
-                uint8_t        px[6];
-                for (int x = 0; x < 6; x++) px[x] = l[__builtin_popcount(g[0] & kMask[x]) + __builtin_popcount(g[1] & kMask[x])];
-                out[0] = (uint8_t)(px[0] << 4 | px[1]);
-                out[1] = (uint8_t)(px[2] << 4 | px[3]);
-                out[2] = (uint8_t)(px[4] << 4 | px[5]);
+                for (int x = 0; x < 7; x++, px++) {
+                    uint8_t m0 = 0x80 >> kCol[x][0], m1 = 0x80 >> kCol[x][1];
+                    uint8_t v = l[!!(a & m0) + !!(a & m1) + !!(b & m0) + !!(b & m1)];
+                    out[px >> 1] |= (px & 1) ? v : (uint8_t)(v << 4);
+                }
             }
-            memset(out, 0, (size_t)(160 - cols * 3));  // the 2 pixels past 53 cells (black)
         }
 }
 

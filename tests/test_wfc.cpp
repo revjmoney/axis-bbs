@@ -114,23 +114,23 @@ TEST_CASE("a control byte in the art is not a hotspot") {
     CHECK(wfcKeyAt(spots, 0, 7, nullptr) == 'U');
 }
 
-TEST_CASE("the built-in CYD WFC fills 53x30 without scrolling, every key tappable") {
+TEST_CASE("the built-in CYD WFC fills 45x24 without scrolling, every key tappable") {
     WfcSnapshot s;
     s.bbsName = "AXIS UNDERGROUND";
-    for (int i = 1; i <= 7; i++) s.nodes.push_back({i, i == 2 ? "Rev" : "", ""});
-    AnsiTerm term(53, 30);
+    for (int i = 1; i <= 4; i++) s.nodes.push_back({i, i == 2 ? "Rev" : "", ""});
+    AnsiTerm term(45, 24);
     auto     spots = drawWfc(kWfcCydAns, s, term);
     std::string top, keys;
-    for (int c = 0; c < 53; c++) top += (char)term.cell(0, c).ch;
+    for (int c = 0; c < 45; c++) top += (char)term.cell(0, c).ch;
     CHECK(top.find("AXIS UNDERGROUND") != std::string::npos);  // row 0 is still the title: nothing scrolled
     for (const auto& h : spots)
         if (h.node == 0) keys += h.key;
     CHECK(keys == " SU#BFLEA!");
     int n = 0;
     for (const auto& h : spots) n += h.node > 0;
-    CHECK(n == 7);
+    CHECK(n == 4);
     int node = 0;
     for (const auto& h : spots)
-        if (h.node == 2) CHECK(wfcKeyAt(spots, h.row, 40, &node) == 'N');
+        if (h.node == 2) CHECK(wfcKeyAt(spots, h.row, 30, &node) == 'N');
     CHECK(node == 2);
 }

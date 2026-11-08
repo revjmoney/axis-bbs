@@ -831,14 +831,17 @@ static void bigButton(int y, const char* label, uint16_t color) {
     scr.setTextSize(1);
 }
 
-// The waiting-for-caller screen on the board's own screen: the WFC skin's WFCCYD.ANS (or the built-in art/wfccyd.ans) in 53x30
-// cells of 6x8, the live values of wfcSnapshot(), its keys and node lines tappable. Expanded again every 5 s when the values
-// changed, and whenever it comes back from another screen. The terminal (~5 KB) is only held while the art is drawn.
+// The waiting-for-caller screen on the board's own screen: the WFC skin's WFCCYD.ANS (or the built-in art/wfccyd.ans) in 45x24
+// cells of 7x10 (315x240, centred), the live values of wfcSnapshot(), its keys and node lines tappable. Expanded again every 5 s
+// when the values changed, and whenever it comes back from another screen. The art is read from the card once and kept while
+// the WFC is up; the terminal (~5 KB) is only held while the art is drawn.
 static int                                detailSession = -1;  // the node detail screen is up for this session (-1: the WFC)
 static std::vector<axis::bbs::WfcHotspot> wfcSpots;            // where the keys and node lines landed
 static axis::bbs::WfcSnapshot             wfcShown;            // the values on the screen
 static uint32_t                           wfcDrawnMs = 0, wfcSoonUntil = 0;  // last expanded; a "coming soon" line until then
 static bool                               wfcStale = true;     // draw it at the next turn (another screen was up, a key was tapped)
+static std::string                        wfcArt, wfcArtFolder;  // the art while the WFC is up, and the skin folder it came from
+static const int                          kWfcLeft = 2;        // 45 cells of 7 pixels: 2 spare pixels on the left, 3 on the right
 static axis::bbs::WfcSnapshot             wfcSnapshot();
 // The sysop menu on the board's own screen: the one SysopShell, 40 columns in 8x16 letters, a tap picks the row.
 static std::unique_ptr<axis::bbs::SysopShell> boardShell;
@@ -941,14 +944,16 @@ static bool drawWfc() {
     wfcDrawnMs = now;
     axis::bbs::WfcSnapshot s = wfcSnapshot();
     if (!wfcStale && s == wfcShown) return false;
-    std::unique_ptr<axis::bbs::AnsiTerm> t(new (std::nothrow) axis::bbs::AnsiTerm(53, 30));
+    std::unique_ptr<axis::bbs::AnsiTerm> t(new (std::nothrow) axis::bbs::AnsiTerm(45, 24));
     if (!t) return false;  // short on memory: the next turn tries again
-    {
-        std::string art = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
-        if (art.empty()) art = kWfcCydAns;  // the theme has none: the built-in art/wfccyd.ans
-        wfcSpots = axis::bbs::drawWfc(art, s, *t);
+    std::string folder = axis::bbs::wfcFolder(cfg);
+    if (wfcArt.empty() || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
+        wfcArt = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
+        if (wfcArt.empty()) wfcArt = kWfcCydAns;  // the theme has none: the built-in art/wfccyd.ans
+        wfcArtFolder = folder;
     }
-    if (soon) t->feed("\x1b[30;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
+    wfcSpots = axis::bbs::drawWfc(wfcArt, s, *t);
+    if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
     AnsiScreen::renderCells(scr, *t);
     wfcShown = std::move(s);
     wfcStale = false;
@@ -1201,9 +1206,13 @@ static void drawPicker() {
 static void drawScreen() {
     if (!screenReady()) {  // a door is running
         wfcStale = true;
+        if (!wfcArt.empty()) std::string().swap(wfcArt);
         return;
     }
-    if (mode != Mode::Normal || job || localNode || boardShell || detailSession >= 0) wfcStale = true;  // the WFC is drawn afresh when it is back
+    if (mode != Mode::Normal || job || localNode || boardShell || detailSession >= 0) {  // the WFC is drawn afresh when it is back
+        wfcStale = true;
+        if (!wfcArt.empty()) std::string().swap(wfcArt);  // and its art read again then (the skin may change meanwhile)
+    }
     if (mode == Mode::WifiPick) {
         drawPicker();
         screenPush();
@@ -2499,7 +2508,7 @@ static void handleTap(int x, int y) {
         }
         // the WFC: a key opens the sysop menu at its section, a node line its details, Space the local logon
         int  num = 0;
-        char k = axis::bbs::wfcKeyAt(wfcSpots, y / 8, x / 6, &num);
+        char k = axis::bbs::wfcKeyAt(wfcSpots, y / 10, x < kWfcLeft ? 0 : (x - kWfcLeft) / 7, &num);
         if (k == 'N') {  // its details, if the node is on this board
             for (size_t i = 0; i < sessions.size(); i++)
                 if (sessionNumber((int)i) == num) detailSession = (int)i;

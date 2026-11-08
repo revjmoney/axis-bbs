@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Rev. J. Money
-"""Draw the built-in CYD waiting-for-caller screen as CP437 ANSI (art/wfccyd.ans), 53 columns by 30 rows.
+"""Draw the built-in CYD waiting-for-caller screen as CP437 ANSI (art/wfccyd.ans), 45 columns by 24 rows.
 
-The board's own screen shows a terminal of 53x30 cells of 6x8 pixels. This is the screen it shows when the theme has no
+The board's own screen shows a terminal of 45x24 cells of 7x10 pixels. This is the screen it shows when the theme has no
 WFCCYD.ANS: the same look as the old pixel-drawn WFC (a title bar, the chunky AXIS logo, a status line, a key box on the left,
 the nodes and today boxes on the right, the newest events, a footer), drawn with the pipe codes of docs/WFC-CODES.md so the
-values are live and the keys tappable. Every row is exactly 53 columns once the codes are filled in, so it wraps by itself (no
-CR LF); the last row stops at 52 so the screen never scrolls.
+values are live and the keys tappable. Every row is exactly 45 columns once the codes are filled in, so it wraps by itself (no
+CR LF); the last row stops at 44 so the screen never scrolls.
 
 usage: python -I tools/art/make_wfccyd.py art/wfccyd.ans src/platform/cyd/wfccyd_art.h [preview.png]
 """
@@ -14,7 +14,7 @@ import os
 import re
 import sys
 
-COLS, ROWS = 53, 30
+COLS, ROWS = 45, 24
 # the axis look: orange frames, yellow keys and accents, grey text, white values, dark grey rules
 FRAME, HOT, BODY, VALUE, DIM, BROWN = '1;31', '1;33', '0;37', '1;37', '1;30', '0;33'
 RAMP = ['1;33', '1;31', '0;33', '0;33']  # the logo, top to bottom
@@ -87,40 +87,35 @@ def key(code, rest):
 
 
 def main(path, header, preview=None):
-    L, R = 19, 34  # the key box (columns 0..18) and the right column (19..52)
+    L, R = 18, 27  # the key box (columns 0..17) and the right column (18..44)
     rows = []
-    rows.append(row([(FRAME, '['), (HOT, 'axis'), (BODY, ' micro bbs '), (DIM, '; '), (VALUE, f('BN', 34)), (FRAME, ']')]))
-    right = [[(BODY, 'u n d e r g r o u n d')], [(HOT, 'c   n   c')], [(BODY, f('MB', 16))],
-             [(DIM, 'sysop '), (VALUE, f('SN', 16))]]
+    rows.append(row([(FRAME, '['), (HOT, 'axis'), (BODY, ' micro bbs '), (DIM, '; '), (VALUE, f('BN', 26)), (FRAME, ']')]))
+    right = [[(BODY, 'underground')], [(HOT, 'c   n   c')], [(BODY, f('MB', 14))], [(VALUE, f('SN', 14))]]
     for r in range(4):
         rows.append(row([(BODY, ' ')] + logo_row(r) + [(BODY, ' ')] + right[r]))
-    rows.append(row([(FRAME, '['), (HOT, 'time '), (VALUE, f('TM', 7)), (HOT, '  date '), (VALUE, f('DT', 12)),
-                     (HOT, '  ip '), (VALUE, f('IP', 15)), (FRAME, ']')]))
+    rows.append(row([(FRAME, '['), (VALUE, f('TM', 7)), (BODY, ' '), (VALUE, f('DT', 12)), (HOT, '  ip '), (VALUE, f('IP', 15)),
+                     (FRAME, ']')]))
     keys = [key('|KO', ' local logon'), key('|KS', ' settings'), key('|KU', ' users'), key('|KM', ' menus'),
-            key('|KB', ' boards'), key('|KF', ' files'), key('|KL', ' look'), key('|KE', ' events'),
+            key('|KB', ' boards'), key('|KF', ' files'), key('|KL', ' logs'), key('|KE', ' events'),
             key('|KA', ' archive'), key('|KV', ' validate')]
     left = [box_top('axis', L)] + [box_mid([(BODY, ' ')] + k, L) for k in keys] + [box_end(L)]
-    nodes = [box_top('nodes', R)] + [box_mid([(BODY, ' '), (VALUE, f('N' + c, 31))], R) for c in 'ABCDEFG'] + [box_end(R)]
+    nodes = [box_top('nodes', R)] + [box_mid([(BODY, ' '), (VALUE, f('N' + c, 24))], R) for c in 'ABCD'] + [box_end(R)]
     today = [box_top('today', R),
-             box_mid([(BODY, ' calls  '), (VALUE, f('CT', 5)), (BODY, '   posts '), (VALUE, f('PT', 5))], R),
-             box_mid([(BODY, ' ups    '), (VALUE, f('UT', 5)), (BODY, '   ram   '), (VALUE, f('RM', 6)), (BODY, 'k')], R),
-             box_mid([(BODY, ' last   '), (VALUE, f('LC', 23))], R),
-             box_mid([(BODY, ' sd     '), (VALUE, f('SD', 7)), (BODY, '  up '), (VALUE, f('UP', 11))], R),
+             box_mid([(BODY, ' calls '), (VALUE, f('CT', 5)), (BODY, ' posts '), (VALUE, f('PT', 5))], R),
+             box_mid([(BODY, ' ups   '), (VALUE, f('UT', 5)), (BODY, ' ram '), (VALUE, f('RM', 6)), (BODY, 'k')], R),
+             box_mid([(BODY, ' last  '), (VALUE, f('LC', 18))], R),
+             box_mid([(BODY, ' sd '), (VALUE, f('SD', 7)), (BODY, ' up '), (VALUE, f('UP', 10))], R),
              box_end(R)]
     right_col = nodes + today
-    under = [[(DIM, ' tap a key, or a')], [(DIM, ' node for details')]]
     for i in range(max(len(left), len(right_col))):
-        l = left[i] if i < len(left) else (under[i - len(left)] if i - len(left) < len(under) else [])
+        l = left[i] if i < len(left) else []
         lw = sum(width(t) for _, t in l)
         rows.append(row(l + [(BODY, ' ' * (L - lw))] + (right_col[i] if i < len(right_col) else [])))
-    rows.append(row([(FRAME, '═' * 2), (DIM, ': '), (HOT, 'events'), (DIM, ' :'), (FRAME, '═' * 41)]))
+    rows.append(row([(HOT, ' page '), (VALUE, f('PG', 39))]))
+    rows.append(row([(FRAME, '═' * 2), (DIM, ': '), (HOT, 'events'), (DIM, ' :'), (FRAME, '═' * 33)]))
     for c in 'ABC':
-        rows.append(row([(BODY, ' '), (BODY, f('E' + c, 52))]))
-    rows.append(row([(HOT, ' page '), (VALUE, f('PG', 47))]))
-    while len(rows) < ROWS - 2:
-        rows.insert(len(rows) - 5, row([]))
-    rows.append(row([(DIM, '─' * COLS)]))
-    rows.append(row([(BROWN, ' (release 11/08/26)'), (BODY, ' ' * 14), (BROWN, '(c) jmscnc.com')], COLS - 1))
+        rows.append(row([(BODY, ' '), (BODY, f('E' + c, 44))]))
+    rows.append(row([(BROWN, ' (release 11/08/26)'), (BODY, ' ' * 9), (BROWN, '(c) jmscnc.com')], COLS - 1))
     assert len(rows) == ROWS, len(rows)
     data = b''.join(rows) + b'\x1b[0m'
     open(path, 'wb').write(data)
@@ -135,7 +130,7 @@ def main(path, header, preview=None):
             lines[i] = lines[i][:cut]
     with open(header, 'w', newline='\r\n') as h:
         h.write('// Generated by tools/art/make_wfccyd.py (art/wfccyd.ans). Do not edit; edit the generator.\n')
-        h.write('// The CYD waiting-for-caller screen when the theme has no WFCCYD.ANS: 53x30 ANSI with WFC codes.\n')
+        h.write('// The CYD waiting-for-caller screen when the theme has no WFCCYD.ANS: 45x24 ANSI with WFC codes.\n')
         h.write('#pragma once\n')
         h.write('static const char kWfcCydAns[] =\n')
         for l in lines:

@@ -1053,7 +1053,7 @@ bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
         case '#': section = SysopSection::Menus; return true;
         case 'b': section = SysopSection::MsgBases; return true;
         case 'f': section = SysopSection::FileAreas; return true;
-        case 'l': section = SysopSection::Look; return true;
+        case 'l': section = SysopSection::System; return true;  // logs: the event log is under System (Look is on the top menu)
         case 'e':
         case 'a':
         case '!': comingSoon = true; return true;
