@@ -2,13 +2,16 @@
 // Copyright (C) 2026 Rev. J. Money
 // The BBS on ViSiON/3-style menu files: MAIN.MNU and friends drive the main menu, their RUN: functions run
 // AXIS's own features, and anything missing falls back without stranding the caller.
+#include <algorithm>
 #include <map>
+#include <vector>
 #include <regex>
 #include <string>
 
 #include "doctest.h"
 #include "bbs/node.h"
 #include "bbs/password.h"
+#include "bbs/sysopshell.h"
 
 using namespace axis::bbs;
 
@@ -138,6 +141,53 @@ TEST_CASE("// is nothing special for a caller") {
     CHECK(r.n.state() == Node::State::Menu);
 }
 
+TEST_CASE("the sysop edits their own account with U, saved through the sysop commands") {
+    SysRig r;
+    std::vector<std::string> ran;
+    r.n->setSysopRun([&ran](const std::string& c) {
+        ran.push_back(c);
+        return std::string();
+    });
+    std::string out = r.type("u");
+    CHECK(out.find("BBS SETUP") == std::string::npos);
+    CHECK(out.find("real name") != std::string::npos);  // the caller's account screen
+    CHECK(out.find("tagline") != std::string::npos);
+    CHECK(out.find("Rev") != std::string::npos);
+    CHECK(r.n->state() == Node::State::Settings);
+
+    r.type("tMachines and monkey business\r");
+    r.type("lMyrtle Beach\r");
+    r.type("rRev J\r");
+    r.type("eme@example.com\r");
+    CHECK(std::find(ran.begin(), ran.end(), "@SET sysop_tagline=Machines and monkey business") != ran.end());
+    CHECK(std::find(ran.begin(), ran.end(), "@SET sysop_location=Myrtle Beach") != ran.end());
+    CHECK(std::find(ran.begin(), ran.end(), "@SET sysop_real_name=Rev J") != ran.end());
+    CHECK(std::find(ran.begin(), ran.end(), "@SET sysop_email=me@example.com") != ran.end());
+    CHECK(r.n->tagline() == "Machines and monkey business");  // it signs the sysop's posts now
+
+    out = r.type("pnope\r");
+    CHECK(out.find("not your password") != std::string::npos);
+    r.type("ppw\rnewpass1\rnewpass1\r");
+    CHECK(std::find(ran.begin(), ran.end(), "@SYSOPPASS newpass1") != ran.end());
+    out = r.type("ppw\r");  // the old one is gone in this session too
+    CHECK(out.find("not your password") != std::string::npos);
+
+    r.type("q");
+    CHECK(r.n->state() == Node::State::Menu);
+}
+
+TEST_CASE("a sysop line can't smuggle a second setting") {
+    SysRig r;
+    std::vector<std::string> ran;
+    r.n->setSysopRun([&ran](const std::string& c) {
+        ran.push_back(c);
+        return std::string();
+    });
+    r.type("u");
+    r.type("lA\nsysop_hash=x\r");  // control bytes never reach the line
+    for (const std::string& c : ran) CHECK(c.find('\n') == std::string::npos);
+}
+
 TEST_CASE("telnet sysop access off") {
     SysRig off(false);
     CHECK(off.n->isSysop());
@@ -217,13 +267,18 @@ WfcSnapshot snap3() {
     s.callsToday = 3;
     return s;
 }
+// over telnet the WFC is the sysop menu's item 9 (// alone opens that menu)
+std::string toWfc(SysRig& r) {
+    r.type("//\r");
+    return r.type("9");
+}
 }  // namespace
 
 TEST_CASE("the wfc draws the theme's art with live values") {
     SysRig r;
     r.n->setArt([](const std::string& f) { return f == "WFC.ANS" ? std::string("|BN calls |CT") : std::string(); });
     r.n->setWfcSnapshot(snap3);
-    std::string out = r.type("//\r");
+    std::string out = toWfc(r);
     CHECK(out.find("AXIS calls 3") != std::string::npos);
     CHECK(r.n->state() == Node::State::Wfc);
 }
@@ -232,14 +287,14 @@ TEST_CASE("no WFC.ANS: the built-in screen") {
     SysRig r;
     r.n->setArt([](const std::string&) { return std::string(); });
     r.n->setWfcSnapshot(snap3);
-    std::string out = r.type("//\r");
+    std::string out = toWfc(r);
     CHECK(out.find("W A I T I N G   F O R   C A L L E R") != std::string::npos);
     CHECK(out.find("AXIS") != std::string::npos);
     CHECK(out.find("[S]ettings") != std::string::npos);
     CHECK(out.find("[A]rchive") != std::string::npos);
     CHECK(out.find("|") == std::string::npos);  // every code was filled in
     SysRig none;  // and without a loader at all
-    CHECK(none.type("//\r").find("W A I T I N G") != std::string::npos);
+    CHECK(toWfc(none).find("W A I T I N G") != std::string::npos);
 }
 
 TEST_CASE("a broken WFC file still draws") {
@@ -248,8 +303,8 @@ TEST_CASE("a broken WFC file still draws") {
         SysRig r;
         r.n->setArt([bad](const std::string&) { return bad; });
         r.n->setWfcSnapshot(snap3);
-        r.type("//");
-        r.n->input((const uint8_t*)"\r", 1, 1000);
+        r.type("//\r");
+        r.n->input((const uint8_t*)"9", 1, 1000);
         std::string raw = r.n->takeOutput();
         CHECK_FALSE(raw.empty());
         CHECK(raw.find("\x1b[1;\x1b") == std::string::npos);  // no escape left open for what follows
@@ -258,14 +313,14 @@ TEST_CASE("a broken WFC file still draws") {
     }
     SysRig z;  // 0 bytes
     z.n->setArt([](const std::string&) { return std::string(); });
-    CHECK_FALSE(z.type("//\r").empty());
+    CHECK_FALSE(toWfc(z).empty());
 }
 
 TEST_CASE("U from the wfc and back") {
     SysRig r;
     r.n->setArt([](const std::string&) { return std::string("|BN calls |CT"); });
     r.n->setWfcSnapshot(snap3);
-    r.type("//\r");
+    toWfc(r);
     CHECK(r.type("U").find("USERS") != std::string::npos);
     CHECK(r.n->state() == Node::State::Sysop);
     std::string back;
@@ -277,7 +332,7 @@ TEST_CASE("U from the wfc and back") {
 TEST_CASE("E A and ! are coming soon on the wfc and stay there") {
     SysRig r;
     r.n->setWfcSnapshot(snap3);
-    r.type("//\r");
+    toWfc(r);
     CHECK(r.type("e").find("coming soon") != std::string::npos);
     CHECK(r.n->state() == Node::State::Wfc);
     CHECK(r.type("!").find("coming soon") != std::string::npos);
@@ -289,23 +344,75 @@ TEST_CASE("E A and ! are coming soon on the wfc and stay there") {
 TEST_CASE("space logs the sysop on") {
     SysRig r;
     r.n->setWfcSnapshot(snap3);
-    r.type("//\r");
+    toWfc(r);
     CHECK(r.n->state() == Node::State::Wfc);
     r.type(" ");
     CHECK(r.n->state() == Node::State::Menu);
 }
 
-TEST_CASE("Q on the wfc leaves like a logoff") {
-    SysRig r;
-    r.type("//\r");
+TEST_CASE("Q on the wfc at the board leaves like a logoff") {
+    SysRig r(true, true);
+    r.n->openWfc(1000);
     r.type("q");
     CHECK(r.n->state() == Node::State::Done);
     CHECK(r.n->wantsHangup());
 }
 
+TEST_CASE("over telnet // alone opens the sysop menu, never the wfc") {
+    SysRig r;
+    std::string out = r.type("//\r");
+    CHECK(r.n->state() == Node::State::Sysop);
+    CHECK(out.find("Waiting for caller screen") != std::string::npos);
+    CHECK(out.find("W A I T I N G") == std::string::npos);
+}
+
+TEST_CASE("the wfc item is in the telnet sysop menu only (at the board the wfc is home)") {
+    std::string out;
+    SysopShell remote(out, [](const std::string&) { return std::string(); }, 80, false);
+    remote.begin();
+    CHECK(out.find("Waiting for caller screen") != std::string::npos);
+    out.clear();
+    SysopShell here(out, [](const std::string&) { return std::string(); }, 80, true);
+    here.begin();
+    CHECK(out.find("Waiting for caller screen") == std::string::npos);
+}
+
+TEST_CASE("telnet wfc: Q goes back to the sysop menu it was picked from, and it never hangs up") {
+    SysRig r;
+    toWfc(r);
+    REQUIRE(r.n->state() == Node::State::Wfc);
+    r.type("q");
+    CHECK(r.n->state() == Node::State::Sysop);
+    CHECK_FALSE(r.n->wantsHangup());
+    r.type("9");  // and in again, then Esc
+    REQUIRE(r.n->state() == Node::State::Wfc);
+    r.type("\x1b");
+    r.n->poll(1000 + 500);  // nothing followed the Esc: a lone Esc
+    CHECK(r.n->state() == Node::State::Sysop);
+}
+
+TEST_CASE("telnet wfc: Esc then a key backs out too, an arrow key does not") {
+    SysRig r;
+    toWfc(r);
+    r.type("\x1b[B");
+    CHECK(r.n->state() == Node::State::Wfc);
+    r.type("\x1bx");
+    CHECK(r.n->state() == Node::State::Sysop);
+}
+
+TEST_CASE("telnet wfc: a section from it and Esc comes back to the wfc, then Q to the sysop menu") {
+    SysRig r;
+    toWfc(r);
+    CHECK(r.type("U").find("USERS") != std::string::npos);
+    for (int i = 0; i < 4 && r.n->state() == Node::State::Sysop; i++) r.type("\x1b");
+    CHECK(r.n->state() == Node::State::Wfc);
+    r.type("q");
+    CHECK(r.n->state() == Node::State::Sysop);
+}
+
 TEST_CASE("the wfc over telnet idles out like any screen; at the board it stays up") {
     SysRig r;  // a telnet sysop
-    r.type("//\r");
+    toWfc(r);
     REQUIRE(r.n->state() == Node::State::Wfc);
     uint32_t late = 1000 + (uint32_t)(r.c.idleMinutes + 1) * 60000u;
     r.n->poll(late);
@@ -326,7 +433,7 @@ TEST_CASE("the wfc redraws every 5 s only when the snapshot changed") {
         s.callsToday = calls;
         return s;
     });
-    r.type("//\r");
+    toWfc(r);
     r.n->poll(3000);
     CHECK(r.n->takeOutput().empty());
     r.n->poll(7000);  // 5 s on, nothing changed

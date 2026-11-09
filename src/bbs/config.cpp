@@ -85,6 +85,9 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "sysop_salt") c.sysopSalt = v;
         else if (k == "sysop_hash") c.sysopHash = v;
         else if (k == "sysop_real_name") c.sysopRealName = v;
+        else if (k == "sysop_location") c.sysopLocation = v;
+        else if (k == "sysop_email") c.sysopEmail = v;
+        else if (k == "sysop_tagline") c.sysopTagline = v;
         else if (k == "dospass_salt") c.dosSalt = v;
         else if (k == "dospass_hash") c.dosHash = v;
         else if (k == "nup_salt") c.nupSalt = v;
@@ -213,6 +216,9 @@ std::string formatConfig(const BbsConfig& c) {
     kv("sysop_salt", c.sysopSalt);
     kv("sysop_hash", c.sysopHash);
     kv("sysop_real_name", c.sysopRealName);
+    kv("sysop_location", c.sysopLocation);
+    kv("sysop_email", c.sysopEmail);
+    kv("sysop_tagline", c.sysopTagline);
     kv("dospass_salt", c.dosSalt);
     kv("dospass_hash", c.dosHash);
     kv("nup_salt", c.nupSalt);

@@ -44,6 +44,7 @@ char menuCommandKey(const std::string& cmd);  // 0 if there's no such command
 
 struct BbsConfig {
     std::string sysopHandle, sysopSalt, sysopHash, sysopRealName;
+    std::string sysopLocation, sysopEmail, sysopTagline;  // the sysop's own account ([U] while logged in); the tagline signs their posts
     std::string dosSalt, dosHash;  // old DOS Prompt password keys; still parsed so a saved ini loads. The command is gone.
     std::string nupSalt, nupHash;  // NUP: the new user password asked before Apply ("" = none; wizard, @NUP)
     std::string bbsName = "Axis Underground CNC", location, boardName = "axis", publicHost;

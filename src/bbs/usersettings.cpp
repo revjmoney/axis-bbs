@@ -106,6 +106,7 @@ bool UserSettings::key(char c) {
         } else {
             u_.salt = makeSalt(rng_);
             u_.hash = hashPassword(u_.salt, got);
+            if (onPassword_) onPassword_(got);
             if (save_) save_();
             out_ += std::string("\r\n   ") + theme::TEXT + "Password changed.";
         }

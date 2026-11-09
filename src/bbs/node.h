@@ -184,6 +184,9 @@ private:
     MessageStore*                                msgStore_ = nullptr;
     std::unique_ptr<MessageReader>               msgs_;
     std::unique_ptr<UserSettings>                settings_;
+    User                                         sysopSelf_;  // [U] for the sysop: their settings as a record
+    void openSysopAccount();
+    void saveSysopAccount();
     std::unique_ptr<EmailBox>                    email_;
     std::map<std::string, int>                   lastRead_;  // without an account (tests, first builds)
     std::function<void(const std::string&)>      linersAdd_;
@@ -289,6 +292,8 @@ private:
     uint32_t                                       wfcDrawn_ = 0;
     bool                                           wfcReturn_ = false;  // the shell was opened from the WFC: Esc comes back to it
     int                                            wfcEsc_ = 0;         // 1 after ESC, 2 inside a CSI (arrow keys are nothing)
+    bool                                           wfcFromShell_ = false;  // telnet: the WFC was picked from the sysop menu (Q/Esc go back there)
+    void                                           leaveWfc();
     WfcSnapshot                                    wfcSnapshot();
     void                                           wfcDraw(const WfcSnapshot& s, bool clear);
     void                                           wfcKey(char c);

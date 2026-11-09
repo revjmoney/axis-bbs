@@ -1130,8 +1130,12 @@ void Node::openWfc(uint32_t nowMs) {
 
 void Node::wfcKey(char c) {
     if (wfcEsc_) {  // an arrow key or other escape sequence: nothing here
-        if (wfcEsc_ == 1) wfcEsc_ = (c == '[' || c == 'O') ? 2 : 0;
-        else if ((unsigned char)c >= 0x40 && (unsigned char)c <= 0x7e) wfcEsc_ = 0;
+        if (wfcEsc_ == 1) {
+            wfcEsc_ = (c == '[' || c == 'O') ? 2 : 0;
+            if (!wfcEsc_ && !local_) leaveWfc();  // a lone Esc over telnet: back
+        } else if ((unsigned char)c >= 0x40 && (unsigned char)c <= 0x7e) {
+            wfcEsc_ = 0;
+        }
         return;
     }
     if (c == 0x1b) {
@@ -1143,6 +1147,10 @@ void Node::wfcKey(char c) {
         return;
     }
     if (c == 'q' || c == 'Q') {
+        if (!local_) {  // over telnet Q backs out (to the sysop menu, or the main menu); it never hangs up
+            leaveWfc();
+            return;
+        }
         out_ += std::string(RST) + "\r\n";
         state_ = State::Done;
         return;
@@ -1160,6 +1168,19 @@ void Node::wfcKey(char c) {
     }
     wfcReturn_ = true;
     openSysop(true, s);
+}
+
+// Out of a telnet WFC: back to the sysop menu if that is where it was picked, else the main menu.
+void Node::leaveWfc() {
+    wfcEsc_ = 0;
+    wfcReturn_ = false;
+    if (wfcFromShell_ && sysopRun_) {
+        wfcFromShell_ = false;
+        openSysop(false, SysopSection::Top);
+        return;
+    }
+    wfcFromShell_ = false;
+    showMainMenu();
 }
 
 void Node::openSysop(bool at, SysopSection s) {
@@ -1205,8 +1226,8 @@ bool Node::slashKey(char c) {
         slash_.clear();
         swallowLf_ = true;  // a CR LF client: the LF must not reach the shell
         if (typed.size() == 2) {
-            if (sysopRun_) openWfc(lastInput_);  // // alone: the waiting-for-caller screen
-            else openSysop(false, s);            // (says the sysop menu is unavailable)
+            if (sysopRun_ && local_) openWfc(lastInput_);  // // alone at the board: the waiting-for-caller screen
+            else openSysop(false, s);  // over telnet: the sysop menu (its WFC item is the way there); or says it is unavailable
         }
         else if (renegadeKey(typed[2], s, soon) && !soon) openSysop(true, s);
         else {
@@ -1237,8 +1258,13 @@ void Node::key(char c) {
     }
     if (state_ == State::Sysop) {
         if (!shell_ || !shell_->key(c)) {
+            bool wfc = shell_ && shell_->wantsWfc();
             shell_.reset();
-            if (wfcReturn_) {
+            if (wfc) {  // picked from the sysop menu: Q or Esc there comes back to it
+                wfcReturn_ = false;
+                wfcFromShell_ = true;
+                openWfc(lastInput_);
+            } else if (wfcReturn_) {
                 wfcReturn_ = false;
                 openWfc(lastInput_);
             } else {
@@ -1838,11 +1864,20 @@ void Node::key(char c) {
             break;
         }
         case 'u': {
-            User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+            User* u = users_ && userId_ ? users_->byId(userId_) : nullptr;  // a promoted sysop has a record too
+            if (!u && sysop_ && sysopRun_) {  // the sysop account: the same screen, kept in the board settings
+                if (local_ || cfg_.sysopTelnet) {
+                    openSysopAccount();
+                } else {  // its changes are sysop settings, and those are closed over telnet
+                    out_ += std::string("\r\n\r\n   ") + AMBER + "Sysop access over telnet is off: change your account at the board.";
+                    showMenu();
+                }
+                break;
+            }
             if (!u) {
                 out_ += "\r\n\r\n   ";
                 out_ += AMBER;
-                out_ += sysop_ && users_ ? "The sysop account lives in BBS SETUP on the board." : "Accounts are off on this board.";
+                out_ += "Accounts are off on this board.";
                 showMenu();
                 break;
             }
@@ -2791,8 +2826,49 @@ void Node::userEditKey(char c) {
 }
 
 std::string Node::tagline() const {
-    const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
-    return u ? u->tagline : "";
+    const User* u = users_ && userId_ ? users_->byId(userId_) : nullptr;
+    if (u) return u->tagline;
+    return sysop_ ? cfg_.sysopTagline : "";
+}
+
+// [U] for the sysop account (the one set up on the board, not a promoted caller): the caller's
+// account screen over a copy of the sysop's settings. Each change goes out as the sysop commands
+// (@SET, @SYSOPPASS), so on a follower it lands on the main and every board, like the sysop menu.
+void Node::openSysopAccount() {
+    sysopSelf_ = User{};
+    sysopSelf_.handle = handle_;
+    sysopSelf_.realName = cfg_.sysopRealName;
+    sysopSelf_.location = cfg_.sysopLocation;
+    sysopSelf_.email = cfg_.sysopEmail;
+    sysopSelf_.tagline = cfg_.sysopTagline;
+    sysopSelf_.salt = cfg_.sysopSalt;
+    sysopSelf_.hash = cfg_.sysopHash;
+    sysopSelf_.security = kSysopSecurity;
+    sysopSelf_.status = User::Status::Validated;
+    state_ = State::Settings;
+    settings_.reset(new UserSettings(sysopSelf_, out_, [this] { saveSysopAccount(); }, rng_));
+    settings_->setOnPassword([this](const std::string& pw) {
+        cfg_.sysopSalt = sysopSelf_.salt;
+        cfg_.sysopHash = sysopSelf_.hash;
+        if (sysopRun_) sysopRun_("@SYSOPPASS " + pw);
+    });
+    settings_->begin();
+}
+
+void Node::saveSysopAccount() {
+    struct F {
+        const char*  key;
+        std::string& cfg;
+        std::string& mine;
+    } fields[] = {{"sysop_real_name", cfg_.sysopRealName, sysopSelf_.realName},
+                  {"sysop_location", cfg_.sysopLocation, sysopSelf_.location},
+                  {"sysop_email", cfg_.sysopEmail, sysopSelf_.email},
+                  {"sysop_tagline", cfg_.sysopTagline, sysopSelf_.tagline}};
+    for (F& f : fields) {
+        if (f.cfg == f.mine) continue;
+        f.cfg = f.mine;  // (the screen only takes printable characters: no second line can ride along)
+        if (sysopRun_) sysopRun_(std::string("@SET ") + f.key + "=" + f.mine);
+    }
 }
 
 std::string Node::activityText() const {
@@ -2875,6 +2951,10 @@ void Node::poll(uint32_t nowMs) {
         splash_.reset();
         lastInput_ = nowMs;
         showWelcome();
+        return;
+    }
+    if (state_ == State::Wfc && wfcEsc_ == 1 && !local_ && nowMs - lastInput_ >= 400) {  // a lone Esc (nothing followed it): back
+        leaveWfc();
         return;
     }
     if (state_ == State::Wfc && nowMs - wfcDrawn_ >= 5000) {  // redraw when something on it changed

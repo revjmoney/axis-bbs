@@ -18,6 +18,9 @@ public:
         : u_(user), out_(out), save_(std::move(save)), rng_(rng) {}
     void begin();       // the account screen
     bool key(char c);   // false once the caller leaves for the main menu
+    // The sysop's account lives in the board settings: the new password goes to this too (it
+    // changes the sysop login on every board), after the record itself has the new hash.
+    void setOnPassword(std::function<void(const std::string&)> f) { onPassword_ = std::move(f); }
 
 private:
     enum class St { Menu, Edit, OldPw, NewPw, AgainPw };
@@ -28,6 +31,7 @@ private:
     User&                 u_;
     std::string&          out_;
     std::function<void()> save_;
+    std::function<void(const std::string&)> onPassword_;
     uint32_t (*rng_)();
     St                    st_ = St::Menu;
     std::string           line_, newPw_;

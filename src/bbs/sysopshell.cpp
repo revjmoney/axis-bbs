@@ -159,8 +159,13 @@ void SysopShell::begin() {
                    {"Menus", "", [this] { enter(SysopSection::Menus); }},
                    {"System", "", [this] { enter(SysopSection::System); }},
                    {"Sections", "", [this] { push("SECTIONS", [this](Layer& x) { sections(x); }); }},
-                   {"Look", "", [this] { enter(SysopSection::Look); }},
-                   {"Leave the sysop menu", "", [this] { layers_.clear(); }}};
+                   {"Look", "", [this] { enter(SysopSection::Look); }}};
+        if (!local_)  // over telnet the WFC is only ever picked here (at the board it is the home screen)
+            l.items.push_back({"Waiting for caller screen", "", [this] {
+                                   wantWfc_ = true;
+                                   layers_.clear();
+                               }});
+        l.items.push_back({"Leave the sysop menu", "", [this] { layers_.clear(); }});
     });
 }
 

@@ -36,6 +36,7 @@ public:
     bool key(char c);          // false once the sysop has left the top layer
     void tapRow(int row);      // a tap on that screen row (0 = the top line)
     bool open() const { return !layers_.empty(); }
+    bool wantsWfc() const { return wantWfc_; }  // left by picking the waiting for caller screen (telnet)
     bool asking() const { return asking_; }  // a question is waiting for a typed answer and Enter
     bool yesNo() const { return asking_ && yesNo_; }  // ... or for one key, Y or N
     bool secret() const { return asking_ && secret_; }  // the answer is a password
@@ -95,6 +96,7 @@ private:
     int                                    esc_ = 0;  // 1 after ESC, 2 after ESC [
     int                                    cols_ = 80;
     bool                                   local_ = false;
+    bool                                   wantWfc_ = false;
     std::vector<std::string>               settings_;  // @SETTINGS for the layer being built
     bool                                   haveSettings_ = false;
     std::string                            header(const std::string& title) const;
