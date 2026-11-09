@@ -333,9 +333,10 @@ bool Node::enterMenu(const std::string& name) {
 std::string Node::loadScreen(const std::string& file) const {  // a menu file, or the same name in the theme folder
     bool        poster = file == "SAYLOR.ANS" || file == "SAYLORLG.ANS";
     std::string a;
-    if (poster && art_) a = art_(file);  // the tall poster lives in the theme, not in /menus
+    bool        whole = !(poster && posterPiece_);  // (a streamed poster is never loaded whole: Node::startPoster)
+    if (poster && art_ && whole) a = art_(file);  // the tall poster lives in the theme, not in /menus
     if (a.empty() && menuLoad_) a = menuLoad_(file);
-    if (a.empty() && art_) a = art_(file);
+    if (a.empty() && art_ && whole) a = art_(file);
     return a;
 }
 
@@ -481,7 +482,14 @@ void Node::nextStep() {
         const std::string& c = s.cmd;
         bool               shown = true;
         bool               hold = s.pause;
-        if (c == "DISPLAYFILE" || c == "PRINTNEWS") {  // a missing file does not clear, and does not pause
+        int poster = 0;  // the Saylor poster streamed a piece at a time: 1 shown whole already, 2 still streaming
+        if (c == "DISPLAYFILE" && posterPiece_ && (s.data == "SAYLOR" || s.data == "SAYLORLG")) {
+            poster = startPoster(s.data + ".ANS", s.clear, hold);
+            if (!poster && s.data == "SAYLOR") poster = startPoster("SAYLORLG.ANS", s.clear, hold);
+            if (poster == 2) return;  // poll() sends the rest, then the pause and the next step
+        }
+        if (poster) {
+        } else if (c == "DISPLAYFILE" || c == "PRINTNEWS") {  // a missing file does not clear, and does not pause
             std::string file = c == "PRINTNEWS" ? std::string("BULLETIN.ANS") : s.data + ".ANS";
             std::string a = loadScreen(file);
             if (a.empty() && c == "DISPLAYFILE" && s.data == "SAYLOR") a = loadScreen("SAYLORLG.ANS");
@@ -543,6 +551,58 @@ void Node::nextStep() {
     }
     inSeq_ = false;
     showMainMenu();
+}
+
+// The poster's first piece: 0 when there is no such poster (nothing shown, nothing cleared), 1 when that was all of it,
+// 2 when the rest follows from poll() a piece at a time.
+int Node::startPoster(const std::string& file, bool clear, bool hold) {
+    bool        exists = false;
+    std::string raw = posterPiece_(file, 0, kPosterPiece, &exists);
+    if (!exists || raw.empty()) return 0;
+    if (clear) out_ += theme::CLS;
+    posterFile_ = file;
+    posterOff_ = raw.size();
+    posterHold_ = hold;
+    posterCarry_.clear();
+    bool last = raw.size() < kPosterPiece;
+    if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;  // (SAUCE: not the picture)
+    posterPiece(raw, last);
+    if (last) return 1;
+    state_ = State::Poster;
+    return 2;
+}
+
+// one piece out: up to its last line break (a code is never cut in two); the rest waits for the next piece
+void Node::posterPiece(const std::string& raw, bool last) {
+    posterCarry_ += raw;
+    size_t cut = posterCarry_.size();
+    if (!last) {
+        cut = posterCarry_.rfind('\n');
+        cut = cut != std::string::npos ? cut + 1 : posterCarry_.size() > 1024 ? posterCarry_.size() - 32 : 0;
+    }
+    if (cut) {
+        expandArt(posterCarry_.substr(0, cut), menuWho(), [this](const std::string& k) { return menuValue(k); },
+                  [this](const char* d, size_t n) { out_.append(d, n); });
+        posterCarry_.erase(0, cut);
+    }
+    if (last) {
+        std::string().swap(posterCarry_);
+        posterFile_.clear();
+    }
+}
+
+// poll(): the poster's next piece (the caller's line takes each one before the next is read)
+void Node::pumpPoster() {
+    bool        exists = false;
+    std::string raw = posterPiece_ ? posterPiece_(posterFile_, posterOff_, kPosterPiece, &exists) : std::string();
+    bool        last = !exists || raw.size() < kPosterPiece || posterOff_ + raw.size() >= kPosterMax;
+    posterOff_ += raw.size();
+    if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;
+    posterPiece(raw, last);
+    if (!last) return;
+    state_ = State::SeqPause;  // (until the sequence says what is next)
+    seqPauseNext_ = posterHold_;
+    seqResume();
 }
 
 bool Node::o2() const { return theme::lookFrom(cfg_.theme) != theme::Look::Axis; }  // cyan and green share that layout
@@ -1400,6 +1460,7 @@ void Node::key(char c) {
         else matrixKey(c);
         return;
     }
+    if (state_ == State::Poster) return;  // keys while the poster streams out: the pause after it waits for one
     if (state_ == State::SeqPause) {
         nextStep();
         return;
@@ -2989,7 +3050,8 @@ std::string Node::activityText() const {
         case State::PreLogon:
         case State::CheckAccess: return "logging in";
         case State::ApplyBar: return "new user application";
-        case State::SeqPause: return "logging in";
+        case State::SeqPause:
+        case State::Poster: return "logging in";
         case State::ApplyAsk:
         case State::NupAsk:
         case State::Applying: return "new user application";
@@ -3026,6 +3088,10 @@ std::string Node::activityText() const {
 
 void Node::poll(uint32_t nowMs) {
     MciScope mciScope(*this);
+    if (state_ == State::Poster) {  // one piece of the poster a turn, nothing else until it is out
+        pumpPoster();
+        return;
+    }
     if (state_ == State::Script) pumpScript();
     if (menu_ && !builtin_ && state_ == State::Menu) menu_->tick(nowMs);  // a lone ESC on a lightbar: Esc after a pause
     if (state_ == State::AxisNet && net_ && !net_->tick(nowMs, lastInput_)) {

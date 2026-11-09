@@ -47,7 +47,7 @@ public:
     ~Node();
     Node(Node&&);
     Node& operator=(Node&&);
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Sysop, Wfc, LookPreview, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Sysop, Wfc, LookPreview, Poster, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -107,6 +107,12 @@ public:
     // from flash, instead of through takeOutput(): a copy of them needs more heap than a busy board has.
     // the Oblivion look's screens from the card (MATRIX.ANS, MAIN.ANS): their text, or "" for the stock screen
     void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
+    // The Saylor poster (SAYLOR.ANS 37 KB, SAYLORLG.ANS 45 KB) a piece at a time: up to `want` bytes of the file from
+    // `offset` ("" at the end; shorter than `want` is the last piece; *exists false: no such poster). With this set the
+    // poster streams out one piece per poll(), so neither the file nor its ANSI ever sits in RAM whole.
+    using PosterPiece = std::function<std::string(const std::string& file, size_t offset, size_t want, bool* exists)>;
+    void        setPoster(PosterPiece piece) { posterPiece_ = std::move(piece); }
+    static constexpr size_t kPosterPiece = 2048, kPosterMax = 49152;  // (SAYLORLG.ANS is 45 KB)
     // ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): with a MAIN.MNU they drive the main menu; without, the built-in one
     void        setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces = nullptr);
     // the last callers list ("handle|node|time|location" lines, oldest first) and adding this call to it
@@ -196,6 +202,13 @@ private:
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
     std::function<std::string(const std::string&)> art_;
+    PosterPiece                                    posterPiece_;
+    std::string                                    posterFile_, posterCarry_;  // the poster streaming out, and a cut line
+    size_t                                         posterOff_ = 0;
+    bool                                           posterHold_ = false;
+    int         startPoster(const std::string& file, bool clear, bool hold);
+    void        posterPiece(const std::string& raw, bool last);
+    void        pumpPoster();
     std::unique_ptr<MenuRunner>                    menu_;
     MenuRunner::Loader                             menuLoad_;
     bool                                           frontDoor_ = false;  // ViSiON/3's front door (PDMATRIX) is running
