@@ -57,6 +57,7 @@ add_library(axiscore STATIC
     src/cluster/relay.cpp
     src/cluster/doorfs.cpp
     src/cluster/cluster.cpp
+    src/bbs/nuv.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp
@@ -92,6 +93,8 @@ add_executable(axis_tests
     tests/test_main.cpp
     tests/test_telnet.cpp
     tests/test_node.cpp
+    tests/test_node_nuv.cpp
+    tests/test_nuv.cpp
     tests/test_password.cpp
     tests/test_config.cpp
     tests/test_setup_wizard.cpp

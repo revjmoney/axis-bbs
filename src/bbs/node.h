@@ -18,6 +18,7 @@
 #include "bbs/filelib.h"
 #include "bbs/msgreader.h"
 #include "bbs/newuser.h"
+#include "bbs/nuv.h"
 #include "bbs/splash.h"
 #include "bbs/users.h"
 #include "bbs/usersettings.h"
@@ -47,7 +48,7 @@ public:
     ~Node();
     Node(Node&&);
     Node& operator=(Node&&);
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, MenuHold, AxisNet, AxisCall, Script, Sysop, Wfc, LookPreview, Poster, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, MenuHold, AxisNet, AxisCall, Script, Sysop, Wfc, LookPreview, Poster, Nuv, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -256,6 +257,17 @@ private:
     void                      showVotes();
     void                      showQuestion(int q);
     void                      votingKey(char c);
+    // new user voting (nuv.h): the applicants this caller still has to see, by handle
+    std::vector<std::string>  nuvList_;
+    size_t                    nuvAt_ = 0;
+    int                       nuvStep_ = 0;  // 0 asked at login, 1 an applicant on screen, 2 typing the comment, 3 a result on screen
+    bool                      nuvYesPick_ = false;
+    NuvRules                  nuvRules() const;
+    bool                      nuvMayVoteNow();  // this caller may vote, and someone is waiting
+    void                      startNuv(bool ask);  // ask: the login's "vote now?" first
+    void                      showNuvApplicant();
+    void                      nuvKey(char c);
+    void                      endNuv();
     void                      rumorLine();          // one random rumor, over the main menu
     void                      extrasKey(char c);    // Rumors and BbsList states
     void                      showLastCallers();

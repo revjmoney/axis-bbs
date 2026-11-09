@@ -133,6 +133,9 @@ void Node::loggedIn() {
         int         n = EmailBox::countNew(*msgStore_, handle_, it == (u ? u->lastRead : lastRead_).end() ? 0 : it->second);
         if (n) notes_.push_back(std::string("   ") + theme::HOT + "*** You have " + std::to_string(n) + " new mail: [E] reads it." + theme::TEXT);
     }
+    if (nuvMayVoteNow() && !(menu_ && !builtin_))  // (menu files: the login sequence's CHECKNUV asks instead)
+        notes_.push_back(std::string("   ") + theme::HOT + "*** " + std::to_string(nuvList_.size()) +
+                         (nuvList_.size() == 1 ? " new user is" : " new users are") + " waiting on the vote: [A] votes." + theme::TEXT);
     if (callersAdd_) {
         const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
         callersAdd_(handle_ + "|" + std::to_string(node_) + "|" + info_().timeText + "|" + (u ? u->location : cfg_.location));
@@ -189,7 +192,10 @@ void Node::showPending() {
     out_ += theme::window("PENDING", {{"handle", handle_},
                                       {"status", "waiting for the sysop"},
                                       {"answers", u ? std::to_string(u->answers.size()) + " questions answered" : ""},
-                                      {"next", "call back later: the sysop reads every one"}});
+                                      {"votes", cfg_.nuvYes > 0 && u ? std::to_string(nuvYes(*u)) + " yes, " + std::to_string(nuvNo(*u)) + " no (" +
+                                                                         std::to_string(cfg_.nuvYes) + " yes gets you in)"
+                                                                   : "the sysop decides"},
+                                      {"next", cfg_.nuvYes > 0 ? "call back later: the callers vote on you" : "call back later: the sysop reads every one"}});
     out_ += "\r\n   " + std::string(theme::TEXT) +
             "Until you're validated you can't reach the files or the doors.\r\n   Lamers, narcs and leeches need not wait.\r\n";
     pendingMenu();
@@ -250,7 +256,7 @@ char v3Command(const std::string& f) {
         {"READMSGS", 'm'}, {"LISTMSGAR", 'm'}, {"SELECTMSGAREA", 'm'}, {"COMPOSEMSG", 'm'}, {"NEWSCAN", 's'},
         {"LISTFILES", 'f'}, {"SELECTFILEAREA", 'f'}, {"DOWNLOADFILE", 'f'}, {"UPLOADFILE", 'f'}, {"SEARCH_FILES", 'f'},
         {"FILE_NEWSCAN", 'f'}, {"CHAT", 'p'}, {"ONELINER", 'o'}, {"LISTUSERS", 'h'}, {"LASTCALLERS", 'l'},
-        {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RANDOMRUMOR", 'r'}, {"RUMORSADD", 'r'}, {"BBSLIST", 'b'}, {"BBSLISTADD", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'},
+        {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RANDOMRUMOR", 'r'}, {"RUMORSADD", 'r'}, {"BBSLIST", 'b'}, {"BBSLISTADD", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'}, {"NUV", 'a'}, {"NEWUSERVOTE", 'a'}, {"CHECKNUV", 'a'},
         {"SHOWSTATS", 'i'}, {"SYSTEMSTATS", 'i'}, {"USERCONFIG", 'u'}, {"CFG_AUTOSIG", 'u'}, {"CFG_PASSWORD", 'u'},  // (the account screen: the tagline is the autosig)
         {"SENDPRIVMAIL", 'e'}, {"READPRIVMAIL", 'e'},
         {"MAINLOGOFF", 'g'}};
@@ -539,9 +545,16 @@ void Node::nextStep() {
                 return;
             }
             shown = false;
+        } else if (c == "CHECKNUV") {  // Oblivion's ^S: asks whether to vote on the new users waiting
+            if (nuvMayVoteNow()) {
+                if (s.clear) out_ += theme::CLS;
+                startNuv(true);
+                return;
+            }
+            shown = false;
         } else {
             if (s.clear) out_ += theme::CLS;
-            shown = false;  // not on AXIS yet (InfoForms, new user voting...): skipped
+            shown = false;  // not on AXIS yet (InfoForms...): skipped
         }
         if (shown && hold) {
             seqPauseNext_ = true;
@@ -1080,6 +1093,7 @@ void Node::showMainMenu() {
     rows.push_back({"[L]", "last callers"});
     if (cfg_.messagesOn) rows.push_back({"[E] [S]", "private email, scan for new messages"});
     rows.push_back({"[R] [B] [K] [V]", "rumors, BBS list, top ten, voting booth"});
+    if (cfg_.nuvYes > 0) rows.push_back({"[A]", "applicants: new user voting"});
     rows.push_back({"[J]", "axis net: other Axis Micro boards"});
     rows.push_back({"[I] [C]", "system info, credits"});
     rows.push_back({"[G]", "goodbye"});
@@ -1534,6 +1548,10 @@ void Node::key(char c) {
     }
     if (state_ == State::Voting) {
         votingKey(c);
+        return;
+    }
+    if (state_ == State::Nuv) {
+        nuvKey(c);
         return;
     }
     if (state_ == State::Rumors || state_ == State::BbsList) {
@@ -2087,6 +2105,9 @@ void Node::key(char c) {
             break;
         case 'v':
             showVotes();
+            break;
+        case 'a':
+            startNuv(false);
             break;
         case '*':  // the user editor. A sysop login is the privilege. There is no second shell.
             if (sysop_ && users_) showUsers();
@@ -2727,6 +2748,162 @@ void Node::votingKey(char c) {
     out_ += std::string("\r\n   ") + theme::TEXT + "Choice " + std::to_string(step_ - 10) + " (Enter alone when done):\r\n   " + theme::ORANGE + "> " + theme::WHITE;
 }
 
+// ---- New user voting (nuv.h): Oblivion's ^S at login (CHECKNUV) and ^D on the menu ([A])
+
+NuvRules Node::nuvRules() const {
+    NuvRules r;
+    r.yes = cfg_.nuvYes;
+    r.no = cfg_.nuvNo;
+    r.level = cfg_.nuvLevel;
+    return r;
+}
+
+bool Node::nuvMayVoteNow() {
+    nuvList_.clear();
+    nuvAt_ = 0;
+    if (!users_ || !nuvRules().on()) return false;
+    if (!sysop_) {
+        const User* me = users_->byId(userId_);
+        if (!me || !nuvMayVote(*me, nuvRules())) return false;
+    }
+    for (User* u : nuvWaiting(*users_, handle_)) nuvList_.push_back(u->handle);
+    return !nuvList_.empty();
+}
+
+void Node::startNuv(bool ask) {
+    if (!nuvMayVoteNow()) {
+        const User* me = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+        const char* why = !nuvRules().on()                               ? "New user voting is off here: the sysop validates every applicant."
+                          : !sysop_ && (!me || !nuvMayVote(*me, nuvRules())) ? "Your account can't vote on new users yet."
+                                                                             : "Nobody is waiting on the vote.";
+        out_ += std::string("\r\n\r\n   ") + theme::TEXT + why;
+        state_ = State::Menu;
+        showMenu();
+        return;
+    }
+    state_ = State::Nuv;
+    if (ask) {
+        nuvStep_ = 0;
+        out_ += "\r\n\r\n   " + theme::fade("NEW USER VOTING") + "\r\n\r\n   " + theme::TEXT + std::to_string(nuvList_.size()) +
+                (nuvList_.size() == 1 ? " new user is" : " new users are") + " waiting on the vote. Vote now? " + theme::key("Y", "/") +
+                theme::key("N", "") + theme::ORANGE + ": " + theme::WHITE;
+        return;
+    }
+    nuvStep_ = 1;
+    showNuvApplicant();
+}
+
+void Node::endNuv() {
+    nuvList_.clear();
+    state_ = State::Menu;
+    showMainMenu();  // (in the login sequence: its next step)
+}
+
+void Node::showNuvApplicant() {
+    User* a = nullptr;
+    while (nuvAt_ < nuvList_.size()) {  // someone else may have decided one while this caller read the last
+        a = users_->find(nuvList_[nuvAt_]);
+        if (a && a->status == User::Status::Pending && !nuvVoteBy(*a, handle_)) break;
+        a = nullptr;
+        nuvAt_++;
+    }
+    if (!a) {
+        endNuv();
+        return;
+    }
+    NuvRules r = nuvRules();
+    nuvStep_ = 1;
+    out_ += theme::CLS;
+    out_ += "\r\n   " + theme::fade("NEW USER VOTING") + theme::DGREY + "   applicant " + std::to_string(nuvAt_ + 1) + " of " +
+            std::to_string(nuvList_.size()) + "\r\n   " + std::string(60, '\xc4') + "\r\n";
+    out_ += std::string("   ") + theme::WHITE + a->handle + theme::TEXT + (a->location.empty() ? "" : "  from " + a->location) + "\r\n";
+    out_ += std::string("   ") + theme::TEXT + "votes " + theme::WHITE + std::to_string(nuvYes(*a)) + theme::TEXT + " yes, " + theme::WHITE +
+            std::to_string(nuvNo(*a)) + theme::TEXT + " no" + theme::DGREY + "   (" + std::to_string(r.yes) + " yes gets them in" +
+            (r.no > 0 ? ", " + std::to_string(r.no) + " no turns them down)" : ")") + "\r\n\r\n";
+    int shown = 0;
+    for (const auto& q : a->answers) {  // the name and email are the sysop's alone
+        if (q.first == "First name" || q.first == "Email" || q.first == "Location" || q.first == "Agreed to the rules" || shown >= 16) continue;
+        std::string l = q.first + ": " + q.second;
+        if (l.size() > 74) l = l.substr(0, 71) + "...";
+        size_t colon = q.first.size();
+        out_ += std::string("   ") + theme::DGREY + "\xfa " + theme::LGREY + l.substr(0, colon) + theme::DGREY + ":" + theme::WHITE + l.substr(colon + 1) + "\r\n";
+        shown++;
+    }
+    if (!shown) out_ += std::string("   ") + theme::DGREY + "(no answers on file)\r\n";
+    out_ += "\r\n   " + theme::key("Y", "es   ") + theme::key("N", "o   ") + theme::key("S", "kip   ") + theme::key("Q", "uit") + theme::ORANGE + ": " +
+            theme::WHITE;
+}
+
+void Node::nuvKey(char c) {
+    if (c == '\n' || c == 0) return;  // the rest of a CR LF
+    char k = (char)(c | 0x20);
+    if (nuvStep_ == 0) {  // the login's "vote now?"
+        if (k == 'y' || c == '\r') {
+            out_ += "yes";
+            showNuvApplicant();
+        } else if (k == 'n' || k == 'q') {
+            out_ += "no";
+            endNuv();
+        }
+        return;
+    }
+    if (nuvStep_ == 1) {  // an applicant on screen
+        if (k == 'y' || k == 'n') {
+            nuvYesPick_ = k == 'y';
+            nuvStep_ = 2;
+            line_.clear();
+            out_ += std::string(nuvYesPick_ ? "yes" : "no") + "\r\n   " + theme::TEXT + "A word for the other voters (Enter for none): " + theme::WHITE;
+        } else if (k == 's') {
+            nuvAt_++;
+            showNuvApplicant();
+        } else if (k == 'q') {
+            endNuv();
+        }
+        return;
+    }
+    if (nuvStep_ == 2) {  // the comment
+        if (c == 8 || c == 127) {
+            if (!line_.empty()) {
+                line_.pop_back();
+                out_ += "\b \b";
+            }
+            return;
+        }
+        if (c != '\r') {
+            if ((unsigned char)c >= 0x20 && (unsigned char)c < 0x7f && line_.size() < 60) {
+                line_ += c;
+                out_ += c;
+            }
+            return;
+        }
+        std::string comment = line_;
+        line_.clear();
+        User*      a = nuvAt_ < nuvList_.size() ? users_->find(nuvList_[nuvAt_]) : nullptr;
+        NuvOutcome o = a ? nuvCast(*a, handle_, nuvYesPick_, comment, nuvRules()) : NuvOutcome::NotPending;
+        if (o == NuvOutcome::Validated && ensureWarrior_) ensureWarrior_(a->handle);
+        if (o != NuvOutcome::NotPending && saveUsers_) saveUsers_();
+        if (o != NuvOutcome::NotPending && onEvent)
+            onEvent("nuv: " + handle_ + " voted " + (nuvYesPick_ ? "yes" : "no") + " on " + a->handle +
+                    (o == NuvOutcome::Validated ? ": in by the vote" : o == NuvOutcome::Denied ? ": turned down by the vote" : ""));
+        out_ += "\r\n\r\n   ";
+        if (o == NuvOutcome::Validated)
+            out_ += std::string(theme::ORANGE) + "That's " + std::to_string(nuvYes(*a)) + " yes. " + theme::WHITE + a->handle + theme::TEXT + " is in.";
+        else if (o == NuvOutcome::Denied)
+            out_ += std::string(theme::ORANGE) + "That's " + std::to_string(nuvNo(*a)) + " no. " + theme::WHITE + a->handle + theme::TEXT +
+                    " is turned down.";
+        else if (o == NuvOutcome::Counted)
+            out_ += std::string(theme::TEXT) + "Counted. " + theme::WHITE + a->handle + theme::TEXT + " has " + std::to_string(nuvYes(*a)) + " yes, " +
+                    std::to_string(nuvNo(*a)) + " no.";
+        else
+            out_ += std::string(theme::TEXT) + "Someone beat you to it: the vote on that one is already decided.";
+        out_ += std::string("\r\n   ") + theme::DGREY + "(press a key)" + theme::RESET;
+        nuvStep_ = 3;
+        return;
+    }
+    nuvAt_++;  // a result on screen: on to the next applicant
+    showNuvApplicant();
+}
+
 void Node::showTopTen() {
     if (!users_) {
         out_ += std::string("\r\n\r\n   ") + AMBER + "Top ten needs accounts on this board." + theme::TEXT;
@@ -3072,6 +3249,7 @@ std::string Node::activityText() const {
         case State::NupAsk:
         case State::Applying: return "new user application";
         case State::Pending: return "waiting to be validated";
+        case State::Nuv: return "new user voting";
         case State::OneLinerAsk:
         case State::OneLiner: return "oneliners";
         case State::Menu: return seqFast_ ? "logging in" : "main menu";

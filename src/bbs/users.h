@@ -14,6 +14,13 @@ namespace axis::bbs {
 
 constexpr int kSysopSecurity = 255;  // a user at this security level is a sysop too
 
+// One validated caller's say on a pending applicant (new user voting, nuv.cpp)
+struct NuvVote {
+    std::string voter;
+    bool        yes = false;
+    std::string comment;  // optional, one line: the applicant never sees it, the sysop and other voters do
+};
+
 struct User {
     enum class Status { Pending, Validated, Denied };
     int         id = 0;
@@ -28,6 +35,7 @@ struct User {
     bool        twit = false;  // the old stealth flag: their posts, oneliners, rumors and chat reach nobody but them
     std::map<std::string, int> lastRead;  // message area -> newest message read
     std::vector<std::pair<std::string, std::string>> answers;  // the application: question, answer
+    std::vector<NuvVote> votes;  // new user voting on this applicant, one per voter (kept after the vote decides)
 };
 
 class UserStore {

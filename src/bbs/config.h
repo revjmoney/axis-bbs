@@ -53,6 +53,7 @@ struct BbsConfig {
     std::string ftnAddress = "99:1/0";
     int         newUserSecurity = 10, dailyMinutes = 60, idleMinutes = 5;
     int         sessions = 2;
+    int         nuvYes = 3, nuvNo = 3, nuvLevel = 20;  // new user voting: yes votes in, no votes out (0 = sysop only), who votes ("nuv_yes", "nuv_no", "nuv_level")
     int         ratio = 0, freeKb = 0;  // downloads up to ratio x uploads + freeKb ("ratio", "free_kb"; 0 = no ratio)
     std::string theme = "axis";  // the one look ("theme"): axis, cyan, green, or a card screenset id
     std::string wfc;             // the waiting screen skin: a look id, or blank to follow the theme. Use wfcFolder().

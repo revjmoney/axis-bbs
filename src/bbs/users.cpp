@@ -69,7 +69,13 @@ void UserStore::parse(const std::string& text) {
         else if (k == "free_dl") u->freeDownloads = n != 0;
         else if (k == "twit") u->twit = n != 0;
         else if (k.rfind("lr.", 0) == 0) u->lastRead[k.substr(3)] = (int)n;
-        else if (k.rfind("q.", 0) == 0) {  // q.<question>=answer
+        else if (k.rfind("nuv.", 0) == 0 && !v.empty()) {  // nuv.<voter>=y|n, then a space and the comment
+            NuvVote nv;
+            nv.voter = k.substr(4);
+            nv.yes = v[0] == 'y';
+            nv.comment = v.size() > 2 ? v.substr(2) : "";
+            u->votes.push_back(nv);
+        } else if (k.rfind("q.", 0) == 0) {  // q.<question>=answer
             u->answers.emplace_back(k.substr(2), v);
         }
     }
@@ -121,6 +127,12 @@ std::string formatUser(const User& u) {
                 if (c == '=') c = '-';
             s += "q." + q + "=" + oneLine(a.second) + "\n";
         }
+        for (auto& v : u.votes) {
+            std::string who = oneLine(v.voter);
+            for (char& c : who)
+                if (c == '=') c = '-';
+            s += "nuv." + who + "=" + (v.yes ? "y" : "n") + (v.comment.empty() ? "" : " " + oneLine(v.comment)) + "\n";
+        }
     }
     return s;
 }
@@ -160,8 +172,18 @@ void UserSync::received(const std::string& record) {
 
 User& UserStore::upsert(const User& u) {
     if (User* have = find(u.handle)) {
-        int id = have->id;
-        *have = u;
+        int  id = have->id;
+        User in = u;
+        for (const NuvVote& v : have->votes) {  // two boards voting at once: keep every vote either one has
+            bool known = false;
+            for (const NuvVote& w : in.votes) known = known || sameName(w.voter, v.voter);
+            if (!known) in.votes.push_back(v);
+        }
+        if (in.status == User::Status::Pending && have->status != User::Status::Pending && !have->votes.empty()) {
+            in.status = have->status;  // the vote already decided: a board that had not heard yet can't undo it
+            in.security = have->security;
+        }
+        *have = in;
         have->id = id;
         return *have;
     }

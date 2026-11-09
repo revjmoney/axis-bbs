@@ -58,8 +58,10 @@ void NewUserApp::begin() {
     out_ += "\r\n";
     out_ += theme::window("NEW USER APPLICATION", {{"handle", handle_},
                                                    {"questions", "about twenty, a few minutes"},
-                                                   {"who reads it", "the sysop, and only the sysop"},
-                                                   {"then", "the sysop validates you"}});
+                                                   {"who reads it", cfg_.nuvYes > 0 ? "the sysop; voters see all but name and email"
+                                                                                    : "the sysop, and only the sysop"},
+                                                   {"then", cfg_.nuvYes > 0 ? "the callers vote you in, or the sysop does"
+                                                                            : "the sysop validates you"}});
     out_ += "\r\n   " + theme::fade("Real answers get you in.") + "  " + theme::TEXT +
             "This board is for people who make chips fly.\r\n";
     at_ = 0;
@@ -86,7 +88,8 @@ void NewUserApp::section(const std::string& title) {
         out_ += theme::window("THE RULES", {{"1", "Real handle, real answers. Lamers get deleted."},
                                             {"2", "Upload only what you have the right to share."},
                                             {"3", "Be cool to the other callers."},
-                                            {"4", "The sysop's word is final."}});
+                                            {"4", "The sysop's word is final."}},
+                                   62);  // rule 1 is one wider than the usual box holds
     }
 }
 

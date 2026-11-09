@@ -108,6 +108,9 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "doors_on") c.doorsOn = n != 0;
         else if (k == "sysop_telnet") c.sysopTelnet = n != 0;
         else if (k == "ratio") c.ratio = (int)n;
+        else if (k == "nuv_yes") c.nuvYes = (int)n;
+        else if (k == "nuv_no") c.nuvNo = (int)n;
+        else if (k == "nuv_level") c.nuvLevel = (int)n;
         else if (k == "free_kb") c.freeKb = (int)n;
         else if (k == "theme") {
             if (const char* id = theme::knownLook(v)) c.theme = id;
@@ -243,6 +246,9 @@ std::string formatConfig(const BbsConfig& c) {
     kv("theme", c.theme);
     kv("wfc", c.wfc);
     kv("ratio", std::to_string(c.ratio));
+    kv("nuv_yes", std::to_string(c.nuvYes));
+    kv("nuv_no", std::to_string(c.nuvNo));
+    kv("nuv_level", std::to_string(c.nuvLevel));
     kv("free_kb", std::to_string(c.freeKb));
     for (size_t i = 0; i < c.doors.size(); i++) {
         const DoorEntry& d = c.doors[i];
@@ -265,7 +271,7 @@ const std::vector<std::pair<std::string, char>>& menuCommands() {
         {"messages", 'M'}, {"files", 'F'},    {"doors", 'D'},    {"teleconference", 'T'}, {"who", 'W'},     {"page", 'P'},
         {"account", 'U'},  {"oneliners", 'O'}, {"multinode", 'N'}, {"lastcallers", 'L'},   {"users", 'H'},   {"email", 'E'},
         {"scan", 'S'},
-        {"rumors", 'R'},   {"bbslist", 'B'},  {"axisnet", 'J'}, {"topten", 'K'},   {"voting", 'V'},         {"info", 'I'},    {"credits", 'C'},
+        {"rumors", 'R'},   {"bbslist", 'B'},  {"axisnet", 'J'}, {"topten", 'K'},   {"voting", 'V'},         {"nuv", 'A'},     {"info", 'I'},    {"credits", 'C'},
         {"goodbye", 'G'},  {"sysop", '*'}};
     return v;
 }
