@@ -2,7 +2,7 @@
 title=BBS Listings
 clr=1
 prompt=1
-prompt1=|15BBS Listings Directory
+prompt1=|XY05,19|08[|15BBS List|08] |07Command |08-|15> |07
 prompt2=|08[|15BBS List|08] |07Command |08->|15 
 fallback=
 acs=*
@@ -17,3 +17,6 @@ cmd=V|RUN:BBSLISTVERIFY|S255|1|Verifying BBS Listing
 cmd=Q|GOTO:MAIN|*|0|
 cmd=G|RUN:MAINLOGOFF|*|0|Logging Off
 cmd=/G|RUN:IMMEDIATELOGOFF|*|0|Logging Off
+bar=5,10,96,7,L, (L) List the BBSes           
+bar=5,11,96,7,A, (A) Add a BBS                
+bar=5,12,96,7,Q, (Q) Main Menu                

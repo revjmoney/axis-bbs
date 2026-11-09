@@ -2,7 +2,7 @@
 title=Rumors
 clr=1
 prompt=1
-prompt1=|15Rumors
+prompt1=|XY05,19|08[|15Rumors|08] |07Command |08-|15> |07
 prompt2=|08[|15Rumors|08] |07Command |08->|15 
 fallback=
 acs=*
@@ -18,3 +18,6 @@ cmd=*|RUN:RANDOMRUMOR|*|0|Random Rumor
 cmd=Q|GOTO:MAIN|*|0|
 cmd=G|RUN:MAINLOGOFF|*|0|Logging Off
 cmd=/G|RUN:IMMEDIATELOGOFF|*|0|Logging Off
+bar=5,10,96,7,L, (L) List Rumors              
+bar=5,11,96,7,A, (A) Add a Rumor              
+bar=5,12,96,7,Q, (Q) Main Menu                

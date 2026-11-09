@@ -250,7 +250,7 @@ char v3Command(const std::string& f) {
         {"READMSGS", 'm'}, {"LISTMSGAR", 'm'}, {"SELECTMSGAREA", 'm'}, {"COMPOSEMSG", 'm'}, {"NEWSCAN", 's'},
         {"LISTFILES", 'f'}, {"SELECTFILEAREA", 'f'}, {"DOWNLOADFILE", 'f'}, {"UPLOADFILE", 'f'}, {"SEARCH_FILES", 'f'},
         {"FILE_NEWSCAN", 'f'}, {"CHAT", 'p'}, {"ONELINER", 'o'}, {"LISTUSERS", 'h'}, {"LASTCALLERS", 'w'},
-        {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RANDOMRUMOR", 'r'}, {"BBSLIST", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'},
+        {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RANDOMRUMOR", 'r'}, {"RUMORSADD", 'r'}, {"BBSLIST", 'b'}, {"BBSLISTADD", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'},
         {"SHOWSTATS", 'i'}, {"SYSTEMSTATS", 'i'}, {"USERCONFIG", 'u'}, {"CFG_AUTOSIG", 'u'}, {"CFG_PASSWORD", 'u'},  // (the account screen: the tagline is the autosig)
         {"SENDPRIVMAIL", 'e'}, {"READPRIVMAIL", 'e'},
         {"MAINLOGOFF", 'g'}};
@@ -301,6 +301,13 @@ std::string Node::menuValue(const std::string& k) const {
     return "";  // |UN (a user note), |PV, areas and conferences: not on AXIS yet
 }
 
+
+// A short answer in a menu file: on the line under the prompt, moved into the theme's menu window (column 5 on),
+// so it never writes over the art's left frame the way a plain "\r\n   " would
+void Node::menuNote(const char* text) {
+    out_ += std::string("\r\n\x1b[4C") + AMBER + text + theme::TEXT;
+    menu_->prompt();
+}
 
 AcsUser Node::menuWho() const {
     const User* u = users_ ? users_->byId(userId_) : nullptr;
@@ -1831,8 +1838,7 @@ void Node::key(char c) {
                             if (d.id == a.arg) known = true;
                         if (!known) why = "Coming soon to AXIS.";
                     }
-                    out_ += std::string("\r\n   ") + AMBER + why + theme::TEXT;
-                    menu_->prompt();
+                    menuNote(why);
                     return;
                 }
                 door_ = pick;
@@ -1845,16 +1851,12 @@ void Node::key(char c) {
                 for (char& ch : cmd) ch = (char)std::toupper((unsigned char)ch);
                 if (cmd == "SCRIPT" || cmd.compare(0, 7, "SCRIPT:") == 0) {
                     name = cmd == "SCRIPT" ? a.args : a.arg.substr(7);
-                    if (!startScript(name, ScriptBack::Menu)) {
-                        out_ += std::string("\r\n   ") + AMBER + "That script is not on the card." + theme::TEXT;
-                        menu_->prompt();
-                    }
+                    if (!startScript(name, ScriptBack::Menu)) menuNote("That script is not on the card.");
                     return;
                 }
                 c = v3Command(a.arg);
                 if (!c) {
-                    out_ += std::string("\r\n   ") + AMBER + "Coming soon to AXIS." + theme::TEXT;
-                    menu_->prompt();
+                    menuNote("Coming soon to AXIS.");
                     return;
                 }
                 break;

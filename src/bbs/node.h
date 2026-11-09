@@ -220,6 +220,7 @@ private:
     bool                                           builtin_ = false;  // the menu files failed: the built-in menu this call
     bool                                           enterMenu(const std::string& name);
     AcsUser                                        menuWho() const;
+    void                                           menuNote(const char* text);  // a short answer under a menu file's prompt
     std::string                                    menuValue(const std::string& k) const;  // a menu placeholder's value
     std::function<void(int, int, const std::string&)> send_;
     std::function<std::vector<std::string>()> callersGet_;

@@ -2,7 +2,7 @@
 title=Email Menu
 clr=1
 prompt=1
-prompt1=|08[|07|TIME|08] |08[|15Email Menu|08] |07Command |08->|15 
+prompt1=|XY05,19|08[|15Email|08] |07Command |08-|15> |07
 prompt2=
 fallback=
 acs=*
@@ -13,3 +13,6 @@ cmd=S|RUN:SENDPRIVMAIL|*|0|Sending Email
 cmd=R|RUN:READPRIVMAIL|*|0|Reading Email
 cmd=L|RUN:LISTPRIVMAIL|*|0|Listing Email
 cmd=Q|GOTO:MAIN|*|0|
+bar=5,10,96,7,R, (R) Read Email               
+bar=5,11,96,7,S, (S) Send Email               
+bar=5,12,96,7,Q, (Q) Main Menu                

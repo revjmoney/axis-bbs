@@ -80,6 +80,44 @@ TEST_CASE("an unknown RUN: function says coming soon and keeps the caller on the
     CHECK(r.n.state() == Node::State::Menu);
 }
 
+TEST_CASE("a menu note sits inside the theme's menu window, not over the art's left frame") {
+    Rig r;
+    r.fs = {{"MAIN.MNU", "prompt1=|XY05,19MAIN ->\ncmd=X|RUN:SPONSORMENU|*|0|\n"}};
+    r.menus();
+    r.login();
+    r.n.input((const uint8_t*)"x", 1, 1000);
+    std::string raw = r.n.takeOutput();
+    size_t note = raw.find("Coming soon to AXIS.");
+    REQUIRE(note != std::string::npos);
+    CHECK(raw.rfind("\r\n\x1b[4C", note) != std::string::npos);  // moved to column 5 first
+    CHECK(raw.find("\r\n   ") == std::string::npos);             // never the old three-space indent
+    CHECK(raw.find("\x1b[19;5H", note) != std::string::npos);    // and the prompt goes back to its own spot
+}
+
+TEST_CASE("the rumor and BBS list menus' add commands open the screens that add") {
+    Rig r;
+    r.fs = {{"MAIN.MNU", "cmd=A|RUN:RUMORSADD|*|0|\ncmd=B|RUN:BBSLISTADD|*|0|\ncmd=Q|GOTO:MAIN|*|0|\n"}};
+    r.menus();
+    r.login();
+    r.type("a");
+    CHECK(r.n.state() == Node::State::Rumors);
+    r.type("q");
+    r.type("b");
+    CHECK(r.n.state() == Node::State::BbsList);
+}
+
+TEST_CASE("a lightbar item is drawn at its own spot in the menu window") {
+    // (tools/art/check_menus.py checks every shipped bar against every theme's window and has a cmd= behind it)
+    Rig r;
+    r.fs = {{"MAIN.MNU", "prompt1=|XY05,19MAIN ->\ncmd=M|GOTO:MAIN|*|0|\nbar=5,10,96,7,M, (M) Messages Menu \n"}};
+    r.menus();
+    r.login();
+    std::string raw;
+    r.n.input((const uint8_t*)"?", 1, 1000);
+    raw = r.n.takeOutput();
+    CHECK(raw.find("\x1b[10;5H") != std::string::npos);  // the bar drawn at its window spot
+}
+
 TEST_CASE("a GOTO to another menu file shows that menu, and Q style GOTO:MAIN comes back") {
     Rig r;
     r.fs = {{"MAIN.MNU", "prompt1=MAIN ->\ncmd=M|GOTO:MSGMENU|*|0|\n"}, {"MSGMENU.MNU", "prompt1=MSG ->\ncmd=Q|GOTO:MAIN|*|0|\n"}};
