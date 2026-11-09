@@ -7,7 +7,8 @@ namespace axis::cluster {
 
 namespace {
 constexpr char kSep = '\x1f';
-}
+bool known(uint8_t t) { return t >= (uint8_t)Frame::Hello && t <= (uint8_t)Frame::Auth; }  // keep in step with Frame
+}  // namespace
 
 std::string frame(Frame type, const std::vector<std::string>& f) {
     size_t len = f.empty() ? 0 : f.size() - 1;  // one allocation, no body copy: the main joins a board on a fragmented heap
@@ -35,12 +36,26 @@ std::vector<std::string> fields(const std::string& body) {
     }
 }
 
+void FrameReader::add(const std::string& bytes) {
+    if (bad_) return;
+    if (bytes.size() > kMaxBuffered - buf_.size()) {  // nobody is reading this, or it is not ours
+        fail();
+        return;
+    }
+    buf_ += bytes;
+}
+
+void FrameReader::fail() {
+    bad_ = true;
+    std::string().swap(buf_);  // the memory back now, not when the link is torn down
+}
+
 bool FrameReader::next(Frame& type, std::string& body) {
     if (bad_ || buf_.size() < 5) return false;
     uint32_t n = 0;
     for (int i = 0; i < 4; i++) n |= (uint32_t)(uint8_t)buf_[i] << (8 * i);
-    if (n == 0 || n > kMaxFrame) {
-        bad_ = true;
+    if (n == 0 || n > kMaxFrame || !known((uint8_t)buf_[4])) {
+        fail();
         return false;
     }
     if (buf_.size() < 4 + n) return false;

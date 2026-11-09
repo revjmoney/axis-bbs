@@ -162,6 +162,36 @@ TEST_CASE("frames keep their fields, spaces included, and arrive whole when spli
     CHECK(v[2] == "anyone cutting aluminum?");
 }
 
+TEST_CASE("a link that is not ours goes bad and lets its bytes go: too long, an unknown type, or piling up unread") {
+    Frame       t;
+    std::string body;
+    FrameReader big;  // a length over kMaxFrame
+    uint32_t    n = kMaxFrame + 1;
+    big.add(std::string{(char)n, (char)(n >> 8), (char)(n >> 16), (char)(n >> 24), (char)Frame::Chat});
+    CHECK_FALSE(big.next(t, body));
+    CHECK(big.bad());
+    FrameReader odd;  // a type no board sends
+    odd.add(std::string("\x01\x00\x00\x00\xff", 5));
+    CHECK_FALSE(odd.next(t, body));
+    CHECK(odd.bad());
+    FrameReader pile;  // a frame that never finishes, fed past the cap
+    pile.add(frame(Frame::Chat, {std::string(100, 'x')}).substr(0, 50));
+    for (int i = 0; i < 40 && !pile.bad(); i++) pile.add(std::string(1024, 'x'));
+    CHECK(pile.bad());
+    pile.add(frame(Frame::Chat, {"late"}));  // nothing more is taken once bad
+    CHECK_FALSE(pile.next(t, body));
+    FrameReader ok;  // the newest types (the key handshake) still pass, and frames waiting up to the cap are kept
+    ok.add(frame(Frame::Auth, {"nonce", "proof"}));
+    std::string chat = frame(Frame::Chat, {std::string(2000, 'x')});
+    for (int i = 0; i < 15; i++) ok.add(chat);  // 30 KB waiting while the main talks to another board
+    REQUIRE_FALSE(ok.bad());
+    REQUIRE(ok.next(t, body));
+    CHECK(t == Frame::Auth);
+    int chats = 0;
+    while (ok.next(t, body)) chats += t == Frame::Chat;
+    CHECK(chats == 15);
+}
+
 TEST_CASE("the first board up becomes main, node 1") {
     FakeLan  lan;
     Board    a(lan, 101, "board-a");

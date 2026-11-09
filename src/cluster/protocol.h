@@ -13,6 +13,7 @@ namespace axis::cluster {
 
 constexpr uint16_t kDiscoveryPort = 2325, kLinkPort = 2324;
 constexpr uint32_t kMaxFrame = 8 * 1024;  // file pieces are 2 KB; anything bigger is not ours
+constexpr size_t   kMaxBuffered = 32 * 1024;  // unread bytes one link may hold (a few frames waiting while the main asks another board)
 constexpr char     kFieldSep = '\x1f';
 
 enum class Frame : uint8_t {
@@ -45,14 +46,16 @@ std::string              frame(Frame type, const std::vector<std::string>& field
 std::vector<std::string> fields(const std::string& body);
 
 // Pulls whole frames out of a byte stream; false when no complete frame is waiting, or (bad set)
-// the stream is not one of ours.
+// the stream is not one of ours: a length over kMaxFrame, a type we don't know, or more than
+// kMaxBuffered bytes piled up. Once bad it drops its bytes and takes no more (the link is closed).
 class FrameReader {
 public:
-    void add(const std::string& bytes) { buf_ += bytes; }
+    void add(const std::string& bytes);
     bool next(Frame& type, std::string& body);
     bool bad() const { return bad_; }
 
 private:
+    void        fail();
     std::string buf_;
     bool        bad_ = false;
 };
