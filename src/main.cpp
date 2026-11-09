@@ -329,6 +329,7 @@ static std::string posterPieceLocal(const std::string& name, size_t offset, size
     if (want > kPosterCap - offset) want = kPosterCap - offset;
     std::string s = readThemeFile(cfg.theme.c_str(), name, want, offset, opened);
     if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(cfg.theme), name, want, offset, opened);
+    if (!*opened) s = readThemeFile("axis", name, want, offset, opened);  // a look without its own poster shows the axis one
     return s;
 }
 // A follower asks the main for the same piece ("T name offset want"); *exists false when the main has none (or did not answer).
