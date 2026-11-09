@@ -1,0 +1,3 @@
+# ANSI art is raw bytes: CR LF pairs are part of the drawing, so git must never convert them
+*.ans -text
+*.ANS -text
