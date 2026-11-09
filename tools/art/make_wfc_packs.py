@@ -34,7 +34,7 @@ KEYS = {'KS': 'S', 'KU': 'U', 'KM': '#', 'KB': 'B', 'KF': 'F', 'KL': 'L', 'KE': 
 # the keys in the order they are listed: code, the text right after it (the tap label), and the label's lead-in
 KEY_LIST = [('KO', '[space] logon'), ('KS', 'settings'), ('KU', 'users'), ('KM', 'menus'), ('KB', 'boards'),
             ('KF', 'files'), ('KL', 'logs'), ('KE', 'events'), ('KA', 'archive'), ('KV', 'validate')]
-COMMON = ['BN', 'SN', 'MB', 'CT', 'PT', 'UT', 'LC', 'SD', 'RM', 'IP', 'UP', 'TM', 'DT', 'PG'] + list(KEYS)
+COMMON = ['BN', 'SN', 'MB', 'VN', 'CT', 'PT', 'UT', 'LC', 'SD', 'RM', 'IP', 'UP', 'TM', 'DT', 'PG'] + list(KEYS)
 REQUIRED = {80: COMMON + ['N' + c for c in 'ABCDEFGH'] + ['EA', 'EB', 'EC'],
             45: COMMON + ['N' + c for c in 'ABCD'] + ['EA', 'EB', 'EC']}
 
@@ -369,7 +369,7 @@ def check(g, data, size, nodes):
     return labels
 
 
-SAMPLE = {'BN': 'AXIS UNDERGROUND CNC', 'SN': 'Rev', 'MB': 'main board', 'CT': '12', 'PT': '4', 'UT': '2', 'LC': 'Saylor',
+SAMPLE = {'BN': 'AXIS UNDERGROUND CNC', 'SN': 'Rev', 'MB': 'main board', 'VN': '0.51', 'CT': '12', 'PT': '4', 'UT': '2', 'LC': 'Saylor',
           'SD': '14.2G', 'RM': '143', 'IP': '192.168.1.164', 'UP': '3d 04:12', 'TM': '21:04', 'DT': '2026-11-08',
           'NA': '1 Rev  reading messages', 'NB': '2 Saylor  in a door: LORD', 'NC': '3 waiting', 'ND': '4 waiting',
           'EA': '21:03 Saylor logged on to node 2', 'EB': '20:58 upload: AXISFLSH.ZIP (1.9 MB)',
@@ -458,7 +458,9 @@ def wfc80(st):
     g.text(1, 46, st['title80'][:34].center(34), st['hot'])
     g.field(2, 46, 'BN', 34, st['value'])
     x = g.text(3, 46, 'sysop ', st['body'])
-    g.field(3, x, 'SN', 28, st['value'])
+    x = g.field(3, x, 'SN', 20, st['value'])
+    x = g.text(3, x, ' v', st['body'])
+    g.field(3, x, 'VN', 6, st['value'])
     x = g.field(4, 46, 'MB', 15, st['body'])
     x = g.field(4, x + 1, 'TM', 7, st['value'])
     g.field(4, x + 1, 'DT', 10, st['value'])
@@ -543,8 +545,9 @@ def wfccyd(st):
         g.put(20 + i, 1, st['bullet'], st['accent'])
         g.field(20 + i, 3, 'E' + c, 42, st['body'])
     x = g.text(23, 1, 'sysop ', st['foot'])
-    x = g.field(23, x, 'SN', 15, st['value'])
-    x = g.field(23, x + 1, 'MB', 15, st['body'])
+    x = g.field(23, x, 'SN', 14, st['value'])
+    x = g.field(23, x + 1, 'MB', 14, st['body'])
+    x = g.field(23, x + 1, 'VN', 5, st['value'])
     rule(g, 23, x + 1, 44 - x - 1, st, 2)
     return g
 

@@ -90,7 +90,7 @@ def main(path, header, preview=None):
     L, R = 18, 27  # the key box (columns 0..17) and the right column (18..44)
     rows = []
     rows.append(row([(FRAME, '['), (HOT, 'axis'), (BODY, ' micro bbs '), (DIM, '; '), (VALUE, f('BN', 26)), (FRAME, ']')]))
-    right = [[(BODY, 'underground')], [(HOT, 'c   n   c')], [(BODY, f('MB', 14))], [(VALUE, f('SN', 14))]]
+    right = [[(BODY, 'underground')], [(HOT, 'c   n   c'), (BODY, ' '), (VALUE, f('VN', 5))], [(BODY, f('MB', 14))], [(VALUE, f('SN', 14))]]
     for r in range(4):
         rows.append(row([(BODY, ' ')] + logo_row(r) + [(BODY, ' ')] + right[r]))
     rows.append(row([(FRAME, '['), (VALUE, f('TM', 7)), (BODY, ' '), (VALUE, f('DT', 12)), (HOT, '  ip '), (VALUE, f('IP', 15)),

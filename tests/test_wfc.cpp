@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include "bbs/wfc.h"
+#include "bbs/version.h"
 
 #include "platform/cyd/wfccyd_art.h"
 
@@ -157,4 +158,10 @@ TEST_CASE("the built-in CYD WFC fills 45x24 without scrolling, every key tappabl
         if (h.node == 0 && h.key != ' ') CHECK(wfcKeyAt(spots, h.row, h.col + 4, nullptr) == h.key);
     for (const auto& h : spots)
         if (h.node == 0 && h.key == ' ') CHECK(wfcKeyAt(spots, h.row, h.col + 6, nullptr) == ' ');  // "local logon"
+}
+
+TEST_CASE("|VN is the firmware version on the WFC") {
+    WfcSnapshot s;
+    CHECK(expandArt("v|VN", {}, wfcValues(s)) == std::string("v") + kAxisVersion);
+    CHECK(expandArt("[@VN######@]", {}, wfcValues(s)).find(kAxisVersion) != std::string::npos);
 }

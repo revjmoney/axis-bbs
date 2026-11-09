@@ -43,7 +43,7 @@ def rule(l, r):
 
 def main(path):
     rows = [rule(TL, TR)]
-    rows.append(row([(VALUE, ' ' + f('BN', 40)), (LABEL, ' ' * 22), (LABEL, f('MB', 14)), (LABEL, ' ')]))
+    rows.append(row([(VALUE, ' ' + f('BN', 40)), (LABEL, ' ' * 12 + 'v'), (VALUE, f('VN', 9)), (LABEL, f('MB', 14)), (LABEL, ' ')]))
     rows.append(row([(TITLE, ' ' * 21 + 'W A I T I N G   F O R   C A L L E R')]))
     rows.append(rule(ML, MR))
     rows.append(row([(HEAD, ' NODES'), (LABEL, ' ' * 38), (HEAD, 'TODAY AND SYSTEM')]))

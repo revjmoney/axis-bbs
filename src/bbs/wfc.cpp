@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "bbs/wfc.h"
 
+#include "bbs/version.h"
+
 #include <cctype>
 #include <cstdio>
 
@@ -69,6 +71,7 @@ ArtValue wfcValues(const WfcSnapshot& s) {
         if (k == "DT") return s.date;
         if (k == "PG") return s.page;
         if (k == "MB") return s.main ? "main board" : "follower board";
+        if (k == "VN") return kAxisVersion;  // the firmware version
         if (nodeCode(k)) {
             size_t i = k[1] - 'A';
             return i < s.nodes.size() ? nodeLine(s.nodes[i]) : "";

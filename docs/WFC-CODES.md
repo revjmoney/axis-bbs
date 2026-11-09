@@ -20,6 +20,7 @@ Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WF
 | `EA`..`EE` | Newest five events, newest first |
 | `PG` | Sysop page text |
 | `MB` | "main board" or "follower board" |
+| `VN` | The firmware version, e.g. `0.51` (the classic and all eight pack WFCs show it) |
 
 ## Hotkeys (tappable on the CYD)
 
