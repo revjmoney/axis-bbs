@@ -13,6 +13,9 @@ struct DoorEntry {
     std::string id, name, exe, args, drop = "doorsys";  // drop: "doorsys" (DOOR.SYS) or "dorinfo"
     bool        enabled = true;  // sixth field of doorN ("|0" hides it). A saved LORD.EXE with no field is off.
 };
+// Only the doors built into the firmware ("*LORD", "*ANSIVIEW", "*SCRIPT") can start: the DOS runtime
+// for an .EXE is not in this firmware (dropped 2026-11-06), so those rows stay out of every door list.
+inline bool doorRuns(const DoorEntry& d) { return !d.exe.empty() && d.exe[0] == '*'; }
 
 // LORD.EXE, any mix of case. LORD Fast is FAST.EXE and is not this.
 inline bool lordGameExe(const std::string& exe) {
@@ -63,8 +66,7 @@ struct BbsConfig {
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)
-    std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "LORD.EXE", "%N NOEMS /DREW", "doorsys"},
-                                 {"blackjack", "BBS Black Jack", "BLKJK.EXE", "BJ.CFG", "doorsys"},
+    std::vector<DoorEntry> doors{{"lord", "Legend of the Red Dragon", "*LORD", "", "none"},
                                  {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"},
                                  {"script", "Scripts", "*SCRIPT", "", "none"}};
     // "*SCRIPT": programs in /scripts on the card. A saved list that lacks it gets this row. *DOSSHELL is dropped.

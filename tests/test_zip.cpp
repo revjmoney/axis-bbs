@@ -158,3 +158,54 @@ TEST_CASE("a piece can be pulled a few bytes at a time, and it matches extractin
             CHECK(got == stored);
         }
 }
+
+namespace {
+// a stored (method 0) ZIP with n small entries, built by hand
+std::vector<uint8_t> manyZip(int n) {
+    std::vector<uint8_t> z, cd;
+    auto put16 = [](std::vector<uint8_t>& v, uint32_t x) { v.push_back((uint8_t)x); v.push_back((uint8_t)(x >> 8)); };
+    auto put32 = [&](std::vector<uint8_t>& v, uint32_t x) { put16(v, x & 0xFFFF); put16(v, x >> 16); };
+    for (int i = 0; i < n; i++) {
+        std::string name = "PIECE" + std::to_string(i) + ".ANS", body = "art " + std::to_string(i);
+        uint32_t    local = (uint32_t)z.size();
+        put32(z, 0x04034b50); put16(z, 20); put16(z, 0); put16(z, 0); put16(z, 0); put16(z, 0);
+        put32(z, 0); put32(z, (uint32_t)body.size()); put32(z, (uint32_t)body.size());
+        put16(z, (uint32_t)name.size()); put16(z, 0);
+        z.insert(z.end(), name.begin(), name.end());
+        z.insert(z.end(), body.begin(), body.end());
+        put32(cd, 0x02014b50); put16(cd, 20); put16(cd, 20); put16(cd, 0); put16(cd, 0); put16(cd, 0); put16(cd, 0);
+        put32(cd, 0); put32(cd, (uint32_t)body.size()); put32(cd, (uint32_t)body.size());
+        put16(cd, (uint32_t)name.size()); put16(cd, 0); put16(cd, 0); put16(cd, 0); put16(cd, 0); put32(cd, 0); put32(cd, local);
+        cd.insert(cd.end(), name.begin(), name.end());
+    }
+    uint32_t cdOff = (uint32_t)z.size();
+    z.insert(z.end(), cd.begin(), cd.end());
+    put32(z, 0x06054b50); put16(z, 0); put16(z, 0); put16(z, (uint32_t)n); put16(z, (uint32_t)n);
+    put32(z, (uint32_t)cd.size()); put32(z, cdOff); put16(z, 0);
+    return z;
+}
+}  // namespace
+
+TEST_CASE("a pack's directory is read in a few reads, not two per file (a follower reads it over the link)") {
+    auto z = manyZip(100);
+    int  reads = 0;
+    ZipReader r(
+        [&](uint32_t off, uint8_t* buf, size_t n) {
+            reads++;
+            if (off + n > z.size()) return false;
+            std::copy(z.begin() + off, z.begin() + off + n, buf);
+            return true;
+        },
+        (uint32_t)z.size());
+    REQUIRE(r.open());
+    CHECK(r.entries().size() == 100);
+    CHECK(r.entries()[99].name == "PIECE99.ANS");
+    CHECK(reads <= 4);
+    CHECK(extract(r, "PIECE42.ANS") == "art 42");
+
+    auto bad = z;
+    bad[bad.size() - 22 - (46 + 11)] ^= 0xFF;  // the last entry's signature (PIECE99.ANS is 11 letters)
+    auto r2 = readerOver(bad);
+    CHECK(r2.open() == false);
+    CHECK(r2.entries().empty());
+}

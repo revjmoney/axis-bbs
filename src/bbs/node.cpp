@@ -275,6 +275,21 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
         load, [this](const char* d, size_t n) { out_.append(d, n); },
         [this](const std::string& k) { return menuValue(k); }));
     menu_->setArtPieces(std::move(pieces));
+    menu_->cantRun = [this](const MenuCmd& c) {  // a DOOR: line whose door can't start here (a DOS .EXE): off the menu
+        std::string cmd = c.cmd;
+        for (char& ch : cmd) ch = (char)std::toupper((unsigned char)ch);
+        if (cmd.compare(0, 5, "DOOR:") != 0) return false;
+        std::string id = c.cmd.substr(5);
+        bool        found = false;
+        for (const DoorEntry& d : cfg_.doors) {
+            std::string did = d.id;
+            if (did.size() != id.size() || !std::equal(did.begin(), did.end(), id.begin(), [](char a, char b) { return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); }))
+                continue;
+            if (doorRuns(d)) return false;
+            found = true;
+        }
+        return found;
+    };
 }
 
 // a placeholder's value: "%XX" are AXIS's own codes (as theme art has always used them), the rest ViSiON/3's names
@@ -855,7 +870,7 @@ std::vector<DoorEntry> Node::doorChoices() const {
     std::vector<DoorEntry> v;
     std::vector<std::string> seen;  // a second *ANSIVIEW with the same areas is the same door
     for (const DoorEntry& d : cfg_.doors) {
-        if (!d.enabled) continue;
+        if (!d.enabled || !doorRuns(d)) continue;  // a DOS .EXE has nothing to run it here
         std::string exe = d.exe;
         for (char& ch : exe) ch = (char)std::toupper((unsigned char)ch);
         if (exe == "*ANSIVIEW") {
@@ -878,13 +893,7 @@ std::vector<DoorEntry> Node::doorChoices() const {
         }
         v.push_back(d);
     }
-    if (!sysop_) return v;
-    for (const DoorEntry& d : cfg_.doors) {
-        std::string exe = d.exe;
-        for (char& ch : exe) ch = (char)std::toupper((unsigned char)ch);
-        if (exe == "LORD.EXE" && d.enabled) v.push_back({d.id, d.name + " Setup (sysop)", "LORDCFG.EXE", "", "local"});
-    }
-    return v;
+    return v;  // (no "LORD Setup" row for the sysop: LORDCFG.EXE is a DOS program too)
 }
 
 std::string Node::cleanScriptName(std::string name) const {
@@ -1949,7 +1958,10 @@ void Node::key(char c) {
                 }
                 if (cmd == "RUMORSLIST" || cmd == "RUMORSADD" || cmd == "BBSLISTADD") {  // straight to the list, or to typing one in
                     if (cmd == "BBSLISTADD") showBbsList();
-                    else state_ = State::Rumors;
+                    else {
+                        out_ += theme::CLS;  // not on top of the menu art
+                        state_ = State::Rumors;
+                    }
                     step_ = 0;
                     extrasKey(cmd == "RUMORSLIST" ? 'l' : 'a');
                     return;
@@ -1995,6 +2007,8 @@ void Node::key(char c) {
         else showMenu();
         return;
     }
+    if (fromMenus && std::strchr("pyrva", c | 0x20))  // these ask right where the cursor is: not on top of the menu art
+        out_ += theme::CLS;
     switch (c | 0x20) {  // either case
         case 't':
         case 'p':

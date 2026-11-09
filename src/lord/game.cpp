@@ -877,7 +877,12 @@ void NativeLord::heal() {
 
 void NativeLord::fightPrompt() {
     send("  (A)ttack  (R)un  (S)tats");
-    if (usesLeft(raw_) > 0) send("  (K)");
+    if (int left = usesLeft(raw_); left > 0) {  // the class skill, said in full (a bare "(K)" told nobody anything)
+        int c = raw_[O_CLASS];
+        send(c == 1 ? "  (K) Death Knight attack (" : c == 2 ? "  (K) Mystic skill (" : "  (K) Thief skill (");
+        num(left);
+        send(" left)");
+    }
     send("\r\n");
 }
 
@@ -1064,7 +1069,11 @@ void NativeLord::finishFight(bool won) {
     if (won) {
         w32(raw_ + O_GOLD, capGold((int64_t)i32(raw_ + O_GOLD) + mon_.gold));
         w32(raw_ + O_XP, capGold((int64_t)i32(raw_ + O_XP) + mon_.xp));
-        send("  You win.\r\n");
+        send("  You win.\r\n  You receive ");  // what the fight paid, the way LORD tells it
+        num((int32_t)mon_.gold);
+        send(" gold and ");
+        num((int32_t)mon_.xp);
+        send(" experience.\r\n");
     }
     save();
     if (raw_[O_DEAD] == 5) {

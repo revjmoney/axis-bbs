@@ -120,3 +120,16 @@ TEST_CASE("two boards voting at once keep both votes, and a stale record can't u
     CHECK(main.find("cnc4life")->security == 20);
     CHECK(main.find("cnc4life")->votes.size() == 4);
 }
+
+#include "bbs/votebooth.h"
+
+TEST_CASE("the sysop takes a booth question out: its ballots go, later questions keep theirs") {
+    std::vector<std::string> votes = {"Best 4th axis setup?|Sherline|Homemade", "Best 4th axis setup?|Sherline|Homemade", "Best CAM?|Fusion|RotatoCAM"};
+    std::vector<std::string> ballots = {"1|a|2", "2|b|1", "3|c|2", "1|d|1", "3|e|1"};
+    CHECK(axis::bbs::voteDelete(votes, ballots, 2));
+    REQUIRE(votes.size() == 2);
+    CHECK(votes[1] == "Best CAM?|Fusion|RotatoCAM");
+    CHECK(ballots == std::vector<std::string>{"1|a|2", "2|c|2", "1|d|1", "2|e|1"});
+    CHECK_FALSE(axis::bbs::voteDelete(votes, ballots, 3));
+    CHECK_FALSE(axis::bbs::voteDelete(votes, ballots, 0));
+}

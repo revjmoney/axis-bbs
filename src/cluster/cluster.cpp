@@ -523,6 +523,13 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
                 Card& c = cards_[l.board];
                 c.freeBytes = toU64(f[1]);
                 c.alive = true;
+                // A main without the card keeps handing main to the card's board: the one hand-over when it joined
+                // can be missed (seen 2026-11-09: board 1 back after a power loss stayed a follower of board 2).
+                if (!hasFiles_ && (!lastYield_ || now - lastYield_ >= kYieldAgainMs)) {
+                    lastYield_ = now;
+                    event("node " + num((uint32_t)l.node) + " has the SD card: handing main to it");
+                    put(l, Frame::Yield, {});
+                }
             } else {
                 cards_.erase(l.board);
             }

@@ -30,6 +30,7 @@
 #include "bbs/axisnet.h"
 #include "net/telnet.h"
 #include "bbs/diag.h"
+#include "bbs/votebooth.h"
 #include "platform/cyd/web.h"
 #include "bbs/ansiviewer.h"
 #include "bbs/script.h"
@@ -85,6 +86,16 @@ static constexpr int kNodeNumber = 1;
 
 // Last door and the boot reason, for @STATUS. Updated when a door starts or returns. No flash writes.
 static axis::bbs::DiagSample boardDiag_;
+
+// What the board was busy with, kept in RTC memory through a crash reset (a power-on clears it): the boot after
+// a panic or a watchdog names it in the event log. Added after an unexplained reboot during an upload (2026-11-09).
+RTC_NOINIT_ATTR static char     doing_[64];
+RTC_NOINIT_ATTR static uint32_t doingMagic_;
+constexpr uint32_t              kDoingMagic = 0xA715D01Eu;
+static void noteDoing(const String& what) {
+    std::snprintf(doing_, sizeof doing_, "%s", what.c_str());
+    doingMagic_ = kDoingMagic;
+}
 
 static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
     boardDiag_.door = how;
@@ -500,7 +511,7 @@ static std::string scriptFile(const std::string& name) {
     if (storageHasSd()) return scriptRead(std::string(storageRoot()) + "/scripts/" + name + ".axs");
     if (!asFollower() || !cluster) return {};
     std::string reply;
-    if (cluster->request(std::string("S\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1') reply.erase(0, 1);
+    if (cluster->request(std::string("J\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1') reply.erase(0, 1);
     else reply.clear();
     return reply;
 }
@@ -508,7 +519,7 @@ static std::vector<std::string> scriptNames() {
     if (storageHasSd() || !asFollower() || !cluster) return scriptNamesLocal();
     std::vector<std::string> v;
     std::string reply;
-    if (cluster->request(std::string("S\x1f"), reply, 3000) && !reply.empty() && reply[0] == '1') {
+    if (cluster->request(std::string("J\x1f"), reply, 3000) && !reply.empty() && reply[0] == '1') {
         for (size_t pos = 1; pos < reply.size();) {
             size_t e = reply.find('\n', pos);
             if (e == std::string::npos) e = reply.size();
@@ -1379,6 +1390,7 @@ static void sendApp(const std::string& s) {
 }
 
 static void hangUp() {
+    noteDoing("idle");
     viewer.reset();
     job.reset();
     zipRam.release();
@@ -2120,6 +2132,7 @@ static void startDoorInner() {
 
 static void startDoor() {
     bool lord = node && node->door().exe == "*LORD";
+    if (node) noteDoing(String("door ") + node->door().name.c_str() + " by " + node->handle().c_str());
     noteDoor(axis::bbs::DoorDiag::Running, 0);
     try {
         startDoorInner();
@@ -2336,6 +2349,9 @@ static void startCluster() {
             screenDirty = true;
         }
     };
+    // A follower's request is told apart by its first letter. The file server (cluster/remotefiles.cpp) owns
+    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H and "AN". Scripts were "S" and @ commands "C"
+    // until 2026-11-09: that took every file open (packs, views, downloads) and upload away from a follower.
     cluster->onRequest = [](int nodeNum, const std::string& req) {
         servedRequest = true;  // a follower waits on this: no nap this turn
         lastServedMs = millis();
@@ -2371,7 +2387,7 @@ static void startCluster() {
             return "1" + piece;
         }
         if (req.rfind("U\x1f", 0) == 0) return "1" + menuFileLocal(req.substr(2), false);  // a menu file or its art (/menus only: under 8 KB)
-        if (req.rfind("S\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
+        if (req.rfind("J\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
             std::string name = req.substr(2);
             if (name.empty()) {
                 std::string out = "1";
@@ -2380,7 +2396,7 @@ static void startCluster() {
             }
             return std::string("1") + scriptFile(name);
         }
-        if (req.rfind("C\x1f", 0) == 0) return "1" + axis::bbs::followerCommand(req.substr(2), sysopRun);  // a follower's @ command (never a board-only one)
+        if (req.rfind("V\x1f", 0) == 0) return "1" + axis::bbs::followerCommand(req.substr(2), sysopRun);  // a follower's @ command (never a board-only one)
         if (req == "AN") {  // a follower asked the main to speak to the Axis Net
             axisProbeSoon = true;
             return std::string("1");
@@ -2651,7 +2667,7 @@ static void runCommand(const String& cmd, Print& out);
 static std::string sysopRun(const std::string& cmd) {
     if (cluster && cluster->role() == axis::cluster::Role::Follower && !axis::bbs::boardOnlyCommand(cmd)) {
         std::string reply;
-        return cluster->request("C\x1f" + cmd, reply, 8000) && !reply.empty() ? reply.substr(1) : std::string("axis: the main didn't answer\n");
+        return cluster->request("V\x1f" + cmd, reply, 8000) && !reply.empty() ? reply.substr(1) : std::string("axis: the main didn't answer\n");
     }
     String out;
     struct Sink : Print {
@@ -2958,6 +2974,20 @@ static void runCommand(const String& cmd, Print& out) {
             }
             if (line.find("_salt=") == std::string::npos && line.find("_hash=") == std::string::npos) out.println(line.c_str());
             line.clear();
+        }
+    } else if (cmd.startsWith("@VOTEDEL ")) {  // "@VOTEDEL n": booth question n (1-based, as listed) and its ballots
+        if (asFollower()) {
+            out.println("@VOTEDEL the booth lives on the main: run it there");
+        } else {
+            std::vector<std::string> v = listLoad("votes"), b = listLoad("ballots");
+            int                      q = cmd.substring(9).toInt();
+            bool                     ok = axis::bbs::voteDelete(v, b, q);
+            if (ok) {
+                listStore("votes", v);
+                listStore("ballots", b);
+                logEvent("voting booth: question " + String(q) + " taken out");
+            }
+            out.println(ok ? "@VOTEDEL OK" : "@VOTEDEL no such question");
         }
     } else if (cmd == "@RUMORS" || cmd == "@BBSLIST" || cmd == "@VOTES" || cmd == "@LINERS") {
         std::vector<std::string> v = cmd == "@LINERS" ? oneLiners : sharedList(cmd == "@RUMORS" ? "rumors" : cmd == "@BBSLIST" ? "bbslist" : "votes");
@@ -3491,7 +3521,15 @@ void setup() {
     userSync.changed(users);  // what we have counts as sent: only new changes go over the link
     for (auto& l : eventFile.tail(40)) events.add(l);  // the Logs screen picks up where it left off
     eventFileReady = true;
-    logEvent("boot: Axis Micro BBS Firmware " + String(axis::bbs::kAxisVersion));
+    logEvent("boot: Axis Micro BBS Firmware " + String(axis::bbs::kAxisVersion) + " (reset=" + axis::bbs::resetToken(boardDiag_.resetCode) + ")");
+    {
+        int r = boardDiag_.resetCode;  // panic, interrupt/task/other watchdog, brownout: say what was running then
+        if ((r == 4 || r == 5 || r == 6 || r == 7 || r == 9) && doingMagic_ == kDoingMagic) {
+            doing_[sizeof doing_ - 1] = 0;
+            logEvent(String("CRASH RESET (") + axis::bbs::resetToken(r) + ") while: " + doing_);
+        }
+        noteDoing("idle");
+    }
     pendingSeen = users.pending();
     makeAreaFolders();
     if (!cfg.setupDone) {
@@ -3604,6 +3642,7 @@ static void serviceSession(int i) {
             if (r.upload && job->ok()) rollDayCounters(), uploadsToday++;
             logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
                      (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
+            noteDoing("idle");
             if (line && line->carrier()) {
                 node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
                 job.reset();
@@ -3660,6 +3699,8 @@ static void serviceSession(int i) {
                 jobStartMs = jobDrawnMs = millis();
                 axis::bbs::UploadInfo info{cfg.bbsName, dialName().c_str(), cfg.location,
                                            std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion};
+                noteDoing(String(node->transfer().upload ? "upload " : "download ") + node->transfer().name.c_str() + " by " +
+                          node->handle().c_str());
                 job.reset(new axis::bbs::TransferJob(callerFiles(), node->transfer(), *line, info));
                 return;
             }

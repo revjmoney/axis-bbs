@@ -301,7 +301,12 @@ bool AnsiViewer::key(char c) {
                 pack_ = 0;
                 showPacks();
             } else if (st_ == St::Packs) {
-                if (packs_.empty() || !openPack((size_t)pick)) showPacks();
+                if (packs_.empty()) showPacks();
+                else if (!openPack((size_t)pick)) {  // say so: a silent redraw looked like the key did nothing
+                    std::string name = packs_[(size_t)pick].name;
+                    showPacks();
+                    send(std::string("\x1b[22;4H") + AMBER + name + " would not open (unreadable, or not a ZIP)." + HI);
+                }
             } else {
                 showPiece((size_t)pick);
             }

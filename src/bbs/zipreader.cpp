@@ -3,6 +3,7 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/zipreader.h"
 
+#include <cstdlib>
 #include <cstring>
 
 #ifdef ESP_PLATFORM
@@ -43,11 +44,46 @@ bool ZipReader::open() {
     }
     if (!found || !read_(eocd, buf, 22)) return false;
     uint16_t count = u16(buf + 10);
-    uint32_t cdOffset = u32(buf + 16);
+    uint32_t cdSize = u32(buf + 12), cdOffset = u32(buf + 16);
+    // The whole central directory in one read when it fits: a follower reads the main's card over the link,
+    // and an entry at a time was two round trips per file (about 200 for an ACiD pack, long enough to give up).
+    if (cdSize >= 46 && cdSize <= kMaxDirectory && (uint64_t)cdOffset + cdSize <= size_) {
+        if (uint8_t* cd = (uint8_t*)std::malloc(cdSize)) {
+            bool ok = read_(cdOffset, cd, cdSize);
+            uint32_t at = 0;
+            for (uint16_t i = 0; ok && i < count && entries_.size() < kMaxEntries; i++) {
+                if (at + 46 > cdSize || u32(cd + at) != 0x02014b50) {
+                    ok = false;
+                    break;
+                }
+                const uint8_t* h = cd + at;
+                uint16_t       nameLen = u16(h + 28), extra = u16(h + 30), comment = u16(h + 32);
+                if (at + 46u + nameLen > cdSize) {
+                    ok = false;
+                    break;
+                }
+                ZipEntry e;
+                e.flags = u16(h + 8);
+                e.method = u16(h + 10);
+                e.time = u16(h + 12);
+                e.date = u16(h + 14);
+                e.crc = u32(h + 16);
+                e.csize = u32(h + 20);
+                e.usize = u32(h + 24);
+                e.local = u32(h + 42);
+                e.name.assign((const char*)h + 46, nameLen);
+                at += 46u + nameLen + extra + comment;
+                if (!e.name.empty() && e.name.back() != '/') entries_.push_back(std::move(e));  // skip folders
+            }
+            std::free(cd);
+            if (ok) return true;
+            entries_.clear();  // a damaged directory: the slow way below says so the same way it always did
+        }
+    }
     uint32_t at = cdOffset;
     for (uint16_t i = 0; i < count && entries_.size() < kMaxEntries; i++) {
         uint8_t h[46];
-        if (!read_(at, h, 46) || u32(h) != 0x02014b50) return false;
+        if (!read_(at, h, 46) || u32(h) != 0x02014b50) return entries_.clear(), false;  // nothing half-listed
         uint16_t nameLen = u16(h + 28), extra = u16(h + 30), comment = u16(h + 32);
         ZipEntry e;
         e.flags = u16(h + 8);
@@ -59,7 +95,7 @@ bool ZipReader::open() {
         e.usize = u32(h + 24);
         e.local = u32(h + 42);
         e.name.resize(nameLen);
-        if (nameLen && !read_(at + 46, (uint8_t*)&e.name[0], nameLen)) return false;
+        if (nameLen && !read_(at + 46, (uint8_t*)&e.name[0], nameLen)) return entries_.clear(), false;
         at += 46u + nameLen + extra + comment;
         if (!e.name.empty() && e.name.back() != '/') entries_.push_back(std::move(e));  // skip folders
     }

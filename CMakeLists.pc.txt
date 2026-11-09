@@ -58,6 +58,7 @@ add_library(axiscore STATIC
     src/cluster/doorfs.cpp
     src/cluster/cluster.cpp
     src/bbs/nuv.cpp
+    src/bbs/votebooth.cpp
     src/bbs/password.cpp
     src/bbs/config.cpp
     src/bbs/setup_wizard.cpp

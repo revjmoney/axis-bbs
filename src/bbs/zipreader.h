@@ -28,6 +28,7 @@ public:
     static const size_t kWorkspace;   // bytes extract() needs in one block: the inflater, a 32 KB window, input
     static const size_t kStateBytes;  // the inflater and input alone, when the window is a block of its own
     static constexpr size_t kMaxEntries = 400;
+    static constexpr uint32_t kMaxDirectory = 48 * 1024;  // a central directory up to this is read in one go
 
     // One entry pulled out a piece at a time (the viewer pauses per screen, or plays an ANSI movie at
     // modem speed). The workspace (and state) must stay put until the stream is done with.

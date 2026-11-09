@@ -126,6 +126,43 @@ TEST_CASE("the rumor and BBS list menus' add commands open the screens that add"
     CHECK(r.n.state() == Node::State::BbsList);
 }
 
+TEST_CASE("prompts picked from the menu files start on a cleared screen, not on top of the menu art") {
+    Rig r;
+    r.fs = {{"MAIN.MNU", "cmd=P|RUN:CHAT|*|0|\ncmd=R|RUN:RUMORSLIST|*|0|\ncmd=V|RUN:VOTE|*|0|\ncmd=Q|GOTO:MAIN|*|0|\n"}, {"MAIN.ANS", "MAIN ART"}};
+    r.menus();
+    r.login();
+    for (const char* k : {"p", "r", "v"}) {
+        r.n.input((const uint8_t*)k, 1, 1000);
+        std::string raw = r.n.takeOutput();
+        CHECK(raw.find("\x1b[2J") != std::string::npos);
+        r.type(*k == 'p' ? "\r" : "q");  // back out (an empty page cancels)
+        if (r.n.state() == Node::State::MenuHold) r.type(" ");
+    }
+}
+
+TEST_CASE("a door that can't start here (a DOS .EXE) is left off a menu file, and the lines below move up") {
+    BbsConfig c;
+    c.doors = {{"lord", "LORD", "*LORD", "", "none"}, {"blackjack", "BBS Black Jack", "BLKJK.EXE", "BJ.CFG", "doorsys"},
+               {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"}};
+    std::map<std::string, std::string> fs = {
+        {"MAIN.MNU", "cmd=L|DOOR:lord|*|0|\ncmd=B|DOOR:blackjack|*|0|\ncmd=A|DOOR:ansiview|*|0|\n"
+                     "bar=5,10,96,7,L, (L) Red Dragon\nbar=5,11,96,7,B, (B) BBS Black Jack\nbar=5,12,96,7,A, (A) ANSI Pack Viewer\n"}};
+    Node n(1, info, c);
+    n.setMenus([&fs](const std::string& f) { return fs.count(f) ? fs[f] : std::string(); });
+    n.begin(0);
+    n.input((const uint8_t*)"Rev\r", 4, 1000);
+    if (n.state() == Node::State::SeqPause) n.input((const uint8_t*)" ", 1, 1000);
+    std::string out = plain(n.takeOutput());
+    CHECK(out.find("Black Jack") == std::string::npos);
+    CHECK(out.find("ANSI Pack Viewer") != std::string::npos);
+    n.input((const uint8_t*)"b", 1, 1000);
+    CHECK(n.state() != Node::State::InDoor);
+    std::string raw;
+    n.input((const uint8_t*)"?", 1, 1000);  // (a redraw) the viewer's bar sits on row 11 now, where Black Jack was
+    raw = n.takeOutput();
+    CHECK(raw.find("\x1b[11;5H") != std::string::npos);
+}
+
 TEST_CASE("List Rumors lists them at once") {
     Rig r;
     r.fs = {{"MAIN.MNU", "cmd=L|RUN:RUMORSLIST|*|0|\ncmd=Q|GOTO:MAIN|*|0|\n"}};

@@ -30,6 +30,9 @@ public:
     // a menu's art read a piece at a time (a 7 KB screen never sits in RAM whole); false: not there, use the Loader
     using ArtPieces = std::function<bool(const std::string& file, const ArtEmit& piece)>;
     void setArtPieces(ArtPieces pieces) { artPieces_ = std::move(pieces); }
+    // true for a command this board can't run (a DOS door with no runtime): it and its lightbar line are left
+    // out, and the lines below it in that column move up so the menu has no hole
+    std::function<bool(const MenuCmd&)> cantRun;
     bool       enter(const std::string& name, const AcsUser& who);  // false: no such menu, or not allowed
     MenuAction key(char c, uint32_t nowMs = 0);                     // key(0): the next auto-run, if any
     void       tick(uint32_t nowMs);                                // a lone ESC becomes Esc after a pause

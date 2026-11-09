@@ -214,6 +214,8 @@ TEST_CASE("native lord heals then wins one fight") {
     CHECK(hit.find("You hit Wolf for 10.") != std::string::npos);
     CHECK(hit.find("Down") != std::string::npos);
     CHECK(hit.find("You win.") != std::string::npos);
+    CHECK(hit.find("You receive ") != std::string::npos);  // what the fight paid is said, not just added
+    CHECK(hit.find(" experience.") != std::string::npos);
     line.push("q");
     CHECK_FALSE(game.step());
     std::vector<uint8_t> after = load(root / "PLAYER.DAT");

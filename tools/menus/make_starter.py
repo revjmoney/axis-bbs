@@ -39,7 +39,7 @@ BARS = {
                           ('E', 'Private Email'), ('Q', 'Main Menu')]], 'Messages'),
     'FILEM': ('FILES', [[('F', 'List Files'), ('D', 'Download'), ('U', 'Upload'), ('S', 'Search Files'), ('N', 'New Files'),
                          ('Q', 'Main Menu')]], 'Transfer'),
-    'DOORSM': ('DOORS', [[('L', 'Red Dragon (LORD)'), ('B', 'BBS Black Jack'), ('A', 'ANSI Pack Viewer'), ('Q', 'Main Menu')]],
+    'DOORSM': ('DOORS', [[('L', 'Red Dragon (LORD)'), ('A', 'ANSI Pack Viewer'), ('Q', 'Main Menu')]],  # no DOS doors: no runtime
                'Doors'),
     'BBSLISTM': ('BBS', [[('L', 'List the BBSes'), ('A', 'Add a BBS'), ('Q', 'Main Menu')]], 'BBS List'),
     'RUMORM': ('RUMOR', [[('L', 'List Rumors'), ('A', 'Add a Rumor'), ('Q', 'Main Menu')]], 'Rumors'),
@@ -52,9 +52,8 @@ EXTRA = {'MSGMENU': ['cmd=E|GOTO:EMAILM|*|0|Email Menu']}
 FRONT_X, FRONT_Y, FRONT_W = 12, 12, 24
 MAIN_PROMPT = '|08[|07|TIME|08] |10|UH |08-|15> |07'
 
-DOORS = ['cmd=L|DOOR:lord|fD|0|Playing LORD', 'cmd=B|DOOR:blackjack|fD|0|Playing Black Jack',
-         'cmd=A|DOOR:ansiview|*|0|Viewing ANSI Packs', 'cmd=S|DOOR:dos|s255|1|At the DOS prompt', 'cmd=Q|GOTO:MAIN|*|0|',
-         'cmd=G|LOGOFF|*|0|']
+DOORS = ['cmd=L|DOOR:lord|fD|0|Playing LORD', 'cmd=A|DOOR:ansiview|*|0|Viewing ANSI Packs', 'cmd=Q|GOTO:MAIN|*|0|',
+         'cmd=G|LOGOFF|*|0|']  # (Black Jack and the DOS prompt need the DOS runtime, which is out of the firmware)
 
 # ViSiON/3's login.json template, the same steps loginseq.cpp uses when LOGIN.SEQ is empty.
 # SAYLOR is the poster in the theme folder. Fast login still skips everything after FASTLOGIN.

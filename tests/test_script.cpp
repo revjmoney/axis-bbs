@@ -99,7 +99,7 @@ TEST_CASE("the scripts door runs a card file and returns to the door list") {
     n.input((const uint8_t*)"d", 1, 1000);
     std::string doors = plain(n.takeOutput());
     CHECK(doors.find("Scripts") != std::string::npos);
-    n.input((const uint8_t*)"4", 1, 1000);
+    n.input((const uint8_t*)"3", 1, 1000);  // 1 LORD, 2 ANSI Movies, 3 Scripts
     std::string list = plain(n.takeOutput());
     CHECK(n.state() == Node::State::Script);
     CHECK(list.find("hello") != std::string::npos);

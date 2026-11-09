@@ -340,6 +340,26 @@ TEST_CASE("a main without an SD card hands over to a board that has one") {
     CHECK(b.c->role() == Role::Main);
 }
 
+TEST_CASE("the card's board still gets main when the hand-over at its join was missed (after a power loss)") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    a.c->setHasFiles(false);
+    b.c->setHasFiles(false);  // joins before it says it has the card: no hand-over at the join
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 8000);
+    REQUIRE(b.c->role() == Role::Follower);
+    b.c->setHasFiles(true);
+    run({&a, &b}, now, 45000);  // its card reports (every 10 s) bring the hand-over again
+    CHECK(b.c->role() == Role::Main);
+    CHECK(a.c->role() == Role::Follower);
+    run({&a, &b}, now, 60000);  // and it stays that way: no hand-over back and forth
+    CHECK(b.c->role() == Role::Main);
+    CHECK(a.c->role() == Role::Follower);
+}
+
 TEST_CASE("the SD board takes node 1 back once nobody is on a call, and the others renumber after it") {
     FakeLan  lan;
     Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");

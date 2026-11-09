@@ -72,14 +72,14 @@ TEST_CASE("timezone rules") {
     CHECK(tzNames().size() == 10);
 }
 
-TEST_CASE("config has LORD as the default door") {
+TEST_CASE("config has the native LORD as the default door, and no DOS doors") {
     auto c = axis::bbs::parseConfig("");
-    REQUIRE(c.doors.size() == 4);
+    REQUIRE(c.doors.size() == 3);
     CHECK(c.doors[0].id == "lord");
-    CHECK(c.doors[1].id == "blackjack");
-    CHECK(c.doors[2].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
-    CHECK(c.doors[3].exe == "*SCRIPT");  // programs from /scripts on the card
-    CHECK(c.doors[0].args == "%N NOEMS /DREW");  // %N: the node number; NOEMS: LORD must not look for EMS
+    CHECK(c.doors[0].exe == "*LORD");      // the game built into the firmware
+    CHECK(c.doors[1].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
+    CHECK(c.doors[2].exe == "*SCRIPT");    // programs from /scripts on the card
+    for (const auto& d : c.doors) CHECK(axis::bbs::doorRuns(d));
 }
 
 TEST_CASE("stock LORD arguments gain NOEMS; custom tails and other doors stay") {

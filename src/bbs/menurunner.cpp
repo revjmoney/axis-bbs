@@ -29,6 +29,28 @@ MenuRunner::MenuRunner(Loader load, ArtEmit emit, ArtValue value) : load_(std::m
 bool MenuRunner::enter(const std::string& name, const AcsUser& who) {
     MenuDef d;
     if (!parseMenu(load_(name + ".MNU"), d) || !acsAllows(d.acs, who)) return false;
+    if (cantRun) {
+        for (size_t i = 0; i < d.cmds.size();) {
+            if (!cantRun(d.cmds[i])) {
+                i++;
+                continue;
+            }
+            for (const std::string& k : keysOf(d.cmds[i]))
+                for (size_t b = 0; b < d.bars.size();) {
+                    std::string bk = d.bars[b].key;
+                    for (char& ch : bk) ch = (char)std::toupper((unsigned char)ch);
+                    if (bk != k) {
+                        b++;
+                        continue;
+                    }
+                    int x = d.bars[b].x, y = d.bars[b].y;
+                    d.bars.erase(d.bars.begin() + (long)b);
+                    for (BarItem& o : d.bars)
+                        if (o.x == x && o.y > y) o.y--;
+                }
+            d.cmds.erase(d.cmds.begin() + (long)i);
+        }
+    }
     def_ = std::move(d), who_ = who, name_ = name, typed_.clear(), autos_.clear();
     bar_.reset(def_.bars.empty() ? nullptr : new Lightbar(def_.bars));
     for (size_t i = 0; i < def_.cmds.size(); i++)

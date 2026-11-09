@@ -146,7 +146,7 @@ TEST_CASE("D lists the configured doors") {
 
 TEST_CASE("the movie door is its own row and a copied viewer is listed once") {
     axis::bbs::BbsConfig c;
-    c.doors = {{"lord", "Legend of the Red Dragon", "LORD.EXE", "%N NOEMS /DREW", "doorsys"},
+    c.doors = {{"lord", "Legend of the Red Dragon", "*LORD", "", "none"},
                {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi", "none"},
                {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi,scene-block", "doorsys"},
                {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi,scene-block", "doorsys"}};
@@ -164,7 +164,7 @@ TEST_CASE("choosing LORD requests the door") {
     type(n, "d1");
     CHECK(n.state() == Node::State::InDoor);
     CHECK(n.doorRequested() == "lord");
-    CHECK(n.door().exe == "LORD.EXE");
+    CHECK(n.door().exe == "*LORD");  // the native game
 }
 
 TEST_CASE("a key that is not a door goes back to the menu") {
@@ -482,7 +482,7 @@ TEST_CASE("an edited main menu shows its items and only its hotkeys work") {
     }
 }
 
-TEST_CASE("a saved original LORD stays off the doors menu and LORD Fast stays") {
+TEST_CASE("with no DOS runtime in the firmware, every .EXE door stays off the doors menu") {
     axis::bbs::BbsConfig c = axis::bbs::parseConfig(
         "door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys\n"
         "door2=blackjack|BBS Black Jack|BLKJK.EXE|BJ.CFG|doorsys\n"
@@ -495,37 +495,18 @@ TEST_CASE("a saved original LORD stays off the doors menu and LORD Fast stays") 
     caller.takeOutput();
     type(caller, "d");
     std::string out = plain(caller.takeOutput());
-    CHECK(out.find("Legend of the Red Dragon") == std::string::npos);
-    CHECK(out.find("LORD Fast") != std::string::npos);
-    CHECK(out.find("AXIS FOUR") != std::string::npos);
-    CHECK(out.find("BBS Black Jack") != std::string::npos);
-    type(caller, "3");  // 1 Black Jack, 2 AXIS FOUR, 3 LORD Fast
+    CHECK(out.find("LORD Fast") == std::string::npos);
+    CHECK(out.find("AXIS FOUR") == std::string::npos);
+    CHECK(out.find("BBS Black Jack") == std::string::npos);
+    CHECK(out.find("LORD") != std::string::npos);  // the native game the saved list gets
+    type(caller, "1");
     CHECK(caller.state() == Node::State::InDoor);
-    CHECK(caller.door().exe == "FAST.EXE");
-    CHECK(caller.doorRequested() == "lord");
-
-    Node sysop(1, info, c);
-    sysop.beginLocalQuiet(0);
-    bool game = false, setup = false, fast = false;
-    for (const auto& d : sysop.doorChoices()) {
-        if (d.exe == "LORD.EXE") game = true;
-        if (d.exe == "LORDCFG.EXE") setup = true;
-        if (d.exe == "FAST.EXE") fast = true;
-    }
-    CHECK_FALSE(game);
-    CHECK_FALSE(setup);
-    CHECK(fast);
+    CHECK(caller.door().exe == "*LORD");
 
     c.doors[0].enabled = true;
-    Node back(1, info, c);
-    back.beginLocalQuiet(0);
-    bool shown = false, setupOn = false;
-    for (const auto& d : back.doorChoices()) {
-        if (d.exe == "LORD.EXE") shown = true;
-        if (d.exe == "LORDCFG.EXE") setupOn = true;
-    }
-    CHECK(shown);
-    CHECK(setupOn);
+    Node sysop(1, info, c);
+    sysop.beginLocalQuiet(0);
+    for (const auto& d : sysop.doorChoices()) CHECK(axis::bbs::doorRuns(d));  // no LORD.EXE, no LORD Setup
 }
 
 TEST_CASE("section switches hide messages, files and doors for every caller") {
