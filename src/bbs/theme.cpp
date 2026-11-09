@@ -190,6 +190,37 @@ const char* legacyThemeFolder(const std::string& id) {
     return row ? row->legacy : nullptr;
 }
 
+const char* menuScreenFile(const std::string& name) {
+    static const char* const kMap[][2] = {
+        {"MAIN.ANS", "MAIN.ANS"},       {"LOGIN.ANS", "LOGIN.ANS"},       {"FASTLOGN.ANS", "FASTLOGN.ANS"},
+        {"NEWUSER.ANS", "NEWUSER.ANS"}, {"PDMATRIX.ANS", "MATRIX.ANS"},   {"FILEM.ANS", "FILES.ANS"},
+        {"DOORSM.ANS", "DOORS.ANS"},    {"MSGMENU.ANS", "MSGS.ANS"},      {"PRELOGON1.ANS", "PRELOGON.ANS"},
+        {"PRELOGON2.ANS", "SHOP.ANS"},  {"PRELOGON3.ANS", "MILL.ANS"},
+    };
+    for (const auto& m : kMap)
+        if (name == m[0]) return m[1];
+    return nullptr;
+}
+
+bool isClassicWfc(const std::string& v) {
+    if (v.size() != 7) return false;
+    for (size_t i = 0; i < 7; i++)
+        if (std::tolower((unsigned char)v[i]) != "classic"[i]) return false;
+    return true;
+}
+
+bool splitLookFile(const std::string& name, std::string& look, std::string& file) {
+    size_t colon = name.find(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 >= name.size()) return false;
+    std::string f = name.substr(colon + 1);
+    if (f.find_first_of(":/\\") != std::string::npos || f.find("..") != std::string::npos) return false;
+    const char* id = knownLook(name.substr(0, colon));
+    if (!id) return false;
+    look = id;
+    file = f;
+    return true;
+}
+
 int lookCount() { return (int)(sizeof kLooks / sizeof kLooks[0]); }
 
 const char* lookId(int index) { return index >= 0 && index < lookCount() ? kLooks[index].id : nullptr; }

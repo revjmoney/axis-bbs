@@ -328,6 +328,12 @@ static std::string themePoster(const std::string& name, size_t offset, size_t ca
 }
 static std::string themeArtLocal(const std::string& name) {
     if (!storageHasSd() || name.find('/') != std::string::npos) return "";
+    std::string look, file;
+    if (axis::bbs::theme::splitLookFile(name, look, file)) {  // "crt:MAIN.ANS": that look's screen (the sysop's preview)
+        std::string s = readThemeFile(look.c_str(), file);
+        if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(look), file);
+        return s;
+    }
     if (posterName(name)) return themePoster(name, 0, kPosterCap);
     // The waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme.
     const std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme;
@@ -343,10 +349,12 @@ static std::string themeArtPiece(const std::string& name, size_t off, bool* open
     size_t cap = posterName(name) ? kPosterCap : kThemeArtCap;
     if (off >= cap) return "";
     size_t want = cap - off < kPosterChunk ? cap - off : kPosterChunk;
-    // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme
-    const std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme;
-    std::string s = readThemeFile(folder.c_str(), name, want, off, opened);
-    if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name, want, off, opened);
+    // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
+    // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
+    std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme, file = name, look;
+    if (axis::bbs::theme::splitLookFile(name, look, file)) folder = look;
+    std::string s = readThemeFile(folder.c_str(), file, want, off, opened);
+    if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, opened);
     return s;
 }
 // A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
@@ -373,7 +381,7 @@ static std::string themeArtRemote(const std::string& name, bool* answered) {
 }
 static std::string themeArt(const std::string& name) {
     if (!asFollower()) return themeArtLocal(name);
-    bool poster = posterName(name);
+    bool poster = posterName(name) || name.find(':') != std::string::npos;  // (a preview is seen once: never cached either)
     if (!poster) {
         auto it = artCache.find(name);
         if (it != artCache.end()) return it->second;
@@ -386,19 +394,41 @@ static std::string themeArt(const std::string& name) {
 // ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): this board's own /menus first (its SD card or flash),
 // then the main's over the cluster. Only the small .MNU files are cached; art is fetched each time it shows.
 static std::map<std::string, std::string> menuCache;
-static std::string menuFileLocal(const std::string& name) {
+// A menu screen the theme draws (MAIN.ANS, PDMATRIX.ANS as MATRIX.ANS ...): the theme's file, so switching the theme
+// switches the menus too. Null when the theme has none (or the name is a menu file): the menu set's own then.
+static FILE* openThemeScreen(const std::string& name) {
+    const char* file = axis::bbs::theme::menuScreenFile(name);
+    if (!file || !storageHasSd() || cfg.theme.empty()) return nullptr;
+    FILE* f = fopen((std::string("/sd/themes/") + cfg.theme + "/" + file).c_str(), "rb");
+    if (!f)
+        if (const char* old = axis::bbs::theme::legacyThemeFolder(cfg.theme)) f = fopen((std::string("/sd/themes/") + old + "/" + file).c_str(), "rb");
+    return f;
+}
+// theme: a menu screen the theme draws comes from the theme (off for the main's "U" answer to a follower: theme
+// screens run past the 8 KB cluster frame, so a follower pulls those through "T" in pieces instead)
+static std::string menuFileLocal(const std::string& name, bool theme = true) {
     std::string s;
     if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return s;
-    if (FILE* f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb")) {
+    size_t cap = 8192;
+    FILE*  f = theme ? openThemeScreen(name) : nullptr;
+    if (f) cap = kThemeArtCap;  // (theme screens run to 11 KB)
+    else f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
+    if (f) {
         char b[512];
-        for (size_t n; s.size() < 8192 && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
+        for (size_t n; s.size() < cap && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
         fclose(f);
     }
     if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) s.resize(sauce);
-    if (s.size() > 8192) s.resize(8192);
+    if (s.size() > cap) s.resize(cap);
     return s;
 }
 static std::string menuFile(const std::string& name) {
+    if (asFollower() && cluster)
+        if (const char* screen = axis::bbs::theme::menuScreenFile(name)) {  // the theme's screen from the main, in pieces (not cached)
+            bool        answered = false;
+            std::string art = themeArtRemote(screen, &answered);
+            if (!art.empty()) return art;
+        }
     std::string s = menuFileLocal(name);
     if (!s.empty() || !asFollower()) return s;
     bool mnu = name.size() > 4 && name.compare(name.size() - 4, 4, ".MNU") == 0;
@@ -476,7 +506,9 @@ static void wireScripts(axis::bbs::Node* n) {
 // a menu's art from this board's own storage a piece at a time (false when it isn't here: the whole-file path)
 static bool menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) {
     if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
-    FILE* f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
+    if (asFollower() && axis::bbs::theme::menuScreenFile(name)) return false;  // a follower: the theme's screen comes from the main (menuFile)
+    FILE* f = openThemeScreen(name);  // the theme's screen first
+    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
     if (!f) return false;
     char b[512];
     for (size_t n, total = 0; total < 16384 && (n = fread(b, 1, sizeof b, f)) > 0; total += n) {
@@ -2309,7 +2341,7 @@ static void startCluster() {
             if (!opened && posterName(name)) return std::string("0");
             return "1" + piece;
         }
-        if (req.rfind("U\x1f", 0) == 0) return "1" + menuFileLocal(req.substr(2));  // a menu file or its art
+        if (req.rfind("U\x1f", 0) == 0) return "1" + menuFileLocal(req.substr(2), false);  // a menu file or its art (/menus only: under 8 KB)
         if (req.rfind("S\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
             std::string name = req.substr(2);
             if (name.empty()) {

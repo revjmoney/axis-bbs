@@ -206,3 +206,35 @@ TEST_CASE("file and message lists wear a header and keep the lightbar's column r
     theme::setArt(nullptr);
     theme::use(theme::Look::Axis);
 }
+
+TEST_CASE("a menu screen's name in a theme folder") {
+    CHECK(std::string(theme::menuScreenFile("MAIN.ANS")) == "MAIN.ANS");
+    CHECK(std::string(theme::menuScreenFile("LOGIN.ANS")) == "LOGIN.ANS");
+    CHECK(std::string(theme::menuScreenFile("FASTLOGN.ANS")) == "FASTLOGN.ANS");
+    CHECK(std::string(theme::menuScreenFile("NEWUSER.ANS")) == "NEWUSER.ANS");
+    CHECK(std::string(theme::menuScreenFile("PDMATRIX.ANS")) == "MATRIX.ANS");
+    CHECK(std::string(theme::menuScreenFile("FILEM.ANS")) == "FILES.ANS");
+    CHECK(std::string(theme::menuScreenFile("DOORSM.ANS")) == "DOORS.ANS");
+    CHECK(std::string(theme::menuScreenFile("MSGMENU.ANS")) == "MSGS.ANS");
+    CHECK(std::string(theme::menuScreenFile("PRELOGON1.ANS")) == "PRELOGON.ANS");
+    CHECK(std::string(theme::menuScreenFile("PRELOGON2.ANS")) == "SHOP.ANS");
+    CHECK(std::string(theme::menuScreenFile("PRELOGON3.ANS")) == "MILL.ANS");
+    CHECK(theme::menuScreenFile("MAIN.MNU") == nullptr);  // menu files never come from a theme
+    CHECK(theme::menuScreenFile("LOGIN.SEQ") == nullptr);
+    CHECK(theme::menuScreenFile("RUMORM.ANS") == nullptr);  // no theme draws it: the menu set's own
+}
+
+TEST_CASE("a look:FILE name asks for one look's screen (the sysop's preview)") {
+    std::string look, file;
+    CHECK(theme::splitLookFile("crt:MAIN.ANS", look, file));
+    CHECK(look == "crt");
+    CHECK(file == "MAIN.ANS");
+    CHECK(theme::splitLookFile("Wasteland:WFC.ANS", look, file));
+    CHECK(look == "wasteland");
+    CHECK_FALSE(theme::splitLookFile("MAIN.ANS", look, file));          // no look: the theme's own
+    CHECK_FALSE(theme::splitLookFile("nope:MAIN.ANS", look, file));     // not a look
+    CHECK_FALSE(theme::splitLookFile("crt:../x.ANS", look, file));      // no paths
+    CHECK_FALSE(theme::splitLookFile("crt:a/MAIN.ANS", look, file));
+    CHECK_FALSE(theme::splitLookFile("crt:", look, file));
+    CHECK_FALSE(theme::splitLookFile("crt:a:b", look, file));
+}

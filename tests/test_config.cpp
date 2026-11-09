@@ -236,6 +236,14 @@ TEST_CASE("the look is axis, cyan, or green, and an old name still loads") {
     CHECK(wfcFolder(parseConfig("wfc=wasteland\n")) == "wasteland");
 }
 
+TEST_CASE("wfc=classic is the built-in waiting screen, whatever the theme") {
+    BbsConfig c = parseConfig("theme=crt\nwfc=classic\n");
+    CHECK(c.wfc == "classic");
+    CHECK(wfcFolder(c).empty());  // no folder: the built-in art
+    CHECK(parseConfig(formatConfig(c)).wfc == "classic");
+    CHECK(parseConfig("theme=crt\nwfc=CLASSIC\n").wfc == "classic");
+}
+
 TEST_CASE("the waiting screen skin (wfc) can differ from the theme") {
     BbsConfig c = parseConfig("theme=sea\nwfc=skulls\n");
     CHECK(c.theme == "sea");

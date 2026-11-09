@@ -37,6 +37,17 @@ public:
     void tapRow(int row);      // a tap on that screen row (0 = the top line)
     bool open() const { return !layers_.empty(); }
     bool wantsWfc() const { return wantWfc_; }  // left by picking the waiting for caller screen (telnet)
+    // Look previews: a host that can draw a look's screens turns them on. Picking a theme or waiting screen
+    // skin then sets nothing: takePreview() hands the host the setting ("theme" / "wfc") and the look id
+    // ("classic" for the built-in waiting screen), once. previewDone(): the host's back; a note means it set
+    // the look (the picker closes and the note shows), none means it didn't (the list again).
+    void setPreviews(bool on) { previews_ = on; }
+    // A lone Esc: the host calls escTimeout() once nothing has followed it for a moment (an arrow key's
+    // bytes arrive together). It goes back a layer; false when that left the menu.
+    bool escPending() const { return esc_ == 1 && !asking_; }
+    bool escTimeout();
+    bool takePreview(std::string& key, std::string& look);
+    void previewDone(const std::string& note);
     bool asking() const { return asking_; }  // a question is waiting for a typed answer and Enter
     bool yesNo() const { return asking_ && yesNo_; }  // ... or for one key, Y or N
     bool secret() const { return asking_ && secret_; }  // the answer is a password
@@ -97,6 +108,8 @@ private:
     int                                    cols_ = 80;
     bool                                   local_ = false;
     bool                                   wantWfc_ = false;
+    bool                                   previews_ = false;
+    std::string                            previewKey_, previewLook_;
     std::vector<std::string>               settings_;  // @SETTINGS for the layer being built
     bool                                   haveSettings_ = false;
     std::string                            header(const std::string& title) const;

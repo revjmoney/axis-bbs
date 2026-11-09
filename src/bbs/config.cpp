@@ -113,6 +113,7 @@ BbsConfig parseConfig(const std::string& ini) {
             if (const char* id = theme::knownLook(v)) c.theme = id;
         } else if (k == "wfc") {  // a look id, or blank to follow the theme. Anything else is ignored.
             if (v.empty()) c.wfc.clear();
+            else if (theme::isClassicWfc(v)) c.wfc = "classic";  // the built-in screen, whatever the theme
             else if (const char* id = theme::knownLook(v)) c.wfc = id;
         }
         else if (k == "sessions") c.sessions = n < 1 ? 1 : n > 4 ? 4 : n;
@@ -174,6 +175,7 @@ BbsConfig parseConfig(const std::string& ini) {
 }
 
 std::string wfcFolder(const BbsConfig& c) {
+    if (c.wfc == "classic") return "";  // no folder: the built-in art
     const char* id = theme::knownLook(c.wfc);
     return id ? id : c.theme;
 }

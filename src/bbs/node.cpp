@@ -251,7 +251,8 @@ char v3Command(const std::string& f) {
         {"LISTFILES", 'f'}, {"SELECTFILEAREA", 'f'}, {"DOWNLOADFILE", 'f'}, {"UPLOADFILE", 'f'}, {"SEARCH_FILES", 'f'},
         {"FILE_NEWSCAN", 'f'}, {"CHAT", 'p'}, {"ONELINER", 'o'}, {"LISTUSERS", 'h'}, {"LASTCALLERS", 'w'},
         {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RANDOMRUMOR", 'r'}, {"BBSLIST", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'},
-        {"SHOWSTATS", 'i'}, {"SYSTEMSTATS", 'i'}, {"USERCONFIG", 'u'}, {"SENDPRIVMAIL", 'e'}, {"READPRIVMAIL", 'e'},
+        {"SHOWSTATS", 'i'}, {"SYSTEMSTATS", 'i'}, {"USERCONFIG", 'u'}, {"CFG_AUTOSIG", 'u'}, {"CFG_PASSWORD", 'u'},  // (the account screen: the tagline is the autosig)
+        {"SENDPRIVMAIL", 'e'}, {"READPRIVMAIL", 'e'},
         {"MAINLOGOFF", 'g'}};
     for (const auto& t : table)
         if (f == t.name) return t.key;
@@ -460,6 +461,13 @@ void Node::seqResume() {
 }
 
 void Node::nextStep() {
+    struct Depth {
+        Node& n;
+        explicit Depth(Node& x) : n(x) {
+            if (++n.seqDepth_ > n.seqDepthPeak_) n.seqDepthPeak_ = n.seqDepth_;
+        }
+        ~Depth() { --n.seqDepth_; }
+    } depth(*this);
     while (inSeq_ && seqAt_ < seq_.size()) {
         const LoginStep s = seq_[seqAt_++];
         if (s.level > menuWho().level) continue;
@@ -926,8 +934,8 @@ void Node::resumeAfterDoor(DoorEnd how, uint32_t nowMs) {
 }
 
 void Node::showMainMenu() {
-    if (inSeq_ && !seqFast_) {  // a login sequence step's screen is done
-        seqResume();
+    if (inSeq_ && !seqFast_) {  // a login sequence step's screen is done: the next step after this key returns
+        seqDue_ = true;
         return;
     }
     state_ = State::Menu;
@@ -1041,7 +1049,17 @@ void Node::input(const uint8_t* p, size_t n, uint32_t nowMs) {
     lastInput_ = nowMs;
     if (holdUntil_ && (int32_t)(nowMs - holdUntil_) < 0) return;  // a wrong password: slow the guessing down
     holdUntil_ = 0;
-    for (size_t i = 0; i < n && state_ != State::Done; i++) key((char)p[i]);
+    for (size_t i = 0; i < n && state_ != State::Done; i++) {
+        key((char)p[i]);
+        drainSeq();
+    }
+}
+
+void Node::drainSeq() {
+    while (seqDue_ && state_ != State::Done) {
+        seqDue_ = false;
+        seqResume();
+    }
 }
 
 bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
@@ -1170,6 +1188,98 @@ void Node::wfcKey(char c) {
     openSysop(true, s);
 }
 
+// ---- the sysop menu's look preview: the look's main menu (or waiting screen) as callers would see it, a key line,
+// left and right for the other looks, Enter uses it, Esc or Q go back to the list. The art comes in as "look:FILE".
+
+void Node::openPreview(const std::string& key, const std::string& look) {
+    previewKey_ = key;
+    previewLook_ = look;
+    previewEsc_ = 0;
+    state_ = State::LookPreview;
+    drawPreview();
+}
+
+void Node::drawPreview() {
+    bool        wfc = previewKey_ == "wfc";
+    bool        classic = wfc && previewLook_ == "classic";
+    std::string art = classic ? builtinWfcArt() : art_ ? art_(previewLook_ + ":" + (wfc ? "WFC.ANS" : "MAIN.ANS")) : std::string();
+    out_ += CLS;
+    if (art.empty()) {
+        out_ += std::string("\r\n\r\n   ") + AMBER + "No screens for this look on the card." + RST;
+    } else if (wfc) {
+        if (!classic) art = cleanWfcArt(art);
+        expandArt(art, AcsUser{}, wfcValues(wfcSnapshot()), [this](const char* d, size_t n) { out_.append(d, n); });
+    } else {
+        paintScreen(art);
+    }
+    std::string name = classic ? "Classic AXIS" : previewLook_;
+    out_ += std::string(RST) + "\x1b[25;1H\x1b[K\x1b[0;30;47m " + name + " \x1b[0;37m  Enter: use it   Left/Right: other looks   Esc or Q: back" + RST;
+}
+
+void Node::previewStep(int dir) {
+    std::vector<std::string> ids;
+    if (previewKey_ == "wfc") ids.push_back("classic");
+    for (int i = 0; i < theme::lookCount(); i++) ids.push_back(theme::lookId(i));
+    size_t at = 0;
+    for (size_t i = 0; i < ids.size(); i++)
+        if (ids[i] == previewLook_) at = i;
+    at = (at + ids.size() + (size_t)(dir > 0 ? 1 : ids.size() - 1)) % ids.size();
+    previewLook_ = ids[at];
+    drawPreview();
+}
+
+void Node::previewKeyIn(char c) {
+    if (previewEsc_ == 1) {
+        previewEsc_ = (c == '[' || c == 'O') ? 2 : 0;
+        if (!previewEsc_) closePreview("");  // a lone Esc
+        return;
+    }
+    if (previewEsc_ == 2) {
+        if ((unsigned char)c >= 0x40 && (unsigned char)c <= 0x7e) {
+            previewEsc_ = 0;
+            if (c == 'C') previewStep(1);
+            else if (c == 'D') previewStep(-1);
+        }
+        return;
+    }
+    if (c == 0x1b) {
+        previewEsc_ = 1;
+        return;
+    }
+    if (c == 'q' || c == 'Q') {
+        closePreview("");
+    } else if (c == '\r') {
+        std::string note = sysopRun_ ? sysopRun_("@SET " + previewKey_ + "=" + previewLook_) : std::string();
+        closePreview(note.empty() ? previewKey_ + " now " + previewLook_ : note);
+    }
+}
+
+void Node::closePreview(const std::string& note) {
+    previewEsc_ = 0;
+    state_ = State::Sysop;
+    if (shell_ && shell_->open()) shell_->previewDone(note);
+    else {
+        shell_.reset();
+        showMainMenu();
+    }
+}
+
+// The sysop menu was left: to the WFC if it was picked there (or the shell came from it), else the main menu.
+void Node::leftShell() {
+    bool wfc = shell_ && shell_->wantsWfc();
+    shell_.reset();
+    if (wfc) {  // picked from the sysop menu: Q or Esc there comes back to it
+        wfcReturn_ = false;
+        wfcFromShell_ = true;
+        openWfc(lastInput_);
+    } else if (wfcReturn_) {
+        wfcReturn_ = false;
+        openWfc(lastInput_);
+    } else {
+        showMainMenu();
+    }
+}
+
 // Out of a telnet WFC: back to the sysop menu if that is where it was picked, else the main menu.
 void Node::leaveWfc() {
     wfcEsc_ = 0;
@@ -1190,6 +1300,7 @@ void Node::openSysop(bool at, SysopSection s) {
         return;
     }
     shell_.reset(new SysopShell(out_, sysopRun_, 80, local_));  // (telnet: no board-only items)
+    shell_->setPreviews(true);  // an 80 column terminal shows a look before it is picked
     state_ = State::Sysop;
     if (at) shell_->beginAt(s);
     else shell_->begin();
@@ -1256,21 +1367,17 @@ void Node::key(char c) {
         wfcKey(c);
         return;
     }
+    if (state_ == State::LookPreview) {
+        previewKeyIn(c);
+        return;
+    }
     if (state_ == State::Sysop) {
-        if (!shell_ || !shell_->key(c)) {
-            bool wfc = shell_ && shell_->wantsWfc();
-            shell_.reset();
-            if (wfc) {  // picked from the sysop menu: Q or Esc there comes back to it
-                wfcReturn_ = false;
-                wfcFromShell_ = true;
-                openWfc(lastInput_);
-            } else if (wfcReturn_) {
-                wfcReturn_ = false;
-                openWfc(lastInput_);
-            } else {
-                showMainMenu();
-            }
+        if (shell_ && shell_->key(c)) {
+            std::string k, look;
+            if (shell_->takePreview(k, look)) openPreview(k, look);
+            return;
         }
+        leftShell();
         return;
     }
     if (state_ == State::Script) {
@@ -2907,6 +3014,7 @@ std::string Node::activityText() const {
         case State::UserEdit: return "user editor";
         case State::Sysop: return "sysop menu";
         case State::Wfc: return "waiting for caller";
+        case State::LookPreview: return "sysop menu";
         case State::Script: return "script";
         case State::Split: return "split-screen chat";
         case State::Done: return "leaving";
@@ -2931,6 +3039,7 @@ void Node::poll(uint32_t nowMs) {
         if (users_ && !sysop_ && users_->byId(userId_) && saveUsers_) saveUsers_();
         showMainMenu();
     }
+    drainSeq();  // (a login step that ended outside a key: a door, a timer)
     if (callStart_ && !sysop_ && cfg_.dailyMinutes > 0 && state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer) {
         uint32_t used = nowMs - callStart_, limit = (uint32_t)cfg_.dailyMinutes * 60000u;
         if (used >= limit) {
@@ -2951,6 +3060,14 @@ void Node::poll(uint32_t nowMs) {
         splash_.reset();
         lastInput_ = nowMs;
         showWelcome();
+        return;
+    }
+    if (state_ == State::Sysop && shell_ && shell_->escPending() && nowMs - lastInput_ >= 400) {  // a lone Esc in the sysop menu: back
+        if (!shell_->escTimeout()) leftShell();
+        return;
+    }
+    if (state_ == State::LookPreview && previewEsc_ == 1 && nowMs - lastInput_ >= 400) {  // a lone Esc on a preview: back
+        closePreview("");
         return;
     }
     if (state_ == State::Wfc && wfcEsc_ == 1 && !local_ && nowMs - lastInput_ >= 400) {  // a lone Esc (nothing followed it): back

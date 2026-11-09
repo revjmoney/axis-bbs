@@ -83,6 +83,52 @@ TEST_CASE("the Look section's waiting screen skin sends @SET wfc=, never @SET th
     CHECK_FALSE(r.ranCmdPrefix("@SET theme="));
 }
 
+TEST_CASE("the waiting screen skin offers the classic built-in screen") {
+    Rig r;
+    r.shell.beginAt(axis::bbs::SysopSection::Look);
+    r.type("2");  // Waiting screen skin
+    CHECK(plain(r.out).find("Classic AXIS (built in)") != std::string::npos);
+    r.type("2");  // 1 follows the theme, 2 is the classic screen
+    CHECK(r.ranCmd("@SET wfc=classic"));
+}
+
+TEST_CASE("with previews on, picking a look asks for its preview and sets nothing yet") {
+    Rig r;
+    r.shell.setPreviews(true);
+    r.shell.beginAt(axis::bbs::SysopSection::Look);
+    r.type("1");  // Theme
+    r.type("4");  // Crt
+    std::string key, look;
+    REQUIRE(r.shell.takePreview(key, look));
+    CHECK(key == "theme");
+    CHECK(look == "crt");
+    CHECK_FALSE(r.ranCmdPrefix("@SET theme="));
+    CHECK_FALSE(r.shell.takePreview(key, look));  // once
+    r.out.clear();
+    r.shell.previewDone("axis: theme now crt");  // the host set it: back to the Look layer with the note
+    CHECK(r.shell.open());
+    CHECK(plain(r.out).find("Waiting screen skin") != std::string::npos);
+    r.shell.setPreviews(true);
+    r.type("2");  // the skin picker previews too, the classic screen included
+    r.type("2");
+    REQUIRE(r.shell.takePreview(key, look));
+    CHECK(key == "wfc");
+    CHECK(look == "classic");
+}
+
+TEST_CASE("Esc from a preview goes back to the list it came from") {
+    Rig r;
+    r.shell.setPreviews(true);
+    r.shell.beginAt(axis::bbs::SysopSection::Look);
+    r.type("1");
+    r.type("4");
+    std::string key, look;
+    REQUIRE(r.shell.takePreview(key, look));
+    r.out.clear();
+    r.shell.previewDone("");  // nothing set
+    CHECK(plain(r.out).find("Crt, hardcore crt") != std::string::npos);
+}
+
 TEST_CASE("the sysop menu opens on its top layer") {
     Rig r;
     r.shell.begin();
@@ -266,7 +312,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         r.type("1");  // follow the theme
         CHECK(r.ranCmd("@SET wfc="));
         r.type("2");
-        r.type("9");  // 1 follow, then the looks: 9 is skulls
+        r.type("a");  // 1 follow, 2 classic, then the looks: the tenth (a) is skulls
         CHECK(r.ranCmd("@SET wfc=skulls"));
     }
     {  // Settings: the board switches and the telnet sysop switch

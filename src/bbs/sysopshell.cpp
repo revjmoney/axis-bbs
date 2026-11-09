@@ -714,26 +714,63 @@ void SysopShell::station(Layer& l) {
 void SysopShell::look(Layer& l) {
     const char* t = theme::knownLook(setting("theme"));
     l.items.push_back({"Theme", t ? t : "axis", [this] { push("THEME", [this](Layer& x) { lookPick(x, "theme", false); }); }});
-    const char* w = theme::knownLook(setting("wfc"));
+    std::string ws = setting("wfc");
+    const char* w = theme::isClassicWfc(ws) ? "classic" : theme::knownLook(ws);
     l.items.push_back({"Waiting screen skin", w ? w : "follows the theme", [this] { push("WFC SKIN", [this](Layer& x) { lookPick(x, "wfc", true); }); }});
 }
 
 void SysopShell::lookPick(Layer& l, const std::string& key, bool follow) {
-    const char* c = theme::knownLook(setting(key));
-    std::string cur = c ? c : "";
-    if (follow)
+    std::string now = setting(key);
+    const char* c = theme::knownLook(now);
+    std::string cur = follow && theme::isClassicWfc(now) ? "classic" : c ? c : "";
+    // a look: set it, or (when the host can draw it) show it first and let the host set it
+    auto pick = [this, key](const std::string& id) {
+        if (previews_) {
+            previewKey_ = key;
+            previewLook_ = id;
+            return;
+        }
+        did(run_("@SET " + key + "=" + id));
+        pop();
+    };
+    if (follow) {
         l.items.push_back({"Follow the theme", cur.empty() ? "now" : "", [this, key] {
                                did(run_("@SET " + key + "="));
                                pop();
                            }});
+        l.items.push_back({"Classic AXIS (built in)", cur == "classic" ? "now" : "", [pick] { pick("classic"); }});
+    }
     for (int i = 0; i < theme::lookCount(); i++) {
         std::string id = theme::lookId(i);
         std::string label = std::string(theme::lookLabel(i)) + ", " + theme::lookBlurb(id.c_str());
-        l.items.push_back({label, id == cur ? "now" : "", [this, key, id] {
-                               did(run_("@SET " + key + "=" + id));
-                               pop();
-                           }});
+        l.items.push_back({label, id == cur ? "now" : "", [pick, id] { pick(id); }});
     }
+}
+
+bool SysopShell::escTimeout() {
+    if (esc_ != 1 || layers_.empty()) return open();
+    esc_ = 0;
+    pop();
+    return open();
+}
+
+bool SysopShell::takePreview(std::string& key, std::string& look) {
+    if (previewLook_.empty()) return false;
+    key = previewKey_;
+    look = previewLook_;
+    previewKey_.clear();
+    previewLook_.clear();
+    return true;
+}
+
+void SysopShell::previewDone(const std::string& note) {
+    if (layers_.empty()) return;
+    if (!note.empty()) {  // the host set a look: off the picker, the change said under the list
+        layers_.pop_back();
+        if (layers_.empty()) return;
+        did(note);
+    }
+    refresh();
 }
 
 void SysopShell::nodes(Layer& l) {

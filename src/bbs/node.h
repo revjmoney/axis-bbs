@@ -47,7 +47,7 @@ public:
     ~Node();
     Node(Node&&);
     Node& operator=(Node&&);
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Sysop, Wfc, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Sysop, Wfc, LookPreview, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
@@ -136,6 +136,7 @@ public:
     void               axisCallDone(bool reached, const char* why = nullptr);
     void               axisRedraw();
     State       state() const { return state_; }
+    int         seqDepthPeak() const { return seqDepthPeak_; }  // tests: login steps nested (1 = never inside another)
     std::string tagline() const;       // the caller's tagline (signs their posts), "" if none
     std::string activityText() const;  // what the caller is doing, in a few words ("files: ANSI Packs")
     const std::string& handle() const { return handle_; }
@@ -292,8 +293,22 @@ private:
     uint32_t                                       wfcDrawn_ = 0;
     bool                                           wfcReturn_ = false;  // the shell was opened from the WFC: Esc comes back to it
     int                                            wfcEsc_ = 0;         // 1 after ESC, 2 inside a CSI (arrow keys are nothing)
-    bool                                           wfcFromShell_ = false;  // telnet: the WFC was picked from the sysop menu (Q/Esc go back there)
+    bool                                           wfcFromShell_ = false;
+    // a login step's screen is done: the next step runs once the key (or poll) that ended it has returned,
+    // never nested under it (the loop task's stack is a few KB)
+    // the sysop menu's look preview: the setting ("theme" / "wfc") and the look on screen
+    std::string                                    previewKey_, previewLook_;
+    int                                            previewEsc_ = 0;  // 1 after ESC, 2 inside a CSI
+    void                                           openPreview(const std::string& key, const std::string& look);
+    void                                           drawPreview();
+    void                                           previewKeyIn(char c);
+    void                                           previewStep(int dir);
+    void                                           closePreview(const std::string& note);
+    bool                                           seqDue_ = false;
+    int                                            seqDepth_ = 0, seqDepthPeak_ = 0;
+    void                                           drainSeq();  // telnet: the WFC was picked from the sysop menu (Q/Esc go back there)
     void                                           leaveWfc();
+    void                                           leftShell();
     WfcSnapshot                                    wfcSnapshot();
     void                                           wfcDraw(const WfcSnapshot& s, bool clear);
     void                                           wfcKey(char c);

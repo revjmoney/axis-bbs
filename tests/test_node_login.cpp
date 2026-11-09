@@ -135,6 +135,19 @@ TEST_CASE("login sequence: steps run in order, a level-limited step is skipped, 
     CHECK(rest.find("MAIN ->") != std::string::npos);
 }
 
+TEST_CASE("login sequence: one step never runs inside another (the board's loop stack is small)") {
+    // Each of these screens ends through the main menu path; that used to start the next step from
+    // inside the last one, so a long sequence nested every screen and the main menu on one stack.
+    Rig r;
+    r.fs["LOGIN.SEQ"] = "step=USERSTATS|0|0|0|\nstep=LASTCALLS|0|0|0|\nstep=USERSTATS|0|0|0|\nstep=WHOISONLINE|0|0|0|\n"
+                        "step=USERSTATS|0|0|0|\nstep=DISPLAYFILE|0|0|0|AFTER\n";
+    r.fs["AFTER.ANS"] = "AFTER ART";
+    std::string out = loginAll(r);
+    CHECK(out.find("AFTER ART") != std::string::npos);
+    CHECK(out.find("MAIN ->") != std::string::npos);
+    CHECK(r.n.seqDepthPeak() == 1);
+}
+
 TEST_CASE("fast login: 2 jumps to MAIN and skips the rest; 1 continues the sequence") {
     Rig r;
     r.fs["LOGIN.SEQ"] = "step=FASTLOGIN|0|0|0|\nstep=DISPLAYFILE|0|0|0|LATER\n";

@@ -26,6 +26,15 @@ const char* knownLook(const std::string& name);  // a look id, or null when it i
 Look        lookFrom(const std::string& name);   // telnet chrome. Screensets use Axis. Unknown is Axis.
 const char* lookName(Look look);                 // "axis", "cyan", or "green" for the three chromes
 const char* legacyThemeFolder(const std::string& id);  // old card folder for cyan/green, or null
+// A menu set's screen (MAIN.ANS, PDMATRIX.ANS, PRELOGON2.ANS ...) by its name in a theme folder (MAIN.ANS,
+// MATRIX.ANS, SHOP.ANS ...): the theme's art wins over the menu set's, so switching the theme switches the
+// screens. Null for anything a theme doesn't draw (menu files, the sequence, the rumor menu's art).
+const char* menuScreenFile(const std::string& name);
+// "wfc=classic": the built-in waiting screen (art/wfc80.ans, art/wfccyd.ans) whatever the theme. Any case.
+bool        isClassicWfc(const std::string& v);
+// "crt:MAIN.ANS": one look's screen, for the sysop's preview; false unless the look is known and the file a
+// plain name (no folders, no second colon). The look comes back as its id.
+bool        splitLookFile(const std::string& name, std::string& look, std::string& file);
 int         lookCount();
 const char* lookId(int index);    // null if index is out of range
 const char* lookLabel(int index); // "Axis", "Crt", ...

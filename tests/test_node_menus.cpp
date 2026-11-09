@@ -472,3 +472,106 @@ TEST_CASE("an idle wfc is the same screen until the minute turns: uptime by the 
     b.uptimeS = 600, b.ramFreeKb = 88;
     CHECK_FALSE(a == b);
 }
+
+// ---- the look preview (sysop menu > Look): the screen itself, arrows for the others, Enter uses it
+namespace {
+struct PreviewRig {
+    SysRig                   r;
+    std::vector<std::string> ran;
+    PreviewRig() {
+        r.n->setSysopRun([this](const std::string& c) {
+            ran.push_back(c);
+            return std::string("axis: ok\n");
+        });
+        r.n->setArt([](const std::string& name) { return name.find("skulls:") == 0 ? std::string() : "PREVIEW " + name; });
+    }
+    bool ranCmd(const std::string& c) const { return std::find(ran.begin(), ran.end(), c) != ran.end(); }
+};
+}  // namespace
+
+TEST_CASE("look preview: the theme's main menu screen, arrows to the next look, Enter uses it") {
+    PreviewRig p;
+    p.r.type("//\r");
+    p.r.type("8");  // Look
+    p.r.type("1");  // Theme
+    std::string out = p.r.type("4");  // Crt
+    CHECK(out.find("PREVIEW crt:MAIN.ANS") != std::string::npos);
+    CHECK(out.find("Enter") != std::string::npos);  // the key line
+    CHECK(p.r.n->state() == Node::State::LookPreview);
+    CHECK(p.r.type("\x1b[C").find("PREVIEW sea:MAIN.ANS") != std::string::npos);
+    p.r.type("\x1b[D");
+    CHECK(p.r.type("\x1b[D").find("PREVIEW green:MAIN.ANS") != std::string::npos);
+    CHECK_FALSE(p.ranCmd("@SET theme=green"));
+    p.r.type("\r");
+    CHECK(p.ranCmd("@SET theme=green"));
+    CHECK(p.r.n->state() == Node::State::Sysop);
+}
+
+TEST_CASE("look preview: Esc goes back to the list and sets nothing") {
+    PreviewRig p;
+    p.r.type("//\r");
+    p.r.type("8");
+    p.r.type("1");
+    p.r.type("4");
+    REQUIRE(p.r.n->state() == Node::State::LookPreview);
+    p.r.type("\x1b");
+    p.r.n->poll(1000 + 600);  // nothing followed it: a lone Esc
+    CHECK(p.r.n->state() == Node::State::Sysop);
+    CHECK(plain(p.r.n->takeOutput()).find("Crt, hardcore crt") != std::string::npos);
+    for (const std::string& c : p.ran) CHECK(c.rfind("@SET theme=", 0) != 0);
+    p.r.type("4");
+    p.r.type("q");  // Q backs out too
+    CHECK(p.r.n->state() == Node::State::Sysop);
+}
+
+TEST_CASE("look preview: the waiting screen skins, the classic built-in screen first, and a look with no screens") {
+    PreviewRig p;
+    p.r.n->setWfcSnapshot(snap3);
+    p.r.type("//\r");
+    p.r.type("8");
+    p.r.type("2");  // Waiting screen skin
+    std::string out = p.r.type("2");  // Classic AXIS (built in)
+    CHECK(out.find("W A I T I N G") != std::string::npos);  // the built-in art
+    CHECK(out.find("PREVIEW") == std::string::npos);
+    CHECK(p.r.type("\x1b[C").find("PREVIEW axis:WFC.ANS") != std::string::npos);
+    p.r.type("\x1b[D");
+    p.r.type("\r");
+    CHECK(p.ranCmd("@SET wfc=classic"));
+    p.r.type("2");  // the skin picker again
+    out = p.r.type("a");  // the tenth item: skulls (the stub has no screens for it)
+    CHECK(out.find("No screens for this look") != std::string::npos);
+    CHECK(p.r.n->state() == Node::State::LookPreview);  // still previewing: arrows go on to the next
+}
+
+TEST_CASE("a lone Esc in the sysop menu goes back after a pause, without waiting for (and eating) the next key") {
+    SysRig r;
+    r.type("//\r");
+    r.type("8");  // Look
+    REQUIRE(r.n->state() == Node::State::Sysop);
+    r.type("\x1b");
+    r.n->poll(1000 + 500);
+    std::string top = plain(r.n->takeOutput());
+    CHECK(top.find("Waiting for caller screen") != std::string::npos);  // back on the top layer
+    r.type("8");  // this key counts: Look again
+    CHECK(r.type("1").find("Crt, hardcore crt") != std::string::npos);
+    SysRig s;  // and from the top layer, out of the sysop menu
+    s.type("//\r");
+    s.type("\x1b");
+    s.n->poll(1000 + 500);
+    CHECK(s.n->state() == Node::State::Menu);
+}
+
+TEST_CASE("the autosig and password menu commands open the account screen (the tagline is the autosig)") {
+    for (const char* cmd : {"CFG_AUTOSIG", "CFG_PASSWORD", "USERCONFIG"}) {
+        SysRig r(true, false, false);
+        r.fs = {{"MAIN.MNU", std::string("prompt1=MAIN ->\ncmd=U|RUN:") + cmd + "|*|0|\n"}};
+        r.n->setMenus([&r](const std::string& f) { return r.fs.count(f) ? r.fs[f] : std::string(); });
+        r.n->begin(0);
+        r.type("Rev\rpw\r");
+        if (r.n->state() == Node::State::SeqPause) r.type(" ");
+        std::string out = r.type("u");
+        CHECK(out.find("Coming soon") == std::string::npos);
+        CHECK(out.find("tagline") != std::string::npos);
+        CHECK(r.n->state() == Node::State::Settings);
+    }
+}
