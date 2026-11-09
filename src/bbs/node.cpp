@@ -249,7 +249,7 @@ char v3Command(const std::string& f) {
     static const struct { const char* name; char key; } table[] = {
         {"READMSGS", 'm'}, {"LISTMSGAR", 'm'}, {"SELECTMSGAREA", 'm'}, {"COMPOSEMSG", 'm'}, {"NEWSCAN", 's'},
         {"LISTFILES", 'f'}, {"SELECTFILEAREA", 'f'}, {"DOWNLOADFILE", 'f'}, {"UPLOADFILE", 'f'}, {"SEARCH_FILES", 'f'},
-        {"FILE_NEWSCAN", 'f'}, {"CHAT", 'p'}, {"ONELINER", 'o'}, {"LISTUSERS", 'h'}, {"LASTCALLERS", 'w'},
+        {"FILE_NEWSCAN", 'f'}, {"CHAT", 'p'}, {"ONELINER", 'o'}, {"LISTUSERS", 'h'}, {"LASTCALLERS", 'l'},
         {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RANDOMRUMOR", 'r'}, {"RUMORSADD", 'r'}, {"BBSLIST", 'b'}, {"BBSLISTADD", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'},
         {"SHOWSTATS", 'i'}, {"SYSTEMSTATS", 'i'}, {"USERCONFIG", 'u'}, {"CFG_AUTOSIG", 'u'}, {"CFG_PASSWORD", 'u'},  // (the account screen: the tagline is the autosig)
         {"SENDPRIVMAIL", 'e'}, {"READPRIVMAIL", 'e'},
@@ -1030,7 +1030,13 @@ void Node::showMainMenu() {
 
 void Node::showMenu() {
     if (menu_ && !builtin_) {
-        showMainMenu();
+        if (inSeq_ && !seqFast_) {  // a login sequence step: the sequence has its own pause
+            showMainMenu();
+            return;
+        }
+        // the menu screen clears: hold what was just shown until a key, or the caller never sees it
+        out_ += std::string("\x1b[0m\r\n   ") + theme::DGREY + "(press a key)" + theme::RESET;
+        state_ = State::MenuHold;
         return;
     }
     if (o2()) {  // Oblivion style: just the prompt again; ? brings the menu back
@@ -1404,6 +1410,11 @@ void Node::key(char c) {
         nextStep();
         return;
     }
+    if (state_ == State::MenuHold) {
+        if (c == '\n' || c == 0) return;  // the rest of the Enter that picked the item
+        showMainMenu();
+        return;
+    }
     if (state_ == State::PreLogon) {  // any key: the LOGIN screen (after check access: the matrix again)
         if (backToMatrix_) {
             backToMatrix_ = false;
@@ -1719,9 +1730,10 @@ void Node::key(char c) {
             out_ += "Opening " + door().name + "...";
             out_ += RST;
             out_ += "\r\n";
-        } else {
+        } else {  // left the list: straight back to the menu, nothing to hold
             state_ = State::Menu;
-            showMenu();
+            if (menu_ && !builtin_) showMainMenu();
+            else showMenu();
         }
         return;
     }
@@ -2404,6 +2416,7 @@ void Node::showUserList() {
 
 void Node::showLastCallers() {
     std::vector<std::string> all = callersGet_ ? callersGet_() : std::vector<std::string>{};
+    if (menu_ && !builtin_ && !inSeq_) out_ += theme::CLS;  // from the menu files: its own screen, not printed over the menu art
     out_ += "\r\n\r\n   " + theme::fade("LAST CALLERS") + "\r\n";
     out_ += std::string("   ") + theme::DGREY + std::string(70, '\xc4') + "\r\n";
     if (all.empty()) out_ += std::string("   ") + theme::TEXT + "(nobody yet)\r\n";
@@ -2990,6 +3003,7 @@ std::string Node::activityText() const {
         case State::CheckAccess: return "logging in";
         case State::ApplyBar: return "new user application";
         case State::SeqPause: return "logging in";
+        case State::MenuHold: return "main menu";
         case State::ApplyAsk:
         case State::NupAsk:
         case State::Applying: return "new user application";

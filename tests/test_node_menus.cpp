@@ -80,6 +80,24 @@ TEST_CASE("an unknown RUN: function says coming soon and keeps the caller on the
     CHECK(r.n.state() == Node::State::Menu);
 }
 
+TEST_CASE("a screen picked from the menu files stays up until a key, then the menu comes back") {
+    Rig r;
+    r.fs = {{"MAIN.MNU", "prompt1=MAIN ->\ncmd=W|RUN:LASTCALLERS 20|*|0|\ncmd=S|RUN:SYSTEMSTATS|*|0|\n"}, {"MAIN.ANS", "MAIN ART"}};
+    r.menus();
+    r.login();
+    for (const char* k : {"w", "s"}) {
+        std::string out = r.type(k);
+        CHECK(out.find(*k == 'w' ? "LAST CALLERS" : "STATS") != std::string::npos);  // W is last callers, not who's online
+        CHECK(out.find("(press a key)") != std::string::npos);
+        CHECK(out.find("MAIN ART") == std::string::npos);  // not cleared away by the menu
+        CHECK(r.n.state() == Node::State::MenuHold);
+        CHECK(r.type("\n").empty());  // the LF of a lightbar's Enter does not skip it
+        CHECK(r.n.state() == Node::State::MenuHold);
+        CHECK(r.type(" ").find("MAIN ART") != std::string::npos);
+        CHECK(r.n.state() == Node::State::Menu);
+    }
+}
+
 TEST_CASE("a menu note sits inside the theme's menu window, not over the art's left frame") {
     Rig r;
     r.fs = {{"MAIN.MNU", "prompt1=|XY05,19MAIN ->\ncmd=X|RUN:SPONSORMENU|*|0|\n"}};

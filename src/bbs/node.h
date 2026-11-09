@@ -47,7 +47,7 @@ public:
     ~Node();
     Node(Node&&);
     Node& operator=(Node&&);
-    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, AxisNet, AxisCall, Script, Sysop, Wfc, LookPreview, Done };
+    enum class State { Splash, Matrix, Login, Password, ApplyAsk, NupAsk, Applying, Pending, OneLinerAsk, OneLiner, Menu, Messages, Doors, InDoor, Files, Transfer, Chat, Paging, Settings, MultiNode, Split, Email, Rumors, BbsList, Bulletin, Voting, UserEdit, PreLogon, CheckAccess, ApplyBar, SeqPause, MenuHold, AxisNet, AxisCall, Script, Sysop, Wfc, LookPreview, Done };
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
