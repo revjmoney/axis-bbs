@@ -319,12 +319,31 @@ static std::string readThemeFile(const char* folder, const std::string& name, si
 static std::string readThemeFile(const char* folder, const std::string& name) {
     return readThemeFile(folder, name, kThemeArtCap, 0, nullptr);
 }
-// The poster is one tall screen. A short read at a later offset means the end of the file, not "try the other folder".
-static std::string themePoster(const std::string& name, size_t offset, size_t cap) {
-    bool opened = false;
-    std::string s = readThemeFile(cfg.theme.c_str(), name, cap, offset, &opened);
-    if (!opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(cfg.theme), name, cap, offset, &opened);
+// One piece of the Saylor poster, from the theme's folder (`want` bytes at most, never more than a cluster frame takes).
+// It is never read whole: Node streams it a piece at a time (Node::setPoster). A short read at a later offset means
+// the end of the file, not "try the other folder".
+static std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened) {
+    *opened = false;
+    if (!storageHasSd() || !posterName(name) || offset >= kPosterCap) return "";
+    if (want > kPosterChunk) want = kPosterChunk;
+    if (want > kPosterCap - offset) want = kPosterCap - offset;
+    std::string s = readThemeFile(cfg.theme.c_str(), name, want, offset, opened);
+    if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(cfg.theme), name, want, offset, opened);
+    if (!*opened) s = readThemeFile("axis", name, want, offset, opened);  // a look without its own poster shows the axis one
     return s;
+}
+// A follower asks the main for the same piece ("T name offset want"); *exists false when the main has none (or did not answer).
+static std::string posterPiece(const std::string& name, size_t offset, size_t want, bool* exists) {
+    *exists = false;
+    if (!asFollower()) return posterPieceLocal(name, offset, want, exists);
+    std::string reply;
+    if (!cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(offset) + "\x1f" + std::to_string(want), reply, 3000) ||
+        reply.empty() || reply[0] != '1')
+        return "";
+    *exists = true;
+    reply.erase(0, 1);  // (in place: no second copy)
+    if (reply.size() > want) reply.resize(want);
+    return reply;
 }
 static std::string themeArtLocal(const std::string& name) {
     if (!storageHasSd() || name.find('/') != std::string::npos) return "";
@@ -334,7 +353,7 @@ static std::string themeArtLocal(const std::string& name) {
         if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(look), file);
         return s;
     }
-    if (posterName(name)) return themePoster(name, 0, kPosterCap);
+    if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never read whole
     // The waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme.
     const std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme;
     std::string s = readThemeFile(folder.c_str(), name);
@@ -343,12 +362,14 @@ static std::string themeArtLocal(const std::string& name) {
 }
 // The main's answer to "T name offset": one piece of a theme file, at most kPosterChunk bytes, so the reply stays under the
 // cluster's 8 KB frame (a bigger one drops the link). *opened: the file is there.
-static std::string themeArtPiece(const std::string& name, size_t off, bool* opened) {
+static std::string themeArtPiece(const std::string& name, size_t off, size_t want, bool* opened) {
     *opened = false;
     if (!storageHasSd() || name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return "";
-    size_t cap = posterName(name) ? kPosterCap : kThemeArtCap;
+    if (posterName(name)) return posterPieceLocal(name, off, want, opened);
+    size_t cap = kThemeArtCap;
     if (off >= cap) return "";
-    size_t want = cap - off < kPosterChunk ? cap - off : kPosterChunk;
+    if (!want || want > kPosterChunk) want = kPosterChunk;
+    if (want > cap - off) want = cap - off;
     // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
     // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
     std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme, file = name, look;
@@ -381,6 +402,7 @@ static std::string themeArtRemote(const std::string& name, bool* answered) {
 }
 static std::string themeArt(const std::string& name) {
     if (!asFollower()) return themeArtLocal(name);
+    if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never fetched whole
     bool poster = posterName(name) || name.find(':') != std::string::npos;  // (a preview is seen once: never cached either)
     if (!poster) {
         auto it = artCache.find(name);
@@ -1800,6 +1822,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         });
         node->setMessages(&callerMessages());
         node->setArt([](const std::string& name) { return themeArt(name); });
+        node->setPoster(posterPiece);
         node->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
         wireScripts(node.get());
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
@@ -2329,15 +2352,21 @@ static void startCluster() {
             std::string rest = req.substr(2);
             size_t      sep = rest.find('\x1f');
             std::string name = sep == std::string::npos ? rest : rest.substr(0, sep);
-            size_t      off = 0;
-            if (sep != std::string::npos)
+            size_t      off = 0, want = 0;  // "T name offset [want]": want 0 (an older follower) is a whole 7000 byte piece
+            if (sep != std::string::npos) {
+                size_t* to = &off;
                 for (char ch : rest.substr(sep + 1)) {
-                    if (ch < '0' || ch > '9' || off > kPosterCap) break;
-                    off = off * 10 + (size_t)(ch - '0');
+                    if (ch == '\x1f' && to == &off) {
+                        to = &want;
+                        continue;
+                    }
+                    if (ch < '0' || ch > '9' || *to > kPosterCap) break;
+                    *to = *to * 10 + (size_t)(ch - '0');
                 }
+            }
             if (off > (posterName(name) ? kPosterCap : kThemeArtCap)) return std::string("0");
             bool        opened = false;
-            std::string piece = themeArtPiece(name, off, &opened);
+            std::string piece = themeArtPiece(name, off, want ? want : kPosterChunk, &opened);
             if (!opened && posterName(name)) return std::string("0");
             return "1" + piece;
         }
@@ -2499,6 +2528,7 @@ static void startLocal() {
     localNode->setWfcSnapshot(wfcSnapshot);
     localNode->setMessages(&callerMessages());
     localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
+    localNode->setPoster(posterPiece);
     localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
     wireScripts(localNode.get());
     localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
@@ -3403,6 +3433,7 @@ static void handleSerial() {
             serialWfc->setWfcSnapshot(wfcSnapshot);
             serialWfc->setMessages(&callerMessages());
             serialWfc->setArt([](const std::string& name) { return themeArt(name); });
+            serialWfc->setPoster(posterPiece);
             serialWfc->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
             wireScripts(serialWfc.get());
             serialWfc->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& l) { sharedListAdd(n, l); });
