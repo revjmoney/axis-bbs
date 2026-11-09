@@ -135,7 +135,7 @@ void Node::loggedIn() {
     }
     if (nuvMayVoteNow() && !(menu_ && !builtin_))  // (menu files: the login sequence's CHECKNUV asks instead)
         notes_.push_back(std::string("   ") + theme::HOT + "*** " + std::to_string(nuvList_.size()) +
-                         (nuvList_.size() == 1 ? " new user is" : " new users are") + " waiting on the vote: [A] votes." + theme::TEXT);
+                         (nuvList_.size() == 1 ? " new user is" : " new users are") + " waiting on the vote: [\x01] votes." + theme::TEXT);  // \x01: the key, filled in when shown (O/2 menus vote with N)
     if (callersAdd_) {
         const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
         callersAdd_(handle_ + "|" + std::to_string(node_) + "|" + info_().timeText + "|" + (u ? u->location : cfg_.location));
@@ -1966,7 +1966,7 @@ void Node::key(char c) {
     }
     if (fromMenus) {
     } else if (o2() && o2Keys_ && c != '?' && c != '*') {  // (? the menu, * the sysop's editor: the same in every look)  // the sysop's O/2 MAIN.ANS: stock Oblivion/2 letters onto ours
-        static const char from[] = "abcefgklmorstvwxy+=./!-j", to[] = "ubtepguhmdrifvlfuuncgskj";  // a account, c chat, e email, f feedback, j axis net, l list users, o open doors, r rumors, s stats, t transfers, w recent callers
+        static const char from[] = "abcefgklmnorstvwxy+=./!-j", to[] = "ubtepguhmadrifvlfuuncgskj";  // n new user voting (O/2's N), a account, c chat, e email, f feedback, j axis net, l list users, o open doors, r rumors, s stats, t transfers, w recent callers
         static_assert(sizeof from == sizeof to, "oblivion key map");
         const char*       hit = std::strchr(from, (char)(c | 0x20));
         if (!hit || !*hit) {
@@ -2940,7 +2940,11 @@ void Node::showTopTen() {
 }
 
 void Node::showNotes() {
-    for (const std::string& n : notes_) out_ += "\r\n" + n;
+    for (std::string n : notes_) {
+        size_t k = n.find('\x01');  // the voting key: N on the sysop's O/2 menu, where A is the account
+        if (k != std::string::npos) n[k] = o2() && o2Keys_ ? 'N' : 'A';
+        out_ += "\r\n" + n;
+    }
     notes_.clear();
 }
 

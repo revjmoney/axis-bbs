@@ -11,6 +11,7 @@
 #include "bbs/node.h"
 #include "bbs/nuv.h"
 #include "bbs/password.h"
+#include "bbs/theme.h"
 #include "bbs/users.h"
 
 using namespace axis::bbs;
@@ -229,4 +230,22 @@ TEST_CASE("the sysop votes too") {
     r.type("y");
     CHECK(has(r.type("\r"), "cnc4life is in."));
     CHECK(nuvVoteBy(*r.users.find("cnc4life"), "Rev"));
+}
+
+TEST_CASE("on the sysop's Oblivion menu (A is the account there) N votes, and the notice says N") {
+    Rig r;
+    r.cfg.theme = "oblivion";
+    r.users.add(person("ChipBreaker", User::Status::Validated));
+    r.users.add(applicant());
+    r.n.reset(new Node(1, info, r.cfg));
+    r.n->setAccounts(&r.users, [&r] { r.saves++; }, rng, [] { return 1800000000u; });
+    r.n->setArt([](const std::string& name) { return name == "MAIN.ANS" ? std::string("O2 MAIN") : std::string(); });
+    r.n->begin(0);
+    r.n->takeOutput();
+    std::string out = r.type("lChipBreaker\rsecret99\r");
+    for (int i = 0; i < 4 && r.n->state() != Node::State::Menu; i++) out += r.type("n");
+    CHECK(has(out, "waiting on the vote: [N] votes."));
+    CHECK(has(r.type("n"), "cnc4life"));
+    CHECK(r.n->state() == Node::State::Nuv);
+    axis::bbs::theme::use(axis::bbs::theme::Look::Axis);
 }
