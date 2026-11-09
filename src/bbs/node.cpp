@@ -1947,6 +1947,13 @@ void Node::key(char c) {
                     if (!startScript(name, ScriptBack::Menu)) menuNote("That script is not on the card.");
                     return;
                 }
+                if (cmd == "RUMORSLIST" || cmd == "RUMORSADD" || cmd == "BBSLISTADD") {  // straight to the list, or to typing one in
+                    if (cmd == "BBSLISTADD") showBbsList();
+                    else state_ = State::Rumors;
+                    step_ = 0;
+                    extrasKey(cmd == "RUMORSLIST" ? 'l' : 'a');
+                    return;
+                }
                 c = v3Command(a.arg);
                 if (!c) {
                     menuNote("Coming soon to AXIS.");
@@ -2040,7 +2047,7 @@ void Node::key(char c) {
             browser_->setDownloadGate([this](uint32_t size) -> std::string {
                 User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
                 if (!u) return "";
-                if (!mayDownload(*u)) return "Downloads open up once you've uploaded something: [U]pload first. Keep the scene alive.";
+                if (!mayDownload(*u)) return "Downloads open up once you've uploaded something: [U]pload first.";
                 return size ? ratioBlock(*u, size, cfg_.ratio, cfg_.freeKb) : std::string();
             });
             browser_->setNewSince(prevCall_ ? prevCall_ : (unixNow_ && unixNow_() > 7 * 86400 ? unixNow_() - 7 * 86400 : 0));

@@ -109,6 +109,10 @@ TEST_CASE("owning a machine gets you in right away") {
     REQUIRE(r.users.all().size() == 1);
     CHECK(r.users.all()[0].status == User::Status::Validated);
     CHECK(r.node.state() == Node::State::Menu);
+    CHECK(r.users.all()[0].email.empty());  // skipped: not the review's "(skipped)"
+    UserStore old;
+    old.parse("[user]\nhandle=x\nemail=(skipped)\n");
+    CHECK(old.all()[0].email.empty());
 }
 
 TEST_CASE("a RotatoCAM Pro user gets in right away, machine or not") {

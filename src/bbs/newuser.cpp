@@ -146,7 +146,7 @@ NewUserApp::Outcome NewUserApp::key(char c) {
             user_.security = vouched ? (cfg_.newUserSecurity > 20 ? cfg_.newUserSecurity : 20) : cfg_.newUserSecurity;
             user_.realName = answers_["First name"];
             user_.location = answers_["Location"];
-            user_.email = answers_["Email"];
+            user_.email = answers_["Email"] == "(skipped)" ? "" : answers_["Email"];  // (skipped) is only how the review shows it
             for (const Step& q : steps_) {  // in the order they were asked
                 auto it = answers_.find(q.key);
                 if (it != answers_.end() && q.kind != Kind::Password && q.kind != Kind::Confirm && q.kind != Kind::Submit)

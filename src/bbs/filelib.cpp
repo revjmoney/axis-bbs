@@ -99,7 +99,7 @@ bool isTextFile(const std::string& name) {
     size_t dot = name.rfind('.');
     if (dot == std::string::npos) return false;
     std::string ext = upper(name.substr(dot + 1));
-    for (const char* t : {"TXT", "NFO", "DIZ", "ANS", "ASC", "BBS", "DOC", "MD", "1ST"})
+    for (const char* t : {"TXT", "NFO", "DIZ", "ANS", "ASC", "BBS", "DOC", "MD", "1ST", "NC", "GC", "NGC", "GCODE", "TAP", "CNC"})  // G-code is text too
         if (ext == t) return true;
     return false;
 }

@@ -117,11 +117,23 @@ TEST_CASE("the rumor and BBS list menus' add commands open the screens that add"
     r.fs = {{"MAIN.MNU", "cmd=A|RUN:RUMORSADD|*|0|\ncmd=B|RUN:BBSLISTADD|*|0|\ncmd=Q|GOTO:MAIN|*|0|\n"}};
     r.menus();
     r.login();
-    r.type("a");
+    CHECK(r.type("a").find("Your rumor") != std::string::npos);  // straight to typing it, no second A
     CHECK(r.n.state() == Node::State::Rumors);
+    r.type("the jar is full\r");
+    CHECK(r.lists["rumors"].size() == 1);
     r.type("q");
-    r.type("b");
+    CHECK(r.type("b").find("Board name") != std::string::npos);
     CHECK(r.n.state() == Node::State::BbsList);
+}
+
+TEST_CASE("List Rumors lists them at once") {
+    Rig r;
+    r.fs = {{"MAIN.MNU", "cmd=L|RUN:RUMORSLIST|*|0|\ncmd=Q|GOTO:MAIN|*|0|\n"}};
+    r.menus();
+    r.lists["rumors"] = {"the offcut you threw away was the exact size you needed"};
+    r.login();
+    CHECK(r.type("l").find("the offcut you threw away") != std::string::npos);
+    CHECK(r.n.state() == Node::State::Rumors);
 }
 
 TEST_CASE("a lightbar item is drawn at its own spot in the menu window") {

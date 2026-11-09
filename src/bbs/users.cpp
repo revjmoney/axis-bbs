@@ -54,7 +54,7 @@ void UserStore::parse(const std::string& text) {
         else if (k == "hash") u->hash = v;
         else if (k == "real_name") u->realName = v;
         else if (k == "location") u->location = v;
-        else if (k == "email") u->email = v;
+        else if (k == "email") u->email = v == "(skipped)" ? "" : v;  // older applications saved the review's placeholder
         else if (k == "tagline") u->tagline = v;
         else if (k == "status") u->status = statusFrom(v);
         else if (k == "security") u->security = (int)n;

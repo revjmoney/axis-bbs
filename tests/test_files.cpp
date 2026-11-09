@@ -471,3 +471,8 @@ TEST_CASE("Esc on the file-area lightbar leaves after a short pause") {
     n.poll(1400);
     CHECK(n.state() == Node::State::Menu);
 }
+
+TEST_CASE("G-code is text: a caller can view it") {
+    for (const char* n : {"PAWN4X.NC", "revj.gc", "PART.NGC", "x.gcode", "y.TAP", "z.cnc", "README.TXT"}) CHECK(axis::bbs::isTextFile(n));
+    for (const char* n : {"GAME.ZIP", "LORD.EXE", "MODEL.STL", "NOEXT"}) CHECK_FALSE(axis::bbs::isTextFile(n));
+}

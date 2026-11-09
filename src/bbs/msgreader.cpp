@@ -78,8 +78,8 @@ void MessageReader::showAreas() {
             int  last = lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, fresh = 0;
             for (auto& m : h) fresh += m.num > last;
             char b[160];
-            std::snprintf(b, sizeof b, "   %s[%2u] %s%-34s %s%4u msgs%s", ORANGE, (unsigned)(i + 1), WHITE, areas_[i].name.c_str(), TEXT,
-                          (unsigned)h.size(), fresh ? "" : "\r\n");
+            std::snprintf(b, sizeof b, "   %s[%2u] %s%-34s %s%4u %s%s", ORANGE, (unsigned)(i + 1), WHITE, areas_[i].name.c_str(), TEXT,
+                          (unsigned)h.size(), h.size() == 1 ? "msg " : "msgs", fresh ? "" : "\r\n");
             out_ += b;
             if (fresh) out_ += std::string("  ") + ORANGE + std::to_string(fresh) + " new" + TEXT + "\r\n";
         }
@@ -93,7 +93,7 @@ void MessageReader::showAreas() {
         int  last = lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, fresh = 0;
         for (auto& m : h) fresh += m.num > last;
         char b[80];
-        std::snprintf(b, sizeof b, "%-32.32s %4u msgs%s", areas_[i].name.c_str(), (unsigned)h.size(),
+        std::snprintf(b, sizeof b, "%-32.32s %4u %s%s", areas_[i].name.c_str(), (unsigned)h.size(), h.size() == 1 ? "msg " : "msgs",
                       fresh ? (std::string("  ") + std::to_string(fresh) + " new").c_str() : "");
         rows.emplace_back(b);
     }
@@ -152,7 +152,7 @@ void MessageReader::showList() {
     list_.setItems(std::move(rows));
     usingList_ = true;
     char cap[80];
-    std::snprintf(cap, sizeof cap, "  #  From          To            Subject          %u msgs", (unsigned)heads_.size());
+    std::snprintf(cap, sizeof cap, "  #  From          To            Subject          %u %s", (unsigned)heads_.size(), heads_.size() == 1 ? "msg" : "msgs");
     out_ += listScreenTop(areas_[area_].name, cap);
     out_ += list_.draw();
     out_ += listScreenStatus(heads_[listFrom_ + (size_t)list_.current()].subject);
