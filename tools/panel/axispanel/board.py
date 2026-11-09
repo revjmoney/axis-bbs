@@ -57,9 +57,10 @@ class BoardLink:
             raise LoginFailed('invalid salt response')
         salt = parts[1]
         scheme = parts[2] if len(parts) > 2 else 'SHA256'  # compatibility with older boards
-        if scheme == 'PBKDF2-SHA256-200000':
-            stored_hash = 'pbkdf2-sha256$200000$' + hashlib.pbkdf2_hmac(
-                'sha256', password.encode('latin-1'), salt.encode('latin-1'), 200000, dklen=32
+        rounds = scheme[len('PBKDF2-SHA256-'):] if scheme.startswith('PBKDF2-SHA256-') else ''
+        if rounds.isdigit() and 0 < int(rounds) <= 10000000:  # each stored hash names its own round count
+            stored_hash = 'pbkdf2-sha256$%s$' % rounds + hashlib.pbkdf2_hmac(
+                'sha256', password.encode('latin-1'), salt.encode('latin-1'), int(rounds), dklen=32
             ).hex()
         elif scheme == 'SHA256':
             stored_hash = sha(salt + password)

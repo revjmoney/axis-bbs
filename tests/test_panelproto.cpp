@@ -37,10 +37,19 @@ TEST_CASE("panel advertises the hash scheme and accepts a PBKDF2 proof") {
     PanelSession s(r.cfg, r.users, "n0nce");
     CHECK(s.greeting() == "AXISPANEL 1 n0nce\n");
     std::string response = s.line("SALT Rev");
-    CHECK(response == "SALT " + r.cfg.sysopSalt + " PBKDF2-SHA256-200000\n");
+    CHECK(response == "SALT " + r.cfg.sysopSalt + " PBKDF2-SHA256-" + std::to_string(kPasswordRounds) + "\n");
     CHECK(s.line("AUTH Rev " + proof("n0nce", r.cfg.sysopSalt, "sysop1")) == "OK\n");
     CHECK(s.authed());
     CHECK(s.who() == "Rev");
+}
+
+TEST_CASE("panel names a stored hash's own round count (older 200000-round hashes still log in)") {
+    Rig r;
+    r.cfg.sysopSalt = "00112233445566778899aabbccddeeff";
+    r.cfg.sysopHash = "pbkdf2-sha256$200000$8a9c52286c39cb1e25c31ef1abf35c3ffe17f4a5a21e19b8808801ccc95f6ef1";
+    PanelSession s(r.cfg, r.users, "n2");
+    CHECK(s.line("SALT Rev") == "SALT " + r.cfg.sysopSalt + " PBKDF2-SHA256-200000\n");
+    CHECK(s.line("AUTH Rev " + sha256Hex("n2" + r.cfg.sysopHash)) == "OK\n");
 }
 
 TEST_CASE("panel advertises legacy SHA-256 for existing stored hashes") {

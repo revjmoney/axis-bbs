@@ -1638,13 +1638,15 @@ void Node::key(char c) {
                 loggedIn();
                 return;
             }
+            if (needsRehash(u->hash)) u->hash = hashPassword(u->salt, pw);  // an older hash (or a slower count): today's, saved below
             u->calls++;
             prevCall_ = u->lastCall;  // for [N]ew files: what landed since they were last here
             if (unixNow_) u->lastCall = unixNow_();
             if (saveUsers_) saveUsers_();
             if (u->status == User::Status::Denied) {
                 out_ += "\r\n\r\n   " + std::string(theme::TEXT) + "Your application was " + theme::ORANGE + "denied" + theme::TEXT +
-                        ". This board isn't for you.\r\n";
+                        (nuvNo(*u) > 0 && cfg_.nuvNo > 0 && nuvNo(*u) >= cfg_.nuvNo ? ". The new user vote turned you down." : ". This board isn't for you.") +
+                        "\r\n";
                 state_ = State::Done;
             } else if (u->status == User::Status::Pending) {
                 state_ = State::Pending;

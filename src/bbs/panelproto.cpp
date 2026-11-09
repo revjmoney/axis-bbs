@@ -17,7 +17,8 @@ bool same(const std::string& a, const std::string& b) {
 }
 
 std::string passwordScheme(const std::string& hash) {
-    return hash.rfind("pbkdf2-sha256$200000$", 0) == 0 ? "PBKDF2-SHA256-200000" : "SHA256";
+    uint32_t rounds = passwordRounds(hash);  // the panel recomputes the stored hash, so it needs this hash's own count
+    return rounds ? "PBKDF2-SHA256-" + std::to_string(rounds) : "SHA256";
 }
 }  // namespace
 

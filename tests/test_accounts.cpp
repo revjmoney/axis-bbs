@@ -182,6 +182,23 @@ TEST_CASE("a validated caller reaches the main menu, and the call is counted") {
     CHECK(r.users.find("machinist")->calls == 1);
 }
 
+TEST_CASE("a login rewrites an old slow (or legacy) hash with today's round count, and the new one still works") {
+    for (const char* kind : {"200000", "legacy"}) {
+        Rig  r;
+        User u = validUser("Machinist", "secret99", User::Status::Validated);
+        u.salt = "00112233445566778899aabbccddeeff";
+        u.hash = std::string(kind) == "legacy" ? sha256Hex(u.salt + "secret99")
+                                                : "pbkdf2-sha256$200000$" + pbkdf2Sha256Hex("secret99", u.salt, 200000);
+        r.users.add(u);
+        r.type("Machinist\rsecret99\r");
+        CHECK(r.node.state() == Node::State::Menu);
+        const User& now = *r.users.find("machinist");
+        CHECK(passwordRounds(now.hash) == kPasswordRounds);
+        CHECK(checkPassword(now.salt, now.hash, "secret99"));
+        CHECK(r.saves > 0);
+    }
+}
+
 TEST_CASE("three wrong passwords hang up") {
     Rig r;
     r.users.add(validUser("Machinist", "secret99", User::Status::Validated));
