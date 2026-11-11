@@ -93,7 +93,7 @@ def main():
         with open(summary, "a", encoding="utf-8") as f:
             f.write(f"### cppcheck {version}: {len(lines)} findings in src/\n\n")
             if lines:
-                f.write("| File | Severity | Check | Message |\n|---|---|---|---|\n")
+                f.write("| File | Severity | Check | Message |\n|-|-|-|-|\n")
                 for path, line, sev, rid, msg in lines:
                     f.write(f"| {path}:{line} | {sev} | {rid} | {msg.replace('|', '/')} |\n")
 

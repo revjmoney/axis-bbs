@@ -7,7 +7,7 @@ version in a comment; Dependabot keeps those pins current.
 ## The checks
 
 | Workflow (file) | Runs on | What it does | Where you see it |
-|---|---|---|---|
+|-|-|-|-|
 | Build (`build.yml`) | every push, every pull request | `host`: host build, all doctest tests, menu art check. `firmware`: `pio run -e cyd` and `-e headless`, size report, and the CYD firmware as a download | Actions tab, the check marks on commits and pull requests |
 | CodeQL (`codeql.yml`) | push to main, pull requests, Mondays, by hand | GitHub's security analysis of the C/C++ host build and the Python in `tools/` | Security tab, Code scanning; on pull requests a "Code scanning results" check and comments on changed lines |
 | Sanitizers (`sanitizers.yml`) | push to main, pull requests, by hand | Host tests built with AddressSanitizer and UndefinedBehaviorSanitizer | Actions tab; the log names file, line and stack of each finding |
@@ -62,8 +62,9 @@ Known findings, found locally with UBSan (MinGW g++ 16.1, trap mode), confirmed 
    Reached by every password hash (`pbkdf2Sha256Hex`, `tests/test_accounts.cpp:97`). Fix:
    cast each byte to `WORD` before shifting.
 
-With both patched (in a scratch copy only), all 793 test cases pass under UBSan. AddressSanitizer
-does not work with MinGW on Windows, so ASan and LeakSanitizer have only run in CI.
+With both patched (in a scratch copy only), all 793 test cases pass under UBSan in trap mode.
+AddressSanitizer and LeakSanitizer do not work with MinGW on Windows, so they have not run yet;
+the first CI run on GitHub is their first run and may find more.
 
 ### Static analysis (cppcheck)
 
@@ -87,8 +88,8 @@ git push origin v0.52
 
 The tag message becomes the release notes (a tag without a message gets GitHub's generated
 list of changes). The release gets, for `cyd` and `headless`: `firmware.bin`,
-`bootloader.bin`, `partitions.bin`, plus `flasher_args.json` (the flash offsets) when ESP-IDF
-writes it, and a `SHA256SUMS.txt`. The build does not produce a merged (factory) image, so
+`bootloader.bin`, `partitions.bin`, plus a `FLASHING.txt` with the flash offsets (bootloader
+0x1000, partition table 0x8000, app 0x10000) and an esptool example, and a `SHA256SUMS.txt`. The build does not produce a merged (factory) image, so
 none is attached. Pushing the same tag again (after deleting it) replaces the files.
 
 ### Hardening on every workflow
@@ -115,39 +116,40 @@ security updates are on; non provider patterns and validity checks are off; ther
 rulesets and no branch protection; default workflow token permission is already `read`.
 The repo is public and owned by a user account (not an organization).
 
-Run these after the `ci-checks` branch is merged to main.
+Run these after the `ci-checks` branch is merged to main. They are bash commands (Git Bash
+works on Windows, PowerShell does not understand the `<<'EOF'` blocks).
 
 1. Keep CodeQL default setup **off**. It conflicts with `codeql.yml` (GitHub rejects the
    workflow's uploads while default setup is on). Check it says `not-configured`:
 
-   ```
-   gh api repos/revjmoney/axis-bbs/code-scanning/default-setup -q .state
-   ```
+```
+gh api repos/revjmoney/axis-bbs/code-scanning/default-setup -q .state
+```
 
 2. Private vulnerability reporting (already on; this is safe to repeat):
 
-   ```
-   gh api -X PUT repos/revjmoney/axis-bbs/private-vulnerability-reporting
-   ```
+```
+gh api -X PUT repos/revjmoney/axis-bbs/private-vulnerability-reporting
+```
 
 3. Secret scanning for non provider patterns (private keys, connection strings and similar)
    and validity checks (GitHub tests whether a leaked token is still live):
 
-   ```
-   gh api -X PATCH repos/revjmoney/axis-bbs --input - <<'EOF'
-   {"security_and_analysis": {
-     "secret_scanning_non_provider_patterns": {"status": "enabled"},
-     "secret_scanning_validity_checks": {"status": "enabled"}}}
-   EOF
-   ```
+```
+gh api -X PATCH repos/revjmoney/axis-bbs --input - <<'EOF'
+{"security_and_analysis": {
+  "secret_scanning_non_provider_patterns": {"status": "enabled"},
+  "secret_scanning_validity_checks": {"status": "enabled"}}}
+EOF
+```
 
    If GitHub answers that a feature is not available for this plan, leave that one off.
 
 4. Dependabot alerts (security updates already need them; this makes sure):
 
-   ```
-   gh api -X PUT repos/revjmoney/axis-bbs/vulnerability-alerts
-   ```
+```
+gh api -X PUT repos/revjmoney/axis-bbs/vulnerability-alerts
+```
 
 5. Branch ruleset for main: pull requests must pass the Build checks (`host` and `firmware`)
    before merging; force pushes and deleting main are blocked; Rev (repository admin) can still
@@ -155,30 +157,30 @@ Run these after the `ci-checks` branch is merged to main.
    admin bypass with `bypass_mode: always` is what keeps direct pushes working. GitHub then
    shows "Bypassed rule violations" on the push, which is expected.
 
-   ```
-   gh api -X POST repos/revjmoney/axis-bbs/rulesets --input - <<'EOF'
-   {
-     "name": "main",
-     "target": "branch",
-     "enforcement": "active",
-     "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-     "bypass_actors": [
-       {"actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always"}
-     ],
-     "rules": [
-       {"type": "deletion"},
-       {"type": "non_fast_forward"},
-       {"type": "required_status_checks",
-        "parameters": {
-          "strict_required_status_checks_policy": false,
-          "required_status_checks": [
-            {"context": "host", "integration_id": 15368},
-            {"context": "firmware", "integration_id": 15368}
-          ]}}
-     ]
-   }
-   EOF
-   ```
+```
+gh api -X POST repos/revjmoney/axis-bbs/rulesets --input - <<'EOF'
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+  "bypass_actors": [
+    {"actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always"}
+  ],
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"},
+    {"type": "required_status_checks",
+     "parameters": {
+       "strict_required_status_checks_policy": false,
+       "required_status_checks": [
+         {"context": "host", "integration_id": 15368},
+         {"context": "firmware", "integration_id": 15368}
+       ]}}
+  ]
+}
+EOF
+```
 
    `actor_id` 5 is the built in Admin repository role, `integration_id` 15368 is GitHub
    Actions. Not yet tested on this user owned repo. After creating it, confirm with
@@ -189,13 +191,18 @@ Run these after the `ci-checks` branch is merged to main.
    Later, once the sanitizer findings are fixed, `asan-ubsan` can be added the same way.
 
 6. Optional: require every action to be pinned to a full commit SHA (this repo already
-   complies, so it only guards future edits):
+   complies, so it only guards future edits). First look at the current values and keep
+   `enabled` and `allowed_actions` as they are in the PUT:
 
-   ```
-   gh api -X PUT repos/revjmoney/axis-bbs/actions/permissions --input - <<'EOF'
-   {"enabled": true, "allowed_actions": "all", "sha_pinning_required": true}
-   EOF
-   ```
+```
+gh api repos/revjmoney/axis-bbs/actions/permissions
+```
+
+```
+gh api -X PUT repos/revjmoney/axis-bbs/actions/permissions --input - <<'EOF'
+{"enabled": true, "allowed_actions": "all", "sha_pinning_required": true}
+EOF
+```
 
    If GitHub rejects `sha_pinning_required`, use Settings > Actions > General instead.
 
