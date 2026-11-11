@@ -163,6 +163,41 @@ void NetState::capGroup(const std::string& group, size_t cap) {
     }
 }
 
+// After a rotate lands, anything stored that the new chain no longer vouches for is dropped,
+// so live state matches what a reload would accept. Nothing earlier is restored.
+void NetState::reverify() {
+    bool dropped = false;
+    for (size_t i = 0; i < rotates_.size();) {
+        if (verifyAt(rotates_[i].n)) {
+            ++i;
+        } else {
+            rotates_.erase(rotates_.begin() + static_cast<long>(i));
+            dropped = true;
+        }
+    }
+    for (auto it = notices_.begin(); it != notices_.end();) {
+        if (verifyAt(it->second.n)) {
+            ++it;
+        } else {
+            it = notices_.erase(it);
+            dropped = true;
+        }
+    }
+    if (notices_.find(std::make_pair(std::string("limits"), std::string("net"))) == notices_.end()) {
+        posts_ = kDefaultPostsPerDay;
+        bytes_ = kDefaultBytesPerDay;
+    }
+    if (dropped) {
+        highSeq_ = 0;
+        for (const Entry& r : rotates_) highSeq_ = std::max(highSeq_, r.n.seq);
+        for (const auto& kv : notices_) highSeq_ = std::max(highSeq_, kv.second.n.seq);
+    }
+    std::string keys[2];
+    keysAt(0xFFFFFFFFu, keys);
+    setRevKey(0, keys[0]);
+    setRevKey(1, keys[1]);
+}
+
 // Accepted risk: nothing here bounds seq. A signing key that leaks before Rev rotates it is a
 // full compromise; the recovery is a firmware update carrying new built-in keys.
 bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
@@ -174,7 +209,8 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
         if (rotates_.size() >= kMaxRotates) return false;
         if (n.target != (n.key == 0 ? "1" : "0")) return false;
         if (!isLowerHex(n.value, 64) || allZero(n.value)) return false;
-        if (!rotates_.empty() && n.seq <= rotates_.back().n.seq) return false;
+        for (const Entry& r : rotates_)
+            if (r.n.seq == n.seq) return false;
         std::string keys[2];
         keysAt(n.seq, keys);
         if (n.value == keys[n.key]) return false;  // would give both slots the same key
@@ -182,11 +218,11 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
         e.n = n;
         e.day = nowDay;
         e.order = ++counter_;
-        rotates_.push_back(e);
-        keysAt(0xFFFFFFFFu, keys);
-        setRevKey(0, keys[0]);
-        setRevKey(1, keys[1]);
+        auto pos = rotates_.begin();
+        while (pos != rotates_.end() && pos->n.seq < n.seq) ++pos;
+        rotates_.insert(pos, e);
         if (n.seq > highSeq_) highSeq_ = n.seq;
+        reverify();
         return true;
     }
 
@@ -313,6 +349,7 @@ void NetState::load(const std::string& text, uint32_t nowDay) {
                      [](const std::pair<NetNotice, uint32_t>& a,
                         const std::pair<NetNotice, uint32_t>& b) { return a.first.seq < b.first.seq; });
     for (const auto& p : pending) applyNotice(p.first, p.second);
+    prune(nowDay);
 }
 
 // ---- NetSeen ----

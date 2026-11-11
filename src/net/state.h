@@ -64,6 +64,7 @@ private:
     };
     bool keysAt(uint32_t seq, std::string out[2]) const;
     bool verifyAt(const NetNotice& n) const;
+    void reverify();
     void capGroup(const std::string& group, size_t cap);
     std::map<std::string, CardRec> cards_;
     std::map<std::pair<std::string, std::string>, Entry> notices_;  // (group, target), not rotates

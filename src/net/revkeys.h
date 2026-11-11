@@ -14,5 +14,7 @@ void setRevKey(int i, const std::string& hex);
 const std::string& builtinRevKey(int i);
 // Test hook: replace both keys (and the built-ins they start from).
 void setRevKeysForTest(const std::string& a, const std::string& b);
+// Test hook: restore the real built-in keys as both the built-ins and the current keys.
+void resetRevKeysForTest();
 
 }  // namespace axis::net

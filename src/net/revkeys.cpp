@@ -7,7 +7,8 @@
 namespace axis::net {
 
 namespace {
-std::string g_builtin[2] = {std::string(64, '0'), std::string(64, '0')};
+const std::string g_real[2] = {std::string(64, '0'), std::string(64, '0')};
+std::string g_builtin[2] = {g_real[0], g_real[1]};
 std::string g_keys[2] = {g_builtin[0], g_builtin[1]};
 const std::string g_empty;
 }  // namespace
@@ -30,6 +31,11 @@ void setRevKey(int i, const std::string& hex) {
 void setRevKeysForTest(const std::string& a, const std::string& b) {
     g_builtin[0] = g_keys[0] = a;
     g_builtin[1] = g_keys[1] = b;
+}
+
+void resetRevKeysForTest() {
+    g_builtin[0] = g_keys[0] = g_real[0];
+    g_builtin[1] = g_keys[1] = g_real[1];
 }
 
 }  // namespace axis::net
