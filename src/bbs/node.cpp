@@ -455,10 +455,11 @@ bool Node::showFrontDoor() {
 }
 
 void Node::showPrelogon() {  // a random PRELOGON1..9.ANS (else PRELOGON.ANS), then a key
+    auto has = [this](const std::string& n) { return exists_ ? exists_(n) : menuLoad_ && !menuLoad_(n).empty(); };
     std::vector<std::string> have;
     for (int i = 1; i <= 9; i++)
-        if (menuLoad_ && !menuLoad_("PRELOGON" + std::to_string(i) + ".ANS").empty()) have.push_back("PRELOGON" + std::to_string(i) + ".ANS");
-    if (have.empty() && menuLoad_ && !menuLoad_("PRELOGON.ANS").empty()) have.push_back("PRELOGON.ANS");
+        if (has("PRELOGON" + std::to_string(i) + ".ANS")) have.push_back("PRELOGON" + std::to_string(i) + ".ANS");
+    if (have.empty() && has("PRELOGON.ANS")) have.push_back("PRELOGON.ANS");
     if (have.empty()) {
         showLoginScreen();
         return;

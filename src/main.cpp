@@ -501,6 +501,37 @@ static std::string menuFile(const std::string& name) {
     return s;
 }
 
+// Does a menu screen exist and have a body? The same lookup as menuFileLocal (theme screen first, then /menus/name) but only
+// fopen + the file's size, no read: showPrelogon probes up to ten names and must not load 16 to 24 KB for each.
+static bool menuExistsLocal(const std::string& name, bool theme = true) {
+    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
+    FILE* f = theme ? openThemeScreen(name) : nullptr;
+    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
+    if (!f) return false;
+    bool has = fseek(f, 0, SEEK_END) == 0 && ftell(f) > 0;
+    fclose(f);
+    return has;
+}
+// The follower's answers from the main ("E"), kept until the theme may change (cleared with artCache).
+static std::map<std::string, bool> existsCache;
+static bool                        mainKnowsExists = false;  // the main has answered "E" with a "1" once: its "0" can be trusted
+static bool menuExists(const std::string& name) {
+    if (menuExistsLocal(name)) return true;
+    if (!asFollower() || !cluster) return false;
+    if (auto it = existsCache.find(name); it != existsCache.end()) return it->second;
+    std::string reply;
+    bool        asked = cluster->request(std::string("E\x1f") + name, reply, 3000);
+    if (asked && reply == "1") {
+        mainKnowsExists = true;
+        return existsCache[name] = true;
+    }
+    if (asked && reply == "0" && mainKnowsExists) return existsCache[name] = false;
+    // No answer, or a "0" from a main that may be older (it answers every letter it doesn't know with "0"): read it as before
+    bool has = !menuFile(name).empty();
+    if (asked) existsCache[name] = has;  // (an unanswered ask is asked again)
+    return has;
+}
+
 // /scripts/NAME.axs. 8000 bytes so a follower can carry the file in one 8 KB cluster frame.
 static std::string scriptRead(const std::string& path) {
     std::string s;
@@ -2052,6 +2083,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setArt([](const std::string& name) { return themeArt(name); });
         node->setPoster(posterPiece);
         node->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+        node->setExists(menuExists);
         wireScripts(node.get());
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
         node->setOneLiners(
@@ -2530,6 +2562,7 @@ static void startCluster() {
     cluster->settings = [] { return axis::bbs::formatConfig(cfg); };
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
         artCache.clear();  // the theme may have changed
+        existsCache.clear();
         if (storageHasSd()) {  // the SD board keeps the BBS's settings: a stand-in main's older copy must not replace them
             Serial.println("axis: settings from a main without the card: kept our own");
             return;
@@ -2583,7 +2616,7 @@ static void startCluster() {
         }
     };
     // A follower's request is told apart by its first letter. The file server (cluster/remotefiles.cpp) owns
-    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H B and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
+    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H B E and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
     // until 2026-11-09: that took every file open (packs, views, downloads) and upload away from a follower.
     cluster->onRequest = [](int nodeNum, const std::string& req) {
         servedRequest = true;  // a follower waits on this: no nap this turn
@@ -2624,6 +2657,7 @@ static void startCluster() {
             HeapScope scope("U");
             return "1" + menuFileLocal(req.substr(2), false);
         }  // a menu file or its art (/menus only: under 8 KB)
+        if (req.rfind("E\x1f", 0) == 0) return std::string(menuExistsLocal(req.substr(2)) ? "1" : "0");  // does a menu screen exist: no read
         if (req.rfind("J\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
             std::string name = req.substr(2);
             if (name.empty()) {
@@ -2793,6 +2827,7 @@ static void startLocal() {
     localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
     localNode->setPoster(posterPiece);
     localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+    localNode->setExists(menuExists);
     wireScripts(localNode.get());
     localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
     localNode->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
@@ -3771,6 +3806,7 @@ static void handleSerial() {
             serialWfc->setArt([](const std::string& name) { return themeArt(name); });
             serialWfc->setPoster(posterPiece);
             serialWfc->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+            serialWfc->setExists(menuExists);
             wireScripts(serialWfc.get());
             serialWfc->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& l) { sharedListAdd(n, l); });
             serialWfc->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});

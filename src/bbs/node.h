@@ -129,6 +129,8 @@ public:
         listGet_ = std::move(get);
         listAdd_ = std::move(add);
     }
+    // Whether a menu screen exists, asked without reading it (showPrelogon's probes). Unset: the screen is loaded to find out.
+    void        setExists(std::function<bool(const std::string&)> exists) { exists_ = std::move(exists); }
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
     // With direct set, a screen leaves in pieces of about this size as it is drawn, instead of piling up whole in the output.
     static constexpr size_t kOutSpill = 2048;
@@ -238,6 +240,7 @@ private:
     void        pumpPoster();
     std::unique_ptr<MenuRunner>                    menu_;
     MenuRunner::Loader                             menuLoad_;
+    std::function<bool(const std::string&)>        exists_;  // setExists: a menu screen's presence, without reading it
     bool                                           frontDoor_ = false;  // ViSiON/3's front door (PDMATRIX) is running
     bool                                           backToMatrix_ = false;  // a key after check access: the matrix again
     int                                            wanders_ = 0;        // matrix picks without logging in (10, then goodbye)
