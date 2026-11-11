@@ -91,9 +91,11 @@ void AnsiTerm::csi(char f) {
     if (y_ > rows_ - 1) y_ = rows_ - 1;
 }
 
-void AnsiTerm::feed(const std::string& bytes) {
-    for (char raw : bytes) {
-        uint8_t ch = (uint8_t)raw;
+void AnsiTerm::feed(const std::string& bytes) { feed(bytes.data(), bytes.size()); }
+
+void AnsiTerm::feed(const char* p, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        uint8_t ch = (uint8_t)p[i];
         if (esc_ == 1) {
             esc_ = ch == '[' ? 2 : 0;
             params_.clear();

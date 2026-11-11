@@ -22,6 +22,7 @@ public:
     int         cols() const { return cols_; }
     int         rows() const { return rows_; }
     void        feed(const std::string& bytes);
+    void        feed(const char* p, size_t n);  // in pieces: an escape may span two calls
     const Cell& cell(int r, int c) const { return cells_[r][c]; }
     int         row() const { return y_; }
     int         col() const { return x_; }

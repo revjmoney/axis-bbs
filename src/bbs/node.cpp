@@ -467,19 +467,48 @@ void Node::showPrelogon() {  // a random PRELOGON1..9.ANS (else PRELOGON.ANS), t
     state_ = State::PreLogon;
 }
 
+// Where LOGIN.ANS puts the handle and password, remembered per art so the 80x25 terminal is built only when the art (or
+// anything that changes its widths) is new. Only the Node loop (core 1) touches it.
+namespace {
+struct LoginCells {
+    size_t key;
+    int    at[2][2];
+};
+LoginCells g_loginCells[4];
+int        g_loginCellsN = 0, g_loginCellsNext = 0;
+uint32_t   g_loginScans = 0;
+}  // namespace
+uint32_t Node::loginScans() { return g_loginScans; }
+
 void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the handle and password go
     std::string a = menuLoad_ ? menuLoad_("LOGIN.ANS") : "";
     loginAt_[0][0] = loginAt_[1][0] = 0;
     if (a.find("|{") != std::string::npos) {
-        std::string drawn = expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); });
-        std::unique_ptr<AnsiTerm> t(new AnsiTerm());
-        t->feed(drawn);
-        for (int r = 0; r < t->rows(); r++)
-            for (int c = 0; c + 3 < t->cols(); c++)
-                if (t->cell(r, c).ch == '|' && t->cell(r, c + 1).ch == '{' && t->cell(r, c + 3).ch == '}') {
-                    int which = t->cell(r, c + 2).ch == 'P' ? 0 : t->cell(r, c + 2).ch == 'O' ? 1 : -1;
-                    if (which >= 0) loginAt_[which][0] = r + 1, loginAt_[which][1] = c + 1;
-                }
+        // the key: the raw art plus the width of every value its pipe codes can expand to before a field
+        size_t key = std::hash<std::string>{}(a);
+        for (const char* k : {"UH", "NAME", "LEVEL", "GL", "CALLS", "TL", "NODE", "MN", "TIME", "DATE", "BN", "%UN", "%BN", "%SN", "%NN", "%DT", "%VN"})
+            key = key * 131 + menuValue(k).size() + 1;
+        LoginCells* hit = nullptr;
+        for (int i = 0; i < g_loginCellsN; i++)
+            if (g_loginCells[i].key == key) hit = &g_loginCells[i];
+        if (hit) {
+            for (int w = 0; w < 2; w++) loginAt_[w][0] = hit->at[w][0], loginAt_[w][1] = hit->at[w][1];
+        } else {
+            g_loginScans++;
+            std::unique_ptr<AnsiTerm> t(new AnsiTerm());
+            expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); },
+                      [&t](const char* d, size_t n) { t->feed(d, n); });
+            for (int r = 0; r < t->rows(); r++)
+                for (int c = 0; c + 3 < t->cols(); c++)
+                    if (t->cell(r, c).ch == '|' && t->cell(r, c + 1).ch == '{' && t->cell(r, c + 3).ch == '}') {
+                        int which = t->cell(r, c + 2).ch == 'P' ? 0 : t->cell(r, c + 2).ch == 'O' ? 1 : -1;
+                        if (which >= 0) loginAt_[which][0] = r + 1, loginAt_[which][1] = c + 1;
+                    }
+            t.reset();
+            LoginCells& e = g_loginCells[g_loginCellsN < 4 ? g_loginCellsN++ : (g_loginCellsNext++ & 3)];
+            e.key = key;
+            for (int w = 0; w < 2; w++) e.at[w][0] = loginAt_[w][0], e.at[w][1] = loginAt_[w][1];
+        }
         for (const char* m : {"|{P}", "|{O}"})
             for (size_t at; (at = a.find(m)) != std::string::npos;) a.replace(at, 4, "    ");
     }
