@@ -369,7 +369,7 @@ std::string window(const std::string& title, const std::vector<std::pair<std::st
         s += "  ";
         for (int i = 0; i < width && d[i]; i++) {
             if (d[i] == '#') {  // runs: full blocks, ending in a top half; the odd grey one for depth
-                bool endsHere = d == drip3 || (d == drip2 ? drip3[i] != '#' : drip2[i] != '#');
+                bool endsHere = d == drip3 || (d == drip2 ? (i >= (int)sizeof drip3 || drip3[i] != '#') : (i >= (int)sizeof drip2 || drip2[i] != '#'));
                 s += i % 7 == 3 ? DGREY : ORANGE;
                 s += endsHere ? "\xdf" : "\xdb";
             } else if (d[i] == '.') {
