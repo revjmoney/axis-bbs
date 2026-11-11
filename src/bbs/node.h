@@ -130,6 +130,8 @@ public:
         listAdd_ = std::move(add);
     }
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
+    // With direct set, a screen leaves in pieces of about this size as it is drawn, instead of piling up whole in the output.
+    static constexpr size_t kOutSpill = 2048;
     void        begin(uint32_t nowMs);
     void        beginLocal(uint32_t nowMs);
     void        beginLocalMenu(uint32_t nowMs);  // the board's local logon: sysop, then the same login sequence as a caller
@@ -223,6 +225,7 @@ private:
     BbsConfig                 cfg_;
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
+    void spill();  // direct set and the output has reached kOutSpill: all of it goes out now, in order
     std::function<std::string(const std::string&)> art_;
     PosterPiece                                    posterPiece_;
     std::string                                    posterFile_, posterCarry_;  // the poster streaming out, and a cut line

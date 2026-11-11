@@ -2121,8 +2121,11 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
                     cluster->request(std::string("Q\x1f") + line, reply, 3000);
                 }
             });
-        node->setDirect([](const char* p, size_t n) {  // the login art, from flash in 1 KB pieces
-            if (line) line->write((const uint8_t*)p, n);
+        // The login art from flash, and any screen as it is drawn (2 KB at a time), straight to this session's own line:
+        // looked up by slot each time (the line moves between `line` and sessions[slot], and hangUp drops it first).
+        node->setDirect([slot](const char* p, size_t n) {
+            WifiStream* l = (size_t)slot < sessions.size() ? sessionLine((size_t)slot) : nullptr;
+            if (l) l->write((const uint8_t*)p, n);
         });
         if (panelConsoleNew) {  // the sysop, from the panel: no password asked, and the WFC is the first screen
             node->beginLocal(millis());

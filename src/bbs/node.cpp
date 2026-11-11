@@ -339,7 +339,10 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
     builtin_ = false;
     if (!load || load("MAIN.MNU").empty()) return;
     menu_.reset(new MenuRunner(
-        load, [this](const char* d, size_t n) { out_.append(d, n); },
+        load, [this](const char* d, size_t n) {
+            out_.append(d, n);
+            spill();
+        },
         [this](const std::string& k) { return menuValue(k); }));
     menu_->setArtPieces(std::move(pieces));
     menu_->cantRun = [this](const MenuCmd& c) {  // a DOOR: line whose door can't start here (a DOS .EXE): off the menu
@@ -429,7 +432,10 @@ std::string Node::loadScreen(const std::string& file) const {  // a menu file, o
 }
 
 void Node::paintScreen(const std::string& art) {
-    expandArt(art, menuWho(), [this](const std::string& k) { return menuValue(k); }, [this](const char* d, size_t n) { out_.append(d, n); });
+    expandArt(art, menuWho(), [this](const std::string& k) { return menuValue(k); }, [this](const char* d, size_t n) {
+            out_.append(d, n);
+            spill();
+        });
 }
 
 bool Node::showArt(const std::string& file) {
@@ -478,7 +484,10 @@ void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the ha
             for (size_t at; (at = a.find(m)) != std::string::npos;) a.replace(at, 4, "    ");
     }
     out_ += theme::CLS;
-    if (!a.empty()) expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); }, [this](const char* d, size_t n) { out_.append(d, n); });
+    if (!a.empty()) expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); }, [this](const char* d, size_t n) {
+            out_.append(d, n);
+            spill();
+        });
     out_ += "\x1b[0m\r\n";
     state_ = State::Login;
     prompt();
@@ -684,7 +693,10 @@ void Node::posterPiece(const std::string& raw, bool last) {
     }
     if (cut) {
         expandArt(posterCarry_.substr(0, cut), menuWho(), [this](const std::string& k) { return menuValue(k); },
-                  [this](const char* d, size_t n) { out_.append(d, n); });
+                  [this](const char* d, size_t n) {
+            out_.append(d, n);
+            spill();
+        });
         posterCarry_.erase(0, cut);
     }
     if (last) {
@@ -1324,7 +1336,10 @@ void Node::wfcDraw(const WfcSnapshot& s, bool clear) {
         out_ += std::string(RST) + "\x1b[H";
         for (size_t i = art.find("\r\n"); i != std::string::npos; i = art.find("\r\n", i + 5)) art.insert(i, "\x1b[K");
     }
-    expandArt(art, AcsUser{}, wfcValues(s), [this](const char* d, size_t n) { out_.append(d, n); });
+    expandArt(art, AcsUser{}, wfcValues(s), [this](const char* d, size_t n) {
+            out_.append(d, n);
+            spill();
+        });
     out_ += RST;
     if (!clear) out_ += "\x1b[J";  // whatever was below (a coming soon line)
 }
@@ -1399,7 +1414,10 @@ void Node::drawPreview() {
         out_ += std::string("\r\n\r\n   ") + AMBER + "No screens for this look on the card." + RST;
     } else if (wfc) {
         if (!classic) art = cleanWfcArt(art);
-        expandArt(art, AcsUser{}, wfcValues(wfcSnapshot()), [this](const char* d, size_t n) { out_.append(d, n); });
+        expandArt(art, AcsUser{}, wfcValues(wfcSnapshot()), [this](const char* d, size_t n) {
+            out_.append(d, n);
+            spill();
+        });
     } else {
         paintScreen(art);
     }
@@ -3492,6 +3510,13 @@ void Node::poll(uint32_t nowMs) {
 
 static size_t outMax_ = 0;
 size_t        Node::outMax() { return outMax_; }
+
+void Node::spill() {
+    if (!direct_ || out_.size() < kOutSpill) return;
+    if (out_.capacity() > outMax_) outMax_ = out_.capacity();
+    direct_(out_.data(), out_.size());
+    out_.clear();  // (the capacity stays, for the next piece)
+}
 
 std::string Node::takeOutput() {
     if (out_.capacity() > outMax_) outMax_ = out_.capacity();
