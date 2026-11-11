@@ -3,6 +3,8 @@
 #include "bbs/daystats.h"
 #include "bbs/sysopshell.h"
 #include "bbs/wfc.h"
+#include "bbs/wfc80_art.h"
+#include "platform/cyd/wfccyd_art.h"
 
 #include "doctest.h"
 
@@ -144,4 +146,27 @@ TEST_CASE("wfc: TC is the lifetime call total") {
     CHECK(t == s);
     t.totalCalls++;
     CHECK_FALSE(t == s);  // a new call redraws the screen
+}
+
+TEST_CASE("wfc: both built-in screens show TC") {
+    WfcSnapshot s;
+    s.totalCalls = 4821;
+    AnsiTerm cyd(45, 24);
+    drawWfc(kWfcCydAns, s, cyd);
+    auto has = [](AnsiTerm& t, const std::string& text) {
+        for (int r = 0; r < t.rows(); r++) {
+            std::string row;
+            for (int c = 0; c < t.cols(); c++) row += (char)t.cell(r, c).ch;
+            if (row.find(text) != std::string::npos) return true;
+        }
+        return false;
+    };
+    CHECK(has(cyd, "total 4821"));
+    bool big = false;  // the classic 80x25 screen (CGA cells): its calls row carries the total field
+    for (int r = 0; r < kWfc80Rows; r++) {
+        std::string row;
+        for (int c = 0; c < 80; c++) row += (char)kWfc80Art[r][c][0];
+        big = big || row.find("Total @TC") != std::string::npos;
+    }
+    CHECK(big);
 }
