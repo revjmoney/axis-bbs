@@ -18,8 +18,10 @@
 
 namespace axis::net {
 
-// Caps sized for the ESP32 (about 90 KB free heap): the whole net state stays around 24 KB at worst.
-constexpr size_t kNetMaxCards = 48;          // the card touched longest ago makes room
+// Caps sized for the ESP32 (about 90 KB free heap). Cards are what an outsider can inflate, so their
+// cap is the tight one (about 22 KB at worst). Notices are made only with Rev's keys, so their
+// count is under Rev's control, not an attacker's.
+constexpr size_t kNetMaxCards = 32;          // the card touched longest ago makes room
 constexpr size_t kNetMaxSeenBoards = 48;     // origin boards in the seen set, least recently used goes
 constexpr uint32_t kSeenWindow = 64;         // seqs tracked below each board's highest
 constexpr size_t kNetMaxIngressBoards = 48;  // boards counted per day
