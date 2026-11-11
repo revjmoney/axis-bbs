@@ -107,10 +107,16 @@ bool NetState::addCard(const NetCard& c) {
         return true;
     }
     if (cards_.size() >= kNetMaxCards) {
-        // Full: the card added or refreshed longest ago makes room, so a flood cannot lock others out.
-        auto oldest = cards_.begin();
-        for (auto i = cards_.begin(); i != cards_.end(); ++i)
-            if (i->second.touched < oldest->second.touched) oldest = i;
+        // Full: the unpinned card added or refreshed longest ago makes room, so a flood cannot lock
+        // others out. Cards carrying a current Rev key, and those the owner pins (this board, its
+        // link peers), never go; if every slot is pinned the new card is refused.
+        auto oldest = cards_.end();
+        for (auto i = cards_.begin(); i != cards_.end(); ++i) {
+            const NetCard& k = i->second.c;
+            if (k.pub == revKey(0) || k.pub == revKey(1) || (pinned_ && pinned_(k.board))) continue;
+            if (oldest == cards_.end() || i->second.touched < oldest->second.touched) oldest = i;
+        }
+        if (oldest == cards_.end()) return false;
         cards_.erase(oldest);
     }
     CardRec r;

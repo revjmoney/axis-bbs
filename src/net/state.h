@@ -50,6 +50,8 @@ public:
     const NetCard* card(const std::string& board) const;
     // Visits every current card (no copies), for callers that need the list of known boards.
     void forEachCard(const std::function<void(const NetCard&)>& f) const;
+    // Boards whose cards are never evicted to make room (besides cards carrying a current Rev key).
+    void setPinned(std::function<bool(const std::string& board)> pinned) { pinned_ = std::move(pinned); }
     // The encoded line of the notice stored now for (group, target), or "" if none. Groups are
     // "post", "board" and "limits" (target "net"); see noticeGroup.
     std::string noticeLine(const std::string& group, const std::string& target) const;
@@ -80,6 +82,7 @@ private:
     std::map<std::string, CardRec> cards_;
     std::map<std::pair<std::string, std::string>, Entry> notices_;  // (group, target), not rotates
     std::vector<Entry> rotates_;                                     // seq order, at most kMaxRotates
+    std::function<bool(const std::string&)> pinned_;
     uint64_t counter_ = 0;
     uint32_t highSeq_ = 0;
     uint32_t posts_ = kDefaultPostsPerDay;

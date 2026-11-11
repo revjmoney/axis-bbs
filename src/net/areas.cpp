@@ -165,6 +165,8 @@ uint32_t netDateUnix(const std::string& text) {
 NetCore::NetCore(MessageStore& store, KeyPair me, std::function<uint32_t()> nowUnix, OutLog& log)
     : store_(store), me_(me), now_(std::move(nowUnix)), log_(log) {
     myBoard_ = boardId(toHex(me_.pub, 32));
+    // This board's own card and its link peers' cards are never evicted for room.
+    state_.setPinned([this](const std::string& b) { return b == myBoard_ || links_.count(b) > 0; });
     syncLimits();
 }
 
@@ -312,7 +314,9 @@ void NetCore::addLinkPeer(const std::string& board) {
         links_.erase(oldest);
     }
     Link l;
-    l.cursor = log_.next();
+    // Starts at the log's end. If the log is not open yet, the top value means the same thing:
+    // pendingFor brings a cursor past next() back to next().
+    l.cursor = log_.ok() ? log_.next() : kOutLogFail;
     l.lastSync = now_();
     links_[board] = l;
 }
@@ -353,7 +357,7 @@ NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer,
 std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::string& peer, size_t max) {
     std::vector<std::pair<uint32_t, std::string>> out;
     auto it = links_.find(peer);
-    if (it == links_.end()) return out;
+    if (it == links_.end() || !log_.ok()) return out;  // a log not open yet leaves cursors alone
     Link& link = it->second;
     if (link.cursor < log_.first()) link.cursor = log_.first();  // fell behind: what was trimmed is lost
     if (link.cursor > log_.next()) link.cursor = log_.next();
@@ -385,7 +389,7 @@ std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::str
 
 void NetCore::acked(const std::string& peer, uint32_t index) {
     auto it = links_.find(peer);
-    if (it == links_.end() || index >= log_.next()) return;
+    if (it == links_.end() || !log_.ok() || index >= log_.next()) return;
     if (index + 1 > it->second.cursor) it->second.cursor = index + 1;
 }
 

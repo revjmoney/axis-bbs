@@ -21,6 +21,7 @@ public:
     virtual uint32_t first() const = 0;                          // the oldest index kept
     virtual uint32_t next() const = 0;                           // the index the next append gets
     virtual void trimTo(uint32_t keepLast) = 0;                  // keep only the newest keepLast entries
+    virtual bool ok() const { return true; }  // false while the log cannot be used (cursors stay put)
     virtual ~OutLog() = default;
 };
 
@@ -55,7 +56,11 @@ public:
         std::function<bool(const std::string& header, uint32_t from)> replace;
     };
     explicit FileOutLog(Io io) : io_(std::move(io)) {}
-    void open();
+    // Reads the header. False if the file exists but its first line could not be read (the file is
+    // left untouched); until open succeeds, append fails and read and trimTo do nothing. The host
+    // can call open again later.
+    bool open();
+    bool ok() const override { return ok_; }
 
     uint32_t append(const std::string& entry) override;
     bool read(uint32_t index, std::string& entry) override;
@@ -67,6 +72,7 @@ private:
     Io io_;
     uint32_t base_ = 0, count_ = 0;
     bool header_ = false;  // the file starts with its "#<base>" line
+    bool ok_ = false;      // open succeeded
 };
 
 }  // namespace axis::net

@@ -34,25 +34,32 @@ void MemOutLog::trimTo(uint32_t keepLast) {
 
 // ---- FileOutLog ----
 
-void FileOutLog::open() {
+bool FileOutLog::open() {
     base_ = 0;
     count_ = 0;
     header_ = false;
+    ok_ = false;
     uint32_t n = io_.lineCount ? io_.lineCount() : 0;
-    if (n == 0) return;  // the header is written with the first entry
+    if (n == 0) {  // empty or missing: the header is written with the first entry
+        ok_ = true;
+        return true;
+    }
     std::string h;
-    if (io_.readLine && io_.readLine(0, h) && h.size() > 1 && h[0] == '#') {
+    if (!io_.readLine || !io_.readLine(0, h)) return false;  // could not read: leave the file alone
+    if (!h.empty() && h[0] == '#') {
         base_ = (uint32_t)std::strtoul(h.c_str() + 1, nullptr, 10);
         count_ = n - 1;
-        header_ = true;
-    } else if (io_.replace && io_.replace("#0", 0)) {  // no header: the whole file is entries from 0
+    } else {  // read fine but no header: the whole file is entries from 0
+        if (!io_.replace || !io_.replace("#0", 0)) return false;
         count_ = n;
-        header_ = true;
     }
+    header_ = true;
+    ok_ = true;
+    return true;
 }
 
 uint32_t FileOutLog::append(const std::string& entry) {
-    if (!oneLine(entry) || !io_.append || next() == kOutLogFail) return kOutLogFail;
+    if (!ok_ || !oneLine(entry) || !io_.append || next() == kOutLogFail) return kOutLogFail;
     if (!header_) {
         if (count_ != 0 || !io_.append("#" + std::to_string(base_))) return kOutLogFail;
         header_ = true;
@@ -63,12 +70,12 @@ uint32_t FileOutLog::append(const std::string& entry) {
 }
 
 bool FileOutLog::read(uint32_t index, std::string& entry) {
-    if (!header_ || index < base_ || index >= next() || !io_.readLine) return false;
+    if (!ok_ || !header_ || index < base_ || index >= next() || !io_.readLine) return false;
     return io_.readLine(index - base_ + 1, entry);
 }
 
 void FileOutLog::trimTo(uint32_t keepLast) {
-    if (!header_ || count_ <= keepLast || !io_.replace) return;
+    if (!ok_ || !header_ || count_ <= keepLast || !io_.replace) return;
     uint32_t skip = count_ - keepLast;
     // One file swap carries both the new base (in its header) and the kept entries, so the two
     // never disagree. If the swap fails, nothing changes.
