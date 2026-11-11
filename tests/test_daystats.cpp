@@ -132,7 +132,7 @@ TEST_CASE("@STATS total= takes plain digits only") {
         CHECK_FALSE(parseStatTotal(bad, n));
         CHECK(n == 7);
     }
-    CHECK(boardOnlyCommand("@STATS"));  // each board keeps its own counters: a follower answers for itself
+    CHECK(boardOnlyCommand("@STATS"));  // a follower answers from its copy of the main's numbers, never over the link
     CHECK(boardOnlyCommand("@stats total=5"));
     CHECK_FALSE(boardOnlyCommand("@STATUS"));
 }

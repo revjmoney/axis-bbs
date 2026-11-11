@@ -210,6 +210,22 @@ TEST_CASE("a second board joins as node 2 and both list both nodes") {
     CHECK(t.b.c->nodes().size() == 2);
 }
 
+TEST_CASE("the main's heartbeat carries one extra field to a follower, and the node list is unchanged") {
+    TwoBoards   t;
+    std::string got;
+    t.a.c->beatExtra = [] { return std::string("v1 day=1 calls=2 posts=0 uploads=0 total=9\nChipBreaker"); };
+    t.b.c->onBeatExtra = [&got](const std::string& x) { got = x; };
+    run({&t.a, &t.b}, t.now, 1500);
+    CHECK(got == "v1 day=1 calls=2 posts=0 uploads=0 total=9\nChipBreaker");
+    CHECK(t.b.c->nodes().size() == 2);
+    CHECK(t.b.c->role() == Role::Follower);
+    got.clear();
+    t.a.c->beatExtra = [] { return std::string("bad\x1f" "field"); };  // a separator inside: not sent at all
+    run({&t.a, &t.b}, t.now, 1500);
+    CHECK(got.empty());
+    CHECK(t.b.c->nodes().size() == 2);
+}
+
 TEST_CASE("each node's caller shows on every board") {
     TwoBoards t;
     t.b.c->setStatus("Spindle Kid", "Files");
