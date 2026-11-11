@@ -68,8 +68,8 @@ bool sendAll(intptr_t s, const char* p, size_t n, int timeoutMs = 10000) {
 TcpStream::TcpStream(intptr_t sock) : sock_(sock) {
     nonBlocking(sock_);
     int one = 1;
-    setsockopt((decltype(socket(0, 0, 0)))sock_, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
-    setsockopt((decltype(socket(0, 0, 0)))sock_, SOL_SOCKET, SO_KEEPALIVE, (const char*)&one, sizeof one);
+    setsockopt((decltype(socket(0, 0, 0)))sock_, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
+    setsockopt((decltype(socket(0, 0, 0)))sock_, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char*>(&one), sizeof one);
     std::string hello = telnet_.initialNegotiation();
     sendAll(sock_, hello.data(), hello.size());
 }
@@ -141,7 +141,7 @@ TcpListener::TcpListener(uint16_t port) {
     netInit();
     sock_ = (intptr_t)socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;
-    setsockopt((decltype(socket(0, 0, 0)))sock_, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof one);
+    setsockopt((decltype(socket(0, 0, 0)))sock_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&one), sizeof one);
     sockaddr_in a = {};
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_ANY);

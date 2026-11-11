@@ -20,7 +20,7 @@ public:
     NewUserApp(std::string handle, std::string& out, const BbsConfig& cfg, uint32_t (*rng)());
     void    begin();
     Outcome key(char c);
-    User    user() const { return user_; }  // after Submitted: pending, password hashed, answers filled in
+    const User& user() const { return user_; }  // after Submitted: pending, password hashed, answers filled in
 
 private:
     enum class Kind { Text, Optional, YesNo, Password, Confirm, Agree, Submit };

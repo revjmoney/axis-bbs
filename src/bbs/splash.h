@@ -21,7 +21,7 @@ public:
 private:
     uint32_t start_, lastFrame_ = 0;
     int      rowsSent_ = -1;     // rows typed in so far (-1: not even the clear screen)
-    uint8_t  shown_[24][80][2];  // what the caller's screen has now: character, attribute
+    uint8_t  shown_[24][80][2] = {};  // what the caller's screen has now: character, attribute
     bool     haveShown_ = false;
 };
 

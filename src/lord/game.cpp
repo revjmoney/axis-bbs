@@ -60,7 +60,7 @@ int usesLeft(const uint8_t* raw) {
 
 int i16(const uint8_t* p) { return (int16_t)(p[0] | (p[1] << 8)); }
 int32_t i32(const uint8_t* p) { return (int32_t)(uint32_t)(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24)); }
-void w16(uint8_t* p, int v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+void w16(uint8_t* p, int v) { p[0] = (uint8_t)v; p[1] = (uint8_t)((unsigned)v >> 8); }
 void w32(uint8_t* p, int32_t v) {
     uint32_t u = (uint32_t)v;
     p[0] = (uint8_t)u;

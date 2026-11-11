@@ -22,7 +22,7 @@ public:
     std::string line(const std::string& in);  // what to send back
     bool        authed() const { return authed_; }
     bool        closed() const { return closed_; }
-    std::string who() const { return who_; }
+    const std::string& who() const { return who_; }
     std::function<std::string(const std::string&)> run;      // runs an @ command, returns its output
     std::function<void(const std::string&)>        onEvent;  // for the event log
     std::function<std::string(const std::string&)> extra;    // other lines after login (the board's screen wall and console)

@@ -28,7 +28,7 @@ public:
     void push(const std::string& keys) {
         for (char c : keys) in_.push_back((uint8_t)c);
     }
-    std::string output() const { return out_; }
+    const std::string& output() const { return out_; }
     void        clearOutput() { out_.clear(); }
     void        hangUp() { up_ = false; }
 

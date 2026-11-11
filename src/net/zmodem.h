@@ -33,9 +33,9 @@ private:
     Mode    mode_ = Mode::Seek;
     bool    crc32_ = false, zdle_ = false;
     int     cans_ = 0;
-    uint8_t buf_[16];
+    uint8_t buf_[16] = {};
     size_t  n_ = 0, need_ = 0;
-    char    hex_[14];
+    char    hex_[14] = {};
 };
 
 class ZmodemSender : public Transfer {
