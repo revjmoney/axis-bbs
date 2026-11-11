@@ -298,33 +298,49 @@ std::string NetCore::originate(const std::string& area, const Message& m, int* n
     return p.id;
 }
 
-void NetCore::addLinkPeer(const std::string& board) {
+size_t NetCore::poolSize(bool outbound) const {
+    size_t n = 0;
+    for (const auto& kv : links_)
+        if (kv.second.outbound == outbound) n++;
+    return n;
+}
+
+// Makes room for one more in a pool: the one in that pool synced longest ago goes, never the
+// first peer and never `keep`. False if nothing could go.
+bool NetCore::makeRoom(bool outbound, const std::string& keep) {
+    if (poolSize(outbound) < (outbound ? kMaxOutboundPeers : kMaxInboundPeers)) return true;
+    auto oldest = links_.end();
+    for (auto i = links_.begin(); i != links_.end(); ++i)
+        if (i->second.outbound == outbound && i->first != firstPeer_ && i->first != keep &&
+            (oldest == links_.end() || i->second.lastSync < oldest->second.lastSync))
+            oldest = i;
+    if (oldest == links_.end()) return false;
+    links_.erase(oldest);
+    return true;
+}
+
+void NetCore::addLinkPeer(const std::string& board, bool outbound) {
     if (!isHex16(board) || board == myBoard_) return;
     auto it = links_.find(board);
     if (it != links_.end()) {
+        if (outbound && !it->second.outbound && makeRoom(true, board)) it->second.outbound = true;
         it->second.lastSync = now_();
         return;
     }
-    if (links_.size() >= kMaxLinkPeers) {  // the one synced longest ago goes, never the first peer
-        auto oldest = links_.end();
-        for (auto i = links_.begin(); i != links_.end(); ++i)
-            if (i->first != firstPeer_ && (oldest == links_.end() || i->second.lastSync < oldest->second.lastSync))
-                oldest = i;
-        if (oldest == links_.end()) return;
-        links_.erase(oldest);
-    }
+    if (!makeRoom(outbound, "")) return;
     Link l;
     // Starts at the log's end. If the log is not open yet, the top value means the same thing:
     // pendingFor brings a cursor past next() back to next().
     l.cursor = log_.ok() ? log_.next() : kOutLogFail;
     l.lastSync = now_();
+    l.outbound = outbound;
     links_[board] = l;
 }
 
 void NetCore::setFirstPeer(const std::string& board) {
     if (!isHex16(board) || board == myBoard_) return;
     firstPeer_ = board;
-    addLinkPeer(board);
+    addLinkPeer(board, true);
 }
 
 // What to send for a log entry. Skip only when it is excluded for this peer or confirmed gone;
@@ -396,7 +412,8 @@ void NetCore::acked(const std::string& peer, uint32_t index) {
 std::string NetCore::saveCursors() const {
     std::string out;
     for (const auto& kv : links_)
-        out += kv.first + " " + std::to_string(kv.second.cursor) + " " + std::to_string(kv.second.lastSync) + "\n";
+        out += kv.first + " " + std::to_string(kv.second.cursor) + " " + std::to_string(kv.second.lastSync) +
+               (kv.second.outbound ? " out\n" : " in\n");
     return out;
 }
 
@@ -413,7 +430,14 @@ void NetCore::loadCursors(const std::string& text) {
         Link l;
         if (t.size() < 2 || !isHex16(t[0]) || t[0] == myBoard_ || !parseSeq(t[1], l.cursor)) continue;
         if (t.size() > 2 && !parseSeq(t[2], l.lastSync)) continue;
-        if (links_.size() >= kMaxLinkPeers && !links_.count(t[0])) continue;
+        if (links_.count(t[0])) continue;
+        if (t.size() > 3) {
+            if (t[3] != "out" && t[3] != "in") continue;
+            l.outbound = t[3] == "out";
+        } else {
+            l.outbound = poolSize(true) < kMaxOutboundPeers;  // an older file without pools
+        }
+        if (poolSize(l.outbound) >= (l.outbound ? kMaxOutboundPeers : kMaxInboundPeers)) continue;
         links_[t[0]] = l;
     }
 }

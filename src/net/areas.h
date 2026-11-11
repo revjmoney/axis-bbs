@@ -38,7 +38,9 @@ std::string netPostId(const std::string& net);
 std::string netDateText(uint32_t unixTime);
 uint32_t netDateUnix(const std::string& text);
 
-constexpr size_t kMaxLinkPeers = 8;        // boards we sync with; the longest unsynced goes first
+constexpr size_t kMaxLinkPeers = 8;        // boards we sync with: both pools together
+constexpr size_t kMaxOutboundPeers = 4;    // boards this board dials, plus the first peer
+constexpr size_t kMaxInboundPeers = 4;     // boards that dialed us; the longest unsynced goes first
 constexpr uint32_t kOutLogKeep = 5000;     // outbound log entries kept
 constexpr uint32_t kOutLogSlack = 500;     // the log is trimmed back to kOutLogKeep past this many more
 constexpr uint32_t kNetKeepPosts = 500;
@@ -96,12 +98,15 @@ public:
     // num, if given, gets the stored message number.
     std::string originate(const std::string& area, const bbs::Message& m, int* num = nullptr);
 
-    // A board we sync with (the first peer, then each board that completes a session with us).
-    // A new one starts at the log's end; it gets the current state from the snapshot exchange.
-    // Calling it again marks a sync now. At kMaxLinkPeers the one synced longest ago goes, never
-    // the first peer.
-    void addLinkPeer(const std::string& board);
-    // The board's first peer: added as a link peer and pinned.
+    // A board we sync with, in one of two pools. Outbound (kMaxOutboundPeers): boards this board
+    // dials, and the first peer; only the host's dialing adds to it. Inbound (kMaxInboundPeers):
+    // boards that dialed us and proved who they are. A full pool loses the one in it synced
+    // longest ago, never the first peer; an add never evicts from the other pool, so strangers
+    // dialing in can never push out the boards this board dials. A board already held is kept
+    // (an outbound add moves an inbound one to the outbound pool). A new one starts at the log's
+    // end; it gets the current state from the snapshot exchange. Calling it again marks a sync now.
+    void addLinkPeer(const std::string& board, bool outbound);
+    // The board's first peer: added as an outbound link peer and pinned.
     void setFirstPeer(const std::string& board);
     bool isLinkPeer(const std::string& board) const { return links_.count(board) > 0; }
     // Up to max (log index, encoded line) pairs for a link peer, oldest first, stopping once the
@@ -111,7 +116,9 @@ public:
     std::vector<std::pair<uint32_t, std::string>> pendingFor(const std::string& peer, size_t max);
     // The peer has the entry at index: its cursor moves past it (acks come in order).
     void acked(const std::string& peer, uint32_t index);
-    std::string saveCursors() const;  // "<peer> <index> <last sync unix>" per line
+    // "<peer> <index> <last sync unix> <out|in>" per line. On load the pool field is optional:
+    // without it a peer goes to the outbound pool while it has room, else the inbound one.
+    std::string saveCursors() const;
     void loadCursors(const std::string& text);
 
     // History for a new board: the stored posts of every Sysop Net area dated at or after
@@ -143,7 +150,10 @@ private:
         uint32_t lastSync = 0;
         uint32_t stuckAt = 0xFFFFFFFFu;  // the entry whose post could not be read last time
         uint8_t strikes = 0;             // calls in a row stuck on it
+        bool outbound = false;           // which pool it is in
     };
+    size_t poolSize(bool outbound) const;
+    bool makeRoom(bool outbound, const std::string& keep);  // evicts within one pool
 
     uint32_t day() const { return now_() / 86400; }
     void syncLimits() { ingress_.setLimits(state_.postsPerDay(), state_.bytesPerDay()); }

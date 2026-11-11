@@ -3,9 +3,13 @@
 // NetSession: the board to board sync state machine (handshake, state exchange, history for a
 // new board, outbound log entries with acks). See session.h and the wire notes below.
 //
-// Wire, one line each, ending with '\n'. In each direction the order is:
-//   AXISNET 2 <card> <nonce>   (the dialer first; the answerer replies once it has the dialer's)
-//   PROOF <sig of peer nonce + own board>
+// Wire, one line each, ending with '\n'. The handshake:
+//   dialer   -> AXISNET 2 <card> <dialer nonce>
+//   answerer -> AXISNET 2 <card> <answerer nonce>     (once the dialer's hello checks out)
+//   dialer   -> PROOF <sig of transcript D>
+//   answerer -> PROOF <sig of transcript A>           (only once the dialer's proof checks out)
+// where transcript R = "AXISNET2|R|<dialer nonce>|<answerer nonce>|<dialer board>|<answerer board>".
+// Then in each direction, in this order:
 //   SEQ <highSeq> [WANT 30]
 //   S <record>* SEND           (the snapshot, maybe empty)
 //   H <post>* HEND             (only if the peer sent WANT)
@@ -61,6 +65,10 @@ const char* tookName(NetCore::Took t) {
     }
 }
 
+// A record this side may put on the wire: with any prefix (at most 32 characters) it stays within
+// what a receiver takes.
+bool fits(const std::string& rec) { return !rec.empty() && rec.size() <= kNetMaxFrame; }
+
 }  // namespace
 
 NetSession::NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, const std::string& nonceHex16,
@@ -70,7 +78,7 @@ NetSession::NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, 
         fail("bad nonce", nullptr);
         return;
     }
-    if (me_.pub != toHex(signer_.pub, 32) || me_.board != boardId(me_.pub) || encode(me_).empty()) {
+    if (me_.pub != toHex(signer_.pub, 32) || me_.board != boardId(me_.pub) || !fits(encode(me_))) {
         fail("bad own card", nullptr);
         return;
     }
@@ -104,9 +112,15 @@ void NetSession::fail(const char* why, const char* bye) {
     peerCard_ = NetCard();
 }
 
+// Unsent output past kSyncOutMax: the peer (or the host) is not taking it. Fails the session.
+bool NetSession::outOverflow() {
+    if (failed_ || out_.size() <= kSyncOutMax) return false;
+    fail("peer not reading", nullptr);
+    return true;
+}
+
 void NetSession::feed(const char* p, size_t n) {
     if (failed_ || n == 0) return;
-    heard_ = true;
     size_t i = 0;
     while (i < n && !failed_) {
         const char* nl = (const char*)std::memchr(p + i, '\n', n - i);
@@ -124,10 +138,13 @@ void NetSession::feed(const char* p, size_t n) {
         l.swap(in_);  // the buffer is empty again before the line is handled
         if (!l.empty() && l.back() == '\r') l.pop_back();  // records never hold a CR
         line(l);
+        if (outOverflow()) return;
     }
 }
 
 void NetSession::line(std::string& l) {
+    heard_ = true;  // only complete lines count against the silence timer
+    if (++linesRx_ > kSyncMaxLines) return fail("too many lines", "limit");
     if (l.compare(0, 4, "BYE ") == 0 || l == "BYE") {
         std::string reason = l.size() > 4 ? l.substr(4, 32) : "";
         for (char& c : reason)
@@ -139,8 +156,8 @@ void NetSession::line(std::string& l) {
     switch (phase_) {
         case Phase::Hello:
             if (!hello(l)) return;
-            if (!dialer_) sendHello();
-            send("PROOF " + signHex(signer_, peerNonce_ + me_.board));
+            if (dialer_) send("PROOF " + signHex(signer_, transcript('D')));  // the dialer proves first
+            else sendHello();  // the answerer signs nothing until the dialer's proof checks out
             phase_ = Phase::Proof;
             return;
         case Phase::Proof:
@@ -179,25 +196,34 @@ bool NetSession::hello(const std::string& l) {
     return true;
 }
 
+std::string NetSession::transcript(char role) const {
+    const std::string& dNonce = dialer_ ? nonce_ : peerNonce_;
+    const std::string& aNonce = dialer_ ? peerNonce_ : nonce_;
+    const std::string& dBoard = dialer_ ? me_.board : peer_;
+    const std::string& aBoard = dialer_ ? peer_ : me_.board;
+    return std::string("AXISNET2|") + role + "|" + dNonce + "|" + aNonce + "|" + dBoard + "|" + aBoard;
+}
+
 void NetSession::proof(const std::string& l) {
-    if (l.compare(0, 6, "PROOF ") != 0 || !isHex(l.substr(6), 128)) {
-        fail("bad line", "bad");
-        return;
-    }
-    if (!verifyHex(peerCard_.pub, nonce_ + peer_, l.substr(6))) {
-        fail("bad proof", "bad");
-        return;
-    }
+    if (l.compare(0, 6, "PROOF ") != 0 || !isHex(l.substr(6), 128)) return fail("bad line", "bad");
+    // The peer's proof carries the peer's role: D from a dialer, A from an answerer.
+    if (!verifyHex(peerCard_.pub, transcript(dialer_ ? 'A' : 'D'), l.substr(6))) return fail("bad proof", "bad");
+    if (!dialer_) send("PROOF " + signHex(signer_, transcript('A')));
+    enterSync();
+}
+
+void NetSession::enterSync() {
     // Proven. Whether it was a link peer before decides the snapshot on first contact; adding it
-    // first pins its card so the card is never evicted for room.
+    // first pins its card so the card is never evicted for room. A board we dialed goes into the
+    // outbound pool, one that dialed us into the inbound pool.
     wasLink_ = core_.isLinkPeer(peer_);
-    core_.addLinkPeer(peer_);
+    core_.addLinkPeer(peer_, dialer_);
     core_.takeCard(peerCard_, peer_);
     peerCard_ = NetCard();
     phase_ = Phase::Sync;
     mySeq_ = core_.state().highSeq();
     send("SEQ " + std::to_string(mySeq_));
-    if (!core_.hasNetPosts()) send("WANT " + std::to_string(kSyncHistoryDays));
+    // WANT (or not) follows in the first tick with heap to spare: hasNetPosts reads headers.
 }
 
 void NetSession::syncLine(std::string& l) {
@@ -227,7 +253,7 @@ void NetSession::syncLine(std::string& l) {
         return takeState(rest);
     }
     if (verb == "H") {
-        peerDone_ = false;
+        if (!sentWant_ || peerHend_) return fail("bad line", "bad");  // history only when asked for
         return takeHistory(rest);
     }
     if (verb == "WANT") {
@@ -242,7 +268,11 @@ void NetSession::syncLine(std::string& l) {
         peerSend_ = true;
         return;
     }
-    if (verb == "HEND") return;
+    if (verb == "HEND") {
+        if (!sentWant_ || peerHend_) return fail("bad line", "bad");
+        peerHend_ = true;
+        return;
+    }
     if (verb == "DONE") {
         if (!peerSend_) return fail("bad line", "bad");
         peerDone_ = true;
@@ -320,13 +350,29 @@ void NetSession::takeHistory(const std::string& rec) {
 
 void NetSession::tick(uint32_t nowMs, bool heapOk) {
     if (failed_ || done()) return;
-    if (!started_ || heard_) {
+    if (!started_) {
         started_ = true;
+        startMs_ = lastRxMs_ = nowMs;
+    }
+    if (heard_) {
         heard_ = false;
         lastRxMs_ = nowMs;
     }
+    if ((uint32_t)(nowMs - startMs_) > kSyncDeadlineMs) return fail("too long", "timeout");
     if ((uint32_t)(nowMs - lastRxMs_) > kSyncTimeoutMs) return fail("timeout", "timeout");
-    if (phase_ != Phase::Sync || !peerSeq_ || !heapOk) return;
+    if (outOverflow()) return;
+    if (phase_ != Phase::Sync || !heapOk) return;
+
+    // 0. Whether to ask for history: only a board whose Sysop Net areas are empty does. Decided
+    // here, with heap to spare, and always before this side's SEND.
+    if (!wantDecided_) {
+        wantDecided_ = true;
+        if (!core_.hasNetPosts()) {
+            send("WANT " + std::to_string(kSyncHistoryDays));
+            sentWant_ = true;
+        }
+    }
+    if (!peerSeq_) return;
 
     size_t budget = kSyncPerTick;
     bool streamed = false;  // S or H lines went out: unanswered, so the peer may rightly be quiet
@@ -339,11 +385,13 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
             snapPos_ = 0;
         }
         while (snapPos_ < snap_.size() && budget && roomForData()) {
-            send("S " + snap_[snapPos_]);
+            if (fits(snap_[snapPos_])) {
+                send("S " + snap_[snapPos_]);
+                budget--;
+                streamed = true;
+            }
             std::string().swap(snap_[snapPos_]);
             snapPos_++;
-            budget--;
-            streamed = true;
         }
         if (snapPos_ < snap_.size()) {
             if (streamed) lastRxMs_ = nowMs;
@@ -367,6 +415,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
                 histDone_ = true;
                 break;
             }
+            if (!fits(l)) continue;
             send("H " + l);
             postsSent_++;
             budget--;
@@ -387,9 +436,18 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         for (auto& e : got) fetched_.emplace_back(e.first, std::move(e.second));
     }
     while (budget && !fetched_.empty() && inFlight_.size() < kSyncInFlight && roomForData()) {
-        auto e = std::move(fetched_.front());
+        auto& front = fetched_.front();
+        if (!fits(front.second)) {
+            // Too big for any receiver: it can never go. Passed over once everything before it
+            // is answered, so the cursor never skips an entry still in flight.
+            if (!inFlight_.empty()) break;
+            core_.acked(peer_, front.first);
+            fetched_.pop_front();
+            continue;
+        }
+        auto e = std::move(front);
         fetched_.pop_front();
-        bool post = !e.second.empty() && e.second[0] == (char)NetKind::Post;
+        bool post = e.second[0] == (char)NetKind::Post;
         send("E " + std::to_string(e.first) + " " + e.second);
         inFlight_.emplace_back(e.first, post);
         if (post) postsSent_++;
@@ -401,6 +459,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         send("DONE");
         sentDone_ = true;
     }
+    outOverflow();
 }
 
 }  // namespace axis::net
