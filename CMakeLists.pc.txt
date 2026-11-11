@@ -129,6 +129,7 @@ add_executable(axis_tests
     tests/test_pathresolve.cpp
     tests/test_imagekey.cpp
     tests/test_telnetstream.cpp
+    tests/test_lfd3k_link.cpp
     tests/test_files.cpp
     tests/test_zip.cpp
     tests/test_ansiterm.cpp
