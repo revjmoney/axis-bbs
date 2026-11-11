@@ -7,11 +7,11 @@ Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WF
 | `BN` | BBS name |
 | `SN` | Sysop |
 | `NA`..`NH` | Node lines 1 to 8, in the order the cluster lists them: "1 Handle  activity" or "1 waiting". A node past the eighth is left off. A caller on the LFD3K-SM modem gets its tier after the activity: "1 Handle  Online  RADIO SF7" (it follows a retrain within 5 s; the signal is in `RR`). |
-| `CT` | Calls today (`CT`, `PT` and `UT` are kept in internal flash, so a reboot or a flash keeps them; they reset at local midnight once the clock is set) |
-| `TC` | Total calls: every call this board has answered, kept through reboots and never reset at midnight (`@STATS total=<n>` sets it) |
+| `CT` | Calls today (`CT`, `PT` and `UT` are kept in internal flash, so a reboot or a flash keeps them; they reset at local midnight once the clock is set). In a cluster `CT`, `PT`, `UT`, `TC` and `LC` are the whole cluster's, kept by the main: a follower sends its calls, uploads and last caller to the main and shows the main's numbers (from its heartbeat) plus any of its own not yet sent |
+| `TC` | Total calls: every call answered (on every board of a cluster), kept through reboots and never reset at midnight (`@STATS total=<n>` on the main sets it) |
 | `PT` | Posts today |
 | `UT` | Uploads today |
-| `LC` | Last caller |
+| `LC` | Last caller (in a cluster, the newest on any board) |
 | `SD` | SD free (for example "1.2G") |
 | `RM` | RAM free, in KB |
 | `IP` | IP address |
