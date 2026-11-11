@@ -1,0 +1,57 @@
+# cppcheck over src/, reported to GitHub code scanning (Security tab, category "cppcheck").
+# The step itself never fails the run, so the existing backlog does not turn anything red.
+# Code scanning compares a pull request with main, so only findings the pull request adds show
+# up on it, and only a new cppcheck "error" fails its code scanning check.
+# Covers the files in the host build (compile_commands.json from CMake). ESP32 only files
+# (src/platform/cyd, src/main.cpp) need ESP-IDF headers and are left out. Generated art
+# headers and third_party/ are filtered out by tools/ci/cppcheck_sarif.py.
+name: Static analysis
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 6 * * 1"  # Mondays 06:41 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: static-analysis-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  cppcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Tools
+        run: sh tools/ci/apt_install.sh cppcheck cmake ninja-build g++
+      - name: Compile database
+        run: |
+          cmake -S . -B build-cppcheck -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          python3 - <<'PY'
+          import json, os
+          root = os.getcwd()
+          db = json.load(open("build-cppcheck/compile_commands.json"))
+          keep = [e for e in db
+                  if os.path.relpath(os.path.join(e["directory"], e["file"]), root).replace(os.sep, "/").startswith("src/")]
+          json.dump(keep, open("build-cppcheck/src_commands.json", "w"), indent=1)
+          print(len(keep), "src files of", len(db))
+          PY
+      - name: cppcheck
+        run: |
+          cppcheck --version
+          cppcheck --project=build-cppcheck/src_commands.json \
+            --enable=warning,performance,portability \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            -j "$(nproc)" \
+            --xml --xml-version=2 2> cppcheck.xml
+          python3 tools/ci/cppcheck_sarif.py cppcheck.xml cppcheck.sarif
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          sarif_file: cppcheck.sarif
+          category: cppcheck
