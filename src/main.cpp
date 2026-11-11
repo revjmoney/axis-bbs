@@ -356,6 +356,9 @@ static std::string posterPiece(const std::string& name, size_t offset, size_t wa
     if (reply.size() > want) reply.resize(want);
     return reply;
 }
+static bool wfcScreen(const std::string& name) {  // a waiting screen (or its lite one): from the WFC skin's folder
+    return name == "WFC.ANS" || name == "WFCCYD.ANS" || name == "WFC.LITE.ANS" || name == "WFCCYD.LITE.ANS";
+}
 static std::string themeArtLocal(const std::string& name) {
     if (!storageHasSd() || name.find('/') != std::string::npos) return "";
     std::string look, file;
@@ -366,7 +369,7 @@ static std::string themeArtLocal(const std::string& name) {
     }
     if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never read whole
     // The waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme.
-    const std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme;
+    const std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg) : cfg.theme;
     std::string s = readThemeFile(folder.c_str(), name);
     if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name);
     return s;
@@ -383,7 +386,7 @@ static std::string themeArtPiece(const std::string& name, size_t off, size_t wan
     if (want > cap - off) want = cap - off;
     // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
     // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
-    std::string folder = name == "WFC.ANS" || name == "WFCCYD.ANS" ? axis::bbs::wfcFolder(cfg) : cfg.theme, file = name, look;
+    std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg) : cfg.theme, file = name, look;
     if (axis::bbs::theme::splitLookFile(name, look, file)) folder = look;
     std::string s = readThemeFile(folder.c_str(), file, want, off, opened);
     if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, opened);
@@ -953,6 +956,8 @@ static void pushBoardToCallers() {
     one(node.get());
     one(localNode.get());
     for (size_t i = 0; i < sessions.size(); i++) one(sessions[i].node.get());
+    for (size_t i = 0; i < sessions.size(); i++)  // modem_link off: calls already on stop taking link reports
+        if (WifiStream* l = sessionLine(i)) l->acceptLink(cfg.modemLink);
 }
 static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~9 KB)
 static std::unique_ptr<AnsiScreen>          localScreen;
@@ -1082,8 +1087,9 @@ static void drawNodeDetail(int i) {
         row(3, "doing", n->activityText().c_str());
         snprintf(b, sizeof b, "%lum %02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
         row(4, "online", b);
-        std::string radio = axis::net::linkLabel(n->link(), false);  // "RADIO SF7" for a caller on the LFD3K-SM modem
-        row(5, "from", l->remoteIP().toString() + (radio.empty() ? "" : (String("  ") + radio.c_str()).c_str()));
+        std::string from = l->remoteIP().toString().c_str(), radio = axis::net::linkLabel(n->link(), false);
+        if (!radio.empty()) from += "  " + radio;  // "RADIO SF7" for a caller on the LFD3K-SM modem
+        row(5, "from", from.c_str());
         row(6, "sysop", n->isSysop() ? "yes" : "no");
         if (axis::bbs::User* u = users.find(n->handle())) {
             row(7, "calls", String(u->calls));
@@ -1408,7 +1414,15 @@ struct FoundModem {
 static std::vector<FoundModem> foundModems;
 static mdns_search_once_t*     modemSearch = nullptr;  // an mDNS search for _lfd3k._tcp running in the background
 static uint32_t                modemSearchMs = 0;
-static void modemSearchForget() { modemSearch = nullptr; }
+static void modemSearchForget() {  // before MDNS.end(): never leave a search for it (or for nobody) to free
+    if (!modemSearch) return;
+    mdns_result_t* res = nullptr;
+    if (mdns_query_async_get_results(modemSearch, 3500, &res)) {  // (a running one ends within its own 3 s)
+        if (res) mdns_query_results_free(res);
+        mdns_query_async_delete(modemSearch);
+    }
+    modemSearch = nullptr;
+}
 static void modemSearchStart() {
     if (modemSearch || WiFi.status() != WL_CONNECTED) return;
     modemSearch = mdns_query_async_new(nullptr, "_lfd3k", "_tcp", MDNS_TYPE_PTR, 3000, 8, nullptr);
@@ -1432,11 +1446,15 @@ static void modemSearchPoll() {  // never waits: the results once the search is 
         std::string ip;
         for (mdns_ip_addr_t* a = r->addr; a && ip.empty(); a = a->next)
             if (a->addr.type == ESP_IPADDR_TYPE_V4) ip = IPAddress(a->addr.u_addr.ip4.addr).toString().c_str();
-        foundModems.push_back({name.empty() ? std::string("(no name)") : name, ip});
+        foundModems.push_back({name.empty() ? std::string("(no name)") : name, ip.empty() ? std::string("-") : ip});
     }
     if (res) mdns_query_results_free(res);
     mdns_query_async_delete(modemSearch);
     modemSearch = nullptr;
+    for (size_t i = 0; i < sessions.size(); i++)  // a Modem page that is open shows them now
+        if (axis::bbs::Node* n = sessionNode(i)) n->sysopReload("MODEM");
+    if (localNode) localNode->sysopReload("MODEM");
+    if (boardShell && boardShell->reloadIf("MODEM")) screenDirty = true;
 }
 
 static void hangUp() {
@@ -1825,7 +1843,7 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     } else {
         for (size_t i = 0; i < sessions.size(); i++) {
             axis::bbs::Node* n = sessionNode(i);
-            w.nodes.push_back({sessionNumber((int)i), n ? n->handle() : std::string(), n ? "Online" : "", n ? axis::net::linkLabel(n->link()) : ""});
+            w.nodes.push_back({sessionNumber((int)i), n ? n->handle() : std::string(), n ? "Online" : "", n ? n->linkShown() : ""});
         }
     }  // (in a cluster the label rides in each board's activity: serviceSession)
     w.radio = axis::bbs::wfcRadio(lastRadio, lastRadioWho);
@@ -1881,7 +1899,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
                 } else {
                     for (size_t i = 0; i < sessions.size(); i++) {
                         axis::bbs::Node* n = sessionNode(i);
-                        v.push_back({sessionNumber((int)i), n ? n->handle() : "", n ? "Online" : "", n ? axis::net::linkLabel(n->link()) : ""});
+                        v.push_back({sessionNumber((int)i), n ? n->handle() : "", n ? "Online" : "", n ? n->linkShown() : ""});
                     }
                 }
                 return v;
@@ -3685,17 +3703,24 @@ static void ledUpdate() {
 
 // The LFD3K-SM modem's newest link report for this caller, into its node (before any door, movie or transfer takes the
 // turn, so a retrain during one still counts).
+static uint32_t lastRadioMs = 0;
 static void takeLinkReport() {
     axis::net::LinkInfo li;
-    if (!line || !node || !line->takeLink(li)) return;
-    bool first = !node->viaModem();
-    node->setLink(li);
-    lastRadio = li;
-    lastRadioWho = node->handle();
-    if (first)
-        logEvent(String("radio caller on node ") + String(sessionNumber(curSession)) + ": " + axis::net::linkLabel(li).c_str() +
-                 (li.modem.empty() ? "" : (String(" via ") + li.modem.c_str()).c_str()));
-    screenDirty = true;
+    if (line && node && cfg.modemLink && line->takeLink(li)) {  // (at most one a second per line: TelnetStream::takeLink)
+        bool first = !node->viaModem();
+        node->setLink(li);
+        // the WFC's |R? codes: this caller's link when it is the one shown, a new call, a new tier, or the shown one is a minute old
+        // (two radio callers do not take turns at every report)
+        if (first || node->handle() == lastRadioWho || li.tier != lastRadio.tier || millis() - lastRadioMs > 60000u) {
+            lastRadio = li;
+            lastRadioWho = node->handle();
+            lastRadioMs = millis();
+        }
+        if (first)
+            logEvent(String("radio caller on node ") + String(sessionNumber(curSession)) + ": " + axis::net::linkLabel(li).c_str() +
+                     (li.modem.empty() ? "" : (String(" via ") + li.modem.c_str()).c_str()));
+    }
+    if (node && node->linkRedrawDue(millis())) screenDirty = true;  // the tier changed (at most every 5 s), not every report
 }
 
 // One session's turn: its caller, and its own movie or transfer when it has one.
@@ -3711,7 +3736,7 @@ static void serviceSession(int i) {
                      : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : st == S::Split ? "Split chat"
                      : st == S::AxisNet ? "Axis Net" : st == S::AxisCall ? "Remote board" : "Online";
             if (!node->available()) activity += " (DND)";
-            if (node->viaModem()) activity += "  " + axis::net::linkLabel(node->link(), false);  // (no RSSI: it would resend every 10 s)
+            if (!node->linkShown().empty()) activity += "  " + node->linkShown();  // (tier only, at most every 5 s: not a status per report)
         }
         Session& me = sessions[(size_t)i];
         if (handle + "|" + activity != me.lastStatus) {

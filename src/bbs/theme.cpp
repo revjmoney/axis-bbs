@@ -202,14 +202,14 @@ const char* menuScreenFile(const std::string& name) {
     };
     for (const auto& m : kMap)
         if (name == m[0]) return m[1];
-    static std::vector<std::pair<std::string, std::string>> lite;  // a lite screen maps as its full one: MAIN.LITE.ANS, MATRIX.LITE.ANS ...
-    if (lite.empty())
-        for (const auto& m : kMap) {
-            std::string a = m[0], b = m[1];
-            lite.push_back({a.substr(0, a.size() - 4) + ".LITE.ANS", b.substr(0, b.size() - 4) + ".LITE.ANS"});
-        }
-    for (const auto& m : lite)
-        if (name == m.first) return m.second.c_str();
+    static const char* const kLite[][2] = {  // a lite screen maps as its full one (docs/MENU-ART.md)
+        {"MAIN.LITE.ANS", "MAIN.LITE.ANS"},       {"LOGIN.LITE.ANS", "LOGIN.LITE.ANS"},     {"FASTLOGN.LITE.ANS", "FASTLOGN.LITE.ANS"},
+        {"NEWUSER.LITE.ANS", "NEWUSER.LITE.ANS"}, {"PDMATRIX.LITE.ANS", "MATRIX.LITE.ANS"}, {"FILEM.LITE.ANS", "FILES.LITE.ANS"},
+        {"DOORSM.LITE.ANS", "DOORS.LITE.ANS"},    {"MSGMENU.LITE.ANS", "MSGS.LITE.ANS"},    {"PRELOGON1.LITE.ANS", "PRELOGON.LITE.ANS"},
+        {"PRELOGON2.LITE.ANS", "SHOP.LITE.ANS"},  {"PRELOGON3.LITE.ANS", "MILL.LITE.ANS"},
+    };
+    for (const auto& m : kLite)
+        if (name == m[0]) return m[1];
     return nullptr;
 }
 

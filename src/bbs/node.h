@@ -161,10 +161,15 @@ public:
     const net::LinkInfo&   link() const { return link_; }
     bool                   viaModem() const { return link_.any; }
     std::string            linkTiers() const;  // the LoRa tiers this call has seen: "SF7", "SF7-SF9", "WIFI"; "" for none
+    // The short label the screens show ("RADIO SF7", no RSSI). It follows the link only when the tier changes, and at most
+    // every 5 s; linkRedrawDue() is true once each time it moved (the host redraws its screens then, not at every report).
+    const std::string&     linkShown() const { return linkShown_; }
+    bool                   linkRedrawDue(uint32_t nowMs);
+    void                   sysopReload(const std::string& title);  // the sysop menu's page with that title, built again (new data)
     // Lite screens: the modem's last report put this caller below lite_below_bps (0 = never). The same menus and features,
     // lighter art: no login splash, NAME.LITE.ANS where the theme or menu set has one, ANSI movies unpaced. Checked at every
     // screen, so a retrain up to a fast tier gets the normal art from the next screen on.
-    bool                   lite() const;  // bps at or below lite_below_bps
+    bool                   lite() const;  // a radio call, bps at or below lite_below_bps
     static std::string     liteName(const std::string& file);  // "MAIN.ANS" -> "MAIN.LITE.ANS"; "" for a name that has none
     std::string            editedMenu() const;  // the sysop's main menu items (cfg mainMenu) in a window
     void             resumeAfterDoor(DoorEnd how, uint32_t nowMs);
@@ -367,6 +372,10 @@ private:
     std::unique_ptr<AxisNetMenu> net_;
     net::LinkInfo                link_;
     std::shared_ptr<bool>        liteNow_ = std::make_shared<bool>(false);  // lite(), for the art loaders (survives a move)
+    // lite names this call found missing: asked once, not at every screen (a follower asks the main for each)
+    std::shared_ptr<std::vector<std::string>> liteMiss_ = std::make_shared<std::vector<std::string>>();
+    std::string                  linkShown_;
+    uint32_t                     linkShownMs_ = 0;
     int                          sfLo_ = 0, sfHi_ = 0;  // the fastest and slowest LoRa tier this call (0: none yet)
     bool                         sawWifi_ = false;
 };

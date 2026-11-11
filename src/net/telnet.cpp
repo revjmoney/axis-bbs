@@ -23,16 +23,19 @@ bool nameOk(const std::string& v) {
         if (!std::isalnum((unsigned char)c) && c != '-' && c != '_' && c != '.') return false;
     return true;
 }
-// "-81", "7.25", "1.8": a whole number, or tenths when `tenths` (more decimals are cut). False for anything else.
-bool number(const std::string& v, bool tenths, long& out) {
+// "-81", "7.25", "1.8": a whole number, or tenths when `tenths` (more decimals are cut). False for anything else, and for
+// more than 9 digits before the point. 64-bit sums: 9 digits times 10 can never overflow.
+bool number(const std::string& v, bool tenths, int64_t& out) {
     size_t i = 0;
     bool   neg = false;
     if (i < v.size() && (v[i] == '-' || v[i] == '+')) neg = v[i++] == '-';
-    long   whole = 0;
-    size_t digits = 0;
-    for (; i < v.size() && std::isdigit((unsigned char)v[i]); i++, digits++)
-        if (digits < 9) whole = whole * 10 + (v[i] - '0');
-    long frac = 0;
+    int64_t whole = 0;
+    size_t  digits = 0;
+    for (; i < v.size() && std::isdigit((unsigned char)v[i]); i++, digits++) {
+        if (digits >= 9) return false;
+        whole = whole * 10 + (v[i] - '0');
+    }
+    int64_t frac = 0;
     if (i < v.size() && v[i] == '.') {
         i++;
         if (i < v.size() && std::isdigit((unsigned char)v[i])) frac = v[i] - '0';
@@ -43,7 +46,7 @@ bool number(const std::string& v, bool tenths, long& out) {
     if (neg) out = -out;
     return true;
 }
-long clampL(long v, long lo, long hi) { return v < lo ? lo : v > hi ? hi : v; }
+int64_t clampL(int64_t v, int64_t lo, int64_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 }  // namespace
 
 int LinkInfo::sf() const {
@@ -68,7 +71,7 @@ bool parseLinkInfo(const std::string& payload, LinkInfo& out) {
         size_t eq = tok.find('=');
         if (eq == std::string::npos || eq == 0) continue;
         std::string k = tok.substr(0, eq), v = tok.substr(eq + 1);
-        long        n = 0;
+        int64_t     n = 0;
         if (k == "v") {
             if (!number(v, false, n) || n < 1) return false;
             l.version = (int)clampL(n, 1, 999);
@@ -189,7 +192,7 @@ void TelnetFilter::subnegotiation() {
         int w = b(1) << 8 | b(2), h = b(3) << 8 | b(4);
         if (w > 0) width_ = w;
         if (h > 0) height_ = h;
-    } else if (!sb_.empty() && (uint8_t)sb_[0] == kLinkOption && linkAgreed_) {  // a report we asked for (DO 90)
+    } else if (!sb_.empty() && (uint8_t)sb_[0] == kLinkOption && linkAgreed_ && linkOn_) {  // a report we asked for (DO 90), still wanted
         if (parseLinkInfo(sb_.substr(1), link_)) linkSeq_++;
     }
 }

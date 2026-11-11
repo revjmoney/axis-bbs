@@ -23,12 +23,11 @@ struct WfcNode {
 };
 
 // The newest LFD3K-SM link report on this board (the |R? codes), as the screen shows it; all "" before the first one.
+// "The same" means the same caller, modem and tier: the numbers (label with RSSI, bps, SNR, RSSI, retrains, LZ) move at
+// every report and must not redraw the WFC each time; they refresh with the next redraw (the minute tick at the latest).
 struct WfcRadio {
     std::string label, who, modem, tier, bps, snr, rssi, retrains, lz;
-    bool        operator==(const WfcRadio& o) const {
-        return label == o.label && who == o.who && modem == o.modem && tier == o.tier && bps == o.bps && snr == o.snr && rssi == o.rssi &&
-               retrains == o.retrains && lz == o.lz;
-    }
+    bool        operator==(const WfcRadio& o) const { return who == o.who && modem == o.modem && tier == o.tier; }
 };
 // who: the caller's handle (or "" for the modem's own caller name)
 WfcRadio wfcRadio(const net::LinkInfo& l, const std::string& who);

@@ -34,7 +34,7 @@ The starter set (`tools/menus/make_starter.py`) lays out:
 
 ## Lite art for slow radio callers
 
-A caller on the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM tells the board its air speed (telnet option
+A radio caller on the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM tells the board its air speed (telnet option
 90, `modem_link=1`). At or below `lite_below_bps` (7031 by default, so SF9 and slower; 0 turns it off) the caller gets
 lite screens: the same menus, bars, keys and features, just lighter art. The RotatoCAM login splash is skipped and
 ANSI movies in the pack viewer are not paced. A retrain to a faster tier gets the normal art from the next screen

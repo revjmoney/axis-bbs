@@ -48,6 +48,7 @@ public:
     bool callerBinary() const { return callerBinary_; }  // caller said WILL BINARY: input is 8-bit clean
     int height() const { return height_; }
     // LFD3K-LINK: answer the modem's WILL 90 with DO 90 (off: DONT, as for any option we don't use). Off by default.
+    // Turned off during a call, further reports are ignored.
     void            acceptLink(bool on) { linkOn_ = on; }
     bool            linkAgreed() const { return linkAgreed_; }
     const LinkInfo& link() const { return link_; }

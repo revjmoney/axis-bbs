@@ -31,10 +31,14 @@ public:
     const TelnetFilter& telnet() const { return telnet_; }
     // LFD3K-LINK (net/telnet.h): take the modem's link reports (answer its WILL 90 with DO 90). Set before start().
     void        acceptLink(bool on) { telnet_.acceptLink(on); }
-    // the newest link report, once: true when one came in since the last call
+    // the newest link report, once: true when one came in since the last call. At most one a second: reports that come
+    // faster are parsed and replaced by the next, and the newest is taken a second after the last one.
     bool        takeLink(LinkInfo& out) {
         if (telnet_.linkReports() == linkTaken_) return false;
+        uint32_t now = nowMs();
+        if (linkTakenMs_ && now - linkTakenMs_ < 1000) return false;
         linkTaken_ = telnet_.linkReports();
+        linkTakenMs_ = now ? now : 1;
         out = telnet_.link();
         return true;
     }
@@ -57,7 +61,7 @@ private:
     std::string  in_, out_;
     size_t       inPos_ = 0;  // next unread byte of in_
     bool         up_ = true;
-    uint32_t     linkTaken_ = 0, bytesIn_ = 0, bytesOut_ = 0;
+    uint32_t     linkTaken_ = 0, linkTakenMs_ = 0, bytesIn_ = 0, bytesOut_ = 0;
 };
 
 }  // namespace axis::net

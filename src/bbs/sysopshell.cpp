@@ -718,6 +718,12 @@ void SysopShell::station(Layer& l) {
 // ---- modem: the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM. Radio callers now, the last 10 radio calls, the
 // modems found on the LAN (mDNS) and its two settings. @MODEM lines: "now|node|handle|label|bps|tiers",
 // "call|handle|tiers|seconds|bytes|retrains", "found|name|ip", "search|on" while a search runs.
+bool SysopShell::reloadIf(const std::string& title) {
+    if (layers_.empty() || layers_.back().title != title || !layers_.back().build || asking_) return false;
+    refresh();
+    return true;
+}
+
 void SysopShell::modem(Layer& l) {
     std::string link = setting("modem_link"), lite = setting("lite_below_bps");
     l.items.push_back({"Take link reports from the modem", link == "0" ? "off" : "on", [this, link] {

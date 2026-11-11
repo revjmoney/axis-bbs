@@ -49,6 +49,8 @@ public:
     bool takePreview(std::string& key, std::string& look);
     void previewDone(const std::string& note);
     bool asking() const { return asking_; }  // a question is waiting for a typed answer and Enter
+    // The page on top, built and drawn again when its title is `title` and no question is open (new data came in). True if so.
+    bool reloadIf(const std::string& title);
     bool yesNo() const { return asking_ && yesNo_; }  // ... or for one key, Y or N
     bool secret() const { return asking_ && secret_; }  // the answer is a password
     const std::string& question() const { return question_; }

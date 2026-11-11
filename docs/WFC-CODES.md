@@ -6,7 +6,7 @@ Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WF
 |---|---|
 | `BN` | BBS name |
 | `SN` | Sysop |
-| `NA`..`NH` | Node lines 1 to 8, in the order the cluster lists them: "1 Handle  activity" or "1 waiting". A node past the eighth is left off. A caller on the LFD3K-SM modem gets its link after the activity: "1 Handle  Online  RADIO SF7 -81" (across a cluster, "RADIO SF7" without the signal). |
+| `NA`..`NH` | Node lines 1 to 8, in the order the cluster lists them: "1 Handle  activity" or "1 waiting". A node past the eighth is left off. A caller on the LFD3K-SM modem gets its tier after the activity: "1 Handle  Online  RADIO SF7" (it follows a retrain within 5 s; the signal is in `RR`). |
 | `CT` | Calls today |
 | `PT` | Posts today |
 | `UT` | Uploads today |
@@ -24,7 +24,7 @@ Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WF
 
 ## Radio codes (the LFD3K-SM modem)
 
-The newest link report from the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM on this board (telnet option 90, LFD3K-LINK; `modem_link=1` in axis.ini). They keep the last report after the call ends, and are blank until the first radio call. None of the shipped WFC screens use them: the node lines already show each radio caller's link. A sysop's own art can.
+The newest link report from the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM on this board (telnet option 90, LFD3K-LINK; `modem_link=1` in axis.ini). They keep the last report after the call ends, and are blank until the first radio call. A new caller or tier redraws the WFC; the numbers (`RL` with its signal, `RB`, `RS`, `RR`, `RN`, `RZ`) refresh with the next redraw, once a minute at the latest. None of the shipped WFC screens use them: the node lines already show each radio caller's link. A sysop's own art can.
 
 | Code | Shows |
 |---|---|

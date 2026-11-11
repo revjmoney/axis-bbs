@@ -253,7 +253,32 @@ Node::MciScope::~MciScope() {
     theme::setLite(false);
 }
 
-bool Node::lite() const { return cfg_.liteBelowBps > 0 && link_.any && link_.bps >= 0 && link_.bps <= cfg_.liteBelowBps; }
+bool Node::lite() const {
+    return cfg_.liteBelowBps > 0 && link_.any && link_.radio() && link_.bps >= 0 && link_.bps <= cfg_.liteBelowBps;
+}
+
+namespace {
+// A lite caller's NAME.LITE.ANS through `get`; "" when there is none. A miss is remembered for the call.
+template <class Get> std::string liteTry(std::vector<std::string>& miss, const std::string& name, Get get) {
+    std::string l = Node::liteName(name);
+    if (l.empty() || std::find(miss.begin(), miss.end(), l) != miss.end()) return "";
+    std::string a = get(l);
+    if (a.empty() && miss.size() < 64) miss.push_back(l);
+    return a;
+}
+}  // namespace
+
+bool Node::linkRedrawDue(uint32_t nowMs) {
+    std::string l = net::linkLabel(link_, false);
+    if (l == linkShown_ || (linkShownMs_ && nowMs - linkShownMs_ < 5000)) return false;
+    linkShown_ = l;
+    linkShownMs_ = nowMs ? nowMs : 1;
+    return true;
+}
+
+void Node::sysopReload(const std::string& title) {
+    if (shell_ && shell_->open()) shell_->reloadIf(title);
+}
 
 std::string Node::liteName(const std::string& file) {
     if (file.size() < 5 || file.find(':') != std::string::npos || file.find('/') != std::string::npos) return "";  // (a look preview: as is)
@@ -268,10 +293,9 @@ void Node::setArt(std::function<std::string(const std::string&)> art) {
         art_ = nullptr;
         return;
     }
-    art_ = [lite = liteNow_, art = std::move(art)](const std::string& name) {
+    art_ = [lite = liteNow_, miss = liteMiss_, art = std::move(art)](const std::string& name) {
         if (*lite)
-            if (std::string l = liteName(name); !l.empty())
-                if (std::string a = art(l); !a.empty()) return a;
+            if (std::string a = liteTry(*miss, name, art); !a.empty()) return a;
         return art(name);
     };
 }
@@ -298,16 +322,17 @@ char v3Command(const std::string& f) {
 void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
     menu_.reset();
     if (load)  // a lite caller gets NAME.LITE.ANS when the menu set has it
-        load = [lite = liteNow_, raw = std::move(load)](const std::string& name) {
+        load = [lite = liteNow_, miss = liteMiss_, raw = std::move(load)](const std::string& name) {
             if (*lite)
-                if (std::string l = liteName(name); !l.empty())
-                    if (std::string a = raw(l); !a.empty()) return a;
+                if (std::string a = liteTry(*miss, name, raw); !a.empty()) return a;
             return raw(name);
         };
     if (pieces)
-        pieces = [lite = liteNow_, raw = std::move(pieces)](const std::string& name, const ArtEmit& piece) {
+        pieces = [lite = liteNow_, miss = liteMiss_, raw = std::move(pieces)](const std::string& name, const ArtEmit& piece) {
             if (*lite)
-                if (std::string l = liteName(name); !l.empty() && raw(l, piece)) return true;
+                if (std::string l = liteName(name); !l.empty() && std::find(miss->begin(), miss->end(), l) == miss->end()) {
+                    if (raw(l, piece)) return true;  // (a miss here still lets the loader ask, which remembers it)
+                }
             return raw(name, piece);
         };
     menuLoad_ = load;
@@ -629,9 +654,10 @@ int Node::startPoster(const std::string& file, bool clear, bool hold) {
     bool        exists = false;
     std::string use = file, raw;
     if (lite())  // a lite caller's poster, when there is one: every piece then comes from that file
-        if (std::string l = liteName(file); !l.empty()) {
+        if (std::string l = liteName(file); !l.empty() && std::find(liteMiss_->begin(), liteMiss_->end(), l) == liteMiss_->end()) {
             raw = posterPiece_(l, 0, kPosterPiece, &exists);
             if (exists && !raw.empty()) use = l;
+            else liteMiss_->push_back(l);
         }
     if (use == file) raw = posterPiece_(file, 0, kPosterPiece, &exists);
     if (!exists || raw.empty()) return 0;
