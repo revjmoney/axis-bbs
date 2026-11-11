@@ -679,9 +679,10 @@ static uint32_t callStartMs = 0;
 static axis::bbs::DayStats dayStats;
 // In a cluster the main owns them. A follower (or a board still finding the main) adds its calls and uploads to
 // statsShare and sends them up (statsSync); it shows the main's numbers from the heartbeat plus what it has not had
-// acknowledged, and never rolls, counts into or saves its own /stats.txt. Its dayStats follows the main's numbers in RAM,
-// so a follower that has to stand in as main carries on from them. Posts need no sending: a follower's caller posts
-// straight into the main's message base (CountingMsgs), which counts them there.
+// acknowledged, and never rolls, counts into, saves or overwrites its own dayStats and /stats.txt (the card board can be
+// a follower for a moment, before a cardless main hands main back: its own numbers must survive that). A follower that
+// stands in as main counts on its own file. Posts need no sending: a follower's caller posts straight into the main's
+// message base (CountingMsgs), which counts them there.
 static axis::bbs::StatsShare statsShare;
 static axis::bbs::StatsInbox statsInbox;  // main: the follower batches already applied
 static bool statsOwner() {
@@ -843,17 +844,18 @@ static int      tapX = -1, tapY = -1;  // a tap from the @TAP serial command
 
 static uint32_t hwRandom() { return esp_random(); }
 
-// A follower heard the main's WFC numbers (a heartbeat, or the answer to a batch): its RAM copy follows them, so a
-// follower that stands in as main starts from them. Never saved here: /stats.txt is the main's.
+// A follower heard the main's WFC numbers (a heartbeat, or the answer to a batch): redraw when they changed. They are
+// only shown (statsShown), never copied into this board's own dayStats.
 static void statsHeard(bool ok) {
     if (!ok || statsOwner()) return;
     const axis::bbs::DayStats& m = statsShare.main();
-    static std::string         lastLc;
-    bool same = m.day == dayStats.day && m.calls == dayStats.calls && m.posts == dayStats.posts && m.uploads == dayStats.uploads &&
-                m.total == dayStats.total && lastLc == statsShare.mainLastCaller();
+    static axis::bbs::DayStats seen;
+    static std::string         seenLc;
+    bool same = m.day == seen.day && m.calls == seen.calls && m.posts == seen.posts && m.uploads == seen.uploads && m.total == seen.total &&
+                seenLc == statsShare.mainLastCaller();
     if (same) return;  // (every heartbeat brings them: redraw only on a change)
-    dayStats = m;
-    lastLc = statsShare.mainLastCaller();
+    seen = m;
+    seenLc = statsShare.mainLastCaller();
     screenDirty = true;
 }
 // Follower: send what it counted to the main, right after counting and then every 5 s until acknowledged. Only from the
