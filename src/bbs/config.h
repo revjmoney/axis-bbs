@@ -68,6 +68,14 @@ struct BbsConfig {
     // SF9 and slower; 0 = never). The plan's spellings modemLink and liteBelowBps are read too.
     bool        modemLink = true;
     int         liteBelowBps = 7031;
+    // Sysop Net (net/areas.h), run by the main: "net_sysop" (on unless 0) adds the four Sysop Net areas for the sysop;
+    // "net_first_peer" is the board this one dials first ("host:port" or "host:port@<16 hex board id>", blank = none);
+    // "net_sync_min" minutes between dials; posts kept per area ("net_keep_posts") and for how many days ("net_keep_days");
+    // the board's net card: "net_name" (blank = bbs_name), "net_sysop_name" (blank = sysop_handle), "net_location".
+    bool        netSysop = true;
+    std::string netFirstPeer;
+    int         netSyncMin = 15, netKeepPosts = 500, netKeepDays = 90;
+    std::string netName, netSysopName, netLocation;
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)
