@@ -50,7 +50,9 @@ def main(path):
     right = [('Calls today', 'CT'), ('Posts today', 'PT'), ('Uploads', 'UT'), ('Last caller', 'LC'),
              ('SD free', 'SD'), ('RAM free KB', 'RM'), ('IP address', 'IP'), ('Uptime', 'UP')]
     for i, (lab, code) in enumerate(right):
-        rows.append(row([(VALUE, ' ' + f('N' + 'ABCDEFGH'[i], 42)), (LABEL, ' '), (LABEL, lab.ljust(12)), (VALUE, f(code, 20))]))
+        # calls today shares its row with the lifetime total: "Calls today 12     Total 4821"
+        value = [(VALUE, f(code, 20))] if code != 'CT' else [(VALUE, f('CT', 5)), (LABEL, ' Total '), (VALUE, f('TC', 8))]
+        rows.append(row([(VALUE, ' ' + f('N' + 'ABCDEFGH'[i], 42)), (LABEL, ' '), (LABEL, lab.ljust(12))] + value))
     rows.append(rule(ML, MR))
     rows.append(row([(HEAD, ' EVENTS')]))
     for c in 'ABC':

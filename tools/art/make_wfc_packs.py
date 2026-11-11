@@ -34,7 +34,7 @@ KEYS = {'KS': 'S', 'KU': 'U', 'KM': '#', 'KB': 'B', 'KF': 'F', 'KL': 'L', 'KE': 
 # the keys in the order they are listed: code, the text right after it (the tap label), and the label's lead-in
 KEY_LIST = [('KO', '[space] logon'), ('KS', 'settings'), ('KU', 'users'), ('KM', 'menus'), ('KB', 'boards'),
             ('KF', 'files'), ('KL', 'logs'), ('KE', 'events'), ('KA', 'archive'), ('KV', 'validate')]
-COMMON = ['BN', 'SN', 'MB', 'VN', 'CT', 'PT', 'UT', 'LC', 'SD', 'RM', 'IP', 'UP', 'TM', 'DT', 'PG'] + list(KEYS)
+COMMON = ['BN', 'SN', 'MB', 'VN', 'CT', 'TC', 'PT', 'UT', 'LC', 'SD', 'RM', 'IP', 'UP', 'TM', 'DT', 'PG'] + list(KEYS)
 REQUIRED = {80: COMMON + ['N' + c for c in 'ABCDEFGH'] + ['EA', 'EB', 'EC'],
             45: COMMON + ['N' + c for c in 'ABCD'] + ['EA', 'EB', 'EC']}
 
@@ -369,7 +369,7 @@ def check(g, data, size, nodes):
     return labels
 
 
-SAMPLE = {'BN': 'AXIS UNDERGROUND CNC', 'SN': 'Rev', 'MB': 'main board', 'VN': '0.51', 'CT': '12', 'PT': '4', 'UT': '2', 'LC': 'Saylor',
+SAMPLE = {'BN': 'AXIS UNDERGROUND CNC', 'SN': 'Rev', 'MB': 'main board', 'VN': '0.51', 'CT': '12', 'TC': '4821', 'PT': '4', 'UT': '2', 'LC': 'Saylor',
           'SD': '14.2G', 'RM': '143', 'IP': '192.168.1.164', 'UP': '3d 04:12', 'TM': '21:04', 'DT': '2026-11-08',
           'NA': '1 Rev  reading messages', 'NB': '2 Saylor  in a door: LORD', 'NC': '3 waiting', 'ND': '4 waiting',
           'EA': '21:03 Saylor logged on to node 2', 'EB': '20:58 upload: AXISFLSH.ZIP (1.9 MB)',
@@ -414,6 +414,14 @@ def frame_top(g, r, c, w, label, st):
     x = g.text(r, x, ' :', st['dim'])
     g.text(r, x, b[1] * (c + w - 1 - x), st['frame'])
     g.put(r, c + w - 1, b[2], st['frame'])
+
+
+def frame_split(g, r, c, w, label, st):
+    """One box's bottom and the next one's top in a single row: the corners become tees ('├: label :┤')."""
+    frame_top(g, r, c, w, label, st)
+    tees = {SINGLE: '├┤', DOUBLE: '╠╣', MIXED: '╞╡'}[st['box']]
+    g.put(r, c, tees[0], st['frame'])
+    g.put(r, c + w - 1, tees[1], st['frame'])
 
 
 def frame_sides(g, r, c, w, st):
@@ -475,7 +483,12 @@ def wfc80(st):
         g.field(r, 2, 'N' + 'ABCDEFGH'[i], 41, st['value'])
         frame_sides(g, r, 45, 35, st)
         g.text(r, 47, stats[i][0].ljust(12), st['body'])
-        g.field(r, 59, stats[i][1], 19, st['value'])
+        if stats[i][1] == 'CT':  # calls today shares its row with the lifetime total
+            x = g.field(r, 59, 'CT', 5, st['value'])
+            x = g.text(r, x, ' total ', st['body'])
+            g.field(r, x, 'TC', 7, st['value'])
+        else:
+            g.field(r, 59, stats[i][1], 19, st['value'])
     frame_end(g, 15, 0, 45, st)
     frame_end(g, 15, 45, 35, st)
     frame_top(g, 16, 0, 80, 'events', st)
@@ -519,24 +532,26 @@ def wfccyd(st):
     for i in range(4):
         frame_sides(g, 7 + i, L, R, st)
         g.field(7 + i, L + 2, 'N' + 'ABCD'[i], 23, st['value'])
-    frame_end(g, 11, L, R, st)
-    frame_top(g, 12, L, R, 'today', st)
-    for r in range(13, 17):
+    frame_split(g, 11, L, R, 'today', st)  # the nodes box ends where the today box starts: a fifth row for the total
+    for r in range(12, 17):
         frame_sides(g, r, L, R, st)
-    x = g.text(13, L + 2, 'calls ', st['body'])
-    x = g.field(13, x, 'CT', 5, st['value'])
-    x = g.text(13, x, ' posts ', st['body'])
-    g.field(13, x, 'PT', 5, st['value'])
-    x = g.text(14, L + 2, 'ups   ', st['body'])
-    x = g.field(14, x, 'UT', 5, st['value'])
-    x = g.text(14, x, ' kb ram ', st['body'])
-    g.field(14, x, 'RM', 5, st['value'])
-    x = g.text(15, L + 2, 'last  ', st['body'])
-    g.field(15, x, 'LC', 17, st['value'])
-    x = g.text(16, L + 2, 'sd ', st['body'])
-    x = g.field(16, x, 'SD', 6, st['value'])
-    x = g.text(16, x, ' up ', st['body'])
-    g.field(16, x, 'UP', 10, st['value'])
+    x = g.text(12, L + 2, 'calls ', st['body'])
+    x = g.field(12, x, 'CT', 5, st['value'])
+    x = g.text(12, x, ' total ', st['body'])
+    g.field(12, x, 'TC', 6, st['value'])
+    x = g.text(13, L + 2, 'posts ', st['body'])
+    x = g.field(13, x, 'PT', 5, st['value'])
+    x = g.text(13, x, ' ups   ', st['body'])
+    g.field(13, x, 'UT', 5, st['value'])
+    x = g.text(14, L + 2, 'last  ', st['body'])
+    g.field(14, x, 'LC', 17, st['value'])
+    x = g.text(15, L + 2, 'sd ', st['body'])
+    x = g.field(15, x, 'SD', 6, st['value'])
+    x = g.text(15, x, ' up ', st['body'])
+    g.field(15, x, 'UP', 10, st['value'])
+    x = g.text(16, L + 2, 'ram   ', st['body'])
+    x = g.field(16, x, 'RM', 5, st['value'])
+    g.text(16, x, ' kb', st['body'])
     frame_end(g, 17, L, R, st)
     x = g.text(18, 1, 'page ', st['hot'])
     g.field(18, x, 'PG', 44 - x, st['value'])

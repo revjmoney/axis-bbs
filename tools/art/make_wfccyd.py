@@ -72,6 +72,11 @@ def box_top(label, w):  # "/--: label :--\" in w columns
     return [(FRAME, '╒═'), (DIM, ': '), (HOT, label), (DIM, ' :'), (FRAME, '═' * rest + '╕')]
 
 
+def box_split(label, w):  # the nodes box's bottom is the today box's top: "|=: label :=|" with tees
+    rest = w - 2 - len(label) - 6
+    return [(FRAME, '╞═'), (DIM, ': '), (HOT, label), (DIM, ' :'), (FRAME, '═' * rest + '╡')]
+
+
 def box_mid(parts, w):
     used = sum(width(t) for _, t in parts)
     assert used <= w - 2, (used, parts)
@@ -99,12 +104,13 @@ def main(path, header, preview=None):
             key('|KB', ' boards'), key('|KF', ' files'), key('|KL', ' logs'), key('|KE', ' events'),
             key('|KA', ' archive'), key('|KV', ' validate')]
     left = [box_top('axis', L)] + [box_mid([(BODY, ' ')] + k, L) for k in keys] + [box_end(L)]
-    nodes = [box_top('nodes', R)] + [box_mid([(BODY, ' '), (VALUE, f('N' + c, 24))], R) for c in 'ABCD'] + [box_end(R)]
-    today = [box_top('today', R),
-             box_mid([(BODY, ' calls '), (VALUE, f('CT', 5)), (BODY, ' posts '), (VALUE, f('PT', 5))], R),
-             box_mid([(BODY, ' ups   '), (VALUE, f('UT', 5)), (BODY, ' ram '), (VALUE, f('RM', 6)), (BODY, 'k')], R),
+    nodes = [box_top('nodes', R)] + [box_mid([(BODY, ' '), (VALUE, f('N' + c, 24))], R) for c in 'ABCD']
+    today = [box_split('today', R),
+             box_mid([(BODY, ' calls '), (VALUE, f('CT', 5)), (BODY, ' total '), (VALUE, f('TC', 6))], R),
+             box_mid([(BODY, ' posts '), (VALUE, f('PT', 5)), (BODY, ' ups   '), (VALUE, f('UT', 5))], R),
              box_mid([(BODY, ' last  '), (VALUE, f('LC', 18))], R),
              box_mid([(BODY, ' sd '), (VALUE, f('SD', 7)), (BODY, ' up '), (VALUE, f('UP', 10))], R),
+             box_mid([(BODY, ' ram   '), (VALUE, f('RM', 5)), (BODY, 'k')], R),
              box_end(R)]
     right_col = nodes + today
     for i in range(max(len(left), len(right_col))):
