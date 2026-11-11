@@ -24,6 +24,7 @@ void TelnetStream::pump() {
     while (up_ && in_.size() < kMaxQueued) {
         int n = rawRead(buf, sizeof buf);
         if (n <= 0) break;
+        bytesIn_ += (uint32_t)n;
         std::string reply;
         telnet_.fromNet(buf, (size_t)n, in_, reply);
         writeRaw(reply);
@@ -62,6 +63,7 @@ bool TelnetStream::sendAll(const char* p, size_t n) {
         if (w > 0) {
             p += w;
             n -= (size_t)w;
+            bytesOut_ += (uint32_t)w;
             lastProgress = nowMs();
         } else if (nowMs() - lastProgress >= sendTimeoutMs) {
             return false;  // the caller stopped reading

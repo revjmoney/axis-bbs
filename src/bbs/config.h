@@ -63,6 +63,11 @@ struct BbsConfig {
     bool        loginSplash = false;  // Rev's RotatoCAM ANSI splash before the login screen ("login_splash", on unless 0)  // callers this board takes at once (1 to 4). Each can be in LORD, a movie, a pack, or a transfer. A deflated piece or a ZIP check needs its own inflate window and is refused when the heap is short.
     bool        sysopTelnet = true;  // "sysop_telnet": the sysop menu may be opened over telnet. Off: only the board's own screen and serial.
     bool        messagesOn = true, filesOn = true, doorsOn = true;  // board switches ("messages_on", "files_on", "doors_on"); on unless 0. A caller's own access is separate.
+    // The LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM (net/telnet.h, LFD3K-LINK): take its link reports ("modem_link",
+    // on unless 0), and give its callers below this many air bits per second the lite screens ("lite_below_bps", 7031 = SF9 and
+    // slower; 0 = never). The plan's spellings modemLink and liteBelowBps are read too.
+    bool        modemLink = true;
+    int         liteBelowBps = 7031;
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)

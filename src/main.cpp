@@ -1786,6 +1786,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     if (panelConsoleNew) line.reset(new PanelStream());
     else line.reset(new WifiStream(incoming));
     line->tapNode = sessionNumber(curSession);
+    line->acceptLink(cfg.modemLink);  // the LFD3K-SM modem's link reports (LFD3K-LINK, telnet option 90)
     callStartMs = millis();
     logEvent((panelConsoleNew ? String("sysop console from the panel") : "call from " + line->remoteIP().toString()) + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
              " KB, largest " + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024) + " KB)");
@@ -3604,8 +3605,22 @@ static void ledUpdate() {
     ledcWrite(0, bare);
 }
 
+// The LFD3K-SM modem's newest link report for this caller, into its node (before any door, movie or transfer takes the
+// turn, so a retrain during one still counts).
+static void takeLinkReport() {
+    axis::net::LinkInfo li;
+    if (!line || !node || !line->takeLink(li)) return;
+    bool first = !node->viaModem();
+    node->setLink(li);
+    if (first)
+        logEvent(String("radio caller on node ") + String(sessionNumber(curSession)) + ": " + axis::net::linkLabel(li).c_str() +
+                 (li.modem.empty() ? "" : (String(" via ") + li.modem.c_str()).c_str()));
+    screenDirty = true;
+}
+
 // One session's turn: its caller, and its own movie or transfer when it has one.
 static void serviceSession(int i) {
+    takeLinkReport();
     if (cluster) {
         std::string handle = node ? node->handle() : "", activity;
         if (node) {

@@ -41,7 +41,7 @@ struct Group {
 };
 const Group kGroups[] = {
     {"BBS and sysop", {"bbs_name", "location", "sysop_handle", "sysop_real_name", "board_name", "ftn_address", "timezone", nullptr}},
-    {"Network", {"telnet_port", "public_host", "sessions", nullptr}},
+    {"Network", {"telnet_port", "public_host", "sessions", "modem_link", "lite_below_bps", nullptr}},
     {"Callers and limits", {"new_user_security", "nuv_yes", "nuv_no", "nuv_level", "daily_minutes", "idle_minutes", "ratio", "free_kb", nullptr}},
     {"Look", {"theme", "login_splash", nullptr}},
 };

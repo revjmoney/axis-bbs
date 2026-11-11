@@ -29,6 +29,17 @@ public:
     std::string takeInput();               // every waiting key, for the BBS menus
     void        hangUp();
     const TelnetFilter& telnet() const { return telnet_; }
+    // LFD3K-LINK (net/telnet.h): take the modem's link reports (answer its WILL 90 with DO 90). Set before start().
+    void        acceptLink(bool on) { telnet_.acceptLink(on); }
+    // the newest link report, once: true when one came in since the last call
+    bool        takeLink(LinkInfo& out) {
+        if (telnet_.linkReports() == linkTaken_) return false;
+        linkTaken_ = telnet_.linkReports();
+        out = telnet_.link();
+        return true;
+    }
+    uint32_t    bytesIn() const { return bytesIn_; }    // raw bytes from and to the caller this call
+    uint32_t    bytesOut() const { return bytesOut_; }
     uint32_t    sendTimeoutMs = 10000;
 
 protected:
@@ -46,6 +57,7 @@ private:
     std::string  in_, out_;
     size_t       inPos_ = 0;  // next unread byte of in_
     bool         up_ = true;
+    uint32_t     linkTaken_ = 0, bytesIn_ = 0, bytesOut_ = 0;
 };
 
 }  // namespace axis::net

@@ -26,6 +26,7 @@
 #include "bbs/menurunner.h"
 #include "bbs/loginseq.h"
 #include "bbs/wfc.h"
+#include "net/telnet.h"
 
 namespace axis::bbs {
 
@@ -52,6 +53,7 @@ public:
     struct WhoLine {
         int         node = 0;
         std::string handle, activity;  // handle "" = waiting for a caller
+        std::string link;              // "RADIO SF7 -81" for a caller on the LFD3K-SM modem, else ""
     };
     enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError, Busy, NotHere };  // NotHere: asked for at the board's own screen (no terminal for a door)  // Busy: another caller here has the slot
     static constexpr size_t   kMaxHandle = 30;
@@ -154,6 +156,11 @@ public:
     // (LORDCFG, drawn straight to the screen: drop "local")
     std::vector<DoorEntry> doorChoices() const;
     void                   applyBoard(const BbsConfig& next);  // section switches and the door list, for a caller already on
+    // The modem's newest report for this call (LFD3K-LINK, net/telnet.h): who is on the radio and how fast. Display only.
+    void                   setLink(const net::LinkInfo& l);
+    const net::LinkInfo&   link() const { return link_; }
+    bool                   viaModem() const { return link_.any; }
+    std::string            linkTiers() const;  // the LoRa tiers this call has seen: "SF7", "SF7-SF9", "WIFI"; "" for none
     std::string            editedMenu() const;  // the sysop's main menu items (cfg mainMenu) in a window
     void             resumeAfterDoor(DoorEnd how, uint32_t nowMs);
     // a download or upload from the Files menu (State::Transfer): the host runs it, then reports back
@@ -353,6 +360,9 @@ private:
     FileLibrary*              files_;
     std::unique_ptr<FileBrowser> browser_;
     std::unique_ptr<AxisNetMenu> net_;
+    net::LinkInfo                link_;
+    int                          sfLo_ = 0, sfHi_ = 0;  // the fastest and slowest LoRa tier this call (0: none yet)
+    bool                         sawWifi_ = false;
 };
 
 // Sent to a caller who connects while the node is in use.

@@ -859,7 +859,26 @@ std::string Node::editedMenu() const {  // the sysop's menu items in a window
     return theme::window("COMMANDS", rows);
 }
 
+void Node::setLink(const net::LinkInfo& l) {
+    link_ = l;
+    if (int sf = l.sf()) {
+        sfLo_ = sfLo_ && sfLo_ < sf ? sfLo_ : sf;
+        sfHi_ = sfHi_ > sf ? sfHi_ : sf;
+    } else if (net::linkLabel(l) == "WIFI") {
+        sawWifi_ = true;
+    }
+}
+
+std::string Node::linkTiers() const {
+    std::string s;
+    if (sfLo_) s = "SF" + std::to_string(sfLo_) + (sfHi_ != sfLo_ ? "-SF" + std::to_string(sfHi_) : "");
+    if (sawWifi_) s += s.empty() ? "WIFI" : " WIFI";
+    return s;
+}
+
 void Node::applyBoard(const BbsConfig& next) {
+    cfg_.modemLink = next.modemLink;
+    cfg_.liteBelowBps = next.liteBelowBps;
     cfg_.messagesOn = next.messagesOn;
     cfg_.filesOn = next.filesOn;
     cfg_.doorsOn = next.doorsOn;
@@ -2437,10 +2456,11 @@ void Node::showWhoOnline() {
     if (who_) all = who_();
     else all.push_back({node_, handle_, "Menu"});
     for (const WhoLine& w : all) {
-        char b[160];
-        std::snprintf(b, sizeof b, "   %snode %-3d %s%-24s %s%s\r\n", theme::ORANGE, w.node, theme::WHITE,
+        char b[192];
+        bool link = !w.handle.empty() && !w.link.empty();
+        std::snprintf(b, sizeof b, "   %snode %-3d %s%-24s %s%s%s%s\r\n", theme::ORANGE, w.node, theme::WHITE,
                       w.handle.empty() ? "" : w.handle.c_str(), theme::TEXT,
-                      w.handle.empty() ? "waiting for a caller" : w.activity.c_str());
+                      w.handle.empty() ? "waiting for a caller" : w.activity.c_str(), link ? "  " : "", link ? w.link.c_str() : "");
         out_ += b;
     }
     showMenu();
@@ -2472,6 +2492,11 @@ void Node::showSystemInfo() {
     };
     if (u && !u->location.empty()) rows.insert(rows.end() - 1, {"from", u->location});
     if (u && !u->tagline.empty()) rows.push_back({"tagline", u->tagline});
+    if (viaModem()) {  // on the LFD3K-SM modem: its link as it last reported
+        std::string l = net::linkLabel(link_);
+        if (link_.bps >= 0) l += "  " + std::to_string(link_.bps) + " bps";
+        rows.push_back({"link", l});
+    }
     out_ += theme::CLS;
     std::string art = theme::artFor("STATS");
     out_ += art.empty() ? theme::banner("STATS") : art;

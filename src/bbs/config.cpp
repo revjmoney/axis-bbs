@@ -107,6 +107,8 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "files_on") c.filesOn = n != 0;
         else if (k == "doors_on") c.doorsOn = n != 0;
         else if (k == "sysop_telnet") c.sysopTelnet = n != 0;
+        else if (k == "modem_link" || k == "modemLink") c.modemLink = n != 0;
+        else if (k == "lite_below_bps" || k == "liteBelowBps") c.liteBelowBps = n < 0 ? 0 : n;
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "nuv_yes") c.nuvYes = (int)n;
         else if (k == "nuv_no") c.nuvNo = (int)n;
@@ -243,6 +245,8 @@ std::string formatConfig(const BbsConfig& c) {
     kv("files_on", c.filesOn ? "1" : "0");
     kv("doors_on", c.doorsOn ? "1" : "0");
     kv("sysop_telnet", c.sysopTelnet ? "1" : "0");
+    kv("modem_link", c.modemLink ? "1" : "0");
+    kv("lite_below_bps", std::to_string(c.liteBelowBps));
     kv("theme", c.theme);
     kv("wfc", c.wfc);
     kv("ratio", std::to_string(c.ratio));
