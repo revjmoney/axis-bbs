@@ -12,7 +12,7 @@ const std::string& revKey(int i);
 void setRevKey(int i, const std::string& hex);
 // The keys compiled in (what the runtime keys start as), so a saved override can be told apart.
 const std::string& builtinRevKey(int i);
-// Test hook: replace both keys.
+// Test hook: replace both keys (and the built-ins they start from).
 void setRevKeysForTest(const std::string& a, const std::string& b);
 
 }  // namespace axis::net

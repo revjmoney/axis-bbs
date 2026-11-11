@@ -64,7 +64,7 @@ const char* groupName(Group g) {
 // The group is decided by the kind and the shape of the target. None means rejected.
 Group groupOf(const NetNotice& n) {
     if (n.kind == "limits") return n.target == "net" ? Group::Limits : Group::None;
-    if (n.kind == "rotate") return n.target == "net" ? Group::Rotate : Group::None;
+    if (n.kind == "rotate") return (n.target == "0" || n.target == "1") ? Group::Rotate : Group::None;
     if (n.target.find('-') != std::string::npos) {
         if (n.kind == "hold" || n.kind == "kill" || n.kind == "lift") return Group::Post;
         return Group::None;
@@ -100,88 +100,163 @@ bool NetState::addCard(const NetCard& c) {
     if (banned(c.board)) return false;
     auto it = cards_.find(c.board);
     if (it != cards_.end()) {
-        if (c.seq <= it->second.seq) return false;
-        it->second = c;
+        if (c.seq <= it->second.c.seq) return false;
+        it->second.c = c;
+        it->second.touched = ++counter_;
         return true;
     }
-    if (cards_.size() >= kNetMaxCards) return false;
-    cards_[c.board] = c;
+    if (cards_.size() >= kNetMaxCards) {
+        // Full: the card added or refreshed longest ago makes room, so a flood cannot lock others out.
+        auto oldest = cards_.begin();
+        for (auto i = cards_.begin(); i != cards_.end(); ++i)
+            if (i->second.touched < oldest->second.touched) oldest = i;
+        cards_.erase(oldest);
+    }
+    CardRec r;
+    r.c = c;
+    r.touched = ++counter_;
+    cards_[c.board] = r;
     return true;
 }
 
-bool NetState::applyNotice(const NetNotice& n) {
-    if (!verifyNotice(n)) return false;
-    return applyNoticeInner(n);
+// The two Rev keys in force for a notice with this seq: the built-ins with every rotate
+// whose seq is below it applied, in order.
+bool NetState::keysAt(uint32_t seq, std::string out[2]) const {
+    out[0] = builtinRevKey(0);
+    out[1] = builtinRevKey(1);
+    for (const Entry& r : rotates_)
+        if (r.n.seq < seq) out[1 - r.n.key] = r.n.value;
+    return true;
 }
 
-bool NetState::applyNoticeInner(const NetNotice& n) {
+bool NetState::verifyAt(const NetNotice& n) const {
+    if (n.key != 0 && n.key != 1) return false;
+    if (encode(n).empty() || !isLowerHex(n.sig, 128)) return false;
+    std::string keys[2];
+    keysAt(n.seq, keys);
+    const std::string& key = keys[n.key];
+    if (!isLowerHex(key, 64) || allZero(key)) return false;
+    return verifyHex(key, signedPart(n), n.sig);
+}
+
+void NetState::capGroup(const std::string& group, size_t cap) {
+    for (;;) {
+        size_t count = 0;
+        auto victim = notices_.end();
+        for (auto i = notices_.begin(); i != notices_.end(); ++i) {
+            if (i->first.first != group) continue;
+            ++count;
+            if (victim == notices_.end()) {
+                victim = i;
+                continue;
+            }
+            // Board group: lifts go before bans. Otherwise the oldest applied goes first.
+            bool iLift = i->second.n.kind == "lift", vLift = victim->second.n.kind == "lift";
+            if (group == "board" && iLift != vLift) {
+                if (iLift) victim = i;
+            } else if (i->second.order < victim->second.order) {
+                victim = i;
+            }
+        }
+        if (count <= cap || victim == notices_.end()) return;
+        notices_.erase(victim);
+    }
+}
+
+// Accepted risk: nothing here bounds seq. A signing key that leaks before Rev rotates it is a
+// full compromise; the recovery is a firmware update carrying new built-in keys.
+bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
     Group g = groupOf(n);
     if (g == Group::None) return false;
+    if (!verifyAt(n)) return false;
+
+    if (g == Group::Rotate) {
+        if (rotates_.size() >= kMaxRotates) return false;
+        if (n.target != (n.key == 0 ? "1" : "0")) return false;
+        if (!isLowerHex(n.value, 64) || allZero(n.value)) return false;
+        if (!rotates_.empty() && n.seq <= rotates_.back().n.seq) return false;
+        std::string keys[2];
+        keysAt(n.seq, keys);
+        if (n.value == keys[n.key]) return false;  // would give both slots the same key
+        Entry e;
+        e.n = n;
+        e.day = nowDay;
+        e.order = ++counter_;
+        rotates_.push_back(e);
+        keysAt(0xFFFFFFFFu, keys);
+        setRevKey(0, keys[0]);
+        setRevKey(1, keys[1]);
+        if (n.seq > highSeq_) highSeq_ = n.seq;
+        return true;
+    }
+
     const auto key = std::make_pair(std::string(groupName(g)), n.target);
     auto it = notices_.find(key);
-    if (it != notices_.end() && n.seq <= it->second.seq) return false;  // replay or stale
-
+    if (it != notices_.end()) {
+        if (n.seq <= it->second.n.seq) return false;  // replay or stale
+        if (g == Group::Post && it->second.n.kind == "kill" && n.kind != "kill")
+            return false;  // a kill is final
+    }
     uint32_t posts = 0, bytes = 0;
-    switch (g) {
-        case Group::Post:
-            if (killed_.count(n.target)) return false;  // a kill is final
-            break;
-        case Group::Limits:
-            if (!parseLimits(n.value, posts, bytes)) return false;
-            break;
-        case Group::Rotate:
-            if (n.key != 0 && n.key != 1) return false;
-            if (!isLowerHex(n.value, 64) || allZero(n.value)) return false;
-            break;
-        default: break;
-    }
+    if (g == Group::Limits && !parseLimits(n.value, posts, bytes)) return false;
 
-    switch (g) {
-        case Group::Post:
-            if (n.kind == "hold") {
-                held_.insert(n.target);
-            } else if (n.kind == "kill") {
-                killed_.insert(n.target);
-                held_.erase(n.target);
-            } else {
-                held_.erase(n.target);  // lift
-            }
-            break;
-        case Group::Board:
-            if (n.kind == "ban") banned_.insert(n.target);
-            else banned_.erase(n.target);
-            break;
-        case Group::Limits:
-            posts_ = posts;
-            bytes_ = bytes;
-            break;
-        case Group::Rotate:
-            setRevKey(1 - n.key, n.value);
-            break;
-        default: return false;
+    Entry e;
+    e.n = n;
+    e.day = nowDay;
+    e.order = ++counter_;
+    notices_[key] = e;
+    if (g == Group::Limits) {
+        posts_ = posts;
+        bytes_ = bytes;
+    } else if (g == Group::Board && n.kind == "ban") {
+        cards_.erase(n.target);  // the ban notice alone records the ban
     }
-    notices_[key] = n;
+    if (g == Group::Post) capGroup("post", kMaxPostNotices);
+    if (g == Group::Board) capGroup("board", kMaxBoardNotices);
     if (n.seq > highSeq_) highSeq_ = n.seq;
     return true;
 }
 
-bool NetState::banned(const std::string& board) const { return banned_.count(board) != 0; }
-bool NetState::held(const std::string& postId) const { return held_.count(postId) != 0; }
-bool NetState::killed(const std::string& postId) const { return killed_.count(postId) != 0; }
+void NetState::prune(uint32_t nowDay) {
+    for (auto i = notices_.begin(); i != notices_.end();) {
+        if (i->first.first == "post" && nowDay > i->second.day &&
+            nowDay - i->second.day > kPostNoticeDays)
+            i = notices_.erase(i);
+        else
+            ++i;
+    }
+}
+
+bool NetState::banned(const std::string& board) const {
+    auto it = notices_.find(std::make_pair(std::string("board"), board));
+    return it != notices_.end() && it->second.n.kind == "ban";
+}
+bool NetState::held(const std::string& postId) const {
+    auto it = notices_.find(std::make_pair(std::string("post"), postId));
+    return it != notices_.end() && it->second.n.kind == "hold";
+}
+bool NetState::killed(const std::string& postId) const {
+    auto it = notices_.find(std::make_pair(std::string("post"), postId));
+    return it != notices_.end() && it->second.n.kind == "kill";
+}
 
 const NetCard* NetState::card(const std::string& board) const {
     auto it = cards_.find(board);
-    return it == cards_.end() ? nullptr : &it->second;
+    return it == cards_.end() ? nullptr : &it->second.c;
 }
 
 std::vector<std::string> NetState::snapshot() const {
     std::vector<std::string> out;
+    for (const Entry& r : rotates_) {
+        std::string l = encode(r.n);
+        if (!l.empty()) out.push_back(l);
+    }
     for (const auto& kv : cards_) {
-        std::string l = encode(kv.second);
+        std::string l = encode(kv.second.c);
         if (!l.empty()) out.push_back(l);
     }
     for (const auto& kv : notices_) {
-        std::string l = encode(kv.second);
+        std::string l = encode(kv.second.n);
         if (!l.empty()) out.push_back(l);
     }
     return out;
@@ -189,60 +264,61 @@ std::vector<std::string> NetState::snapshot() const {
 
 std::string NetState::save() const {
     std::string out;
-    bool rotated = false;
-    for (int i = 0; i < 2; ++i)
-        if (revKey(i) != builtinRevKey(i)) rotated = true;
-    if (rotated)
-        for (int i = 0; i < 2; ++i) out += "K" + std::to_string(i) + " " + revKey(i) + "\n";
-    for (const std::string& l : snapshot()) out += l + "\n";
+    for (const Entry& r : rotates_) {
+        std::string l = encode(r.n);
+        if (!l.empty()) out += std::to_string(r.day) + " " + l + "\n";
+    }
+    for (const auto& kv : cards_) {
+        std::string l = encode(kv.second.c);
+        if (!l.empty()) out += l + "\n";
+    }
+    for (const auto& kv : notices_) {
+        std::string l = encode(kv.second.n);
+        if (!l.empty()) out += std::to_string(kv.second.day) + " " + l + "\n";
+    }
     return out;
 }
 
-void NetState::load(const std::string& text) {
+void NetState::load(const std::string& text, uint32_t nowDay) {
     cards_.clear();
     notices_.clear();
-    banned_.clear();
-    held_.clear();
-    killed_.clear();
+    rotates_.clear();
     highSeq_ = 0;
     posts_ = kDefaultPostsPerDay;
     bytes_ = kDefaultBytesPerDay;
+    setRevKey(0, builtinRevKey(0));
+    setRevKey(1, builtinRevKey(1));
 
-    std::vector<NetNotice> pending;
-    std::string keys[2];
-    for (const std::string& line : splitLines(text)) {
-        if (line.size() > kNetMaxFrame + 8) continue;
-        if (line[0] == 'K' && line.size() == 3 + 64 && (line[1] == '0' || line[1] == '1') &&
-            line[2] == ' ') {
-            std::string hex = line.substr(3);
-            if (isLowerHex(hex, 64) && !allZero(hex)) keys[line[1] - '0'] = hex;
-            continue;
+    std::vector<std::pair<NetNotice, uint32_t>> pending;
+    for (std::string line : splitLines(text)) {
+        uint32_t day = nowDay;
+        if (line[0] >= '0' && line[0] <= '9') {
+            size_t sp = line.find(' ');
+            uint32_t d = 0;
+            if (sp == std::string::npos || !parseU32(line.substr(0, sp), d)) continue;
+            day = d;
+            line = line.substr(sp + 1);
+            if (line.empty()) continue;
         }
+        if (line.size() > kNetMaxFrame) continue;
         if (line[0] == static_cast<char>(NetKind::Card)) {
             NetCard c;
-            if (decode(line, c)) addCard(c);  // before notices, so a banned board's card loads
+            if (decode(line, c)) addCard(c);
         } else if (line[0] == static_cast<char>(NetKind::Notice)) {
             NetNotice n;
-            if (decode(line, n)) pending.push_back(n);
+            if (decode(line, n)) pending.emplace_back(n, day);
         }
     }
     std::stable_sort(pending.begin(), pending.end(),
-                     [](const NetNotice& a, const NetNotice& b) { return a.seq < b.seq; });
-
-    // A notice signed by a key that was later rotated out only verifies under the old keys, and
-    // one signed by a rotated-in key only under the saved keys, so try both key sets.
-    std::vector<NetNotice> later;
-    for (const NetNotice& n : pending)
-        if (!applyNotice(n)) later.push_back(n);
-    for (int i = 0; i < 2; ++i)
-        if (!keys[i].empty()) setRevKey(i, keys[i]);
-    for (const NetNotice& n : later) applyNotice(n);
+                     [](const std::pair<NetNotice, uint32_t>& a,
+                        const std::pair<NetNotice, uint32_t>& b) { return a.first.seq < b.first.seq; });
+    for (const auto& p : pending) applyNotice(p.first, p.second);
 }
 
 // ---- NetSeen ----
 
 bool NetSeen::add(const std::string& id, uint32_t nowDay) {
-    if (id.empty()) return false;
+    if (id.empty() || id.size() > kMaxSeenIdLen) return false;
     if (!ids_.insert(id).second) return false;
     order_.emplace_back(nowDay, id);
     while (order_.size() > kNetMaxSeen) {

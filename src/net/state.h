@@ -21,13 +21,20 @@ constexpr size_t kNetMaxCards = 512;
 constexpr size_t kNetMaxSeen = 20000;
 constexpr size_t kNetMaxIngressBoards = 512;
 constexpr uint32_t kSeenDays = 120;
+constexpr uint32_t kPostNoticeDays = 150;
+constexpr size_t kMaxRotates = 16;
+constexpr size_t kMaxPostNotices = 4096;
+constexpr size_t kMaxBoardNotices = 1024;
+constexpr size_t kMaxSeenIdLen = 40;
 constexpr uint32_t kDefaultPostsPerDay = 50;
 constexpr uint32_t kDefaultBytesPerDay = 64 * 1024;
 
 class NetState {
 public:
     bool addCard(const NetCard& c);
-    bool applyNotice(const NetNotice& n);
+    // Verified against the keys in force at the notice's seq. nowDay is the local day it is applied.
+    bool applyNotice(const NetNotice& n, uint32_t nowDay);
+    void prune(uint32_t nowDay);  // expires post-group notices 150 days after they were applied
 
     bool banned(const std::string& board) const;
     bool held(const std::string& postId) const;
@@ -38,18 +45,30 @@ public:
     size_t cardCount() const { return cards_.size(); }
     const NetCard* card(const std::string& board) const;
 
-    // Every current card, then the latest notice per (group, target), as encoded lines.
+    // The rotate chain in seq order, then every current card, then the other latest notices.
     std::vector<std::string> snapshot() const;
-    // Text for the SD card: K0/K1 lines when a Rev key was rotated, then cards, then notices.
+    // Text for the SD card: the same lines as snapshot, notices prefixed with "<day> ".
     std::string save() const;
     // Replaces the state. Junk lines are skipped and every record is verified again.
-    void load(const std::string& text);
+    void load(const std::string& text, uint32_t nowDay);
 
 private:
-    bool applyNoticeInner(const NetNotice& n);
-    std::map<std::string, NetCard> cards_;
-    std::map<std::pair<std::string, std::string>, NetNotice> notices_;  // (group, target)
-    std::unordered_set<std::string> banned_, held_, killed_;
+    struct Entry {
+        NetNotice n;
+        uint32_t day = 0;
+        uint64_t order = 0;
+    };
+    struct CardRec {
+        NetCard c;
+        uint64_t touched = 0;
+    };
+    bool keysAt(uint32_t seq, std::string out[2]) const;
+    bool verifyAt(const NetNotice& n) const;
+    void capGroup(const std::string& group, size_t cap);
+    std::map<std::string, CardRec> cards_;
+    std::map<std::pair<std::string, std::string>, Entry> notices_;  // (group, target), not rotates
+    std::vector<Entry> rotates_;                                     // seq order, at most kMaxRotates
+    uint64_t counter_ = 0;
     uint32_t highSeq_ = 0;
     uint32_t posts_ = kDefaultPostsPerDay;
     uint32_t bytes_ = kDefaultBytesPerDay;
