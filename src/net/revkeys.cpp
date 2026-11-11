@@ -7,13 +7,19 @@
 namespace axis::net {
 
 namespace {
-std::string g_keys[2] = {std::string(64, '0'), std::string(64, '0')};
+const std::string g_builtin[2] = {std::string(64, '0'), std::string(64, '0')};
+std::string g_keys[2] = {g_builtin[0], g_builtin[1]};
 const std::string g_empty;
 }  // namespace
 
 const std::string& revKey(int i) {
     if (i < 0 || i > 1) return g_empty;
     return g_keys[i];
+}
+
+const std::string& builtinRevKey(int i) {
+    if (i < 0 || i > 1) return g_empty;
+    return g_builtin[i];
 }
 
 void setRevKey(int i, const std::string& hex) {
