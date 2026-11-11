@@ -39,7 +39,7 @@ Board 1's windowed low (59 KB, largest 45 KB) came while board 2 rejoined the cl
 python -I tools/busytest.py --main 192.168.1.164 --follower 192.168.1.165 --port COM20 --follower-port COM21 --minutes 15 --users <test users file> --out busy-baseline.csv
 ```
 
-**Result: FAIL. Board 1 panicked 5 times in 15 minutes (the run stopped at the fifth, at 895 s). The first panic came 77 s after the first caller dialed.** 18 ALLOC FAILED lines. Board 2 also panicked twice (its own log, at 17:41 and 17:44, while serving the relayed caller and the follower caller), and both boards came back on their own with their roles and the card.
+**Result: FAIL. Board 1 panicked 5 times in 15 minutes (the run stopped at the fifth, at 895 s). The first panic came 77 s after the first caller dialed.** 18 ALLOC FAILED lines. Board 2 also panicked twice (its own log says "while: idle"), both in the same minute as board 1's fourth and fifth panics, while it held the relayed caller C and caller D. It was not watched on serial, so there is no backtrace for those two. Both boards came back on their own with their roles and the card.
 
 Lowest numbers in the 30 s polls (board 1):
 
