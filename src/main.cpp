@@ -310,29 +310,44 @@ constexpr size_t kThemeArtCap = 12288;
 constexpr size_t kPosterCap = 49152;  // SAYLOR.ANS is 37 KB, SAYLORLG.ANS is 45 KB. Not cached.
 constexpr size_t kPosterChunk = 7000;  // a cluster frame is 8 KB, so a follower pulls the poster in pieces
 static bool posterName(const std::string& name) { return name == "SAYLOR.ANS" || name == "SAYLORLG.ANS"; }
-static std::string readThemeFile(const char* folder, const std::string& name, size_t cap, size_t offset, bool* opened) {
-    std::string s;
-    if (opened) *opened = false;
-    if (!folder || !folder[0]) return s;
+// Append at most min(fileSize - offset, cap) bytes of f (from offset) to out, cut at the first 0x1a. The file's size is asked
+// first so out grows once (a string read in 512-byte pieces doubles its block and costs ~16 KB per screen). False: the
+// seek to offset failed (nothing appended).
+static bool readFileAppend(FILE* f, size_t cap, size_t offset, std::string& out) {
+    const size_t old = out.size();
+    long         end = -1;
+    if (fseek(f, 0, SEEK_END) == 0) end = ftell(f);
+    if (end >= 0) {
+        if (fseek(f, (long)offset, SEEK_SET) != 0) return false;
+        size_t n = (size_t)end > offset ? (size_t)end - offset : 0;
+        if (n > cap) n = cap;
+        out.resize(old + n);
+        n = n ? fread(&out[old], 1, n, f) : 0;
+        out.resize(old + n);
+    } else {  // (no size: the old piece-by-piece read)
+        if (fseek(f, (long)offset, SEEK_SET) != 0) return false;
+        char b[512];
+        for (size_t n; out.size() - old < cap && (n = fread(b, 1, sizeof b, f)) > 0;) out.append(b, n);
+        if (out.size() - old > cap) out.resize(old + cap);
+    }
+    if (size_t sauce = out.find('', old); sauce != std::string::npos) out.resize(sauce);
+    return true;
+}
+static bool readThemeFileAppend(const char* folder, const std::string& name, size_t cap, size_t offset, std::string& out) {
+    if (!folder || !folder[0]) return false;
     std::string path = std::string("/sd/themes/") + folder + "/" + name;
     FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return s;
-    if (opened) *opened = true;
-    if (offset && fseek(f, (long)offset, SEEK_SET) != 0) {
-        fclose(f);
-        return s;
-    }
-    char b[512];
-    for (size_t n; s.size() < cap && (n = fread(b, 1, sizeof b, f)) > 0;) {
-        s.append(b, n);
-        if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) {
-            s.resize(sauce);
-            break;
-        }
-    }
+    if (!f) return false;
+    const size_t old = out.size();
+    readFileAppend(f, cap, offset, out);
     fclose(f);
-    if (s.size() > cap) s.resize(cap);
-    if (s.size() > artMax) artMax = s.size();
+    if (out.size() - old > artMax) artMax = out.size() - old;
+    return true;
+}
+static std::string readThemeFile(const char* folder, const std::string& name, size_t cap, size_t offset, bool* opened) {
+    std::string s;
+    bool        ok = readThemeFileAppend(folder, name, cap, offset, s);
+    if (opened) *opened = ok;
     return s;
 }
 static std::string readThemeFile(const char* folder, const std::string& name) {
@@ -404,6 +419,7 @@ static std::string themeArtPiece(const std::string& name, size_t off, size_t wan
 static std::string themeArtRemote(const std::string& name, bool* answered) {
     size_t      cap = posterName(name) ? kPosterCap : kThemeArtCap;
     std::string all;
+    if (!posterName(name)) all.reserve(cap);  // (one block: the pieces do not double it)
     *answered = false;
     for (size_t off = 0; all.size() < cap;) {
         std::string reply;
@@ -458,12 +474,9 @@ static std::string menuFileLocal(const std::string& name, bool theme = true) {
     if (f) cap = kThemeArtCap;  // (theme screens run to 11 KB)
     else f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
     if (f) {
-        char b[512];
-        for (size_t n; s.size() < cap && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
+        readFileAppend(f, cap, 0, s);
         fclose(f);
     }
-    if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) s.resize(sauce);
-    if (s.size() > cap) s.resize(cap);
     if (s.size() > artMax) artMax = s.size();
     return s;
 }
