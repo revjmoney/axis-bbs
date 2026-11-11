@@ -1,0 +1,65 @@
+# CodeQL code scanning: C/C++ (the host test build, compiled for real) and the Python tools.
+# Results land in the Security tab under Code scanning. On a pull request, new alerts show up
+# as a "Code scanning results" check and as comments on the changed lines.
+#
+# Query suite: the default one (security queries only). The firmware has a lot of deliberate
+# low level C style code (8086 emulator, fixed buffers, packed protocols) where the extra
+# "quality" queries would mostly be noise; cppcheck (static-analysis.yml) covers code quality.
+#
+# Do not also turn on CodeQL "default setup" in the repository settings: GitHub refuses
+# uploads from this workflow while default setup is on.
+name: CodeQL
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"  # Mondays 06:17 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build-mode: manual
+          - language: python
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Compilers
+        if: matrix.language == 'c-cpp'
+        run: sh tools/ci/apt_install.sh g++ cmake ninja-build
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config: |
+            paths:
+              - tools
+      # CodeQL watches this compile. It is the same host build the tests use (core, doors, LORD,
+      # cluster, telnet and file transfer code). ESP32 only files (src/platform/cyd, src/main.cpp)
+      # need the ESP-IDF toolchain and are not in it.
+      - name: Host build
+        if: matrix.build-mode == 'manual'
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          cmake -S . -B build -G Ninja
+          cmake --build build
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: "/language:${{ matrix.language }}"
