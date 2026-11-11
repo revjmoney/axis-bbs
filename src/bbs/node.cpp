@@ -362,6 +362,8 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
     };
 }
 
+// NOTE: showLoginScreen keys its login cell cache on a hand-kept list of this function's non-constant codes: add any new
+// non-constant value or mci code there too, or a cached LOGIN.ANS layout goes stale.
 // a placeholder's value: "%XX" are AXIS's own codes (as theme art has always used them), the rest ViSiON/3's names
 std::string Node::menuValue(const std::string& k) const {
     if (!k.empty() && k[0] == '%') {
@@ -930,8 +932,7 @@ void Node::showWelcome() {
     }
     state_ = State::Login;
     if (direct_) {  // the art from flash, straight out; only the boxes are built here
-        if (!out_.empty()) direct_(out_.data(), out_.size());
-        out_.clear();
+        if (!out_.empty()) flushDirect();
         direct_(CLS, std::strlen(CLS));
         direct_(kLoginArt, sizeof kLoginArt - 1);
         out_ += welcomeBoxes(node_, info_(), cfg_);
@@ -3542,6 +3543,10 @@ size_t        Node::outMax() { return outMax_; }
 
 void Node::spill() {
     if (!direct_ || out_.size() < kOutSpill) return;
+    flushDirect();
+}
+
+void Node::flushDirect() {
     if (out_.capacity() > outMax_) outMax_ = out_.capacity();
     // out_ is emptied on every exit, so a write that throws partway (bad_alloc) is never sent again later
     std::string piece;

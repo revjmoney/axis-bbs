@@ -227,6 +227,7 @@ private:
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
     void spill();  // direct set and the output has reached kOutSpill: all of it goes out now, in order
+    void flushDirect();  // out_ to direct_, emptied even if the write throws (capacity kept)
     std::function<std::string(const std::string&)> art_;
     PosterPiece                                    posterPiece_;
     std::string                                    posterFile_, posterCarry_;  // the poster streaming out, and a cut line
