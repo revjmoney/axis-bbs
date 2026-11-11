@@ -82,6 +82,7 @@ ArtValue wfcValues(const WfcSnapshot& s) {
         if (k == "BN") return s.bbsName;
         if (k == "SN") return s.sysop;
         if (k == "CT") return std::to_string(s.callsToday);
+        if (k == "TC") return std::to_string(s.totalCalls);
         if (k == "PT") return std::to_string(s.postsToday);
         if (k == "UT") return std::to_string(s.uploadsToday);
         if (k == "LC") return s.lastCaller;

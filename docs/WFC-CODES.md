@@ -7,7 +7,8 @@ Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WF
 | `BN` | BBS name |
 | `SN` | Sysop |
 | `NA`..`NH` | Node lines 1 to 8, in the order the cluster lists them: "1 Handle  activity" or "1 waiting". A node past the eighth is left off. A caller on the LFD3K-SM modem gets its tier after the activity: "1 Handle  Online  RADIO SF7" (it follows a retrain within 5 s; the signal is in `RR`). |
-| `CT` | Calls today |
+| `CT` | Calls today (`CT`, `PT` and `UT` are kept in internal flash, so a reboot or a flash keeps them; they reset at local midnight once the clock is set) |
+| `TC` | Total calls: every call this board has answered, kept through reboots and never reset at midnight (`@STATS total=<n>` sets it) |
 | `PT` | Posts today |
 | `UT` | Uploads today |
 | `LC` | Last caller |

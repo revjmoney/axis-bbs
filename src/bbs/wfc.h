@@ -37,6 +37,7 @@ struct WfcSnapshot {
     std::vector<WfcNode>     nodes;   // cluster-wide, by number
     std::vector<std::string> events;  // newest first
     uint32_t                 callsToday = 0, postsToday = 0, uploadsToday = 0, sdFreeKb = 0, ramFreeKb = 0, uptimeS = 0;
+    uint32_t                 totalCalls = 0;  // every call ever on this board (|TC)
     bool                     main = true;  // "main board" / "follower board"
     WfcRadio                 radio;        // the newest radio link (|RL |RW |RO |RT |RB |RS |RR |RN |RZ)
     // "the same screen": the uptime by the minute and free RAM in 8 KB steps (time is HH:MM), so an idle WFC is redrawn
@@ -44,7 +45,7 @@ struct WfcSnapshot {
     bool operator==(const WfcSnapshot& o) const {
         return bbsName == o.bbsName && sysop == o.sysop && lastCaller == o.lastCaller && ip == o.ip && time == o.time && date == o.date &&
                page == o.page && nodes == o.nodes && events == o.events && callsToday == o.callsToday && postsToday == o.postsToday &&
-               uploadsToday == o.uploadsToday && sdFreeKb == o.sdFreeKb && ramFreeKb / 8 == o.ramFreeKb / 8 && uptimeS / 60 == o.uptimeS / 60 &&
+               uploadsToday == o.uploadsToday && totalCalls == o.totalCalls && sdFreeKb == o.sdFreeKb && ramFreeKb / 8 == o.ramFreeKb / 8 && uptimeS / 60 == o.uptimeS / 60 &&
                main == o.main && radio == o.radio;
     }
 };

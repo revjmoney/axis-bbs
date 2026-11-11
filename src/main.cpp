@@ -29,6 +29,7 @@
 #include "bbs/announce.h"
 #include "bbs/axisnet.h"
 #include "net/telnet.h"
+#include "bbs/daystats.h"
 #include "bbs/diag.h"
 #include "bbs/votebooth.h"
 #include "platform/cyd/web.h"
@@ -671,16 +672,27 @@ static constexpr size_t     kZipWindow = 32768;
 static std::unique_ptr<axis::bbs::Node>         node;
 static std::unique_ptr<axis::bbs::SetupGate>    gate;
 static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
-static uint32_t callStartMs = 0, callsToday = 0, postsToday = 0, uploadsToday = 0;
+static uint32_t callStartMs = 0;
+// Calls, posts and uploads today and the lifetime call total, in internal flash (/stats.txt) so a reboot keeps them.
 // The day counters roll at local midnight; until the clock is set they just keep counting.
+static axis::bbs::DayStats dayStats;
+static void statsSave() {
+    if (!flashWrite("/stats.txt", dayStats.format())) Serial.println("axis: stats save failed");
+}
 static void rollDayCounters() {
-    static int dayKey = 0;
-    time_t     now = time(nullptr);
+    time_t now = time(nullptr);
     if (now < 1700000000) return;
     struct tm* t = localtime(&now);
-    int        key = (t->tm_year + 1900) * 400 + t->tm_yday;
-    if (dayKey && key != dayKey) callsToday = postsToday = uploadsToday = 0;
-    dayKey = key;
+    if (dayStats.roll((t->tm_year + 1900) * 400 + t->tm_yday)) statsSave();
+}
+// At boot, after the users: the saved counters, or (no file yet) a total seeded from every account's call count.
+static void statsLoad() {
+    if (!LittleFS.exists("/stats.txt")) {
+        for (auto& u : users.all()) dayStats.total += u.calls;
+        statsSave();
+    } else if (!dayStats.parse(flashRead("/stats.txt"))) {
+        Serial.println("axis: /stats.txt unreadable, stats start from zero");
+    }
 }
 
 // Several callers per board. Each loop turn serves one session at a time: its line, node, game,
@@ -806,7 +818,7 @@ static axis::bbs::SysInfo sysInfo() {
     s.storage = storageSummary();
     s.hardware = "ESP32 CYD " + std::to_string(ESP.getCpuFreqMHz()) + " MHz " +
                  std::to_string(ESP.getFlashChipSize() >> 20) + " MB flash";
-    s.callsToday = callsToday;
+    s.callsToday = dayStats.calls;
     s.nodesTotal = (int)sessions.size();
     s.nodes.clear();
     for (size_t i = 0; i < sessions.size(); i++) s.nodes.push_back(sessionNode(i) ? sessionNode(i)->handle() : std::string());
@@ -859,7 +871,7 @@ struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for
     using axis::bbs::FileMessageStore::FileMessageStore;
     int post(const std::string& area, const axis::bbs::Message& m) override {
         int n = axis::bbs::FileMessageStore::post(area, m);
-        if (n && area != "email") postsToday++;
+        if (n && area != "email") dayStats.post(), statsSave();
         return n;
     }
 };
@@ -1870,9 +1882,10 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     const auto& ev = events.lines();
     for (auto it = ev.rbegin(); it != ev.rend() && w.events.size() < 8; ++it) w.events.push_back(*it);
     rollDayCounters();
-    w.callsToday = callsToday;
-    w.postsToday = postsToday;
-    w.uploadsToday = uploadsToday;
+    w.callsToday = dayStats.calls;
+    w.postsToday = dayStats.posts;
+    w.uploadsToday = dayStats.uploads;
+    w.totalCalls = dayStats.total;
     w.sdFreeKb = (uint32_t)(storageFreeBytes() >> 10);
     w.ramFreeKb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
     w.uptimeS = millis() / 1000;
@@ -1893,7 +1906,8 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     if (!giveBack.empty()) line->inject(giveBack);
     if (cfg.setupDone && mode == Mode::Normal) {
         rollDayCounters();
-        callsToday++;
+        dayStats.call();
+        statsSave();
         node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, cfg, &callerFiles()));
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
@@ -3109,6 +3123,21 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@RUMORS" || cmd == "@BBSLIST" || cmd == "@VOTES" || cmd == "@LINERS") {
         std::vector<std::string> v = cmd == "@LINERS" ? oneLiners : sharedList(cmd == "@RUMORS" ? "rumors" : cmd == "@BBSLIST" ? "bbslist" : "votes");
         for (auto& l : v) out.println(l.c_str());
+    } else if (cmd == "@STATS" || cmd.startsWith("@STATS ")) {
+        // this board's WFC counters: "@STATS" lists them, "@STATS total=<n>" sets the lifetime call total
+        uint32_t n = 0;
+        if (cmd.length() > 7 && !(cmd.substring(7).startsWith("total=") && axis::bbs::parseStatTotal(cmd.substring(13).c_str(), n))) {
+            out.println("@STATS use @STATS or @STATS total=<n> (n from 0 to 4294967295)");
+        } else {
+            if (cmd.length() > 7) {
+                dayStats.total = n;
+                statsSave();
+                screenDirty = true;
+                logEvent("sysop: lifetime calls set to " + String(n));
+            }
+            out.printf("@STATS day=%d calls=%u posts=%u uploads=%u total=%u\n", dayStats.day, (unsigned)dayStats.calls,
+                       (unsigned)dayStats.posts, (unsigned)dayStats.uploads, (unsigned)dayStats.total);
+        }
     } else if (cmd == "@STATUS") {  // one line for the panel
         int on = 0;
         for (size_t i = 0; i < sessions.size(); i++) on += sessionLine(i) ? 1 : 0;
@@ -3635,6 +3664,11 @@ void setup() {
     users.parse(flashRead("/users.dat"));
     linersLoad();
     callersLoad();
+    if (!lastCallers.empty()) {  // the WFC's last caller: the newest saved login ("handle|node|time|location")
+        std::string h = lastCallers.back().substr(0, lastCallers.back().find('|'));
+        if (!h.empty()) lastCaller = h.c_str();
+    }
+    statsLoad();
     userSync.changed(users);  // what we have counts as sent: only new changes go over the link
     for (auto& l : eventFile.tail(40)) events.add(l);  // the Logs screen picks up where it left off
     eventFileReady = true;
@@ -3780,7 +3814,7 @@ static void serviceSession(int i) {
         }
         if (!running) {
             const auto& r = job->request();
-            if (r.upload && job->ok()) rollDayCounters(), uploadsToday++;
+            if (r.upload && job->ok()) rollDayCounters(), dayStats.upload(), statsSave();
             logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
                      (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
             noteDoing("idle");
