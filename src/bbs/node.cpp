@@ -3514,8 +3514,17 @@ size_t        Node::outMax() { return outMax_; }
 void Node::spill() {
     if (!direct_ || out_.size() < kOutSpill) return;
     if (out_.capacity() > outMax_) outMax_ = out_.capacity();
-    direct_(out_.data(), out_.size());
-    out_.clear();  // (the capacity stays, for the next piece)
+    // out_ is emptied on every exit, so a write that throws partway (bad_alloc) is never sent again later
+    std::string piece;
+    piece.swap(out_);
+    struct Back {  // hands the capacity back for the next piece
+        std::string &piece, &out;
+        ~Back() {
+            piece.clear();
+            out.swap(piece);
+        }
+    } back{piece, out_};
+    direct_(piece.data(), piece.size());
 }
 
 std::string Node::takeOutput() {
