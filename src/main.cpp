@@ -330,7 +330,7 @@ static bool readFileAppend(FILE* f, size_t cap, size_t offset, std::string& out)
         for (size_t n; out.size() - old < cap && (n = fread(b, 1, sizeof b, f)) > 0;) out.append(b, n);
         if (out.size() - old > cap) out.resize(old + cap);
     }
-    if (size_t sauce = out.find('', old); sauce != std::string::npos) out.resize(sauce);
+    if (size_t sauce = out.find('\x1a', old); sauce != std::string::npos) out.resize(sauce);
     return true;
 }
 static bool readThemeFileAppend(const char* folder, const std::string& name, size_t cap, size_t offset, std::string& out) {
