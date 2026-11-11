@@ -57,7 +57,7 @@ bool inGroups(const std::string& k) {
 bool boardOnlyCommand(const std::string& cmd) {
     static const char* const kMine[] = {"@CLUSTERKEY", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
                                         "@BEEP",       "@STATION", "@LED",       "@SHOT",       "@TAP",     "@LKEY",    "@LSCREEN", "@WIFIPICK",
-                                        "@STATS"};
+                                        "@STATS", "@HEAPWIN"};
     std::string word = cmd.substr(0, cmd.find(' '));
     for (char& c : word) c = (char)std::toupper((unsigned char)c);
     for (const char* m : kMine)

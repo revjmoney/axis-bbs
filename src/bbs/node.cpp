@@ -3490,7 +3490,11 @@ void Node::poll(uint32_t nowMs) {
     }
 }
 
+static size_t outMax_ = 0;
+size_t        Node::outMax() { return outMax_; }
+
 std::string Node::takeOutput() {
+    if (out_.capacity() > outMax_) outMax_ = out_.capacity();
     std::string s;
     s.swap(out_);
     return s;

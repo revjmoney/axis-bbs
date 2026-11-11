@@ -32,8 +32,10 @@
 #include "bbs/daystats.h"
 #include "bbs/statsshare.h"
 #include "bbs/diag.h"
+#include "bbs/heapwin.h"
 #include "bbs/votebooth.h"
 #include "platform/cyd/web.h"
+#include "platform/cyd/heapscope.h"
 #include "bbs/ansiviewer.h"
 #include "bbs/script.h"
 #include "lord/game.h"
@@ -98,6 +100,9 @@ static void noteDoing(const String& what) {
     std::snprintf(doing_, sizeof doing_, "%s", what.c_str());
     doingMagic_ = kDoingMagic;
 }
+static const char* doingNow() { return doingMagic_ == kDoingMagic ? doing_ : ""; }  // the same text noteDoing keeps
+static axis::bbs::HeapWindow heapWin;  // lowest heap since boot or the last @HEAPWIN
+static size_t                artMax = 0;  // largest art string read from the SD (theme or menu file)
 
 static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
     boardDiag_.door = how;
@@ -327,6 +332,7 @@ static std::string readThemeFile(const char* folder, const std::string& name, si
     }
     fclose(f);
     if (s.size() > cap) s.resize(cap);
+    if (s.size() > artMax) artMax = s.size();
     return s;
 }
 static std::string readThemeFile(const char* folder, const std::string& name) {
@@ -458,6 +464,7 @@ static std::string menuFileLocal(const std::string& name, bool theme = true) {
     }
     if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) s.resize(sauce);
     if (s.size() > cap) s.resize(cap);
+    if (s.size() > artMax) artMax = s.size();
     return s;
 }
 static std::string menuFile(const std::string& name) {
@@ -931,6 +938,7 @@ static void logEvent(const String& what) {
 }
 
 static void saveUsers() {
+    HeapScope scope("saveUsers");
     if (!flashWrite("/users.dat", users.format())) logEvent("users: SAVE FAILED");
     if (cluster)  // a follower tells the main; the main tells every follower
         for (auto& rec : userSync.changed(users)) cluster->sendUser(rec);
@@ -1119,6 +1127,7 @@ static void drawLocal() {
 // The WFC on the board: false when it is unchanged (nothing to push). The art is expanded into a heap terminal that goes again
 // once the screen copy has it, so the loop's stack only holds the snapshot.
 static bool drawWfc() {
+    HeapScope scope("drawWfc");
     uint32_t now = millis();
     bool     soon = wfcSoonUntil && (int32_t)(now - wfcSoonUntil) < 0;
     if (wfcSoonUntil && !soon) wfcSoonUntil = 0, wfcStale = true;  // the "coming soon" line goes
@@ -2377,7 +2386,10 @@ static void callerInput(const std::string& app) {
     const uint8_t* p = (const uint8_t*)app.data();
     if (node) {
         std::string before = node->handle();
-        node->input(p, app.size(), millis());
+        {
+            HeapScope scope("node");
+            node->input(p, app.size(), millis());
+        }
         if (node->handle() != before) screenDirty = true;
         return;
     }
@@ -2570,6 +2582,7 @@ static void startCluster() {
             return out;
         }
         if (req.rfind("T\x1f", 0) == 0) {  // a theme screen, "T name offset": every file in pieces, so the frame stays under 8 KB
+            HeapScope scope("T");
             std::string rest = req.substr(2);
             size_t      sep = rest.find('\x1f');
             std::string name = sep == std::string::npos ? rest : rest.substr(0, sep);
@@ -2591,7 +2604,10 @@ static void startCluster() {
             if (!opened && posterName(name)) return std::string("0");
             return "1" + piece;
         }
-        if (req.rfind("U\x1f", 0) == 0) return "1" + menuFileLocal(req.substr(2), false);  // a menu file or its art (/menus only: under 8 KB)
+        if (req.rfind("U\x1f", 0) == 0) {
+            HeapScope scope("U");
+            return "1" + menuFileLocal(req.substr(2), false);
+        }  // a menu file or its art (/menus only: under 8 KB)
         if (req.rfind("J\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
             std::string name = req.substr(2);
             if (name.empty()) {
@@ -3251,6 +3267,9 @@ static void runCommand(const String& cmd, Print& out) {
             out.printf("@STATS day=%d calls=%u posts=%u uploads=%u total=%u\n", s.day, (unsigned)s.calls, (unsigned)s.posts,
                        (unsigned)s.uploads, (unsigned)s.total);
         }
+    } else if (cmd == "@HEAPWIN") {  // restart the lowest-heap window (the numbers on @STATUS: wmin wlarge wdoing)
+        heapWin.reset();
+        out.println("@HEAPWIN reset");
     } else if (cmd == "@STATUS") {  // one line for the panel
         int on = 0;
         for (size_t i = 0; i < sessions.size(); i++) on += sessionLine(i) ? 1 : 0;
@@ -3259,6 +3278,15 @@ static void runCommand(const String& cmd, Print& out) {
         sample.largest = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
         sample.minHeap = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
         sample.stackWords = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+        sample.winFree = heapWin.lowFree == UINT32_MAX ? sample.heapFree : heapWin.lowFree;
+        sample.winLargest = heapWin.lowLargest == UINT32_MAX ? sample.largest : heapWin.lowLargest;
+        sample.winDoing = heapWin.lowDoing;
+        auto stk = [](const char* n) { TaskHandle_t h = xTaskGetHandle(n); return h ? (uint32_t)uxTaskGetStackHighWaterMark(h) : 0u; };
+        sample.stkWeb = stk("web");
+        sample.stkMdns = stk("mdns");
+        sample.stkTimer = stk("esp_timer");
+        sample.outMax = (uint32_t)axis::bbs::Node::outMax();
+        sample.artMax = (uint32_t)artMax;
         char line[384];
         std::snprintf(line, sizeof line, "id=%s role=%s nodes=%d on=%d heap=%u largest=%u up=%lu rssi=%d sd_mb=%u ip=%s",
                       WiFi.macAddress().c_str(),
@@ -3755,6 +3783,7 @@ static void allocFailed(size_t size, uint32_t caps, const char* fn) {
 }
 
 void setup() {
+    heapScopeHook([](const std::string& l) { logEvent(String(l.c_str())); });
     boardDiag_.resetCode = (int)esp_reset_reason();
     heap_caps_register_failed_alloc_callback(allocFailed);
     ledBegin();
@@ -3945,7 +3974,11 @@ static void serviceSession(int i) {
         return;
     }
     if (nativeLord) {  // this caller is in LORD
-        bool running = nativeLord->step();
+        bool running;
+        {
+            HeapScope scope("door");
+            running = nativeLord->step();
+        }
         if (line) line->flush();
         if (!running) finishLord();
         delay(5);
@@ -3977,7 +4010,10 @@ static void serviceSession(int i) {
             return;
         }
         if (line && node) {
-            node->poll(millis());
+            {
+                HeapScope scope("node");
+                node->poll(millis());
+            }
             if (node->state() == axis::bbs::Node::State::InDoor) {
                 startDoor();
                 return;
@@ -4004,6 +4040,8 @@ void loop() {
     if (millis() - lastLoop > 2000 && millis() - shotDoneMs > 1000)  // (a bench screenshot stalls on purpose)
         logEvent("loop stalled " + String(millis() - lastLoop) + " ms");
     lastLoop = millis();
+    heapWin.sample((uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT), (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), doingNow());
+    heapScopeFlush();  // a line the web task (core 0) held
     handleSerial();
     modemSearchPoll();  // (before any early return: a network re-apply may be waiting on it)
     applyNetworkDue();

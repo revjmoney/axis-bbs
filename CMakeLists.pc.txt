@@ -31,6 +31,7 @@ add_library(axiscore STATIC
     src/bbs/dosshell.cpp
     src/bbs/script.cpp
     src/bbs/diag.cpp
+    src/bbs/heapwin.cpp
     src/bbs/dripfont.cpp
     src/bbs/ledsignal.cpp
     src/bbs/station.cpp

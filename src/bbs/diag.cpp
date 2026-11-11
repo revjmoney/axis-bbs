@@ -38,9 +38,16 @@ const char* resetToken(int resetCode) {
 }
 
 std::string diagFields(const DiagSample& s) {
-    char b[192];
-    std::snprintf(b, sizeof b, " min=%u stack=%u door_peak=%u door=%s door_stack=%u reset=%s", s.minHeap, s.stackWords,
-                  s.doorPeakKb, doorDiagToken(s.door), s.doorStackWords, resetToken(s.resetCode));
+    std::string tok = s.winDoing.substr(0, 24);
+    for (char& c : tok)
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') c = '_';
+    if (tok.empty()) tok = "none";
+    char b[320];
+    std::snprintf(b, sizeof b,
+                  " min=%u stack=%u door_peak=%u door=%s door_stack=%u reset=%s wmin=%u wlarge=%u wdoing=%s stk_web=%u stk_mdns=%u "
+                  "stk_timer=%u outmax=%u artmax=%u",
+                  s.minHeap, s.stackWords, s.doorPeakKb, doorDiagToken(s.door), s.doorStackWords, resetToken(s.resetCode), s.winFree,
+                  s.winLargest, tok.c_str(), s.stkWeb, s.stkMdns, s.stkTimer, s.outMax, s.artMax);
     return b;
 }
 

@@ -137,6 +137,7 @@ public:
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);
     std::string takeOutput();
+    static size_t outMax();  // the largest output buffer (capacity) handed out so far, for @STATUS
     bool        wantsHangup() const { return state_ == State::Done; }
     // Axis Net asked to call a remote board, or to ask the boards we know (R, or a new note).
     bool               axisTakeProbe();

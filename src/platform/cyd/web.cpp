@@ -10,6 +10,7 @@
 #include <WiFiClientSecure.h>
 
 #include "bbs/noip.h"
+#include "heapscope.h"
 #include "web_roots.h"
 
 namespace web {
@@ -21,6 +22,7 @@ volatile bool      main_ = true;  // (any board with the settings does the work)
 String             discord_, domain_, host_, key_, secret_, lastIp_, lastResult_ = "idle";
 String             noipHost_, noipUser_, noipPass_, noipIp_, noipResult_ = "idle";
 volatile bool      noipStopped_ = false;  // No-IP refused: wait for new settings (it bans clients that keep trying)
+volatile bool      busy_ = false;    // inside request()
 volatile bool      door_ = false;    // a door is using the heap: do not start a handshake
 SemaphoreHandle_t  lock_ = nullptr;  // the settings, shared with the task
 constexpr size_t   kLine = 320;
@@ -44,8 +46,8 @@ String jsonText(const char* s) {  // a JSON string's inside
     return o;
 }
 
-int request(const char* method, const String& url, const String& body, const String& auth, String* reply,
-            const char* agent = nullptr) {
+int requestInner(const char* method, const String& url, const String& body, const String& auth, String* reply,
+                 const char* agent) {
     bool secure = url.startsWith("https://");
     if (secure && !tlsFits()) return -2;  // not enough memory for HTTPS right now
     WiFiClientSecure tls;
@@ -63,6 +65,15 @@ int request(const char* method, const String& url, const String& body, const Str
     int code = http.sendRequest(method, (uint8_t*)body.c_str(), body.length());
     if (reply && code > 0) *reply = http.getString();
     http.end();
+    return code;
+}
+
+int request(const char* method, const String& url, const String& body, const String& auth, String* reply,
+            const char* agent = nullptr) {
+    HeapScope scope("web");
+    busy_ = true;
+    int code = requestInner(method, url, body, auth, reply, agent);
+    busy_ = false;
     return code;
 }
 
@@ -153,6 +164,8 @@ void startTask() {
     xTaskCreatePinnedToCore(run, "web", 7168, nullptr, 1, &task_, 0);  // TLS wants a deep stack; core 0 with WiFi
 }
 }  // namespace
+
+bool busy() { return busy_; }
 
 void begin() {
     if (!lock_) lock_ = xSemaphoreCreateMutex();
