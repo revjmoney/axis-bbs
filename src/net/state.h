@@ -47,6 +47,11 @@ public:
     const NetCard* card(const std::string& board) const;
     // Visits every current card (no copies), for callers that need the list of known boards.
     void forEachCard(const std::function<void(const NetCard&)>& f) const;
+    // The encoded line of the notice stored now for (group, target), or "" if none. Groups are
+    // "post", "board" and "limits" (target "net"); see noticeGroup.
+    std::string noticeLine(const std::string& group, const std::string& target) const;
+    // The encoded rotate notice with this seq from the rotate chain, or "" if none.
+    std::string rotateLine(uint32_t seq) const;
 
     // The rotate chain in seq order, then every current card, then the other latest notices.
     std::vector<std::string> snapshot() const;
@@ -78,8 +83,12 @@ private:
     uint32_t bytes_ = kDefaultBytesPerDay;
 };
 
+// The group a notice is stored under: "post", "board", "limits" or "rotate"; "" if it is invalid.
+std::string noticeGroup(const NetNotice& n);
+
 class NetSeen {
 public:
+    bool has(const std::string& id) const { return ids_.count(id) > 0; }
     bool add(const std::string& id, uint32_t nowDay);  // false if already seen
     void prune(uint32_t nowDay);                        // drops ids older than kSeenDays
     size_t size() const { return order_.size(); }

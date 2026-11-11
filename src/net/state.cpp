@@ -285,6 +285,19 @@ void NetState::forEachCard(const std::function<void(const NetCard&)>& f) const {
     for (const auto& kv : cards_) f(kv.second.c);
 }
 
+std::string NetState::noticeLine(const std::string& group, const std::string& target) const {
+    auto it = notices_.find(std::make_pair(group, target));
+    return it == notices_.end() ? std::string() : encode(it->second.n);
+}
+
+std::string NetState::rotateLine(uint32_t seq) const {
+    for (const Entry& r : rotates_)
+        if (r.n.seq == seq) return encode(r.n);
+    return "";
+}
+
+std::string noticeGroup(const NetNotice& n) { return groupName(groupOf(n)); }
+
 std::vector<std::string> NetState::snapshot() const {
     std::vector<std::string> out;
     for (const Entry& r : rotates_) {
