@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <string>
 #include <unordered_set>
@@ -44,6 +45,8 @@ public:
     uint32_t bytesPerDay() const { return bytes_; }
     size_t cardCount() const { return cards_.size(); }
     const NetCard* card(const std::string& board) const;
+    // Visits every current card (no copies), for callers that need the list of known boards.
+    void forEachCard(const std::function<void(const NetCard&)>& f) const;
 
     // The rotate chain in seq order, then every current card, then the other latest notices.
     std::vector<std::string> snapshot() const;

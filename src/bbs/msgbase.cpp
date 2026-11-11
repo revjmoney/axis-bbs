@@ -55,6 +55,13 @@ void scan(const std::string& path, bool bodies, F visit) {
                 else if (k == "to") m.to = v;
                 else if (k == "subj") m.subject = v;
                 else if (k == "date") m.date = v;
+                else if (k == "net") {
+                    if (bodies) m.net = v;
+                    else {  // headers only: keep "P<sep><id>", not the whole (up to 9 KB) line
+                        size_t a = v.find(kSep), b = a == std::string::npos ? a : v.find(kSep, a + 1);
+                        m.net = b == std::string::npos ? v : v.substr(0, b);
+                    }
+                }
             }
         } else if (have && inBody && bodies) {
             m.body += (line.size() > 1 && line[0] == ' ' && line[1] == '\x01' ? line.substr(1) : line) + "\n";
@@ -69,7 +76,14 @@ void scan(const std::string& path, bool bodies, F visit) {
 }
 std::string record(int num, const Message& m) {  // one post as it's stored
     std::string rec = "\x01MSG\nnum=" + std::to_string(num) + "\nfrom=" + oneLine(m.from) + "\nto=" + oneLine(m.to) +
-                      "\nsubj=" + oneLine(m.subject) + "\ndate=" + oneLine(m.date) + "\n\n";
+                      "\nsubj=" + oneLine(m.subject) + "\ndate=" + oneLine(m.date) + "\n";
+    if (!m.net.empty()) {  // written whole: it holds 0x1F separators and may run past 72 characters
+        rec += "net=";
+        for (char c : m.net)
+            if (c != '\n' && c != '\r') rec += c;
+        rec += "\n";
+    }
+    rec += "\n";
     std::string line;
     for (size_t i = 0; i <= m.body.size(); i++) {  // body lines; one that starts like a record mark is escaped
         if (i == m.body.size() || m.body[i] == '\n') {

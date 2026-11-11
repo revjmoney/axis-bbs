@@ -281,6 +281,10 @@ const NetCard* NetState::card(const std::string& board) const {
     return it == cards_.end() ? nullptr : &it->second.c;
 }
 
+void NetState::forEachCard(const std::function<void(const NetCard&)>& f) const {
+    for (const auto& kv : cards_) f(kv.second.c);
+}
+
 std::vector<std::string> NetState::snapshot() const {
     std::vector<std::string> out;
     for (const Entry& r : rotates_) {
