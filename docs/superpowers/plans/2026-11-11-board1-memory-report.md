@@ -29,7 +29,9 @@ id=8C:94:DF:4F:14:18 role=follower nodes=2 on=0 heap=113452 largest=106496 up=95
 | lowest since boot (min) | 53580 | 82060 |
 | windowed low (wmin / wlarge) | 59252 / 45056 | 106976 / 94208 |
 
-Board 1's windowed low (59 KB, largest 45 KB) came while board 2 rejoined the cluster after its flash, with no caller on. A second idle reading after a clean restart (up 171 s, before the busy test) gave free 91452, largest 81920, min 59084.
+Board 1's idle low comes from its own boot DNS check (HTTPS, about 60 s after boot), with no caller on: the board's log says `heap low in web: min 58268->57552` after the flash, and after the last boot of the day `heap low in web: min 76132->57136, largest 55296`. So board 1's `min` sits at 53 to 59 KB from boot onward, before anyone calls. A second idle reading after a clean restart (up 171 s, before the busy test) gave free 91452, largest 81920, min 59084.
+
+**Largest block after callers.** Every reading with no caller on, taken right after callers hung up, shows free about 91 KB but largest only 55296 (6 readings: after the LORD, viewer, messages and LORD plus follower trials). Only fresh or settled boots show 77824 to 86016 (and 81920 again at up 570 after the last boot). Task 4's TLS gate wants about 80 KB largest, so right after a busy spell it will usually wait.
 
 ## 2. Busy test
 
@@ -49,19 +51,19 @@ Lowest numbers in the 30 s polls (board 1):
 | largest block (poll) | 34816 |
 | min since boot (between polls) | 11492 |
 | windowed low wmin / wlarge | 36568 / 13312 |
-| board's own "heap low" lines, largest at that moment | down to 3584 |
+| largest block in the ALLOC FAILED lines | down to 3584 |
 
 Every panic is `abort()` from a failed `operator new` (an exception nobody catches), decoded with addr2line on this build:
 
 | time | failed alloc | free / largest then | where |
 |---|---|---|---|
 | 77 s | 15713 | 35992 / 14336 | `Node` output string grows (node.cpp:342) while `expandArt` (pipecodes.cpp:75) writes a screen |
-| 112 s | 15361 | 29072 / 15360 | the same append, from `Node::showLoginScreen` (node.cpp:468) |
+| 112 s | 15361 | 29072 / 15360 | a string in the pipe code expansion (pipecodes.cpp:190) under `Node::showLoginScreen` (node.cpp:468): the login screen, not node.cpp:342 |
 | 175 s | 31310 | 55148 / 24576 | LORD `NativeLord::readFile` from `loadMonster` (game.cpp:360), the whole LENEMY.DAT |
 | 758 s | 15713 | 31824 / 12800 | node.cpp:342 from expandArt again |
 | 895 s | 15713 | 32204 / 13312 | node.cpp:342 from expandArt again |
 
-The 13 ALLOC FAILED lines that did not panic are all 12016 bytes (the ANSI viewer's ZIP inflate state); the viewer survives them and says the pack won't open.
+The 13 ALLOC FAILED lines that did not panic are all 12016 bytes. That is `ZipReader::kStateBytes` (the 10992 byte `tinfl_decompressor` from firmware.elf plus the 1024 byte input buffer), which `AnsiViewer::grabInflate` asks for next to its 32 KB window; the viewer survives the failure and the pack does not open.
 
 What each caller did (counts from the script):
 
@@ -81,7 +83,7 @@ Notes on the run:
 
 ### Instrument concern (Task 1, not fixed here)
 
-`wmin` misses the real lows. In the same boot, `min` (the IDF low since boot) was 11492 while `wmin` said 36568, and `wdoing` named the ANSI viewer while the deepest lows were in `node` and `T` (the board's "heap low in" log lines). The window is sampled only at the top of `loop()`, so lows inside one pass (a screen being expanded, a door step) do not reach it. `wdoing` is also cut at 24 characters, so the handle is lost (`door_ANSI_Pack_Viewer_by`). For Task 18 the honest number is `min` after a fresh boot, plus the "heap low in" lines.
+`wmin` misses the real lows. In the same boot, `min` (the IDF low since boot) was 11492 while `wmin` said 36568, and `wdoing` named the ANSI viewer while the deepest lows were in `node` and `T` (the board's "heap low in" log lines). The window is sampled only at the top of `loop()`, so lows inside one pass (a screen being expanded, a door step) do not reach it. `wdoing` is also cut at 24 characters, so the handle is lost (`door_ANSI_Pack_Viewer_by`). Neither field works as Task 18's pass number as it stands: `wmin` misses the lows, and `min` (since boot) already holds the boot DNS check's 53 to 59 KB, under the 60 KB busy floor, before any caller. Task 18 needs a window that resets with `@HEAPWIN` and is fed from the deep spots too (the places that write the "heap low in" lines), or the busy floor read from those lines.
 
 ## 3. The main's extra 22 KB
 
@@ -94,7 +96,7 @@ There is no command that unmounts the card or stops the web task at runtime (`@S
 | FATFS mount on the card: `vfs_fat_ctx_t` (2660, holds the FATFS object with its 512 byte window and two 1 KB path buffers) plus 10 open file slots (`SD.begin(..., 10)`) of 552 each (`FIL`, 512 of it the per file cache), plus 40 bytes of flags | 8220 | computed from sizeof in firmware.elf; board 2 has no card so does not mount it |
 | Web task (No-IP, DNS, Discord): stack 7168, task control block 344, line queue 8 x 320 = 2560 plus 84 | 10156 | computed from sizeof; `stk_web=0` on board 2 shows the task does not exist there (it starts only where No-IP, DNS or Discord is set, and those are set on board 1 only) |
 | Last callers list, main only (`lastCallers`, up to 20 lines) | about 1500 | estimated: 20 x (24 byte string plus its line on the heap) |
-| User list | 0 | both boards hold all 9 users (`@USERS` on board 2: 9; the cluster log "node 3 has every user (9 sent)") |
+| User list | 0 | both boards hold all 9 users (`@USERS`: 9 on each board, board 1 read after the busy test; the cluster log "node 3 has every user (9 sent)") |
 | `artCache`, `menuCache` | 0 on board 1 | follower only (main.cpp `themeArt`, `menuFile`); board 2's are empty at idle (`artmax=0`) |
 | Day stats | under 100 | both boards keep their own |
 | Unexplained (heap block headers on the items above, the main's cluster bookkeeping, the card's SPI and card structs, web settings strings) | about 2100 | gap minus the rows above |
@@ -111,7 +113,7 @@ Bytes left, lowest seen anywhere today.
 | web | 7168 | **1108** | right after the boot DNS check (seen after every clean boot on board 1); 4420 after `@DDNS now` at low heap |
 | mdns | 4096 | 2124 (board 2), 2260 (board 1) | idle and busy |
 | esp_timer | 3584 | 3392 | constant, both boards |
-| Arduino loop (`stack` field) | 8192 | 1364 (board 1, busy trial), 1876 in the full run | busy |
+| Arduino loop (`stack` field) | 8192 | 1364 (board 1, messages and files trial), 1748 in the full run | busy |
 
 What they decide:
 
