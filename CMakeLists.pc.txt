@@ -73,6 +73,8 @@ add_library(axiscore STATIC
     third_party/sha256/sha256.c
     third_party/monocypher/monocypher.c
     src/net/sign.cpp
+    src/net/record.cpp
+    src/net/revkeys.cpp
     dosemu/door/cpu.cpp
     dosemu/door/guestmem.cpp
     dosemu/door/mz.cpp
