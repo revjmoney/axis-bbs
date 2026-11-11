@@ -30,6 +30,7 @@
 #include "bbs/axisnet.h"
 #include "net/telnet.h"
 #include "bbs/daystats.h"
+#include "bbs/statsshare.h"
 #include "bbs/diag.h"
 #include "bbs/votebooth.h"
 #include "platform/cyd/web.h"
@@ -676,10 +677,23 @@ static uint32_t callStartMs = 0;
 // Calls, posts and uploads today and the lifetime call total, in internal flash (/stats.txt) so a reboot keeps them.
 // The day counters roll at local midnight; until the clock is set they just keep counting.
 static axis::bbs::DayStats dayStats;
+// In a cluster the main owns them. A follower (or a board still finding the main) adds its calls and uploads to
+// statsShare and sends them up (statsSync); it shows the main's numbers from the heartbeat plus what it has not had
+// acknowledged, and never rolls, counts into or saves its own /stats.txt. Its dayStats follows the main's numbers in RAM,
+// so a follower that has to stand in as main carries on from them. Posts need no sending: a follower's caller posts
+// straight into the main's message base (CountingMsgs), which counts them there.
+static axis::bbs::StatsShare statsShare;
+static axis::bbs::StatsInbox statsInbox;  // main: the follower batches already applied
+static bool statsOwner() {
+    if (!cluster) return true;
+    auto r = cluster->role();
+    return r == axis::cluster::Role::Main || r == axis::cluster::Role::Off;
+}
 static void statsSave() {
     if (!flashWrite("/stats.txt", dayStats.format())) Serial.println("axis: stats save failed");
 }
 static void rollDayCounters() {
+    if (!statsOwner()) return;  // only the main's midnight counts
     time_t now = time(nullptr);
     if (now < 1700000000) return;
     struct tm* t = localtime(&now);
@@ -693,6 +707,34 @@ static void statsLoad() {
     } else if (!dayStats.parse(flashRead("/stats.txt"))) {
         Serial.println("axis: /stats.txt unreadable, stats start from zero");
     }
+}
+// What the screens and @STATS show: this board's own numbers on the main, the main's last ones on a follower (none
+// before it has heard them), plus anything still waiting to be sent up.
+static axis::bbs::DayStats statsShown() {
+    if (statsOwner()) return statsShare.shown(dayStats);
+    return statsShare.shown();
+}
+static bool statsSendNow = false;  // a follower counted something: send it at the top of the next loop turn
+static void countCall() {
+    if (statsOwner()) {
+        rollDayCounters();
+        dayStats.call();
+        statsSave();
+    } else statsShare.call(), statsSendNow = true;
+}
+static void countUpload() {
+    if (statsOwner()) {
+        rollDayCounters();
+        dayStats.upload();
+        statsSave();
+    } else statsShare.upload(), statsSendNow = true;
+}
+static void countPost() {
+    if (statsOwner()) {
+        rollDayCounters();
+        dayStats.post();
+        statsSave();
+    } else statsShare.post(), statsSendNow = true;
 }
 
 // Several callers per board. Each loop turn serves one session at a time: its line, node, game,
@@ -791,10 +833,42 @@ static int callersOnline() {
     return n;
 }
 static String   lastCaller = "none yet";
+// LC: a follower shows the main's last caller (or its own newest one not yet sent), its own only before it has heard.
+static std::string statsLastCaller() {
+    std::string h = statsOwner() ? std::string() : statsShare.lastCaller();
+    return h.empty() ? std::string(lastCaller.c_str()) : h;
+}
 static bool     screenDirty = true;
 static int      tapX = -1, tapY = -1;  // a tap from the @TAP serial command
 
 static uint32_t hwRandom() { return esp_random(); }
+
+// A follower heard the main's WFC numbers (a heartbeat, or the answer to a batch): its RAM copy follows them, so a
+// follower that stands in as main starts from them. Never saved here: /stats.txt is the main's.
+static void statsHeard(bool ok) {
+    if (!ok || statsOwner()) return;
+    const axis::bbs::DayStats& m = statsShare.main();
+    static std::string         lastLc;
+    bool same = m.day == dayStats.day && m.calls == dayStats.calls && m.posts == dayStats.posts && m.uploads == dayStats.uploads &&
+                m.total == dayStats.total && lastLc == statsShare.mainLastCaller();
+    if (same) return;  // (every heartbeat brings them: redraw only on a change)
+    dayStats = m;
+    lastLc = statsShare.mainLastCaller();
+    screenDirty = true;
+}
+// Follower: send what it counted to the main, right after counting and then every 5 s until acknowledged. Only from the
+// top of loop(), never inside a caller's turn; 1.5 s at most (the main answers in milliseconds). A link that is down is
+// skipped at once and the counts wait.
+static void statsSync() {
+    static uint32_t nextTry = 0;
+    if (!statsShare.waiting() || !asFollower()) return;
+    if (!statsSendNow && (int32_t)(millis() - nextTry) < 0) return;
+    statsSendNow = false;
+    std::string reply;
+    bool        ok = cluster->request(statsShare.request(hwRandom()), reply, 1500) && statsShare.answer(reply);
+    statsHeard(ok);
+    nextTry = millis() + (ok ? 0 : 5000);
+}
 
 static String timeText() {
     time_t now = time(nullptr);
@@ -818,7 +892,7 @@ static axis::bbs::SysInfo sysInfo() {
     s.storage = storageSummary();
     s.hardware = "ESP32 CYD " + std::to_string(ESP.getCpuFreqMHz()) + " MHz " +
                  std::to_string(ESP.getFlashChipSize() >> 20) + " MB flash";
-    s.callsToday = dayStats.calls;
+    s.callsToday = statsShown().calls;
     s.nodesTotal = (int)sessions.size();
     s.nodes.clear();
     for (size_t i = 0; i < sessions.size(); i++) s.nodes.push_back(sessionNode(i) ? sessionNode(i)->handle() : std::string());
@@ -871,7 +945,7 @@ struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for
     using axis::bbs::FileMessageStore::FileMessageStore;
     int post(const std::string& area, const axis::bbs::Message& m) override {
         int n = axis::bbs::FileMessageStore::post(area, m);
-        if (n && area != "email") dayStats.post(), statsSave();
+        if (n && area != "email") countPost();
         return n;
     }
 };
@@ -1513,7 +1587,10 @@ static void hangUp() {
     line.reset();  // closes the connection
     logEvent("hang up" + heapText() + " " + String(node && !node->handle().empty() ? node->handle().c_str() : "") + " after " +
              String((millis() - callStartMs) / 1000) + "s");
-    if (node && !node->handle().empty()) lastCaller = node->handle().c_str();
+    if (node && !node->handle().empty()) {
+        lastCaller = node->handle().c_str();
+        if (!statsOwner()) statsShare.caller(node->handle()), statsSendNow = true;  // the main's LC is the cluster's
+    }
     node.reset();
     gate.reset();
     wizard.reset();
@@ -1864,7 +1941,7 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     axis::bbs::WfcSnapshot w;
     w.bbsName = cfg.bbsName;
     w.sysop = cfg.sysopHandle;
-    w.lastCaller = lastCaller.c_str();
+    w.lastCaller = statsLastCaller();
     w.ip = WiFi.localIP().toString().c_str();
     std::string t = timeText().c_str();  // "YYYY-MM-DD HH:MM"
     if (t.size() >= 16) w.date = t.substr(0, 10), w.time = t.substr(11, 5);
@@ -1882,10 +1959,11 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     const auto& ev = events.lines();
     for (auto it = ev.rbegin(); it != ev.rend() && w.events.size() < 8; ++it) w.events.push_back(*it);
     rollDayCounters();
-    w.callsToday = dayStats.calls;
-    w.postsToday = dayStats.posts;
-    w.uploadsToday = dayStats.uploads;
-    w.totalCalls = dayStats.total;
+    axis::bbs::DayStats st = statsShown();
+    w.callsToday = st.calls;
+    w.postsToday = st.posts;
+    w.uploadsToday = st.uploads;
+    w.totalCalls = st.total;
     w.sdFreeKb = (uint32_t)(storageFreeBytes() >> 10);
     w.ramFreeKb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
     w.uptimeS = millis() / 1000;
@@ -1905,9 +1983,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     line->start();
     if (!giveBack.empty()) line->inject(giveBack);
     if (cfg.setupDone && mode == Mode::Normal) {
-        rollDayCounters();
-        dayStats.call();
-        statsSave();
+        countCall();
         node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, cfg, &callerFiles()));
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
@@ -2452,6 +2528,10 @@ static void startCluster() {
         for (auto& u : users.all()) v.push_back(axis::bbs::formatUser(u));
         return v;
     };
+    cluster->beatExtra = [] {  // the main's WFC stats ride every heartbeat (about 60 bytes)
+        return axis::bbs::encodeStatsSnapshot(dayStats, lastCaller.c_str());
+    };
+    cluster->onBeatExtra = [](const std::string& x) { statsHeard(statsShare.heard(x)); };
     cluster->onUser = [](const std::string& rec) {
         axis::bbs::User u;
         if (!axis::bbs::parseUser(rec, u)) return;
@@ -2466,7 +2546,7 @@ static void startCluster() {
         }
     };
     // A follower's request is told apart by its first letter. The file server (cluster/remotefiles.cpp) owns
-    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H and "AN". Scripts were "S" and @ commands "C"
+    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H B and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
     // until 2026-11-09: that took every file open (packs, views, downloads) and upload away from a follower.
     cluster->onRequest = [](int nodeNum, const std::string& req) {
         servedRequest = true;  // a follower waits on this: no nap this turn
@@ -2526,6 +2606,16 @@ static void startCluster() {
             size_t sep = req.find('\x1f', 2);
             if (sep != std::string::npos) listAddLocal(req.substr(2, sep - 2), req.substr(sep + 1));
             return std::string("1");
+        }
+        if (req.rfind("B\x1f", 0) == 0) {  // a follower's calls and uploads for the WFC stats: applied once, answered with ours
+            rollDayCounters();
+            std::string last = lastCaller.c_str();
+            if (statsInbox.apply(req, dayStats, last) == axis::bbs::StatsInbox::Result::Applied) {
+                statsSave();
+                lastCaller = last.c_str();
+                screenDirty = true;
+            }
+            return "1" + axis::bbs::encodeStatsSnapshot(dayStats, lastCaller.c_str());
         }
         if (req == "K") {  // the last callers
             std::string out = "1";
@@ -3123,6 +3213,19 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@RUMORS" || cmd == "@BBSLIST" || cmd == "@VOTES" || cmd == "@LINERS") {
         std::vector<std::string> v = cmd == "@LINERS" ? oneLiners : sharedList(cmd == "@RUMORS" ? "rumors" : cmd == "@BBSLIST" ? "bbslist" : "votes");
         for (auto& l : v) out.println(l.c_str());
+    } else if ((cmd == "@STATS" || cmd.startsWith("@STATS ")) && !statsOwner()) {
+        // a follower: the main owns the counters; this is the main's last word plus what is still to be sent up
+        if (cmd.length() > 7) {
+            out.println("@STATS total is kept on the main: run @STATS total=<n> there");
+        } else {
+            axis::bbs::DayStats s = statsShown();
+            const auto&         p = statsShare.pending();
+            const auto&         o = statsShare.outstanding();
+            out.printf("@STATS %s day=%d calls=%u posts=%u uploads=%u total=%u unsent=%u/%u/%u\n",
+                       statsShare.known() ? "from the main:" : "main not heard yet, this board's unsent only:", s.day, (unsigned)s.calls,
+                       (unsigned)s.posts, (unsigned)s.uploads, (unsigned)s.total, (unsigned)(p.calls + o.calls), (unsigned)(p.posts + o.posts),
+                       (unsigned)(p.uploads + o.uploads));
+        }
     } else if (cmd == "@STATS" || cmd.startsWith("@STATS ")) {
         // this board's WFC counters: "@STATS" lists them, "@STATS total=<n>" sets the lifetime call total
         uint32_t n = 0;
@@ -3135,8 +3238,9 @@ static void runCommand(const String& cmd, Print& out) {
                 screenDirty = true;
                 logEvent("sysop: lifetime calls set to " + String(n));
             }
-            out.printf("@STATS day=%d calls=%u posts=%u uploads=%u total=%u\n", dayStats.day, (unsigned)dayStats.calls,
-                       (unsigned)dayStats.posts, (unsigned)dayStats.uploads, (unsigned)dayStats.total);
+            axis::bbs::DayStats s = statsShown();  // (plus any counts left from when this board was a follower)
+            out.printf("@STATS day=%d calls=%u posts=%u uploads=%u total=%u\n", s.day, (unsigned)s.calls, (unsigned)s.posts,
+                       (unsigned)s.uploads, (unsigned)s.total);
         }
     } else if (cmd == "@STATUS") {  // one line for the panel
         int on = 0;
@@ -3814,7 +3918,7 @@ static void serviceSession(int i) {
         }
         if (!running) {
             const auto& r = job->request();
-            if (r.upload && job->ok()) rollDayCounters(), dayStats.upload(), statsSave();
+            if (r.upload && job->ok()) countUpload();
             logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
                      (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
             noteDoing("idle");
@@ -3945,6 +4049,7 @@ void loop() {
         return;
     }
     if (cluster) cluster->tick(millis());
+    statsSync();
     if (localNode) {  // the sysop at the board's own screen
         localNode->poll(millis());
         using S = axis::bbs::Node::State;

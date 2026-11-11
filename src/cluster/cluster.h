@@ -122,6 +122,10 @@ public:
     std::function<uint32_t()>                     clockMs;     // for request(): the time
     std::function<void(uint32_t)>                 sleepMs;     // and a short wait
     std::function<bool()>                         busyHere;    // main: someone on this board the status doesn't show (the local console)
+    // main: one more field on every heartbeat (the shared WFC stats); "" sends none. It must hold no 0x1F.
+    std::function<std::string()>                  beatExtra;
+    // follower: that field, when the main's heartbeat carries one (an older main's never does)
+    std::function<void(const std::string&)>       onBeatExtra;
 
 private:
     struct Link {

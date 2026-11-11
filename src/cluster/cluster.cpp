@@ -270,6 +270,10 @@ void Cluster::heartbeat() {
         f.push_back(n.handle);
         f.push_back(n.activity);
     }
+    if (beatExtra && !links_.empty()) {  // one trailing field: a follower that doesn't know it skips it (5 fields a node)
+        std::string x = beatExtra();
+        if (!x.empty() && x.find(kFieldSep) == std::string::npos) f.push_back(x);
+    }
     for (Link& l : links_)
         if (l.auth == 2 && !put(l, Frame::Heartbeat, f)) event("heartbeat to node " + num((uint32_t)l.node) + " failed");
 }
@@ -569,6 +573,7 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
         }
         for (const NodeInfo& n : nodes_)
             if (n.ip == mainIp_) lastMain_ = n.number;
+        if ((f.size() - 1) % 5 == 1 && onBeatExtra) onBeatExtra(f.back());  // the main's extra field
     } else if (t == Frame::Chat && f.size() >= 4) {
         if (onChat) onChat({(int)toU(f[0]), f[1], f[2], f[3] == "1", f.size() >= 6 ? (int)toU(f[4]) : 0, f.size() >= 6 ? (int)toU(f[5]) : 0});
     } else if (t == Frame::UserChange) {
