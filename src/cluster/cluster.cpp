@@ -92,6 +92,21 @@ bool Cluster::put(Link& l, Frame t, const std::vector<std::string>& f) {
     return net_.send(l.id, out);
 }
 
+// put() for a frame whose last field is big (a file piece): the head fields go in front of it where it already sits, so the
+// piece is moved into the frame, not copied (the sender reserved room for the head and the tag). Same bytes as put().
+bool Cluster::put(Link& l, Frame t, const std::vector<std::string>& head, std::string&& last) {
+    if (l.auth != 2 || l.dead) return false;
+    std::string h(4, '\0');
+    h += (char)t;
+    for (const std::string& s : head) h += s, h += kFieldSep;
+    std::string out = std::move(last);
+    out.insert(0, h);
+    out += frameTag(l.linkKey, asMain(l) ? 'M' : 'F', l.sent++, t, out.data() + 5, out.size() - 5);
+    uint32_t n = (uint32_t)(out.size() - 4);
+    for (int i = 0; i < 4; i++) out[(size_t)i] = (char)(n >> (8 * i));
+    return net_.send(l.id, out);
+}
+
 bool Cluster::take(Link& l, Frame& t, std::string& body) {
     while (!l.dead && l.in.next(t, body)) {
         if (l.auth == 2) {  // trusted: every frame must carry the right tag, in order
@@ -580,11 +595,8 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
         } else if (t == Frame::FileReq) {
             size_t      sep = body.find(kFieldSep);
             std::string id = body.substr(0, sep), req = sep == std::string::npos ? "" : body.substr(sep + 1);
-            std::vector<std::string> resp;  // the answer (up to a 7 KB file piece) moves in: no second copy of it
-            resp.reserve(2);
-            resp.push_back(id);
-            resp.emplace_back(onRequest ? onRequest(l.node, req) : std::string("0"));
-            put(l, Frame::FileResp, resp);
+            std::string r = onRequest ? onRequest(l.node, req) : std::string("0");  // (up to a 7 KB file piece)
+            put(l, Frame::FileResp, {id}, std::move(r));  // moved into the frame: no second copy of it
         }
         return;
     }

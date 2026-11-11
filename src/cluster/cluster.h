@@ -168,6 +168,7 @@ private:
     void turnedAway(uint32_t now);  // the "turned away" event, at most once a minute
     // one frame on a link, sealed with its tag once the link is trusted
     bool put(Link& l, Frame t, const std::vector<std::string>& f);
+    bool put(Link& l, Frame t, const std::vector<std::string>& head, std::string&& last);  // last (big) is moved into the frame
     // the next frame from a link that is for the BBS; the handshake is handled in here
     bool take(Link& l, Frame& t, std::string& body);
     void sendHello(Link& l);

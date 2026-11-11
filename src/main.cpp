@@ -356,14 +356,17 @@ static std::string readThemeFile(const char* folder, const std::string& name) {
 // One piece of the Saylor poster, from the theme's folder (`want` bytes at most, never more than a cluster frame takes).
 // It is never read whole: Node streams it a piece at a time (Node::setPoster). A short read at a later offset means
 // the end of the file, not "try the other folder".
-static std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened) {
-    *opened = false;
-    if (!storageHasSd() || !posterName(name) || offset >= kPosterCap) return "";
+static bool posterPieceLocalAppend(const std::string& name, size_t offset, size_t want, std::string& out) {
+    if (!storageHasSd() || !posterName(name) || offset >= kPosterCap) return false;
     if (want > kPosterChunk) want = kPosterChunk;
     if (want > kPosterCap - offset) want = kPosterCap - offset;
-    std::string s = readThemeFile(cfg.theme.c_str(), name, want, offset, opened);
-    if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(cfg.theme), name, want, offset, opened);
-    if (!*opened) s = readThemeFile("axis", name, want, offset, opened);  // a look without its own poster shows the axis one
+    if (readThemeFileAppend(cfg.theme.c_str(), name, want, offset, out)) return true;
+    if (readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(cfg.theme), name, want, offset, out)) return true;
+    return readThemeFileAppend("axis", name, want, offset, out);  // a look without its own poster shows the axis one
+}
+static std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened) {
+    std::string s;
+    *opened = posterPieceLocalAppend(name, offset, want, s);
     return s;
 }
 // A follower asks the main for the same piece ("T name offset want"); *exists false when the main has none (or did not answer).
@@ -398,41 +401,42 @@ static std::string themeArtLocal(const std::string& name) {
     return s;
 }
 // The main's answer to "T name offset": one piece of a theme file, at most kPosterChunk bytes, so the reply stays under the
-// cluster's 8 KB frame (a bigger one drops the link). *opened: the file is there.
-static std::string themeArtPiece(const std::string& name, size_t off, size_t want, bool* opened) {
-    *opened = false;
-    if (!storageHasSd() || name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return "";
-    if (posterName(name)) return posterPieceLocal(name, off, want, opened);
+// cluster's 8 KB frame (a bigger one drops the link). The piece is appended to out (the reply being built: no second copy).
+// Returns whether the file is there.
+static bool themeArtPieceAppend(const std::string& name, size_t off, size_t want, std::string& out) {
+    if (!storageHasSd() || name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
+    if (posterName(name)) return posterPieceLocalAppend(name, off, want, out);
     size_t cap = kThemeArtCap;
-    if (off >= cap) return "";
+    if (off >= cap) return false;
     if (!want || want > kPosterChunk) want = kPosterChunk;
     if (want > cap - off) want = cap - off;
     // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
     // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
     std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg) : cfg.theme, file = name, look;
     if (axis::bbs::theme::splitLookFile(name, look, file)) folder = look;
-    std::string s = readThemeFile(folder.c_str(), file, want, off, opened);
-    if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, opened);
-    return s;
+    if (readThemeFileAppend(folder.c_str(), file, want, off, out)) return true;
+    return readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, out);
 }
 // A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
 static std::string themeArtRemote(const std::string& name, bool* answered) {
+    constexpr size_t kFollowerWant = 4096;  // a follower asks for 4 KB pieces: the main's reply (and this reply) stay small
     size_t      cap = posterName(name) ? kPosterCap : kThemeArtCap;
     std::string all;
     if (!posterName(name)) all.reserve(cap);  // (one block: the pieces do not double it)
     *answered = false;
     for (size_t off = 0; all.size() < cap;) {
         std::string reply;
-        if (!cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off), reply, 3000) || reply.empty()) {
+        if (!cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off) + "\x1f" + std::to_string(kFollowerWant), reply, 3000) || reply.empty()) {
             *answered = false;  // (a piece went missing: not a whole answer)
             return all;
         }
         *answered = true;
         if (reply[0] != '1') break;
-        std::string chunk = reply.substr(1);
+        reply.erase(0, 1);  // (in place: the piece is the reply)
+        const std::string& chunk = reply;
         if (chunk.empty()) break;
         all += chunk;
-        if (chunk.size() < kPosterChunk) break;
+        if (chunk.size() < kFollowerWant) break;  // (a short piece is the end; an older main that ignores want sends 7000, never short before the end)
         off += chunk.size();
     }
     if (all.size() > cap) all.resize(cap);
@@ -2652,10 +2656,15 @@ static void startCluster() {
                 }
             }
             if (off > (posterName(name) ? kPosterCap : kThemeArtCap)) return std::string("0");
-            bool        opened = false;
-            std::string piece = themeArtPiece(name, off, want ? want : kPosterChunk, &opened);
+            // built once, in place: '1' then the piece (reserved up front, with room for the cluster to put its frame header and tag round it)
+            size_t w = want ? want : kPosterChunk;
+            if (w > kPosterChunk) w = kPosterChunk;
+            std::string r;
+            r.reserve(1 + w + 64);
+            r = '1';
+            bool opened = themeArtPieceAppend(name, off, w, r);
             if (!opened && posterName(name)) return std::string("0");
-            return "1" + piece;
+            return r;
         }
         if (req.rfind("U\x1f", 0) == 0) {
             HeapScope scope("U");
