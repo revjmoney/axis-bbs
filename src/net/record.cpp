@@ -277,6 +277,11 @@ bool decode(const std::string& line, NetNotice& out) {
 bool signPost(NetPost& p, const KeyPair& k) {
     if (!validFields(p)) return false;
     if (boardId(toHex(k.pub, 32)) != p.board) return false;
+    p.sig.assign(128, '0');  // final length, to check the frame cap before signing
+    if (encode(p).empty()) {
+        p.sig.clear();
+        return false;
+    }
     p.sig = signHex(k, signedPart(p));
     return !p.sig.empty();
 }
@@ -289,6 +294,11 @@ bool verifyPost(const NetPost& p, const std::string& pubHex) {
 
 bool signCard(NetCard& c, const KeyPair& k) {
     if (toHex(k.pub, 32) != c.pub || boardId(c.pub) != c.board || !validFields(c)) return false;
+    c.sig.assign(128, '0');  // final length, to check the frame cap before signing
+    if (encode(c).empty()) {
+        c.sig.clear();
+        return false;
+    }
     c.sig = signHex(k, signedPart(c));
     return !c.sig.empty();
 }
@@ -305,6 +315,11 @@ bool verifyCard(const NetCard& c, const std::string& pubHex) {
 
 bool signNotice(NetNotice& n, const KeyPair& k) {
     if (!validFields(n)) return false;
+    n.sig.assign(128, '0');  // final length, to check the frame cap before signing
+    if (encode(n).empty()) {
+        n.sig.clear();
+        return false;
+    }
     n.sig = signHex(k, signedPart(n));
     return !n.sig.empty();
 }
