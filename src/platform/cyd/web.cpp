@@ -123,6 +123,8 @@ void ddnsCheck() {
     if (code == 200) lastIp_ = ip;
 }
 
+volatile bool ddnsDue_ = false;  // bench: @DDNS now makes the next turn check at once
+
 void run(void*) {
     uint32_t lastDdns = 0;
     bool     first = true;
@@ -150,8 +152,9 @@ void run(void*) {
             }
         }
         if (door_) continue;  // DNS checks allocate too; the timer is not consumed, so they run after
-        if (main_ && WiFi.status() == WL_CONNECTED && millis() > kFirstCheckMs && (first || millis() - lastDdns > kDdnsEveryMs)) {
+        if (main_ && WiFi.status() == WL_CONNECTED && millis() > kFirstCheckMs && (first || ddnsDue_ || millis() - lastDdns > kDdnsEveryMs)) {
             first = false;
+            ddnsDue_ = false;
             lastDdns = millis();
             ddnsCheck();
         }
@@ -255,6 +258,8 @@ bool setNoip(const String& spec) {
     if (host.length()) startTask();
     return true;
 }
+
+void ddnsSoon() { ddnsDue_ = true; }
 
 void noipNow() {
     xSemaphoreTake(lock_, portMAX_DELAY);

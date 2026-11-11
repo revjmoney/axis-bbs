@@ -40,7 +40,7 @@ const char* resetToken(int resetCode) {
 std::string diagFields(const DiagSample& s) {
     std::string tok = s.winDoing.substr(0, 24);
     for (char& c : tok)
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') c = '_';
+        if (c == '=' || (unsigned char)c < 0x21 || (unsigned char)c > 0x7e) c = '_';  // @STATUS is key=value tokens split on spaces
     if (tok.empty()) tok = "none";
     char b[320];
     std::snprintf(b, sizeof b,

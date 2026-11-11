@@ -3500,6 +3500,9 @@ static void runCommand(const String& cmd, Print& out) {
         }
     } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
         out.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
+    } else if (cmd == "@DDNS now") {  // bench: make the web task's DNS check due on its next turn
+        web::ddnsSoon();
+        out.println("axis: ddns check due");
     } else if (cmd.startsWith("@DDNS")) {  // "@DDNS domain|host|key|secret": GoDaddy dynamic DNS; alone: off
         out.println(web::setDdns(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: ddns saved" : "axis: @DDNS domain|host|key|secret");
     } else if (cmd == "@NOIPNOW") {  // bench: update No-IP right now
