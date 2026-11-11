@@ -17,10 +17,6 @@ jobs:
   asan-ubsan:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Known findings on main (see docs/github-automation.md): theme.cpp drip2 read past its end,
-    # and a signed shift in third_party/sha256/sha256.c. While those stand, a red result here
-    # does not fail the run. Remove this line once both are fixed so new findings fail again.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Compilers

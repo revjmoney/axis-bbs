@@ -46,25 +46,10 @@ the cmake command line, the CMakeLists files are untouched) and runs `axis_tests
 bounds access, use after free, leak, bad shift or overflow stops the run with the file, line
 and a stack trace in the log.
 
-The job is marked `continue-on-error: true` for now because main has two known findings (below).
-The run shows the job as failed (red cross on the job) but the workflow still passes. Remove
-the `continue-on-error` line once both are fixed, so any new finding fails the check.
-
-Known findings, found locally with UBSan (MinGW g++ 16.1, trap mode), confirmed with gdb:
-
-1. `src/bbs/theme.cpp:372` in `theme::window`: when drawing the first drip row (`drip1`, 72
-   characters) the code also reads `drip2[i]`, but `drip2` is only 70 bytes. At `i == 71` that
-   reads past the end of `drip2` (out of bounds read of a static array). Reached by the
-   STATS window (`Node::showSystemInfo`, `tests/test_node.cpp:94`). Fix: treat `i` past the end
-   of `drip2` as "not a drip", for example `i >= (int)sizeof drip2 || drip2[i] != '#'`.
-2. `third_party/sha256/sha256.c:49` in `sha256_transform`: `data[j] << 24` shifts a byte
-   promoted to signed `int` into the sign bit, which is undefined in C for bytes 0x80 and up.
-   Reached by every password hash (`pbkdf2Sha256Hex`, `tests/test_accounts.cpp:97`). Fix:
-   cast each byte to `WORD` before shifting.
-
-With both patched (in a scratch copy only), all 793 test cases pass under UBSan in trap mode.
-AddressSanitizer and LeakSanitizer do not work with MinGW on Windows, so they have not run yet;
-the first CI run on GitHub is their first run and may find more.
+Any finding fails the check. The two findings UBSan showed locally (a read past the end of
+`drip2` in `theme::window`, and a signed byte shift in `third_party/sha256/sha256.c`) were fixed
+on main in 99ad074. AddressSanitizer and LeakSanitizer do not work with MinGW on Windows, so
+their first real run is on GitHub.
 
 ### Static analysis (cppcheck)
 
