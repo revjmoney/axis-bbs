@@ -47,8 +47,8 @@ jobs:
           pio run -e cyd -j 2
           pio run -e headless -j 2
       # Both envs write firmware.bin, so each file gets the env in its name. The build does not
-      # make a merged (factory) image. flasher_args.json, when ESP-IDF writes it, lists the
-      # flash offset of each file.
+      # make a merged (factory) image. Offsets: bootloader and partition table are where
+      # PlatformIO espressif32 6.9.0 flashes them (ESP32), the app is app0 in partitions.csv.
       - name: Collect files
         run: |
           mkdir -p dist
@@ -57,10 +57,16 @@ jobs:
               test -f ".pio/build/$env/$f"
               cp ".pio/build/$env/$f" "dist/axis-bbs-$TAG-$env-$f"
             done
-            if [ -f ".pio/build/$env/flasher_args.json" ]; then
-              cp ".pio/build/$env/flasher_args.json" "dist/axis-bbs-$TAG-$env-flasher_args.json"
-            fi
           done
+          cat > "dist/axis-bbs-$TAG-FLASHING.txt" <<EOF
+          Axis Micro BBS Firmware $TAG, ESP32 (CYD and headless boards)
+          bootloader.bin  0x1000
+          partitions.bin  0x8000
+          firmware.bin    0x10000
+          Example, a board on COM5, files for env cyd:
+          esptool.py -p COM5 write_flash 0x1000 axis-bbs-$TAG-cyd-bootloader.bin 0x8000 axis-bbs-$TAG-cyd-partitions.bin 0x10000 axis-bbs-$TAG-cyd-firmware.bin
+          This does not touch NVS, LittleFS or the SD card.
+          EOF
           (cd dist && sha256sum * > "axis-bbs-$TAG-SHA256SUMS.txt")
           ls -l dist
       - name: Publish release
