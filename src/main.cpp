@@ -2525,11 +2525,18 @@ static void startCluster() {
     cluster->setFreeBytes(storageFreeBytes(true));  // and the main pools every card by its room
     cluster->clockMs = [] { return (uint32_t)millis(); };
     cluster->sleepMs = [](uint32_t ms) { delay(ms); };
-    cluster->allUsers = [] {
-        std::vector<std::string> v;
-        for (auto& u : users.all()) v.push_back(axis::bbs::formatUser(u));
-        return v;
+    // a joining board's copy of the users, one record at a time in id order (ids only grow; @UDEL can remove one
+    // mid-copy, which only means it is not sent). Never a list of every record at once.
+    cluster->nextUser = [](int after, int& id, std::string& record) {
+        const axis::bbs::User* best = nullptr;
+        for (const auto& u : users.all())
+            if (u.id > after && (!best || u.id < best->id)) best = &u;
+        if (!best) return false;
+        id = best->id;
+        record = axis::bbs::formatUser(*best);
+        return true;
     };
+    cluster->heapLargest = [] { return (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT); };
     cluster->beatExtra = [] {  // the main's WFC stats ride every heartbeat (about 60 bytes)
         return axis::bbs::encodeStatsSnapshot(dayStats, lastCaller.c_str());
     };

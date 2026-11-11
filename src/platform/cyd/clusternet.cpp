@@ -74,6 +74,13 @@ bool Esp32ClusterNet::send(int link, const std::string& b) {
     return !l.dead;
 }
 
+size_t Esp32ClusterNet::queued(int link) {
+    auto it = links_.find(link);
+    if (it == links_.end()) return 0;
+    pump(it->second);  // what the socket takes now doesn't count
+    return it->second.out.size();
+}
+
 int Esp32ClusterNet::recv(int link, std::string& out) {
     auto it = links_.find(link);
     if (it == links_.end()) return -1;

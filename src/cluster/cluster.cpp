@@ -6,6 +6,7 @@
 #include "bbs/password.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstdlib>
 #include <map>
 
@@ -278,6 +279,36 @@ void Cluster::heartbeat() {
         if (l.auth == 2 && !put(l, Frame::Heartbeat, f)) event("heartbeat to node " + num((uint32_t)l.node) + " failed");
 }
 
+void Cluster::serveUserSync() {
+    // Ordering: a user changed while this runs goes to every link at once (sendUser), and each record here is built
+    // from the user store at the moment it is sent, so a record sent after a live one is never older than it.
+    for (Link& l : links_) {
+        if (!l.syncing || l.auth != 2 || l.dead || l.board.empty()) continue;
+        if (heapLargest && heapLargest() < kSyncHeapFloor) {  // tight: wait (said once per join, not every tick)
+            if (!l.syncPaused && !l.syncPauses++) event("user copy to node " + num((uint32_t)l.node) + " waiting: low memory");
+            l.syncPaused = true;
+            continue;
+        }
+        l.syncPaused = false;
+        for (int k = 0; k < kSyncPerTick; k++) {
+            size_t q = net_.queued(l.id);
+            if (q >= kSyncQueueBytes) break;
+            std::vector<std::string> f(1);
+            int                      id = 0;
+            if (!nextUser || !nextUser(l.syncAfter, id, f[0])) {
+                l.syncing = false;
+                std::string waited = l.syncPauses ? ", waited for memory " + num(l.syncPauses) + "x" : "";
+                event("node " + num((uint32_t)l.node) + " has every user (" + num(l.syncSent) + " sent" + waited + ")");
+                break;
+            }
+            if (q && q + f[0].size() + 5 + kTagBytes > kSyncQueueBytes) break;  // waits for the queue to drain (built again then)
+            if (!put(l, Frame::UserChange, f)) break;
+            l.syncAfter = id;
+            l.syncSent++;
+        }
+    }
+}
+
 void Cluster::announce() {  // "AXIS! ip epoch node sd": where the main is, and whether it holds the SD card
     if (alone_) return;
     shout("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_) + (hasFiles_ ? " 1" : " 0"));
@@ -489,7 +520,7 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
             std::sort(mine.begin(), mine.end());
             int give = mine[0];
             for (Link& other : links_)  // the board rebooted: its old link is dead, whatever TCP says yet
-                if (&other != &l && other.board == f[0]) other.board.clear(), other.node = 0;
+                if (&other != &l && other.board == f[0]) other.board.clear(), other.node = 0, other.syncing = false;
             l.node = give;
             l.board = f[0];
             std::vector<std::string> welcome = {num((uint32_t)give), num(epoch_)};
@@ -497,9 +528,16 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
             put(l, Frame::Welcome, welcome);
             event("node " + num((uint32_t)give) + " joined");
             heartbeat();
-            if (settings) put(l, Frame::Settings, {settings()});
-            if (allUsers)  // its replica of the user base
-                for (const std::string& rec : allUsers()) put(l, Frame::UserChange, {rec});
+            if (settings) {
+                std::vector<std::string> s;
+                s.emplace_back(settings());
+                put(l, Frame::Settings, s);
+            }
+            // its replica of the user base: a few records a tick from here on (serveUserSync), never all at once
+            l.syncing = (bool)nextUser;
+            l.syncPaused = false;
+            l.syncAfter = INT_MIN;
+            l.syncSent = l.syncPauses = 0;
             // a card for the pool; only from a board that sends its free space (it answers MainReq: older ones never would)
             if (f.size() >= 7 && f[3] == "1") cards_[f[0]] = {ip, toU64(f[6]), true};
             else cards_.erase(f[0]);
@@ -796,6 +834,7 @@ void Cluster::tick(uint32_t now) {
                 heartbeat();
                 tidyNumbers(now);
             }
+            serveUserSync();
             if (now - lastAnnounce_ >= kAnnounceMs) {
                 lastAnnounce_ = now;
                 announce();

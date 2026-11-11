@@ -23,6 +23,7 @@ public:
     int      recv(int link, std::string& out) override;
     void     close(int link) override;
     uint32_t myIp() override { return (uint32_t)WiFi.localIP(); }
+    size_t   queued(int link) override;
 
 private:
     static constexpr size_t kMaxQueue = 8192;

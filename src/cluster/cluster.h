@@ -28,6 +28,11 @@ public:
     virtual int      recv(int link, std::string& out) = 0;        // bytes appended; -1 = closed
     virtual void     close(int link) = 0;
     virtual uint32_t myIp() = 0;
+    // bytes sent on this link that the socket hasn't taken yet (the main paces a joining board's user copy by it)
+    virtual size_t   queued(int link) {
+        (void)link;
+        return 0;
+    }
     virtual ~Net() = default;
 };
 
@@ -116,7 +121,11 @@ public:
     std::function<std::string(const std::string& req)> onMainRequest;  // follower: answer the main (requestTo)
     std::function<void()>                         onMainGone;  // follower: the link to the main closed
     std::function<void(const std::string& record)> onUser;     // a user record came over the link
-    std::function<std::vector<std::string>()>     allUsers;    // main: every user, for a board that joins
+    // main: a board that joins gets every user, a few records a tick (serveUserSync). The user with the lowest id
+    // above afterId: its id and its record (users.h formatUser), built only now; false when there is none.
+    std::function<bool(int afterId, int& id, std::string& record)> nextUser;
+    // main: the largest free heap block in bytes; below kSyncHeapFloor the user copy waits (unset: never waits)
+    std::function<uint32_t()>                     heapLargest;
     std::function<std::string()>                  settings;    // main: the BBS settings, for a board that joins
     std::function<void(const std::string&)>       onSettings;  // follower: the main's settings arrived
     std::function<uint32_t()>                     clockMs;     // for request(): the time
@@ -126,6 +135,13 @@ public:
     std::function<std::string()>                  beatExtra;
     // follower: that field, when the main's heartbeat carries one (an older main's never does)
     std::function<void(const std::string&)>       onBeatExtra;
+
+    // The user copy to a joining board never queues past kSyncQueueBytes on its link (the link's queue dies at 8 KB
+    // and one file reply is about 7 KB), sends at most kSyncPerTick records a tick, and waits while the largest free
+    // block is under kSyncHeapFloor. Welcome, heartbeats and settings never wait.
+    static constexpr size_t   kSyncQueueBytes = 1024;
+    static constexpr int      kSyncPerTick = 4;
+    static constexpr uint32_t kSyncHeapFloor = 40 * 1024;
 
 private:
     struct Link {
@@ -140,6 +156,10 @@ private:
         uint32_t    sent = 0, got = 0;  // frames sealed / opened on this link
         uint32_t    since = 0;          // when it opened: a link that hasn't proved the key in 5 s goes
         bool        probe = false;      // a main checking another main holds the key (it speaks as a follower)
+        // main: copying the user base to this board, one record at a time in id order (never the whole base at once)
+        bool        syncing = false, syncPaused = false;
+        int         syncAfter = 0;               // the last user id sent
+        uint32_t    syncSent = 0, syncPauses = 0;
     };
     bool asMain(const Link& l) const { return mainSide() && !l.probe; }  // which side of the handshake this link is
     void probeMain(uint32_t ip, uint32_t epoch, uint32_t now);  // main: does that other main really hold the key?
@@ -164,6 +184,7 @@ private:
     void handleDatagram(const std::string& d, uint32_t from, uint32_t now);
     void handleFrame(Link& l, Frame t, const std::string& body, uint32_t now);
     void heartbeat();
+    void serveUserSync();  // main: the next few records to each joining board
     void announce();
     void tidyNumbers(uint32_t now);  // main: once every node has sat idle a while, it is 1, 2 ... and the others follow
     void event(const std::string& e) {

@@ -27,6 +27,8 @@ struct FakeNet : Net {
     std::deque<int>                            incoming;
     int                                        next = 1;
     std::vector<uint32_t>                      dialed;  // every connect() asked for, found or not
+    size_t                                     cap = 0;  // like the board's kMaxQueue: a link past this many unread bytes dies (0 = no cap)
+    std::map<int, size_t>                      peak;     // the most unread bytes each link ever held
 
     void broadcast(const std::string& d) override;
     bool recvDatagram(std::string& d, uint32_t& from) override {
@@ -46,8 +48,19 @@ struct FakeNet : Net {
     bool send(int link, const std::string& b) override {
         auto it = wires.find(link);
         if (it == wires.end() || !it->second.first->up) return false;
-        (it->second.second ? it->second.first->toMain : it->second.first->toFollower) += b;
+        std::string& out = it->second.second ? it->second.first->toMain : it->second.first->toFollower;
+        out += b;
+        if (out.size() > peak[link]) peak[link] = out.size();
+        if (cap && out.size() > cap) {  // the other board stopped reading
+            it->second.first->up = false;
+            return false;
+        }
         return true;
+    }
+    size_t queued(int link) override {
+        auto it = wires.find(link);
+        if (it == wires.end()) return 0;
+        return (it->second.second ? it->second.first->toMain : it->second.first->toFollower).size();
     }
     int recv(int link, std::string& out) override {
         auto it = wires.find(link);
@@ -309,7 +322,12 @@ TEST_CASE("a joining board gets every user, and user changes travel both ways") 
     Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
     uint32_t now = 0;
     std::vector<std::string> onA, onB;
-    a.c->allUsers = [] { return std::vector<std::string>{"[user]\nhandle=Rev\n", "[user]\nhandle=Chip Breaker\n"}; };
+    a.c->nextUser = [](int after, int& id, std::string& rec) {
+        if (after >= 2) return false;
+        id = after < 1 ? 1 : 2;
+        rec = id == 1 ? "[user]\nhandle=Rev\n" : "[user]\nhandle=Chip Breaker\n";
+        return true;
+    };
     a.c->onUser = [&](const std::string& r) { onA.push_back(r); };
     b.c->onUser = [&](const std::string& r) { onB.push_back(r); };
     a.c->start(now);
@@ -1072,4 +1090,139 @@ TEST_CASE("with no cluster key a board runs alone: it hears nobody and lets nobo
     CHECK(a.c->nodes().size() == 1);
     CHECK(b.c->role() == Role::Main);  // b found no main it could join
     CHECK(b.net.datagrams.empty());    // and a never announced itself
+}
+
+namespace {
+// The main's user base for the join tests: id -> record, padded to about 120 bytes, so 500 of them are far over
+// the link's 8 KB queue. The follower keeps the last record it got for each handle, and every record in order.
+struct UserBase {
+    std::map<int, std::string> recs;
+    explicit UserBase(int n) {
+        for (int i = 1; i <= n; i++) set(i, "v1");
+    }
+    static std::string handle(int i) { return "User" + std::to_string(i); }
+    void set(int i, const std::string& ver) {
+        recs[i] = "[user]\nhandle=" + handle(i) + "\nver=" + ver + "\nnote=" + std::string(80, 'x') + "\n";
+    }
+    void serve(Cluster& c) {
+        c.nextUser = [this](int after, int& id, std::string& rec) {
+            auto it = recs.upper_bound(after);
+            if (it == recs.end()) return false;
+            id = it->first;
+            rec = it->second;
+            return true;
+        };
+    }
+};
+struct Replica {
+    std::map<std::string, std::string> byHandle;
+    size_t                             got = 0;
+    void listen(Cluster& c) {
+        c.onUser = [this](const std::string& r) {
+            size_t at = r.find("handle="), end = r.find('\n', at);
+            byHandle[r.substr(at + 7, end - at - 7)] = r;
+            got++;
+        };
+    }
+};
+}  // namespace
+
+TEST_CASE("a board joining a main with 500 users gets them all, a little at a time, without its link dropping") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    a.net.cap = 8192;  // the board's queue limit
+    UserBase users(500);
+    users.serve(*a.c);
+    Replica on2;
+    on2.listen(*b.c);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 20000);
+    CHECK(b.c->role() == Role::Follower);
+    CHECK_FALSE(a.saw("left"));
+    CHECK(a.saw("node 2 has every user (500 sent)"));
+    CHECK(on2.byHandle.size() == 500);
+    CHECK(on2.byHandle["User500"] == users.recs[500]);
+    REQUIRE(a.net.peak.size() == 1);
+    CHECK(a.net.peak.begin()->second <= Cluster::kSyncQueueBytes);  // never more than its budget waiting on the link
+}
+
+TEST_CASE("a user changed in the middle of the copy reaches the joining board with the newer value") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    UserBase users(500);
+    users.serve(*a.c);
+    Replica on2;
+    on2.listen(*b.c);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 1500);
+    REQUIRE(on2.got > 10);  // the copy is under way
+    REQUIRE(on2.got < 400);
+    for (int i : {3, 450}) {  // one already copied, one not yet: the sysop changes both (saveUsers sends each live)
+        users.set(i, "v2");
+        a.c->sendUser(users.recs[i]);
+    }
+    run({&a, &b}, now, 20000);
+    CHECK(a.saw("node 2 has every user"));
+    CHECK(on2.byHandle.size() == 500);
+    CHECK(on2.byHandle["User3"].find("ver=v2") != std::string::npos);
+    CHECK(on2.byHandle["User450"].find("ver=v2") != std::string::npos);
+}
+
+TEST_CASE("low memory on the main holds the user copy, never the join itself, and the copy goes on after") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    uint32_t largest = 20 * 1024;  // under the floor
+    a.c->heapLargest = [&largest] { return largest; };
+    a.c->settings = [] { return std::string("bbs_name=Axis Underground CNC\n"); };
+    std::string settingsGot;
+    b.c->onSettings = [&](const std::string& s) { settingsGot = s; };
+    UserBase users(100);
+    users.serve(*a.c);
+    Replica on2;
+    on2.listen(*b.c);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 15000);  // longer than a follower waits for a heartbeat
+    CHECK(b.c->role() == Role::Follower);
+    CHECK(b.c->nodeNumber() == 2);
+    CHECK(settingsGot == "bbs_name=Axis Underground CNC\n");
+    CHECK(on2.got == 0);
+    CHECK(a.saw("user copy to node 2 waiting: low memory"));
+    CHECK_FALSE(a.saw("has every user"));
+    largest = 60 * 1024;  // memory is back
+    run({&a, &b}, now, 5000);
+    CHECK(on2.byHandle.size() == 100);
+    CHECK(a.saw("node 2 has every user (100 sent, waited for memory 1x)"));
+}
+
+TEST_CASE("two boards joining at the same time each get their own user copy") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b"), c(lan, 103, "board-c");
+    uint32_t now = 0;
+    a.net.cap = 8192;
+    UserBase users(300);
+    users.serve(*a.c);
+    Replica on2, on3;
+    on2.listen(*b.c);
+    on3.listen(*c.c);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    c.c->start(now);
+    run({&a, &b, &c}, now, 20000);
+    CHECK(b.c->role() == Role::Follower);
+    CHECK(c.c->role() == Role::Follower);
+    CHECK(on2.byHandle.size() == 300);
+    CHECK(on3.byHandle.size() == 300);
+    CHECK(on2.got == 300);  // each record once: one copy per board, not shared or doubled
+    CHECK(on3.got == 300);
+    for (auto& p : a.net.peak) CHECK(p.second <= Cluster::kSyncQueueBytes);
 }
