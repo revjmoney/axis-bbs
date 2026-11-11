@@ -18,15 +18,16 @@
 
 namespace axis::net {
 
-constexpr size_t kNetMaxCards = 512;
-constexpr size_t kNetMaxSeen = 20000;
-constexpr size_t kNetMaxIngressBoards = 512;
+// Caps sized for the ESP32 (about 90 KB free heap): the whole net state stays around 24 KB at worst.
+constexpr size_t kNetMaxCards = 48;          // the card touched longest ago makes room
+constexpr size_t kNetMaxSeenBoards = 48;     // origin boards in the seen set, least recently used goes
+constexpr uint32_t kSeenWindow = 64;         // seqs tracked below each board's highest
+constexpr size_t kNetMaxIngressBoards = 48;  // boards counted per day
 constexpr uint32_t kSeenDays = 120;
 constexpr uint32_t kPostNoticeDays = 150;
 constexpr size_t kMaxRotates = 16;
-constexpr size_t kMaxPostNotices = 4096;
-constexpr size_t kMaxBoardNotices = 1024;
-constexpr size_t kMaxSeenIdLen = 40;
+constexpr size_t kMaxPostNotices = 64;   // hold/kill/lift of posts: the oldest applied goes first
+constexpr size_t kMaxBoardNotices = 64;  // ban/lift of boards: the oldest lift goes first, then the oldest ban
 constexpr uint32_t kDefaultPostsPerDay = 50;
 constexpr uint32_t kDefaultBytesPerDay = 64 * 1024;
 
@@ -86,18 +87,28 @@ private:
 // The group a notice is stored under: "post", "board", "limits" or "rotate"; "" if it is invalid.
 std::string noticeGroup(const NetNotice& n);
 
+// Seen posts, per origin board: post ids are "<board>-<seq>", and each board keeps its highest seq
+// seen plus a 64 bit window of the 64 seqs below it. A seq at or below high - 64 counts as seen.
+// At most kNetMaxSeenBoards boards; the least recently used one goes first.
 class NetSeen {
 public:
-    bool has(const std::string& id) const { return ids_.count(id) > 0; }
-    bool add(const std::string& id, uint32_t nowDay);  // false if already seen
-    void prune(uint32_t nowDay);                        // drops ids older than kSeenDays
-    size_t size() const { return order_.size(); }
-    std::string save() const;  // "<day> <id>" per line
+    bool has(const std::string& id) const;
+    bool add(const std::string& id, uint32_t nowDay);  // false if already seen or not a post id
+    void prune(uint32_t nowDay);  // drops boards not touched for kSeenDays
+    size_t size() const { return boards_.size(); }
+    std::string save() const;  // "<board> <high> <window as 16 hex> <last day>" per line
     void load(const std::string& text);
 
 private:
-    std::deque<std::pair<uint32_t, std::string>> order_;
-    std::unordered_set<std::string> ids_;
+    struct Rec {
+        uint32_t high = 0;
+        uint64_t window = 0;  // bit i: seq high - 1 - i seen
+        uint32_t day = 0;     // last touched
+        uint64_t used = 0;    // for least recently used eviction
+    };
+    void put(uint64_t board, const Rec& r);
+    std::map<uint64_t, Rec> boards_;
+    uint64_t counter_ = 0;
 };
 
 class Ingress {

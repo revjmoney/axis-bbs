@@ -43,6 +43,9 @@ constexpr uint32_t kOutLogKeep = 5000;     // outbound log entries kept
 constexpr uint32_t kOutLogSlack = 500;     // the log is trimmed back to kOutLogKeep past this many more
 constexpr uint32_t kNetKeepPosts = 500;
 constexpr uint32_t kNetKeepDays = 90;
+constexpr size_t kNetPendingBytes = 12 * 1024;  // pendingFor stops once its lines reach this much
+constexpr uint32_t kNetClockSet = 1700000000;   // below this the board's clock is not set
+constexpr uint8_t kNetReadStrikes = 3;          // pendingFor calls stuck on an unreadable post before it is gone
 
 // `store` must be the board's real message store, never the NetPostingStore wrapping it (that
 // would loop through originate and hide held posts from trim and sending).
@@ -67,8 +70,10 @@ public:
     const std::string& board() const { return myBoard_; }
     bool isRevBoard(const std::string& board) const;  // its card's pub is one of Rev's keys
 
-    // A post from a peer (fromPeer may be empty). Stores it and logs it to pass on.
-    Took take(const NetPost& p, const std::string& fromPeer);
+    // A post from a peer (fromPeer may be empty). Stores it and logs it to pass on. Taken by value
+    // so the caller can move it in and the body is held once. With the clock set, a post dated
+    // more than keepDays ago or more than a day ahead is Rejected.
+    Took take(NetPost p, const std::string& fromPeer);
     // A card or notice from a peer. True if it changed the state (then it is logged to pass on).
     bool takeCard(const NetCard& c, const std::string& fromPeer);
     bool takeNotice(const NetNotice& n, const std::string& fromPeer);
@@ -81,16 +86,24 @@ public:
 
     // A board we sync with (the first peer, then each board that completes a session with us).
     // A new one starts at the log's end; it gets the current state from the snapshot exchange.
-    // Calling it again marks a sync now.
+    // Calling it again marks a sync now. At kMaxLinkPeers the one synced longest ago goes, never
+    // the first peer.
     void addLinkPeer(const std::string& board);
+    // The board's first peer: added as a link peer and pinned.
+    void setFirstPeer(const std::string& board);
     bool isLinkPeer(const std::string& board) const { return links_.count(board) > 0; }
-    // Up to max (log index, encoded line) pairs for a link peer, oldest first. Entries excluded for
-    // it or no longer resolvable (a killed post, a gone card) are skipped.
+    // Up to max (log index, encoded line) pairs for a link peer, oldest first, stopping once the
+    // lines reach kNetPendingBytes (at least one is returned if any is ready). Entries excluded for
+    // it or confirmed gone (killed, banned origin, card or notice no longer held, post not in the
+    // area) are skipped. A read failure stops the list there; it is tried again next time.
     std::vector<std::pair<uint32_t, std::string>> pendingFor(const std::string& peer, size_t max);
     // The peer has the entry at index: its cursor moves past it (acks come in order).
     void acked(const std::string& peer, uint32_t index);
     std::string saveCursors() const;  // "<peer> <index> <last sync unix>" per line
     void loadCursors(const std::string& text);
+
+    // Log appends that failed (the entry is then never passed on), for the host to report.
+    uint32_t appendFailures() const { return appendFailures_; }
 
     uint32_t postSeq() const { return seq_; }
     void setPostSeq(uint32_t s) { seq_ = s ? s : 1; }
@@ -107,15 +120,19 @@ private:
     struct Link {
         uint32_t cursor = 0;
         uint32_t lastSync = 0;
+        uint32_t stuckAt = 0xFFFFFFFFu;  // the entry whose post could not be read last time
+        uint8_t strikes = 0;             // calls in a row stuck on it
     };
 
     uint32_t day() const { return now_() / 86400; }
     void syncLimits() { ingress_.setLimits(state_.postsPerDay(), state_.bytesPerDay()); }
     void log(const std::string& entry);
-    int storePost(const NetPost& p, const std::string& line);
-    std::string resolve(const std::string& entry, const std::string& peer);
+    enum class Res { Ready, Skip, Retry };  // send it; excluded or gone for good; try again later
+    int storePost(NetPost& p, std::string& line);
+    Res resolve(const std::string& entry, const std::string& peer, std::string& line);
+    bool clockSet() const { return now_() > kNetClockSet; }
     void dropPost(const std::string& id);
-    void trimArea(const std::string& area, uint32_t nowDay);
+    void trimArea(const std::string& area, uint32_t nowDay, bool clock);
 
     bbs::MessageStore& store_;
     KeyPair me_;
@@ -129,6 +146,8 @@ private:
     uint32_t keepPosts_ = kNetKeepPosts, keepDays_ = kNetKeepDays;
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;
+    std::string firstPeer_;
+    uint32_t appendFailures_ = 0;
 };
 
 // The board's message store with the net on top: a post into an sn_ area goes through

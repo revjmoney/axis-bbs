@@ -4,6 +4,7 @@
 #include "net/state.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include "net/revkeys.h"
 #include "net/sign.h"
@@ -371,43 +372,104 @@ void NetState::load(const std::string& text, uint32_t nowDay) {
 
 // ---- NetSeen ----
 
-bool NetSeen::add(const std::string& id, uint32_t nowDay) {
-    if (id.empty() || id.size() > kMaxSeenIdLen) return false;
-    if (!ids_.insert(id).second) return false;
-    order_.emplace_back(nowDay, id);
-    while (order_.size() > kNetMaxSeen) {
-        ids_.erase(order_.front().second);
-        order_.pop_front();
+namespace {
+
+// "<16 hex board>-<seq>" as numbers.
+bool seenId(const std::string& id, uint64_t& board, uint32_t& seq) {
+    if (id.size() < 18 || id[16] != '-' || !isLowerHex(id.substr(0, 16), 16)) return false;
+    board = std::strtoull(id.substr(0, 16).c_str(), nullptr, 16);
+    return parseU32(id.substr(17), seq);
+}
+
+std::string hex16(uint64_t v) {
+    static const char* d = "0123456789abcdef";
+    std::string s(16, '0');
+    for (int i = 15; i >= 0; i--, v >>= 4) s[static_cast<size_t>(i)] = d[v & 15];
+    return s;
+}
+
+}  // namespace
+
+bool NetSeen::has(const std::string& id) const {
+    uint64_t board;
+    uint32_t seq;
+    if (!seenId(id, board, seq)) return false;
+    auto it = boards_.find(board);
+    if (it == boards_.end()) return false;
+    const Rec& r = it->second;
+    if (seq > r.high) return false;
+    if (seq == r.high) return true;
+    uint32_t d = r.high - seq;
+    if (d > kSeenWindow) return true;  // below the window: counted as seen
+    return (r.window >> (d - 1)) & 1u;
+}
+
+void NetSeen::put(uint64_t board, const Rec& r) {
+    if (boards_.find(board) == boards_.end() && boards_.size() >= kNetMaxSeenBoards) {
+        auto lru = boards_.begin();
+        for (auto i = boards_.begin(); i != boards_.end(); ++i)
+            if (i->second.used < lru->second.used) lru = i;
+        boards_.erase(lru);
     }
+    boards_[board] = r;
+}
+
+bool NetSeen::add(const std::string& id, uint32_t nowDay) {
+    uint64_t board;
+    uint32_t seq;
+    if (!seenId(id, board, seq) || has(id)) return false;
+    Rec r;
+    auto it = boards_.find(board);
+    if (it == boards_.end()) {
+        r.high = seq;
+    } else {
+        r = it->second;
+        if (seq > r.high) {
+            uint32_t shift = seq - r.high;  // the old high moves to bit shift - 1
+            if (shift > kSeenWindow) r.window = 0;
+            else if (shift == kSeenWindow) r.window = 1ull << (kSeenWindow - 1);
+            else r.window = (r.window << shift) | (1ull << (shift - 1));
+            r.high = seq;
+        } else {
+            r.window |= 1ull << (r.high - seq - 1);
+        }
+    }
+    r.day = nowDay;
+    r.used = ++counter_;
+    put(board, r);
     return true;
 }
 
 void NetSeen::prune(uint32_t nowDay) {
-    std::deque<std::pair<uint32_t, std::string>> keep;
-    for (auto& e : order_) {
-        if (nowDay > e.first && nowDay - e.first > kSeenDays) ids_.erase(e.second);
-        else keep.push_back(std::move(e));
+    for (auto i = boards_.begin(); i != boards_.end();) {
+        if (nowDay > i->second.day && nowDay - i->second.day > kSeenDays) i = boards_.erase(i);
+        else ++i;
     }
-    order_.swap(keep);
 }
 
 std::string NetSeen::save() const {
     std::string out;
-    for (const auto& e : order_) out += std::to_string(e.first) + " " + e.second + "\n";
+    for (const auto& kv : boards_)
+        out += hex16(kv.first) + " " + std::to_string(kv.second.high) + " " + hex16(kv.second.window) + " " +
+               std::to_string(kv.second.day) + "\n";
     return out;
 }
 
 void NetSeen::load(const std::string& text) {
-    order_.clear();
-    ids_.clear();
+    boards_.clear();
+    counter_ = 0;
     for (const std::string& line : splitLines(text)) {
-        size_t sp = line.find(' ');
-        if (sp == std::string::npos || sp == 0) continue;
-        uint32_t day = 0;
-        if (!parseU32(line.substr(0, sp), day)) continue;
-        std::string id = line.substr(sp + 1);
-        if (id.empty() || id.size() > 64 || id.find(' ') != std::string::npos) continue;
-        add(id, day);  // bounded: the oldest are dropped first if there are too many
+        // four fields: board, high, window, day
+        size_t a = line.find(' '), b = a == std::string::npos ? a : line.find(' ', a + 1),
+               c = b == std::string::npos ? b : line.find(' ', b + 1);
+        if (c == std::string::npos || line.find(' ', c + 1) != std::string::npos) continue;
+        std::string board = line.substr(0, a), window = line.substr(b + 1, c - b - 1);
+        Rec r;
+        if (!isLowerHex(board, 16) || !isLowerHex(window, 16)) continue;
+        if (!parseU32(line.substr(a + 1, b - a - 1), r.high) || !parseU32(line.substr(c + 1), r.day)) continue;
+        r.window = std::strtoull(window.c_str(), nullptr, 16);
+        r.used = ++counter_;
+        put(std::strtoull(board.c_str(), nullptr, 16), r);  // bounded: the earliest lines go first
     }
 }
 

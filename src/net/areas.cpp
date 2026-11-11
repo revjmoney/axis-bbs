@@ -3,6 +3,7 @@
 // Sysop Net areas, NetCore (taking, making, storing and logging net records) and the posting store.
 #include "net/areas.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -174,51 +175,62 @@ bool NetCore::isRevBoard(const std::string& board) const {
 }
 
 void NetCore::log(const std::string& entry) {
-    log_.append(entry);
+    if (log_.append(entry) == kOutLogFail) appendFailures_++;
     if (log_.next() - log_.first() > kOutLogKeep + kOutLogSlack) log_.trimTo(kOutLogKeep);
 }
 
-int NetCore::storePost(const NetPost& p, const std::string& line) {
+// Moves the body and the line into the stored message (they are not needed after), so the post
+// is held once.
+int NetCore::storePost(NetPost& p, std::string& line) {
     if (areaIndex(p.area) < 0) return 0;
     Message m;
     m.from = p.from;
     m.to = p.to;
     m.subject = p.subject;
-    m.date = netDateText(p.date);
-    m.body = p.body;
-    m.net = line;
+    uint32_t date = p.date;
+    if (clockSet() && date > now_()) date = now_();  // a post from the future ages from today
+    m.date = netDateText(date);
+    m.body = std::move(p.body);
+    m.net = std::move(line);
+    p.body.clear();
+    line.clear();
     return store_.post(p.area, m);
 }
 
-NetCore::Took NetCore::take(const NetPost& in, const std::string& fromPeer) {
+NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer) {
     syncLimits();  // the host may have loaded the state directly
-    // 1. decode limits: the record must be representable and signed
-    if (in.sig.empty() || in.body.size() > kNetMaxBody || encode(in).empty()) return Took::Rejected;
+    // 1. decode limits: the record must be representable and signed, and (with a clock) in date
+    if (p.sig.empty() || p.body.size() > kNetMaxBody || encode(p).empty()) return Took::Rejected;
+    if (clockSet()) {
+        uint64_t now = now_(), date = p.date;
+        if (date + (uint64_t)keepDays_ * 86400 < now || date > now + 86400) return Took::Rejected;
+    }
     // 2. banned board
-    if (state_.banned(in.board)) return Took::Banned;
+    if (state_.banned(p.board)) return Took::Banned;
     // 3. a known card, and the post signed by its key
-    const NetCard* c = state_.card(in.board);
-    if (!c || !verifyPost(in, c->pub)) return Took::Rejected;
+    const NetCard* c = state_.card(p.board);
+    if (!c || !verifyPost(p, c->pub)) return Took::Rejected;
     // 4. a Sysop Net area, and Rev's board only for the revOnly ones
-    const NetArea* area = sysopNetArea(in.area);
-    if (!area || (area->revOnly && !isRevBoard(in.board))) return Took::Rejected;
+    const NetArea* area = sysopNetArea(p.area);
+    if (!area || (area->revOnly && !isRevBoard(p.board))) return Took::Rejected;
     // 5. killed
-    if (state_.killed(in.id)) return Took::Rejected;
+    if (state_.killed(p.id)) return Took::Rejected;
     // 6. dedupe (it is marked seen only once stored, below)
-    if (seen_.has(in.id)) return Took::Duplicate;
+    if (seen_.has(p.id)) return Took::Duplicate;
     // 7. ingress, counting the body size
     uint32_t today = day();
-    if (!ingress_.allow(in.board, in.body.size(), today)) return Took::Limited;
+    if (!ingress_.allow(p.board, p.body.size(), today)) return Took::Limited;
 
-    NetPost p = in;
+    std::string cameWith = p.path;
     if (!fromPeer.empty()) p.path = appendHop(p.path, fromPeer);
     std::string line = encode(p);
     if (line.empty()) {  // the hop is not a valid path entry: keep the path as it came
-        p.path = in.path;
+        p.path = cameWith;
         line = encode(p);
     }
+    cameWith.clear();
     if (line.empty()) return Took::Rejected;
-    int num = storePost(p, line);
+    int num = storePost(p, line);  // the body and line are moved out here
     if (!num) return Took::Rejected;
     seen_.add(p.id, today);
     log("P " + p.area + " " + std::to_string(num) + " " + p.id + " " + excludeList({fromPeer, p.path, p.board}));
@@ -291,10 +303,12 @@ void NetCore::addLinkPeer(const std::string& board) {
         it->second.lastSync = now_();
         return;
     }
-    if (links_.size() >= kMaxLinkPeers) {
-        auto oldest = links_.begin();
+    if (links_.size() >= kMaxLinkPeers) {  // the one synced longest ago goes, never the first peer
+        auto oldest = links_.end();
         for (auto i = links_.begin(); i != links_.end(); ++i)
-            if (i->second.lastSync < oldest->second.lastSync) oldest = i;
+            if (i->first != firstPeer_ && (oldest == links_.end() || i->second.lastSync < oldest->second.lastSync))
+                oldest = i;
+        if (oldest == links_.end()) return;
         links_.erase(oldest);
     }
     Link l;
@@ -303,44 +317,67 @@ void NetCore::addLinkPeer(const std::string& board) {
     links_[board] = l;
 }
 
-// The line to send for a log entry, or "" if it is excluded for this peer or no longer resolves.
-std::string NetCore::resolve(const std::string& entry, const std::string& peer) {
+void NetCore::setFirstPeer(const std::string& board) {
+    if (!isHex16(board) || board == myBoard_) return;
+    firstPeer_ = board;
+    addLinkPeer(board);
+}
+
+// What to send for a log entry. Skip only when it is excluded for this peer or confirmed gone;
+// Retry when the post could not be read (the caller stops there and tries again later).
+NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer, std::string& line) {
+    line.clear();
     std::vector<std::string> t = tokens(entry);
-    if (t.empty() || inList(t.back(), peer)) return "";
+    if (t.empty() || inList(t.back(), peer)) return Res::Skip;
     if (t[0] == "P" && t.size() == 5) {
-        if (state_.killed(t[3]) || !sysopNetArea(t[1])) return "";
+        const std::string& id = t[3];
+        if (id.size() < 17 || state_.killed(id) || state_.banned(id.substr(0, 16)) || !sysopNetArea(t[1]))
+            return Res::Skip;
         Message m;
-        if (!store_.read(t[1], std::atoi(t[2].c_str()), m) || netPostId(m.net) != t[3]) return "";
-        return m.net;
+        if (!store_.read(t[1], std::atoi(t[2].c_str()), m)) return Res::Retry;
+        if (netPostId(m.net) != id) return Res::Skip;  // that number now holds another post
+        line = std::move(m.net);
+        return Res::Ready;  // m and its body are released here
     }
     if (t[0] == "C" && t.size() == 3) {
         const NetCard* c = state_.card(t[1]);
-        return c && !state_.banned(t[1]) ? encode(*c) : std::string();
+        if (c && !state_.banned(t[1])) line = encode(*c);
+    } else if (t[0] == "N" && t.size() == 4) {
+        uint32_t seq;
+        if (t[1] != "R") line = state_.noticeLine(t[1], t[2]);
+        else if (parseSeq(t[2], seq)) line = state_.rotateLine(seq);
     }
-    if (t[0] == "N" && t.size() == 4) {
-        if (t[1] == "R") {
-            uint32_t seq;
-            return parseSeq(t[2], seq) ? state_.rotateLine(seq) : std::string();
-        }
-        return state_.noticeLine(t[1], t[2]);
-    }
-    return "";
+    return line.empty() ? Res::Skip : Res::Ready;  // not held any more (or not an entry): gone
 }
 
 std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::string& peer, size_t max) {
     std::vector<std::pair<uint32_t, std::string>> out;
     auto it = links_.find(peer);
     if (it == links_.end()) return out;
-    uint32_t& cur = it->second.cursor;
-    if (cur < log_.first()) cur = log_.first();  // fell behind the log: what was trimmed is lost
-    if (cur > log_.next()) cur = log_.next();
-    std::string entry;
-    for (uint32_t i = cur; i < log_.next() && out.size() < max; i++) {
-        std::string line = log_.read(i, entry) ? resolve(entry, peer) : std::string();
-        if (line.empty()) {
-            if (out.empty()) cur = i + 1;  // nothing here for this peer: never look at it again
+    Link& link = it->second;
+    if (link.cursor < log_.first()) link.cursor = log_.first();  // fell behind: what was trimmed is lost
+    if (link.cursor > log_.next()) link.cursor = log_.next();
+    std::string entry, line;
+    size_t bytes = 0;
+    for (uint32_t i = link.cursor; i < log_.next() && out.size() < max; i++) {
+        if (!log_.read(i, entry)) break;  // try again next time
+        Res r = resolve(entry, peer, line);
+        if (r == Res::Retry) {
+            // A post that cannot be read. Usually a short failure; but a post trimmed away from its
+            // area reads the same, so after kNetReadStrikes calls stuck on it, it counts as gone.
+            if (link.stuckAt != i) {
+                link.stuckAt = i;
+                link.strikes = 0;
+            }
+            if (++link.strikes < kNetReadStrikes) break;
+            r = Res::Skip;
+        }
+        if (r == Res::Skip) {
+            if (out.empty()) link.cursor = i + 1;  // nothing here for this peer: never look at it again
             continue;
         }
+        if (!out.empty() && bytes + line.size() > kNetPendingBytes) break;
+        bytes += line.size();
         out.emplace_back(i, std::move(line));
     }
     return out;
@@ -393,13 +430,18 @@ void NetCore::dropPost(const std::string& id) {
     // Older than the newest headers: the next trim drops it.
 }
 
-void NetCore::trimArea(const std::string& area, uint32_t nowDay) {
+void NetCore::trimArea(const std::string& area, uint32_t nowDay, bool clock) {
     auto gone = [&](const Message& m) {
         std::string id = netPostId(m.net);
         if (!id.empty() && state_.killed(id)) return true;
+        if (!clock) return false;  // no clock: ages mean nothing, only the count trims
         uint32_t t = netDateUnix(m.date);
+        if (t == 0) return false;
         uint32_t d = t / 86400;
-        return t != 0 && nowDay > d && nowDay - d > keepDays_;
+        // Posts stored with a clock are dated no later than the day they came in (storePost), so
+        // one dated past tomorrow came in without a clock and a bad date: it goes now.
+        if (d > nowDay + 1) return true;
+        return nowDay > d && nowDay - d > keepDays_;
     };
     std::vector<Message> h = store_.headers(area);
     if (h.size() < MessageStore::kMaxHeaders) {  // the whole area is here: decide from the headers
@@ -436,7 +478,7 @@ void NetCore::trim(uint32_t nowUnix) {
     state_.prune(nowDay);
     seen_.prune(nowDay);
     log_.trimTo(kOutLogKeep);
-    for (const NetArea& a : sysopNetAreas()) trimArea(a.id, nowDay);
+    for (const NetArea& a : sysopNetAreas()) trimArea(a.id, nowDay, nowUnix > kNetClockSet);
 }
 
 // ---- NetPostingStore ----
@@ -449,11 +491,8 @@ bool NetPostingStore::hidden(const Message& m) const {
 std::vector<Message> NetPostingStore::headers(const std::string& area) {
     std::vector<Message> v = inner_.headers(area);
     if (!isNetAreaId(area)) return v;
-    std::vector<Message> out;
-    out.reserve(v.size());
-    for (Message& m : v)
-        if (!hidden(m)) out.push_back(std::move(m));
-    return out;
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const Message& m) { return hidden(m); }), v.end());
+    return v;
 }
 
 bool NetPostingStore::read(const std::string& area, int num, Message& out) {

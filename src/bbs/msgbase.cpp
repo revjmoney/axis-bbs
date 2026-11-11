@@ -129,9 +129,9 @@ std::vector<Message> FileMessageStore::headers(const std::string& area) {
 
 bool FileMessageStore::read(const std::string& area, int num, Message& out) {
     bool found = false;
-    scan(path(area), true, [&](const Message& m) {
+    scan(path(area), true, [&](Message& m) {
         if (m.num != num) return true;
-        out = m;
+        out = std::move(m);  // the scan stops here, so the record is not needed again
         found = true;
         return false;
     });

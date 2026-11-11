@@ -37,19 +37,22 @@ private:
     uint32_t first_ = 0;
 };
 
-// The file holds one entry per line, line 0 being index `base`. The base lives in a small side
-// file (saved only when a trim moves it). Call open() once the storage is ready.
+// The file's first line is "#<base>", the index of the entry on the next line; then one entry per
+// line. The base lives in the same file, so a trim is one file swap: the host writes the new file
+// whole, then puts it in place of the old one. Call open() once the storage is ready.
 class FileOutLog : public OutLog {
 public:
     struct Io {
         std::function<bool(const std::string& line)> append;  // add one line (newline added by the host)
-        // Line n (0 based) without its newline; false past the end. Reads are mostly sequential
-        // (n, n+1, ...), so the host should remember its last position.
+        // File line n (0 based, the header is line 0) without its newline; false past the end.
+        // Reads are mostly sequential (n, n+1, ...), so the host should remember its last position.
         std::function<bool(uint32_t n, std::string& line)> readLine;
-        std::function<uint32_t()> lineCount;          // lines in the file now
-        std::function<bool(uint32_t skip)> dropFront;  // rewrite the file without its first skip lines
-        std::function<std::string()> loadBase;         // side file text ("" if none)
-        std::function<void(const std::string&)> saveBase;
+        std::function<uint32_t()> lineCount;  // lines in the file now (0 if it is missing)
+        // Write a new file: `header`, then the old file's lines from line `from` on; then swap it in
+        // for the old one (write a temp file, then rename it over the old file). If the board can
+        // stop between removing the old file and the rename, the host should take a leftover temp
+        // file as the log when it opens it.
+        std::function<bool(const std::string& header, uint32_t from)> replace;
     };
     explicit FileOutLog(Io io) : io_(std::move(io)) {}
     void open();
@@ -63,6 +66,7 @@ public:
 private:
     Io io_;
     uint32_t base_ = 0, count_ = 0;
+    bool header_ = false;  // the file starts with its "#<base>" line
 };
 
 }  // namespace axis::net

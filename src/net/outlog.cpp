@@ -37,35 +37,42 @@ void MemOutLog::trimTo(uint32_t keepLast) {
 void FileOutLog::open() {
     base_ = 0;
     count_ = 0;
-    if (io_.loadBase) {
-        std::string b = io_.loadBase();
-        base_ = (uint32_t)std::strtoul(b.c_str(), nullptr, 10);
+    header_ = false;
+    uint32_t n = io_.lineCount ? io_.lineCount() : 0;
+    if (n == 0) return;  // the header is written with the first entry
+    std::string h;
+    if (io_.readLine && io_.readLine(0, h) && h.size() > 1 && h[0] == '#') {
+        base_ = (uint32_t)std::strtoul(h.c_str() + 1, nullptr, 10);
+        count_ = n - 1;
+        header_ = true;
+    } else if (io_.replace && io_.replace("#0", 0)) {  // no header: the whole file is entries from 0
+        count_ = n;
+        header_ = true;
     }
-    if (io_.lineCount) count_ = io_.lineCount();
 }
 
 uint32_t FileOutLog::append(const std::string& entry) {
     if (!oneLine(entry) || !io_.append || next() == kOutLogFail) return kOutLogFail;
+    if (!header_) {
+        if (count_ != 0 || !io_.append("#" + std::to_string(base_))) return kOutLogFail;
+        header_ = true;
+    }
     if (!io_.append(entry)) return kOutLogFail;
     count_++;
     return next() - 1;
 }
 
 bool FileOutLog::read(uint32_t index, std::string& entry) {
-    if (index < base_ || index >= next() || !io_.readLine) return false;
-    return io_.readLine(index - base_, entry);
+    if (!header_ || index < base_ || index >= next() || !io_.readLine) return false;
+    return io_.readLine(index - base_ + 1, entry);
 }
 
 void FileOutLog::trimTo(uint32_t keepLast) {
-    if (count_ <= keepLast || !io_.dropFront) return;
+    if (!header_ || count_ <= keepLast || !io_.replace) return;
     uint32_t skip = count_ - keepLast;
-    // The base is saved first: a crash in between makes a few indexes point one entry off, which
-    // costs at most a resend or a skip (dedupe makes resends harmless).
-    if (io_.saveBase) io_.saveBase(std::to_string(base_ + skip));
-    if (!io_.dropFront(skip)) {
-        if (io_.saveBase) io_.saveBase(std::to_string(base_));
-        return;
-    }
+    // One file swap carries both the new base (in its header) and the kept entries, so the two
+    // never disagree. If the swap fails, nothing changes.
+    if (!io_.replace("#" + std::to_string(base_ + skip), skip + 1)) return;
     base_ += skip;
     count_ = keepLast;
 }
