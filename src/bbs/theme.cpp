@@ -125,6 +125,8 @@ void use(Look l) {
 }
 
 static std::function<std::string(const std::string&)> art_, mci_;
+static bool lite_ = false;
+void        setLite(bool on) { lite_ = on; }
 void setMci(std::function<std::string(const std::string&)> fill) { mci_ = std::move(fill); }
 void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
 std::string artFor(const std::string& title) {
@@ -133,7 +135,8 @@ std::string artFor(const std::string& title) {
     for (char c : title)
         if (std::isalnum((unsigned char)c) && name.size() < 8) name += (char)std::toupper((unsigned char)c);
     if (name.empty()) return "";
-    std::string a = art_(name + ".ANS");
+    std::string a = lite_ ? art_(name + ".LITE.ANS") : std::string();
+    if (a.empty()) a = art_(name + ".ANS");
     if (!a.empty() && mci_) a = mci_(a);
     if (!a.empty() && a.back() != '\n') a += "\r\n";
     return a;
@@ -199,6 +202,14 @@ const char* menuScreenFile(const std::string& name) {
     };
     for (const auto& m : kMap)
         if (name == m[0]) return m[1];
+    static std::vector<std::pair<std::string, std::string>> lite;  // a lite screen maps as its full one: MAIN.LITE.ANS, MATRIX.LITE.ANS ...
+    if (lite.empty())
+        for (const auto& m : kMap) {
+            std::string a = m[0], b = m[1];
+            lite.push_back({a.substr(0, a.size() - 4) + ".LITE.ANS", b.substr(0, b.size() - 4) + ".LITE.ANS"});
+        }
+    for (const auto& m : lite)
+        if (name == m.first) return m.second.c_str();
     return nullptr;
 }
 

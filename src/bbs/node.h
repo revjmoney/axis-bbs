@@ -109,7 +109,7 @@ public:
     // Big fixed screens (the login art) go straight to the caller through this, a piece at a time
     // from flash, instead of through takeOutput(): a copy of them needs more heap than a busy board has.
     // the Oblivion look's screens from the card (MATRIX.ANS, MAIN.ANS): their text, or "" for the stock screen
-    void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
+    void        setArt(std::function<std::string(const std::string&)> art);  // (a lite caller gets NAME.LITE.ANS when the theme has it)
     // The Saylor poster (SAYLOR.ANS 37 KB, SAYLORLG.ANS 45 KB) a piece at a time: up to `want` bytes of the file from
     // `offset` ("" at the end; shorter than `want` is the last piece; *exists false: no such poster). With this set the
     // poster streams out one piece per poll(), so neither the file nor its ANSI ever sits in RAM whole.
@@ -161,6 +161,11 @@ public:
     const net::LinkInfo&   link() const { return link_; }
     bool                   viaModem() const { return link_.any; }
     std::string            linkTiers() const;  // the LoRa tiers this call has seen: "SF7", "SF7-SF9", "WIFI"; "" for none
+    // Lite screens: the modem's last report put this caller below lite_below_bps (0 = never). The same menus and features,
+    // lighter art: no login splash, NAME.LITE.ANS where the theme or menu set has one, ANSI movies unpaced. Checked at every
+    // screen, so a retrain up to a fast tier gets the normal art from the next screen on.
+    bool                   lite() const;  // bps at or below lite_below_bps
+    static std::string     liteName(const std::string& file);  // "MAIN.ANS" -> "MAIN.LITE.ANS"; "" for a name that has none
     std::string            editedMenu() const;  // the sysop's main menu items (cfg mainMenu) in a window
     void             resumeAfterDoor(DoorEnd how, uint32_t nowMs);
     // a download or upload from the Files menu (State::Transfer): the host runs it, then reports back
@@ -361,6 +366,7 @@ private:
     std::unique_ptr<FileBrowser> browser_;
     std::unique_ptr<AxisNetMenu> net_;
     net::LinkInfo                link_;
+    std::shared_ptr<bool>        liteNow_ = std::make_shared<bool>(false);  // lite(), for the art loaders (survives a move)
     int                          sfLo_ = 0, sfHi_ = 0;  // the fastest and slowest LoRa tier this call (0: none yet)
     bool                         sawWifi_ = false;
 };

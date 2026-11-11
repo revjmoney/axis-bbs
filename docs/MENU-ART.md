@@ -32,6 +32,20 @@ The starter set (`tools/menus/make_starter.py`) lays out:
 - `LOGIN.ANS` needs `|{P}` (handle) and `|{O}` (password) with 16 blank cells after each for the typing.
 - Every bar's key needs a `cmd=` line, or picking it does nothing. Give bars only to commands that run on AXIS.
 
+## Lite art for slow radio callers
+
+A caller on the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM tells the board its air speed (telnet option
+90, `modem_link=1`). At or below `lite_below_bps` (7031 by default, so SF9 and slower; 0 turns it off) the caller gets
+lite screens: the same menus, bars, keys and features, just lighter art. The RotatoCAM login splash is skipped and
+ANSI movies in the pack viewer are not paced. A retrain to a faster tier gets the normal art from the next screen
+on, and a retrain down gets lite art.
+
+To make lite art, save it beside the full screen with `.LITE` before `.ANS`: `MAIN.LITE.ANS` beside `MAIN.ANS`,
+`MATRIX.LITE.ANS`, `STATS.LITE.ANS`, `SAYLOR.LITE.ANS` and so on, in the theme folder or in `/menus`, the same
+places the full screens live. A screen with no lite file shows the full one, so a look needs none to work. Keep a
+lite screen to the same window as the full one (the bars and prompt land in the same spots), and keep it small:
+plain colours and few cursor moves, about 1 to 2 KB, since SF12 carries roughly 140 bytes a second.
+
 ## Checking
 
 ```

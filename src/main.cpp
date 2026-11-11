@@ -1370,9 +1370,11 @@ static void drawScreen() {
 }
 
 // ------------------------------------------------------------------ network
+static void modemSearchForget();
 static void applyNetwork() {
     setenv("TZ", axis::bbs::tzRule(cfg.timezone), 1);
     tzset();
+    modemSearchForget();  // MDNS.end() frees a search still running
     MDNS.end();
     if (MDNS.begin(cfg.boardName.c_str())) MDNS.addService("telnet", "tcp", cfg.telnetPort);
     server.end();
@@ -1406,6 +1408,7 @@ struct FoundModem {
 static std::vector<FoundModem> foundModems;
 static mdns_search_once_t*     modemSearch = nullptr;  // an mDNS search for _lfd3k._tcp running in the background
 static uint32_t                modemSearchMs = 0;
+static void modemSearchForget() { modemSearch = nullptr; }
 static void modemSearchStart() {
     if (modemSearch || WiFi.status() != WL_CONNECTED) return;
     modemSearch = mdns_query_async_new(nullptr, "_lfd3k", "_tcp", MDNS_TYPE_PTR, 3000, 8, nullptr);
@@ -2181,7 +2184,7 @@ static void startDoorInner() {
         viewer.reset(new axis::bbs::AnsiViewer(callerFiles(), va.empty() ? d.args : va[0].first, va.empty() ? areaName(d.args) : va[0].second,
                                                nullptr, 0, *line));
         viewer->setAreas(va);
-        viewer->setClock([] { return (uint32_t)millis(); });  // ANSI movies play at modem speed
+        if (!node->lite()) viewer->setClock([] { return (uint32_t)millis(); });  // ANSI movies play at modem speed (a lite caller: unpaced)
         viewer->begin();
         line->flush();
         return;

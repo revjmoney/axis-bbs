@@ -69,6 +69,8 @@ std::string drip(const std::string& text);
 // The theme's header screens from the card: drip("DOORS") shows DOORS.ANS when the theme folder has it
 void setArt(std::function<std::string(const std::string&)> art);
 std::string artFor(const std::string& title);  // "" when there is none
+// a lite caller (a slow radio tier) is being served: artFor tries NAME.LITE.ANS first (a Node sets it while it works)
+void setLite(bool on);
 // fills a header screen's codes (%BN, %NN, %UN...) for the caller being served; a Node sets it while it works
 void setMci(std::function<std::string(const std::string&)> fill);
 std::string titleBar(const std::string& text);  // the Oblivion look's title: a fading rule around "M E N U"

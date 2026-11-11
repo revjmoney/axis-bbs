@@ -723,8 +723,8 @@ void SysopShell::modem(Layer& l) {
     l.items.push_back({"Take link reports from the modem", link == "0" ? "off" : "on", [this, link] {
                            did(run_(std::string("@SET modem_link=") + (link == "0" ? "1" : "0")));
                        }});
-    l.items.push_back({"Lite screens below (bps)", lite == "0" ? "never" : lite, [this] {
-                           ask("Lite screens below this many bps (7031 = SF9 and slower, 0 = never)", false,
+    l.items.push_back({"Lite screens at or below (bps)", lite == "0" ? "never" : lite, [this] {
+                           ask("Lite screens at or below this many bps (7031 = SF9 and slower, 0 = never)", false,
                                [this](const std::string& v) { did(run_("@SET lite_below_bps=" + v)); });
                        }});
     std::vector<Item> now, calls, found;

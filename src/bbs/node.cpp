@@ -210,7 +210,7 @@ void Node::begin(uint32_t nowMs) {
     MciScope mciScope(*this);
     lastInput_ = nowMs;
     theme::use(theme::lookFrom(cfg_.theme));  // one look for the whole board: the setting decides
-    if (cfg_.loginSplash) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
+    if (cfg_.loginSplash && !lite()) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
         state_ = State::Splash;
         splash_.reset(new Splash(nowMs));
         out_ += splash_->step(nowMs);
@@ -244,8 +244,37 @@ void Node::beginLocalMenu(uint32_t nowMs) {
 }
 
 // While this node works, the theme's header screens get its codes (one node runs at a time; cleared after)
-Node::MciScope::MciScope(Node& n) { theme::setMci([&n](const std::string& s) { return n.mci(s); }); }
-Node::MciScope::~MciScope() { theme::setMci(nullptr); }
+Node::MciScope::MciScope(Node& n) {
+    theme::setMci([&n](const std::string& s) { return n.mci(s); });
+    theme::setLite(n.lite());  // the header screens (theme::artFor) go lite too
+}
+Node::MciScope::~MciScope() {
+    theme::setMci(nullptr);
+    theme::setLite(false);
+}
+
+bool Node::lite() const { return cfg_.liteBelowBps > 0 && link_.any && link_.bps >= 0 && link_.bps <= cfg_.liteBelowBps; }
+
+std::string Node::liteName(const std::string& file) {
+    if (file.size() < 5 || file.find(':') != std::string::npos || file.find('/') != std::string::npos) return "";  // (a look preview: as is)
+    std::string up = file;
+    for (char& c : up) c = (char)std::toupper((unsigned char)c);
+    if (up.compare(up.size() - 4, 4, ".ANS") != 0 || (up.size() >= 9 && up.compare(up.size() - 9, 9, ".LITE.ANS") == 0)) return "";
+    return file.substr(0, file.size() - 4) + ".LITE" + file.substr(file.size() - 4);
+}
+
+void Node::setArt(std::function<std::string(const std::string&)> art) {
+    if (!art) {
+        art_ = nullptr;
+        return;
+    }
+    art_ = [lite = liteNow_, art = std::move(art)](const std::string& name) {
+        if (*lite)
+            if (std::string l = liteName(name); !l.empty())
+                if (std::string a = art(l); !a.empty()) return a;
+        return art(name);
+    };
+}
 
 // ---- ViSiON/3-style menu files
 
@@ -268,6 +297,19 @@ char v3Command(const std::string& f) {
 
 void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
     menu_.reset();
+    if (load)  // a lite caller gets NAME.LITE.ANS when the menu set has it
+        load = [lite = liteNow_, raw = std::move(load)](const std::string& name) {
+            if (*lite)
+                if (std::string l = liteName(name); !l.empty())
+                    if (std::string a = raw(l); !a.empty()) return a;
+            return raw(name);
+        };
+    if (pieces)
+        pieces = [lite = liteNow_, raw = std::move(pieces)](const std::string& name, const ArtEmit& piece) {
+            if (*lite)
+                if (std::string l = liteName(name); !l.empty() && raw(l, piece)) return true;
+            return raw(name, piece);
+        };
     menuLoad_ = load;
     builtin_ = false;
     if (!load || load("MAIN.MNU").empty()) return;
@@ -585,10 +627,16 @@ void Node::nextStep() {
 // 2 when the rest follows from poll() a piece at a time.
 int Node::startPoster(const std::string& file, bool clear, bool hold) {
     bool        exists = false;
-    std::string raw = posterPiece_(file, 0, kPosterPiece, &exists);
+    std::string use = file, raw;
+    if (lite())  // a lite caller's poster, when there is one: every piece then comes from that file
+        if (std::string l = liteName(file); !l.empty()) {
+            raw = posterPiece_(l, 0, kPosterPiece, &exists);
+            if (exists && !raw.empty()) use = l;
+        }
+    if (use == file) raw = posterPiece_(file, 0, kPosterPiece, &exists);
     if (!exists || raw.empty()) return 0;
     if (clear) out_ += theme::CLS;
-    posterFile_ = file;
+    posterFile_ = use;
     posterOff_ = raw.size();
     posterHold_ = hold;
     posterCarry_.clear();
@@ -861,6 +909,7 @@ std::string Node::editedMenu() const {  // the sysop's menu items in a window
 
 void Node::setLink(const net::LinkInfo& l) {
     link_ = l;
+    *liteNow_ = lite();
     if (int sf = l.sf()) {
         sfLo_ = sfLo_ && sfLo_ < sf ? sfLo_ : sf;
         sfHi_ = sfHi_ > sf ? sfHi_ : sf;
@@ -879,6 +928,7 @@ std::string Node::linkTiers() const {
 void Node::applyBoard(const BbsConfig& next) {
     cfg_.modemLink = next.modemLink;
     cfg_.liteBelowBps = next.liteBelowBps;
+    *liteNow_ = lite();
     cfg_.messagesOn = next.messagesOn;
     cfg_.filesOn = next.filesOn;
     cfg_.doorsOn = next.doorsOn;
@@ -3365,6 +3415,10 @@ void Node::poll(uint32_t nowMs) {
         }
     }  // the idle timer covers the application and the pending screen too
     if (state_ == State::Splash) {
+        if (splash_ && lite()) {  // the modem said this caller is slow (its report comes after the splash started): cut it
+            splash_.reset();
+            out_ += theme::CLS;
+        }
         if (splash_ && !splash_->done(nowMs)) {
             out_ += splash_->step(nowMs);
             return;
