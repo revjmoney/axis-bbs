@@ -18,6 +18,8 @@ std::string pbkdf2Sha256Hex(const std::string& password, const std::string& salt
 uint32_t    passwordRounds(const std::string& hash);  // a PBKDF2 hash's round count, 0 for a legacy SHA-256 hash
 bool        needsRehash(const std::string& hash);     // legacy, or another round count than kPasswordRounds
 std::string hmacSha256Raw(const std::string& key, const std::string& data);  // 32 raw bytes
+// the same over head then data[0..n), without joining them first (a cluster frame's tag: no copy of its body)
+std::string hmacSha256Raw(const std::string& key, const std::string& head, const char* data, size_t n);
 std::string makeSalt(uint32_t (*rng)());  // 32 hex characters (16 random bytes)
 std::string hashPassword(const std::string& salt, const std::string& password);
 bool        checkPassword(const std::string& salt, const std::string& hash, const std::string& password);

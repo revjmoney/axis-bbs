@@ -66,3 +66,10 @@ TEST_CASE("new hashes use the board's round count and do not need a rehash") {
     CHECK(passwordRounds(hash) == kPasswordRounds);
     CHECK(passwordRounds(sha256Hex("x")) == 0);
 }
+
+TEST_CASE("the two-part HMAC equals the HMAC of the joined bytes (cluster frame tags stay the same)") {
+    std::string key = "link-key-0123456789", head = std::string("M\x05\x00\x00\x00\x09", 6), body(7000, 'q');
+    body[17] = '\0';
+    CHECK(axis::bbs::hmacSha256Raw(key, head, body.data(), body.size()) == axis::bbs::hmacSha256Raw(key, head + body));
+    CHECK(axis::bbs::hmacSha256Raw(key, "", body.data(), 0) == axis::bbs::hmacSha256Raw(key, ""));
+}

@@ -52,12 +52,14 @@ bool sameBytes(const std::string& a, const std::string& b) {  // in constant tim
 std::string proof(const std::string& key, const char* what, const std::string& mainNonce, const std::string& followerNonce) {
     return bbs::hmacSha256Raw(key, std::string(what) + mainNonce + followerNonce);
 }
-std::string frameTag(const std::string& linkKey, char from, uint32_t seq, Frame t, const std::string& body) {
+// over the direction, the counter, the type and the body, without copying the body (a file piece is 7 KB)
+std::string frameTag(const std::string& linkKey, char from, uint32_t seq, Frame t, const char* body, size_t n) {
     std::string m(1, from);
     for (int i = 0; i < 4; i++) m += (char)(seq >> (8 * i));
     m += (char)t;
-    m += body;
-    return bbs::hmacSha256Raw(linkKey, m).substr(0, kTagBytes);
+    std::string tag = bbs::hmacSha256Raw(linkKey, m, body, n);
+    tag.resize(kTagBytes);
+    return tag;
 }
 }  // namespace
 
@@ -84,7 +86,7 @@ bool Cluster::unsign(std::string& d) {
 bool Cluster::put(Link& l, Frame t, const std::vector<std::string>& f) {
     if (l.auth != 2 || l.dead) return false;
     std::string out = frame(t, f);
-    out += frameTag(l.linkKey, asMain(l) ? 'M' : 'F', l.sent++, t, out.substr(5));
+    out += frameTag(l.linkKey, asMain(l) ? 'M' : 'F', l.sent++, t, out.data() + 5, out.size() - 5);  // (frame() left room for it)
     uint32_t n = (uint32_t)(out.size() - 4);
     for (int i = 0; i < 4; i++) out[(size_t)i] = (char)(n >> (8 * i));
     return net_.send(l.id, out);
@@ -99,7 +101,7 @@ bool Cluster::take(Link& l, Frame& t, std::string& body) {
             }
             std::string tag = body.substr(body.size() - kTagBytes);
             body.resize(body.size() - kTagBytes);
-            if (!sameBytes(tag, frameTag(l.linkKey, asMain(l) ? 'F' : 'M', l.got, t, body))) {
+            if (!sameBytes(tag, frameTag(l.linkKey, asMain(l) ? 'F' : 'M', l.got, t, body.data(), body.size()))) {
                 event("a frame with a bad cluster tag: dropping the link");
                 l.dead = true;
                 break;
@@ -578,7 +580,11 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
         } else if (t == Frame::FileReq) {
             size_t      sep = body.find(kFieldSep);
             std::string id = body.substr(0, sep), req = sep == std::string::npos ? "" : body.substr(sep + 1);
-            put(l, Frame::FileResp, {id, onRequest ? onRequest(l.node, req) : std::string("0")});
+            std::vector<std::string> resp;  // the answer (up to a 7 KB file piece) moves in: no second copy of it
+            resp.reserve(2);
+            resp.push_back(id);
+            resp.emplace_back(onRequest ? onRequest(l.node, req) : std::string("0"));
+            put(l, Frame::FileResp, resp);
         }
         return;
     }

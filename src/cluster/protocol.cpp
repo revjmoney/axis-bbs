@@ -15,7 +15,7 @@ std::string frame(Frame type, const std::vector<std::string>& f) {
     for (const std::string& s : f) len += s.size();
     uint32_t    n = (uint32_t)len + 1;
     std::string out;
-    out.reserve(5 + len);
+    out.reserve(5 + len + kTagBytes);  // and the tag put() adds, so it never grows (doubling) the buffer
     for (int i = 0; i < 4; i++) out += (char)(n >> (8 * i));
     out += (char)type;
     for (size_t i = 0; i < f.size(); i++) {

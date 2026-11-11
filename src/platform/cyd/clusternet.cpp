@@ -68,8 +68,15 @@ bool Esp32ClusterNet::send(int link, const std::string& b) {
     auto it = links_.find(link);
     if (it == links_.end() || it->second.dead || !it->second.c.connected()) return false;
     Link& l = it->second;
-    l.out += b;
-    pump(l);
+    if (l.out.empty()) {  // nothing waiting: hand it to the socket straight from the caller's string, queue only the rest
+        int fd = l.c.fd();  // (copying a 7 KB file piece into the queue first doubled it on the heap for a moment)
+        int w = fd < 0 ? -1 : ::send(fd, b.data(), b.size(), MSG_DONTWAIT);
+        if (fd < 0 || (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) l.dead = true;
+        else if ((size_t)(w > 0 ? w : 0) < b.size()) l.out.assign(b, (size_t)(w > 0 ? w : 0), std::string::npos);
+    } else {
+        l.out += b;
+        pump(l);
+    }
     if (l.out.size() > kMaxQueue) l.dead = true;  // the other board stopped reading
     return !l.dead;
 }

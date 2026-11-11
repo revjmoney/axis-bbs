@@ -60,9 +60,11 @@ struct Hmac {
         sha256_init(&outer);
         sha256_update(&outer, opad, 64);
     }
-    void mac(const uint8_t* data, size_t n, uint8_t out[32]) const {
+    void mac(const uint8_t* data, size_t n, uint8_t out[32]) const { mac(nullptr, 0, data, n, out); }
+    void mac(const uint8_t* head, size_t h, const uint8_t* data, size_t n, uint8_t out[32]) const {
         SHA256_CTX c = inner;
         uint8_t    in[32];
+        if (h) sha256_update(&c, head, h);
         sha256_update(&c, data, n);
         sha256_final(&c, in);
         c = outer;
@@ -113,6 +115,12 @@ bool needsRehash(const std::string& hash) { return passwordRounds(hash) != kPass
 std::string hmacSha256Raw(const std::string& key, const std::string& data) {
     uint8_t out[32];
     Hmac(key).mac((const uint8_t*)data.data(), data.size(), out);
+    return std::string((const char*)out, 32);
+}
+
+std::string hmacSha256Raw(const std::string& key, const std::string& head, const char* data, size_t n) {
+    uint8_t out[32];
+    Hmac(key).mac((const uint8_t*)head.data(), head.size(), (const uint8_t*)data, n, out);
     return std::string((const char*)out, 32);
 }
 
