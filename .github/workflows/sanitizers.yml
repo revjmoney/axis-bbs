@@ -1,0 +1,43 @@
+# The host tests built with AddressSanitizer and UndefinedBehaviorSanitizer.
+# Catches out of bounds reads and writes, use after free, leaks, signed overflow, bad shifts and
+# similar bugs that a normal test run passes over. The flags go in on the cmake command line, so
+# the CMakeLists files stay as they are. Any sanitizer report stops the test run and fails the job.
+name: Sanitizers
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  asan-ubsan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Known findings on main (see docs/github-automation.md): theme.cpp drip2 read past its end,
+    # and a signed shift in third_party/sha256/sha256.c. While those stand, a red result here
+    # does not fail the run. Remove this line once both are fixed so new findings fail again.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Compilers
+        run: sh tools/ci/apt_install.sh g++ cmake ninja-build
+      - name: Build with ASan and UBSan
+        env:
+          CC: gcc
+          CXX: g++
+          SAN: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g
+        run: |
+          cmake -S . -B build-san -G Ninja \
+            "-DCMAKE_C_FLAGS=$SAN" \
+            "-DCMAKE_CXX_FLAGS=$SAN" \
+            "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+          cmake --build build-san
+      - name: Host tests under the sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ./build-san/axis_tests --reporters=console
