@@ -1,0 +1,76 @@
+# Push a tag like v0.52 and this builds both firmware envs and publishes a GitHub Release with
+# the .bin files attached. The release notes are the tag message (git tag -a v0.52 -m "..."),
+# or GitHub's generated change list when the tag has no message.
+# Uses only the built in GITHUB_TOKEN: no repository secret needed.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write  # create the release and attach files
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # checkout leaves a lightweight copy of the tag; fetch the real one to read its message.
+      - name: Tag message
+        run: |
+          git fetch --force --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
+          if [ "$(git cat-file -t "refs/tags/$TAG")" = tag ]; then
+            git tag -l --format='%(contents)' "$TAG" > notes.md
+          fi
+          if [ -s notes.md ]; then cat notes.md; else echo "no tag message, using generated notes"; fi
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+          key: pio-6.1.18-espressif32-6.9.0-idf-3.40407.240606-${{ runner.os }}
+      - name: PlatformIO 6.1.18
+        run: |
+          sh tools/ci/apt_install.sh python3-venv
+          pip install --retries 5 platformio==6.1.18
+      - name: Compile CYD and headless
+        run: |
+          pio run -e cyd -j 2
+          pio run -e headless -j 2
+      # Both envs write firmware.bin, so each file gets the env in its name. The build does not
+      # make a merged (factory) image. flasher_args.json, when ESP-IDF writes it, lists the
+      # flash offset of each file.
+      - name: Collect files
+        run: |
+          mkdir -p dist
+          for env in cyd headless; do
+            for f in firmware.bin bootloader.bin partitions.bin; do
+              test -f ".pio/build/$env/$f"
+              cp ".pio/build/$env/$f" "dist/axis-bbs-$TAG-$env-$f"
+            done
+            if [ -f ".pio/build/$env/flasher_args.json" ]; then
+              cp ".pio/build/$env/flasher_args.json" "dist/axis-bbs-$TAG-$env-flasher_args.json"
+            fi
+          done
+          (cd dist && sha256sum * > "axis-bbs-$TAG-SHA256SUMS.txt")
+          ls -l dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          elif [ -s notes.md ]; then
+            gh release create "$TAG" dist/* --verify-tag --title "Axis Micro BBS Firmware $TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "Axis Micro BBS Firmware $TAG" --generate-notes
+          fi
