@@ -13,6 +13,7 @@ namespace axis::net {
 
 constexpr size_t kNetMaxBody = 8 * 1024;
 constexpr size_t kNetMaxSubject = 72;
+constexpr size_t kNetMaxFrame = 9 * 1024;  // longest encoded line, without the newline
 
 enum class NetKind : char { Post = 'P', Card = 'C', Notice = 'N' };
 

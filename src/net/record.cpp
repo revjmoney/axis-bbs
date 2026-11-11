@@ -33,6 +33,10 @@ bool cleanField(const std::string& s) {
     return true;
 }
 
+bool noSep(const std::string& s) { return s.find(kSep) == std::string::npos; }
+
+bool cleanField(const std::string& s, size_t maxLen) { return s.size() <= maxLen && cleanField(s); }
+
 bool validArea(const std::string& a) {
     if (a.empty() || a.size() > 16) return false;
     for (char c : a)
@@ -43,6 +47,7 @@ bool validArea(const std::string& a) {
 // Parse an unsigned decimal of 1..10 digits that fits in uint32_t.
 bool parseU32(const std::string& s, uint32_t& out) {
     if (s.empty() || s.size() > 10) return false;
+    if (s.size() > 1 && s[0] == '0') return false;  // no leading zeros: one spelling per number
     uint64_t v = 0;
     for (char c : s) {
         if (c < '0' || c > '9') return false;
@@ -108,7 +113,7 @@ bool validPath(const std::string& p) {
 // id must be <board>-<decimal seq> with the board part equal to the board field.
 bool validId(const std::string& id, const std::string& board) {
     if (!isLowerHex(board, 16)) return false;
-    if (id.size() < 18 || id.size() > 27) return false;
+    if (id.size() < 18 || id.size() > 27 || id.size() > 40) return false;
     if (id.compare(0, 16, board) != 0 || id[16] != '-') return false;
     uint32_t seq;
     return parseU32(id.substr(17), seq);
@@ -116,19 +121,19 @@ bool validId(const std::string& id, const std::string& board) {
 
 // Field checks shared by encode (refuses) and decode (rejects). sig is checked separately.
 bool validFields(const NetPost& p) {
-    return validArea(p.area) && validId(p.id, p.board) && cleanField(p.from) && cleanField(p.to) &&
-           cleanField(p.subject) && p.subject.size() <= kNetMaxSubject && p.body.size() <= kNetMaxBody &&
-           validPath(p.path);
+    return validArea(p.area) && validId(p.id, p.board) && cleanField(p.from, 36) && cleanField(p.to, 36) &&
+           cleanField(p.subject, kNetMaxSubject) && p.body.size() <= kNetMaxBody && noSep(p.body) &&
+           p.path.size() <= 512 && validPath(p.path);
 }
 
 bool validFields(const NetCard& c) {
-    return isLowerHex(c.board, 16) && isLowerHex(c.pub, 64) && cleanField(c.name) && cleanField(c.host) &&
-           cleanField(c.mac) && cleanField(c.sysop) && cleanField(c.location) && cleanField(c.links) &&
+    return isLowerHex(c.board, 16) && isLowerHex(c.pub, 64) && cleanField(c.name, 40) && cleanField(c.host, 64) &&
+           cleanField(c.mac, 17) && cleanField(c.sysop, 40) && cleanField(c.location, 40) && cleanField(c.links, 16) &&
            c.port >= 0 && c.port <= 65535;
 }
 
 bool validFields(const NetNotice& n) {
-    return validNoticeKind(n.kind) && cleanField(n.target) && cleanField(n.value) && (n.key == 0 || n.key == 1);
+    return validNoticeKind(n.kind) && cleanField(n.target, 40) && cleanField(n.value, 64) && (n.key == 0 || n.key == 1);
 }
 
 bool sigOk(const std::string& s) { return isLowerHex(s, 128); }
@@ -185,24 +190,28 @@ std::string signedPart(const NetNotice& n) {
 std::string encode(const NetPost& p) {
     if (!validFields(p)) return "";
     if (!p.sig.empty() && !sigOk(p.sig)) return "";
-    return signedPart(p) + kSep + p.path + kSep + p.sig;
+    std::string line = signedPart(p) + kSep + p.path + kSep + p.sig;
+    return line.size() > kNetMaxFrame ? std::string() : line;
 }
 
 std::string encode(const NetCard& c) {
     if (!validFields(c)) return "";
     if (!c.sig.empty() && !sigOk(c.sig)) return "";
-    return signedPart(c) + kSep + c.sig;
+    std::string line = signedPart(c) + kSep + c.sig;
+    return line.size() > kNetMaxFrame ? std::string() : line;
 }
 
 std::string encode(const NetNotice& n) {
     if (!validFields(n)) return "";
     if (!n.sig.empty() && !sigOk(n.sig)) return "";
-    return signedPart(n) + kSep + n.sig;
+    std::string line = signedPart(n) + kSep + n.sig;
+    return line.size() > kNetMaxFrame ? std::string() : line;
 }
 
 // ---- decode ----------------------------------------------------------------------------
 
 bool decode(const std::string& line, NetPost& out) {
+    if (line.size() > kNetMaxFrame) return false;
     std::vector<std::string> f = split(line);
     if (f.size() != 11 || f[0] != "P") return false;
     NetPost p;
@@ -223,6 +232,7 @@ bool decode(const std::string& line, NetPost& out) {
 }
 
 bool decode(const std::string& line, NetCard& out) {
+    if (line.size() > kNetMaxFrame) return false;
     std::vector<std::string> f = split(line);
     if (f.size() != 12 || f[0] != "C") return false;
     NetCard c;
@@ -245,6 +255,7 @@ bool decode(const std::string& line, NetCard& out) {
 }
 
 bool decode(const std::string& line, NetNotice& out) {
+    if (line.size() > kNetMaxFrame) return false;
     std::vector<std::string> f = split(line);
     if (f.size() != 7 || f[0] != "N") return false;
     NetNotice n;
