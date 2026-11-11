@@ -1377,10 +1377,11 @@ static void drawScreen() {
 
 // ------------------------------------------------------------------ network
 static void modemSearchForget();
-static void applyNetwork() {
-    setenv("TZ", axis::bbs::tzRule(cfg.timezone), 1);
-    tzset();
-    modemSearchForget();  // MDNS.end() frees a search still running
+static bool modemSearchRunning();
+static bool     networkPending = false;  // applyNetwork() waits for an mDNS modem search to end (the loop keeps running)
+static uint32_t networkPendingMs = 0;
+static void applyNetworkNow() {
+    modemSearchForget();  // MDNS.end() must never meet a search: one that is done is freed here
     MDNS.end();
     if (MDNS.begin(cfg.boardName.c_str())) MDNS.addService("telnet", "tcp", cfg.telnetPort);
     server.end();
@@ -1392,6 +1393,24 @@ static void applyNetwork() {
                   heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
+// The clock zone at once; mDNS and the listeners now, or (an mDNS search for modems is running) once it has ended or
+// 3.5 s have passed: applyNetworkDue() in the loop. Callers and the panel keep running meanwhile.
+static void applyNetwork() {
+    setenv("TZ", axis::bbs::tzRule(cfg.timezone), 1);
+    tzset();
+    if (!modemSearchRunning()) {
+        networkPending = false;
+        applyNetworkNow();
+        return;
+    }
+    if (!networkPending) networkPendingMs = millis();
+    networkPending = true;
+}
+static void applyNetworkDue() {  // each loop turn, after modemSearchPoll()
+    if (!networkPending || (modemSearchRunning() && millis() - networkPendingMs < 3500u)) return;
+    networkPending = false;
+    applyNetworkNow();  // (a search still running after 3.5 s is left to MDNS.end(), which frees it)
+}
 static void sendApp(const std::string& s) {
     if (s.empty() || !line) return;
     line->write((const uint8_t*)s.data(), s.size());
@@ -1414,17 +1433,18 @@ struct FoundModem {
 static std::vector<FoundModem> foundModems;
 static mdns_search_once_t*     modemSearch = nullptr;  // an mDNS search for _lfd3k._tcp running in the background
 static uint32_t                modemSearchMs = 0;
-static void modemSearchForget() {  // before MDNS.end(): never leave a search for it (or for nobody) to free
+static bool modemSearchRunning() { return modemSearch != nullptr; }
+static void modemSearchForget() {  // before MDNS.end(): a finished search is freed here (never waits)
     if (!modemSearch) return;
     mdns_result_t* res = nullptr;
-    if (mdns_query_async_get_results(modemSearch, 3500, &res)) {  // (a running one ends within its own 3 s)
+    if (mdns_query_async_get_results(modemSearch, 0, &res)) {
         if (res) mdns_query_results_free(res);
         mdns_query_async_delete(modemSearch);
-    }
+    }  // (still running: MDNS.end() frees it with the rest)
     modemSearch = nullptr;
 }
 static void modemSearchStart() {
-    if (modemSearch || WiFi.status() != WL_CONNECTED) return;
+    if (modemSearch || networkPending || WiFi.status() != WL_CONNECTED) return;
     modemSearch = mdns_query_async_new(nullptr, "_lfd3k", "_tcp", MDNS_TYPE_PTR, 3000, 8, nullptr);
     modemSearchMs = millis();
 }
@@ -3838,6 +3858,8 @@ void loop() {
         logEvent("loop stalled " + String(millis() - lastLoop) + " ms");
     lastLoop = millis();
     handleSerial();
+    modemSearchPoll();  // (before any early return: a network re-apply may be waiting on it)
+    applyNetworkDue();
     if (boardIsHeadless() && portal) {  // the AXIS-SETUP hotspot until a network is picked
         portal->handleClient();
         delay(2);
@@ -3919,7 +3941,6 @@ void loop() {
         axisProbeOne();
     }
     pumpPanel();
-    modemSearchPoll();
     for (size_t i = 0; i < sessions.size(); i++) {
         bindSession((int)i);
         serviceSession((int)i);
