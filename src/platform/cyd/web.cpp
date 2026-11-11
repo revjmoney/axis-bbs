@@ -4,6 +4,7 @@
 #include "web.h"
 
 #include <HTTPClient.h>
+#include <atomic>
 #include <base64.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -29,11 +30,14 @@ constexpr size_t   kLine = 320;
 constexpr uint32_t kDdnsEveryMs = 10 * 60 * 1000;
 constexpr uint32_t kFirstCheckMs = 60 * 1000;  // after boot: time to clear bad settings before any network call
 constexpr size_t   kTlsNeeds = 48 * 1024;      // a TLS handshake wants about 45 KB in one piece
+constexpr size_t   kTlsReserve = 32 * 1024;    // and a callers' worth of heap must stay free besides
+std::atomic<uint32_t> dropped_{0}, gated_{0};  // Discord lines dropped / DNS checks held for lack of memory
+volatile uint32_t     gatedLargest_ = 0;       // the largest block the last held DNS check saw
 
 // a busy CYD main can't spare a TLS handshake: trying anyway starves the whole board.
 // A running door wins even when the largest block still looks big enough: the handshake
 // would take that block and the next guest page would fail.
-bool tlsFits() { return !door_ && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kTlsNeeds; }
+bool tlsFits() { return !door_ && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kTlsNeeds + kTlsReserve; }
 
 String jsonText(const char* s) {  // a JSON string's inside
     String o;
@@ -79,8 +83,8 @@ int request(const char* method, const String& url, const String& body, const Str
 
 String publicIp() {
     String ip;
-    // No-IP's own checker answers over plain HTTP, for a board without room for HTTPS
-    if (request("GET", tlsFits() ? "https://api.ipify.org" : "http://ip1.dynupdate.no-ip.com/", "", "", &ip) != 200) return "";
+    // No-IP's own checker answers over plain HTTP: the answer is only our public IP, no secret travels
+    if (request("GET", "http://ip1.dynupdate.no-ip.com/", "", "", &ip) != 200) return "";
     ip.trim();
     return ip.length() >= 7 && ip.length() <= 15 ? ip : String();
 }
@@ -92,12 +96,16 @@ void noipCheck(const String& ip) {
     xSemaphoreGive(lock_);
     if (!host.length() || noipStopped_ || ip == noipIp_) return;
     String reply, url = axis::bbs::noipUrl(host.c_str(), ip.c_str()).c_str();
-    bool   secure = tlsFits();
-    if (!secure) url.replace("https://", "http://");  // No-IP accepts plain HTTP; HTTPS only when it fits
+    if (!tlsFits()) {  // the password never goes over plain HTTP: wait for memory, retry next cycle
+        gatedLargest_ = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        gated_++;
+        noipResult_ = "noip: waiting for memory";
+        return;
+    }
     int    code = request("GET", url, "", auth, &reply,
                           "AxisMicroBBS/0.3 therealrevjmoney@gmail.com");
     auto   r = axis::bbs::noipReply(reply.c_str());
-    noipResult_ = "noip: " + host + " -> " + ip + " " + (r.ok ? "ok" : "FAILED") + " (" + (secure ? "HTTPS " : "HTTP ") + String(code) + " " +
+    noipResult_ = "noip: " + host + " -> " + ip + " " + (r.ok ? "ok" : "FAILED") + " (" + "HTTPS " + String(code) + " " +
                   r.text.c_str() + ")";
     if (r.stop) noipStopped_ = true, noipResult_ += ", stopped until @NOIP is set again";
     Serial.printf("axis: %s\n", noipResult_.c_str());
@@ -116,6 +124,12 @@ void ddnsCheck() {
     }
     noipCheck(ip);
     if (!domain.length() || ip == lastIp_) return;
+    if (!tlsFits()) {
+        gatedLargest_ = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        gated_++;
+        lastResult_ = "ddns: waiting for memory";
+        return;
+    }
     int code = request("PUT", "https://api.godaddy.com/v1/domains/" + domain + "/records/A/" + host,
                        "[{\"data\":\"" + ip + "\",\"ttl\":600}]", auth, nullptr);
     lastResult_ = "ddns: " + host + "." + domain + " -> " + ip + (code == 200 ? " ok" : " FAILED (HTTP " + String(code) + ")");
@@ -148,6 +162,7 @@ void run(void*) {
             } else if (door_) {
                 vTaskDelay(pdMS_TO_TICKS(500));
             } else {
+                if (main_ && url.length() && WiFi.status() == WL_CONNECTED && !door_) dropped_++;  // TLS did not fit (not a door)
                 holding = false;  // no webhook, or the heap cannot spare TLS: drop it, as before
             }
         }
@@ -169,6 +184,10 @@ void startTask() {
 }  // namespace
 
 bool busy() { return busy_; }
+
+uint32_t droppedLines() { return dropped_; }
+uint32_t gatedChecks() { return gated_; }
+uint32_t gatedLargestKb() { return gatedLargest_ / 1024; }
 
 void begin() {
     if (!lock_) lock_ = xSemaphoreCreateMutex();

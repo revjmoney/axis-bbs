@@ -15,6 +15,9 @@ void begin();                                     // load the settings; starts t
 void setMain(bool isMain);                        // only the main announces and updates DNS
 void setDoorRunning(bool on);                     // a door has the heap: hold HTTPS until it returns
 bool busy();                                      // the web task is inside a request right now
+uint32_t droppedLines();                          // Discord lines dropped because TLS did not fit (not doors)
+uint32_t gatedChecks();                           // DNS / No-IP checks held back for lack of memory
+uint32_t gatedLargestKb();                        // largest block (KB) the last held check saw
 void announce(const String& line);                // queue a Discord line (dropped when the queue is full)
 bool setDiscord(const String& webhookUrl);        // "" turns it off
 bool setDdns(const String& spec);                 // "domain|host|key|secret", "" turns it off

@@ -4136,6 +4136,17 @@ void loop() {
         unbindSession();
     }
     axisDirty = false;
+    static uint32_t lastMemLog = 0, seenDropped = 0, seenGated = 0;  // low-memory web notes, at most hourly
+    static bool     memLogged = false;
+    if (!memLogged || millis() - lastMemLog > 3600000u) {
+        uint32_t d = web::droppedLines(), g = web::gatedChecks();
+        if (d != seenDropped || g != seenGated) {
+            if (d != seenDropped) logEvent("discord: " + String(d - seenDropped) + " lines dropped (low memory)");
+            if (g != seenGated) logEvent("ddns: waiting for memory (largest " + String(web::gatedLargestKb()) + " KB)");
+            seenDropped = d, seenGated = g;
+            lastMemLog = millis(), memLogged = true;
+        }
+    }
     static uint32_t lastTick = 0;  // keep the clock and the time-online count moving
     if (millis() - lastTick > 300u) {  // the status lights blink, long lines scroll, the times tick
         lastTick = millis();
