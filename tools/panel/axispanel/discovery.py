@@ -6,19 +6,23 @@ import socket
 DISCOVERY_PORT = 2325
 
 
-def board_ip(datagram: bytes):
-    """The board's IP from an announcement, or None."""
+def board_ip(datagram: bytes, sender=None):
+    """The board's IP from an announcement, or None. With the sender's address given, an announcement that names
+    another address is ignored: anyone can send one, but only the board itself sends from its own IP."""
     parts = datagram.decode('ascii', 'replace').split()
     if len(parts) < 2 or parts[0] != 'AXIS!':
         return None
     try:
         n = int(parts[1])  # the firmware sends the IPv4 address as a little-endian number
-        return str(ipaddress.IPv4Address(n.to_bytes(4, 'little')))
-    except ValueError:
+        ip = str(ipaddress.IPv4Address(n.to_bytes(4, 'little')))
+    except (ValueError, OverflowError):
         try:
-            return str(ipaddress.IPv4Address(parts[1]))
+            ip = str(ipaddress.IPv4Address(parts[1]))
         except ValueError:
             return None
+    if sender is not None and ip != sender:
+        return None
+    return ip
 
 
 class _Proto(asyncio.DatagramProtocol):
@@ -26,7 +30,7 @@ class _Proto(asyncio.DatagramProtocol):
         self.on_board = on_board
 
     def datagram_received(self, data, addr):
-        ip = board_ip(data)
+        ip = board_ip(data, addr[0])
         if ip:
             self.on_board(ip)
 

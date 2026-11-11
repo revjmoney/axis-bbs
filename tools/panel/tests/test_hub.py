@@ -18,9 +18,14 @@ def sha(t):
 class FakeBoard:
     """Speaks the panel protocol like the firmware (bbs/panelproto.h)."""
 
-    def __init__(self, role='main', password='sysop1'):
-        self.role, self.salt = role, 'abc'
-        self.hash = sha(self.salt + password)
+    def __init__(self, role='main', password='sysop1', scheme='PBKDF2-SHA256-10000'):
+        self.role, self.salt, self.scheme = role, 'abc', scheme
+        if not scheme.startswith('PBKDF2-SHA256-') or not scheme[14:].isdigit():
+            self.hash = sha(self.salt + password)
+        else:
+            rounds = int(scheme.rsplit('-', 1)[1])
+            self.hash = 'pbkdf2-sha256$%d$' % rounds + hashlib.pbkdf2_hmac(
+                'sha256', password.encode(), self.salt.encode(), rounds, dklen=32).hex()
         self.commands = []
         self.server = None
 
@@ -38,7 +43,8 @@ class FakeBoard:
                 return
             line = raw.decode().strip()
             if line.startswith('SALT '):
-                w.write(('SALT %s\n' % (self.salt if line[5:] == 'Rev' else '-')).encode())
+                reply = 'SALT %s %s\n' % (self.salt, self.scheme) if line[5:] == 'Rev' else 'SALT -\n'
+                w.write(reply.encode())
             elif line.startswith('AUTH '):
                 authed = line.split()[2] == sha(nonce + self.hash)
                 w.write(b'OK\n' if authed else b'NO\n')
@@ -58,6 +64,46 @@ def test_announcements_name_the_board():
     n = int.from_bytes(bytes([192, 168, 1, 164]), 'little')
     assert board_ip(('AXIS! %d 3 1 1' % n).encode()) == '192.168.1.164'
     assert board_ip(b'hello') is None
+    assert board_ip(('AXIS! %d 3 1 1' % n).encode(), '192.168.1.164') == '192.168.1.164'
+
+
+def test_an_announcement_for_another_address_is_ignored():
+    # anyone on the LAN can send one: it must come from the board it names
+    n = int.from_bytes(bytes([192, 168, 1, 164]), 'little')
+    assert board_ip(('AXIS! %d 3 1 1' % n).encode(), '192.168.1.66') is None
+
+
+def test_a_board_asking_for_a_weak_hash_never_gets_a_proof():
+    # a fake board could ask for the old SHA-256 scheme or a tiny round count, then crack the proof offline
+    for scheme in ('SHA256', 'PBKDF2-SHA256-1', 'PBKDF2-SHA256-9999', 'PBKDF2-SHA256-x', 'MD5'):
+        async def go():
+            fb = FakeBoard(scheme=scheme)
+            proofs = []
+            orig = fb.client
+
+            async def client(r, w):
+                await orig(_Spy(r, proofs), w)
+            fb.server = await asyncio.start_server(client, '127.0.0.1', 0)
+            port = fb.server.sockets[0].getsockname()[1]
+            hub = Hub(link_factory=link_to(port))
+            hub.seen('board1')
+            await asyncio.sleep(0)
+            assert not await hub.login('Rev', 'sysop1')
+            assert proofs == [], scheme
+        asyncio.run(go())
+
+
+class _Spy:
+    """Wraps a reader and keeps every AUTH line the panel sends."""
+
+    def __init__(self, r, seen):
+        self.r, self.seen = r, seen
+
+    async def readline(self):
+        raw = await self.r.readline()
+        if raw.startswith(b'AUTH '):
+            self.seen.append(raw)
+        return raw
 
 
 def test_login_and_commands_reach_the_main():
@@ -138,7 +184,7 @@ def test_screen_bytes_reach_the_hub_and_console_lines_get_answers():
                     return
                 line = raw.decode().strip()
                 if line.startswith('SALT '):
-                    w.write(b'SALT abc\n')
+                    w.write(b'SALT abc PBKDF2-SHA256-10000\n')
                 elif line.startswith('AUTH '):
                     w.write(b'OK\nSTAT role=main\nSCR 3 aGk=\n')
                 elif line == 'CON NEW':

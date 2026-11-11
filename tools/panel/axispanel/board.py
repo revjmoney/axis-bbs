@@ -5,6 +5,7 @@ import time
 
 PANEL_PORT = 2326
 QUIET_S = 15  # no STAT this long: the board is gone
+MIN_ROUNDS = 10000  # the firmware's kPasswordRounds (src/bbs/password.h): never prove a password more cheaply
 
 
 def sha(text: str) -> str:
@@ -56,17 +57,18 @@ class BoardLink:
             await self.close()
             raise LoginFailed('invalid salt response')
         salt = parts[1]
-        scheme = parts[2] if len(parts) > 2 else 'SHA256'  # compatibility with older boards
+        # The board names the scheme, and anyone on the LAN can pretend to be a board. The proof we send is only
+        # as hard to crack as that scheme, so a weak one (the old plain SHA-256, or a low round count) is refused
+        # before any proof leaves this PC. A sysop hash still on the old scheme is upgraded by one telnet login.
+        scheme = parts[2] if len(parts) > 2 else 'SHA256'
         rounds = scheme[len('PBKDF2-SHA256-'):] if scheme.startswith('PBKDF2-SHA256-') else ''
-        if rounds.isdigit() and 0 < int(rounds) <= 10000000:  # each stored hash names its own round count
-            stored_hash = 'pbkdf2-sha256$%s$' % rounds + hashlib.pbkdf2_hmac(
-                'sha256', password.encode('latin-1'), salt.encode('latin-1'), int(rounds), dklen=32
-            ).hex()
-        elif scheme == 'SHA256':
-            stored_hash = sha(salt + password)
-        else:
+        if not (rounds.isdigit() and MIN_ROUNDS <= int(rounds) <= 10000000):
             await self.close()
-            raise LoginFailed('unsupported password hash scheme')
+            raise LoginFailed('this board asked for a weak password hash (%s); log in once by telnet to upgrade it'
+                              % scheme)
+        stored_hash = 'pbkdf2-sha256$%s$' % rounds + hashlib.pbkdf2_hmac(
+            'sha256', password.encode('latin-1'), salt.encode('latin-1'), int(rounds), dklen=32
+        ).hex()
         proof = sha(nonce + stored_hash)
         ok = await self._ask('AUTH %s %s' % (handle, proof)) == 'OK'
         if not ok:
