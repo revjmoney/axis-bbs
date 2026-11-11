@@ -109,7 +109,7 @@ std::string DoorFsServer::handle(const std::string& request) {
             auto g = splitN(req.size() > 1 ? req.substr(2) : std::string(), 3);
             int  h = (int)toL(g[0]);
             if (fs.seek(h, toL(g.size() > 1 ? g[1] : "0"), 0) < 0) return okN(-25);
-            const std::string& d = g.size() > 2 ? g[2] : std::string();
+            std::string d = g.size() > 2 ? g[2] : std::string();
             return okN(fs.write(h, d.data(), (int)d.size()));
         }
         case 'z': {  // a file's size by handle
@@ -295,7 +295,7 @@ std::string lordNodeFile(const std::string& node1, int node) {
         if (cr) line.pop_back();
         size_t at = line.find("for node ");
         if (at != std::string::npos) {
-            line = line.substr(0, at) + "for node " + n;
+            line.replace(at, std::string::npos, "for node " + n);
             header = true;
         }
         if (line.rfind("BBSDROP", 0) == 0) line = "BBSDROP C:\\NODE" + n + "\\";

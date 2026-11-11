@@ -1045,7 +1045,7 @@ void Node::scriptKey(char c) {
         return;
     }
     script_->step((unsigned char)c, out_);
-    if (script_ && !script_->running()) finishScript();
+    if (!script_->running()) finishScript();
 }
 
 void Node::finishScript() {
@@ -2947,7 +2947,7 @@ void Node::showNuvApplicant() {
     for (const auto& q : a->answers) {  // the name and email are the sysop's alone
         if (q.first == "First name" || q.first == "Email" || q.first == "Location" || q.first == "Agreed to the rules" || shown >= 16) continue;
         std::string l = q.first + ": " + q.second;
-        if (l.size() > 74) l = l.substr(0, 71) + "...";
+        if (l.size() > 74) l.replace(71, std::string::npos, "...");
         size_t colon = q.first.size();
         out_ += std::string("   ") + theme::DGREY + "\xfa " + theme::LGREY + l.substr(0, colon) + theme::DGREY + ":" + theme::WHITE + l.substr(colon + 1) + "\r\n";
         shown++;

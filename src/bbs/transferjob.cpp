@@ -24,7 +24,7 @@ std::string cleanUploadName(const std::string& in) {
         else if (!out.empty() && out.back() != '_') out += '_';
     }
     while (!out.empty() && out[0] == '.') out.erase(0, 1);  // no hidden files, no ".."
-    if (out.size() > 40) out = out.substr(0, 36) + out.substr(out.size() - 4);
+    if (out.size() > 40) out.erase(36, out.size() - 40);
     if (out == "FILES.BBS") out = "FILES_.BBS";
     return out;
 }

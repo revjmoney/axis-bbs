@@ -403,7 +403,7 @@ void DosShell::dir(const std::string& arg) {
         size_t      dot = n.find('.');
         if (dot != std::string::npos && n != "." && n != "..") {
             ext = n.substr(dot + 1);
-            n = n.substr(0, dot);
+            n.resize(dot);
         }
         if (f.attr & 0x10) {
             std::snprintf(row, sizeof row, "%-8s %-3s    <DIR>\r\n", n.c_str(), ext.c_str());

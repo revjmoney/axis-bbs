@@ -1239,12 +1239,6 @@ void NativeLord::showPlaces() {
     send("\r\n  Other places\r\n");
     std::string pending;
     bool have = false;
-    for (size_t i = 0; i <= b.size(); i++) {
-        if (i != b.size() && b[i] != '\n') continue;
-        std::string line = trimC(b.substr(i > 20000 ? 0 : (i < b.size() ? 0 : 0), 0));
-        (void)line;
-        break;
-    }
     size_t start = 0;
     for (size_t i = 0; i <= b.size(); i++) {
         if (i != b.size() && b[i] != '\n') continue;

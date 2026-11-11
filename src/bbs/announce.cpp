@@ -31,7 +31,8 @@ std::string announceLine(const std::string& e) {
     size_t up = e.find(" uploaded ");
     if (up != std::string::npos) {
         std::string file = e.substr(up + 10);
-        file = file.substr(0, file.find(' '));
+        size_t sp = file.find(' ');
+        if (sp != std::string::npos) file.resize(sp);
         return "**" + tame(e.substr(0, up)) + "** uploaded " + tame(file) + ". Fresh files in the vaults.";
     }
     size_t op = e.find(" opened ");
