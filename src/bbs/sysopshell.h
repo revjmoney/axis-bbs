@@ -95,6 +95,7 @@ private:
     void look(Layer& l);
     void lookPick(Layer& l, const std::string& key, bool follow);
     void station(Layer& l);
+    void modem(Layer& l);
 
     std::string&       out_;
     Run                run_;

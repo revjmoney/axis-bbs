@@ -50,10 +50,32 @@ std::string nodeLine(const WfcNode& n) {
     if (n.handle.empty()) return l + "waiting";
     l += n.handle;
     if (!n.activity.empty()) l += "  " + n.activity;
+    if (!n.link.empty()) l += "  " + n.link;
     return l;
+}
+std::string tenths(int t) {  // 72 -> "7.2", -5 -> "-0.5"
+    std::string s = t < 0 ? "-" : "";
+    unsigned    a = (unsigned)(t < 0 ? -t : t);
+    return s + std::to_string(a / 10) + "." + std::to_string(a % 10);
 }
 bool nodeCode(const std::string& k) { return k.size() == 2 && k[0] == 'N' && k[1] >= 'A' && k[1] < 'A' + kNodeSlots; }
 }  // namespace
+
+WfcRadio wfcRadio(const net::LinkInfo& l, const std::string& who) {
+    WfcRadio r;
+    if (!l.any) return r;
+    r.label = net::linkLabel(l);
+    r.who = who.empty() ? l.caller : who;
+    r.modem = l.modem;
+    r.tier = l.tier;
+    if (l.bps >= 0) r.bps = std::to_string(l.bps);
+    if (l.hasSnr) r.snr = tenths(l.snrTenths);
+    if (l.hasRssi) r.rssi = std::to_string(l.rssi);
+    if (l.retrains >= 0) r.retrains = std::to_string(l.retrains);
+    if (l.lzTenths == 0) r.lz = "off";
+    else if (l.lzTenths > 0) r.lz = tenths(l.lzTenths);
+    return r;
+}
 
 ArtValue wfcValues(const WfcSnapshot& s) {
     return [s](const std::string& k) -> std::string {
@@ -72,6 +94,20 @@ ArtValue wfcValues(const WfcSnapshot& s) {
         if (k == "PG") return s.page;
         if (k == "MB") return s.main ? "main board" : "follower board";
         if (k == "VN") return kAxisVersion;  // the firmware version
+        if (k.size() == 2 && k[0] == 'R') {  // the newest LFD3K-SM radio link
+            switch (k[1]) {
+                case 'L': return s.radio.label;
+                case 'W': return s.radio.who;
+                case 'O': return s.radio.modem;
+                case 'T': return s.radio.tier;
+                case 'B': return s.radio.bps;
+                case 'S': return s.radio.snr;
+                case 'R': return s.radio.rssi;
+                case 'N': return s.radio.retrains;
+                case 'Z': return s.radio.lz;
+                default: break;
+            }
+        }
         if (nodeCode(k)) {
             size_t i = k[1] - 'A';
             return i < s.nodes.size() ? nodeLine(s.nodes[i]) : "";

@@ -9,14 +9,29 @@
 
 #include "bbs/ansiterm.h"
 #include "bbs/pipecodes.h"
+#include "net/telnet.h"
 
 namespace axis::bbs {
 
 struct WfcNode {
     int         number = 0;
     std::string handle, activity;  // handle "" = waiting
-    bool        operator==(const WfcNode& o) const { return number == o.number && handle == o.handle && activity == o.activity; }
+    std::string link;              // "RADIO SF7 -81" for a caller on the LFD3K-SM modem (shown after the activity)
+    bool        operator==(const WfcNode& o) const {
+        return number == o.number && handle == o.handle && activity == o.activity && link == o.link;
+    }
 };
+
+// The newest LFD3K-SM link report on this board (the |R? codes), as the screen shows it; all "" before the first one.
+struct WfcRadio {
+    std::string label, who, modem, tier, bps, snr, rssi, retrains, lz;
+    bool        operator==(const WfcRadio& o) const {
+        return label == o.label && who == o.who && modem == o.modem && tier == o.tier && bps == o.bps && snr == o.snr && rssi == o.rssi &&
+               retrains == o.retrains && lz == o.lz;
+    }
+};
+// who: the caller's handle (or "" for the modem's own caller name)
+WfcRadio wfcRadio(const net::LinkInfo& l, const std::string& who);
 
 struct WfcSnapshot {
     std::string              bbsName, sysop, lastCaller, ip, time, date, page;
@@ -24,13 +39,14 @@ struct WfcSnapshot {
     std::vector<std::string> events;  // newest first
     uint32_t                 callsToday = 0, postsToday = 0, uploadsToday = 0, sdFreeKb = 0, ramFreeKb = 0, uptimeS = 0;
     bool                     main = true;  // "main board" / "follower board"
+    WfcRadio                 radio;        // the newest radio link (|RL |RW |RO |RT |RB |RS |RR |RN |RZ)
     // "the same screen": the uptime by the minute and free RAM in 8 KB steps (time is HH:MM), so an idle WFC is redrawn
     // once a minute, not at every 5 s check while the heap wobbles
     bool operator==(const WfcSnapshot& o) const {
         return bbsName == o.bbsName && sysop == o.sysop && lastCaller == o.lastCaller && ip == o.ip && time == o.time && date == o.date &&
                page == o.page && nodes == o.nodes && events == o.events && callsToday == o.callsToday && postsToday == o.postsToday &&
                uploadsToday == o.uploadsToday && sdFreeKb == o.sdFreeKb && ramFreeKb / 8 == o.ramFreeKb / 8 && uptimeS / 60 == o.uptimeS / 60 &&
-               main == o.main;
+               main == o.main && radio == o.radio;
     }
 };
 

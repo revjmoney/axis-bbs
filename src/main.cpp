@@ -1082,7 +1082,8 @@ static void drawNodeDetail(int i) {
         row(3, "doing", n->activityText().c_str());
         snprintf(b, sizeof b, "%lum %02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
         row(4, "online", b);
-        row(5, "from", l->remoteIP().toString());
+        std::string radio = axis::net::linkLabel(n->link(), false);  // "RADIO SF7" for a caller on the LFD3K-SM modem
+        row(5, "from", l->remoteIP().toString() + (radio.empty() ? "" : (String("  ") + radio.c_str()).c_str()));
         row(6, "sysop", n->isSysop() ? "yes" : "no");
         if (axis::bbs::User* u = users.find(n->handle())) {
             row(7, "calls", String(u->calls));
@@ -1389,6 +1390,52 @@ static void sendApp(const std::string& s) {
     line->flush();
 }
 
+// The LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM: the newest link report on this board (the WFC's |R? codes),
+// the last 10 radio calls (newest first) and the modems found on the LAN by mDNS (the sysop menu's System > Modem, @MODEM).
+struct RadioCall {
+    std::string who, tiers;
+    uint32_t    secs = 0, bytes = 0;
+    int32_t     retrains = -1;
+};
+static std::vector<RadioCall> radioCalls;
+static axis::net::LinkInfo    lastRadio;
+static std::string            lastRadioWho;
+struct FoundModem {
+    std::string name, ip;
+};
+static std::vector<FoundModem> foundModems;
+static mdns_search_once_t*     modemSearch = nullptr;  // an mDNS search for _lfd3k._tcp running in the background
+static uint32_t                modemSearchMs = 0;
+static void modemSearchStart() {
+    if (modemSearch || WiFi.status() != WL_CONNECTED) return;
+    modemSearch = mdns_query_async_new(nullptr, "_lfd3k", "_tcp", MDNS_TYPE_PTR, 3000, 8, nullptr);
+    modemSearchMs = millis();
+}
+static std::string safeName(const char* s, size_t n) {  // letters, digits, space and - _ . only, 24 at most
+    std::string v;
+    for (size_t i = 0; s && i < n && s[i] && v.size() < 24; i++)
+        if (std::isalnum((unsigned char)s[i]) || s[i] == ' ' || s[i] == '-' || s[i] == '_' || s[i] == '.') v += s[i];
+    return v;
+}
+static void modemSearchPoll() {  // never waits: the results once the search is done
+    mdns_result_t* res = nullptr;
+    if (!modemSearch || !mdns_query_async_get_results(modemSearch, 0, &res)) return;
+    foundModems.clear();
+    for (mdns_result_t* r = res; r && foundModems.size() < 8; r = r->next) {
+        std::string name = safeName(r->instance_name ? r->instance_name : r->hostname, 64);
+        for (size_t t = 0; t < r->txt_count; t++)  // TXT name= is the modem's own name
+            if (r->txt[t].key && std::strcmp(r->txt[t].key, "name") == 0 && r->txt[t].value)
+                name = safeName(r->txt[t].value, r->txt_value_len ? r->txt_value_len[t] : 64);
+        std::string ip;
+        for (mdns_ip_addr_t* a = r->addr; a && ip.empty(); a = a->next)
+            if (a->addr.type == ESP_IPADDR_TYPE_V4) ip = IPAddress(a->addr.u_addr.ip4.addr).toString().c_str();
+        foundModems.push_back({name.empty() ? std::string("(no name)") : name, ip});
+    }
+    if (res) mdns_query_results_free(res);
+    mdns_query_async_delete(modemSearch);
+    modemSearch = nullptr;
+}
+
 static void hangUp() {
     noteDoing("idle");
     viewer.reset();
@@ -1401,6 +1448,14 @@ static void hangUp() {
         loginGuard.failed(ip, millis());
         if (!loginGuard.allowed(ip, millis()))
             logEvent("login: " + line->remoteIP().toString() + " locked out for " + String(loginGuard.secondsLeft(ip, millis()) / 60) + " min");
+    }
+    if (line && node && node->viaModem()) {  // a radio call: into the Modem page's last 10
+        std::string who = node->handle();
+        for (char& c : who)
+            if (c == '|') c = ' ';
+        radioCalls.insert(radioCalls.begin(), {who, node->linkTiers(), (millis() - callStartMs) / 1000, line->bytesIn() + line->bytesOut(),
+                                               node->link().retrains});
+        if (radioCalls.size() > 10) radioCalls.resize(10);
     }
     line.reset();  // closes the connection
     logEvent("hang up" + heapText() + " " + String(node && !node->handle().empty() ? node->handle().c_str() : "") + " after " +
@@ -1765,9 +1820,12 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
         for (auto& n : cluster->nodes()) w.nodes.push_back({n.number, n.handle, n.activity});
         std::sort(w.nodes.begin(), w.nodes.end(), [](const axis::bbs::WfcNode& a, const axis::bbs::WfcNode& b) { return a.number < b.number; });
     } else {
-        for (size_t i = 0; i < sessions.size(); i++)
-            w.nodes.push_back({sessionNumber((int)i), sessionNode(i) ? sessionNode(i)->handle() : std::string(), sessionNode(i) ? "Online" : ""});
-    }
+        for (size_t i = 0; i < sessions.size(); i++) {
+            axis::bbs::Node* n = sessionNode(i);
+            w.nodes.push_back({sessionNumber((int)i), n ? n->handle() : std::string(), n ? "Online" : "", n ? axis::net::linkLabel(n->link()) : ""});
+        }
+    }  // (in a cluster the label rides in each board's activity: serviceSession)
+    w.radio = axis::bbs::wfcRadio(lastRadio, lastRadioWho);
     const auto& ev = events.lines();
     for (auto it = ev.rbegin(); it != ev.rend() && w.events.size() < 8; ++it) w.events.push_back(*it);
     rollDayCounters();
@@ -1818,8 +1876,10 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
                         return a.node < b.node;
                     });
                 } else {
-                    for (size_t i = 0; i < sessions.size(); i++)
-                        v.push_back({sessionNumber((int)i), sessionNode(i) ? sessionNode(i)->handle() : "", sessionNode(i) ? "Online" : ""});
+                    for (size_t i = 0; i < sessions.size(); i++) {
+                        axis::bbs::Node* n = sessionNode(i);
+                        v.push_back({sessionNumber((int)i), n ? n->handle() : "", n ? "Online" : "", n ? axis::net::linkLabel(n->link()) : ""});
+                    }
                 }
                 return v;
             });
@@ -2869,6 +2929,21 @@ static void runCommand(const String& cmd, Print& out) {
             for (auto& n : cluster->nodes())
                 out.printf("axis: node %d ip %s handle '%s' activity '%s'%s\n", n.number, IPAddress(n.ip).toString().c_str(),
                               n.handle.c_str(), n.activity.c_str(), n.number == cluster->nodeNumber() ? " (this board)" : "");
+    } else if (cmd == "@MODEM" || cmd == "@MODEM scan") {  // LFD3K-SM radio callers now, the last 10, the modems on the LAN
+        if (cmd == "@MODEM scan" || (!modemSearch && millis() - modemSearchMs > 60000u) || !modemSearchMs) modemSearchStart();
+        for (size_t i = 0; i < sessions.size(); i++) {
+            axis::bbs::Node* n = sessionNode(i);
+            if (!n || !n->viaModem()) continue;
+            std::string who = n->handle();
+            for (char& c : who)
+                if (c == '|') c = ' ';
+            out.printf("now|%d|%s|%s|%s|%s\n", sessionNumber((int)i), who.c_str(), axis::net::linkLabel(n->link()).c_str(),
+                       n->link().bps >= 0 ? std::to_string(n->link().bps).c_str() : "", n->linkTiers().c_str());
+        }
+        for (auto& c : radioCalls)
+            out.printf("call|%s|%s|%u|%u|%d\n", c.who.c_str(), c.tiers.c_str(), (unsigned)c.secs, (unsigned)c.bytes, (int)c.retrains);
+        for (auto& m : foundModems) out.printf("found|%s|%s\n", m.name.c_str(), m.ip.c_str());
+        if (modemSearch) out.println("search|on");
     } else if (cmd == "@CARDS") {  // the SD cards in the pool: free space, up or down (bench)
         if (storageHasSd()) out.printf("axis: card on this board, %u MB free\n", (unsigned)(storageFreeBytes(true) >> 20));
         else out.println("axis: no SD card on this board");
@@ -3612,6 +3687,8 @@ static void takeLinkReport() {
     if (!line || !node || !line->takeLink(li)) return;
     bool first = !node->viaModem();
     node->setLink(li);
+    lastRadio = li;
+    lastRadioWho = node->handle();
     if (first)
         logEvent(String("radio caller on node ") + String(sessionNumber(curSession)) + ": " + axis::net::linkLabel(li).c_str() +
                  (li.modem.empty() ? "" : (String(" via ") + li.modem.c_str()).c_str()));
@@ -3631,6 +3708,7 @@ static void serviceSession(int i) {
                      : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : st == S::Split ? "Split chat"
                      : st == S::AxisNet ? "Axis Net" : st == S::AxisCall ? "Remote board" : "Online";
             if (!node->available()) activity += " (DND)";
+            if (node->viaModem()) activity += "  " + axis::net::linkLabel(node->link(), false);  // (no RSSI: it would resend every 10 s)
         }
         Session& me = sessions[(size_t)i];
         if (handle + "|" + activity != me.lastStatus) {
@@ -3813,6 +3891,7 @@ void loop() {
         axisProbeOne();
     }
     pumpPanel();
+    modemSearchPoll();
     for (size_t i = 0; i < sessions.size(); i++) {
         bindSession((int)i);
         serviceSession((int)i);

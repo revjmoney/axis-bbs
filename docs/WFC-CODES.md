@@ -6,7 +6,7 @@ Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WF
 |---|---|
 | `BN` | BBS name |
 | `SN` | Sysop |
-| `NA`..`NH` | Node lines 1 to 8, in the order the cluster lists them: "1 Handle  activity" or "1 waiting". A node past the eighth is left off. |
+| `NA`..`NH` | Node lines 1 to 8, in the order the cluster lists them: "1 Handle  activity" or "1 waiting". A node past the eighth is left off. A caller on the LFD3K-SM modem gets its link after the activity: "1 Handle  Online  RADIO SF7 -81" (across a cluster, "RADIO SF7" without the signal). |
 | `CT` | Calls today |
 | `PT` | Posts today |
 | `UT` | Uploads today |
@@ -21,6 +21,22 @@ Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WF
 | `PG` | Sysop page text |
 | `MB` | "main board" or "follower board" |
 | `VN` | The firmware version, e.g. `0.51` (the classic and all eight pack WFCs show it) |
+
+## Radio codes (the LFD3K-SM modem)
+
+The newest link report from the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM on this board (telnet option 90, LFD3K-LINK; `modem_link=1` in axis.ini). They keep the last report after the call ends, and are blank until the first radio call. None of the shipped WFC screens use them: the node lines already show each radio caller's link. A sysop's own art can.
+
+| Code | Shows |
+|---|---|
+| `RL` | The link label: "RADIO SF7 -81", or "WIFI" for a call that came over the modem's wire |
+| `RW` | Who: the caller's handle (or the modem's name for its caller, before login) |
+| `RO` | The modem's name |
+| `RT` | Tier: `SF5` to `SF12`, or `WIFI` |
+| `RB` | Air speed in bits per second |
+| `RS` | SNR in dB, one decimal ("7.2") |
+| `RR` | RSSI in dBm ("-81") |
+| `RN` | Retrains this call |
+| `RZ` | Compression ratio ("1.8"), or "off" |
 
 ## Hotkeys (tappable on the CYD)
 

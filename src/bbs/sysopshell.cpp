@@ -681,7 +681,11 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"Update No-IP now", "", show("NO-IP", "@NOIPNOW")});
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
-    if (!local_) return;  // the rest is for the sysop at the board: never over telnet
+    Item modemPage{"Modem", "LFD3K-SM radio callers", [this] { push("MODEM", [this](Layer& x) { modem(x); }); }};  // (last, online and here)
+    if (!local_) {  // the rest is for the sysop at the board: never over telnet
+        l.items.push_back(modemPage);
+        return;
+    }
     l.items.push_back({"Restart this board", "", [this] { confirm("Restart the board now?", [this] { did(run_("@RESTART")); }); }});
     // setup again on the board's screen; the settings stay as they are until the wizard saves (@RESETSETUP is the erase, serial only)
     l.items.push_back({"Rerun setup", "kept till saved", [this] { confirm("Run setup again? Settings stay until it saves", [this] { did(run_("@RERUNSETUP")); }); }});
@@ -694,6 +698,7 @@ void SysopShell::system(Layer& l) {
                            });
                        }});
     l.items.push_back({"Station", "sensors and relays", [this] { push("STATION", [this](Layer& x) { station(x); }); }});
+    l.items.push_back(modemPage);
 }
 
 // ---- station: sensors (read only), the relays (pick to flip), a beep
@@ -708,6 +713,46 @@ void SysopShell::station(Layer& l) {
         }
     }
     l.items.push_back({"Beep", "", [this] { did(run_("@BEEP")); }});
+}
+
+// ---- modem: the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM. Radio callers now, the last 10 radio calls, the
+// modems found on the LAN (mDNS) and its two settings. @MODEM lines: "now|node|handle|label|bps|tiers",
+// "call|handle|tiers|seconds|bytes|retrains", "found|name|ip", "search|on" while a search runs.
+void SysopShell::modem(Layer& l) {
+    std::string link = setting("modem_link"), lite = setting("lite_below_bps");
+    l.items.push_back({"Take link reports from the modem", link == "0" ? "off" : "on", [this, link] {
+                           did(run_(std::string("@SET modem_link=") + (link == "0" ? "1" : "0")));
+                       }});
+    l.items.push_back({"Lite screens below (bps)", lite == "0" ? "never" : lite, [this] {
+                           ask("Lite screens below this many bps (7031 = SF9 and slower, 0 = never)", false,
+                               [this](const std::string& v) { did(run_("@SET lite_below_bps=" + v)); });
+                       }});
+    std::vector<Item> now, calls, found;
+    bool              searching = false;
+    for (auto& line : lines("@MODEM")) {
+        auto f = split(line, '|');
+        if (f[0] == "now" && f.size() >= 6)
+            now.push_back({"node " + f[1] + " " + (f[2].empty() ? "(logging in)" : f[2]), f[3] + (f[4].empty() ? "" : " " + f[4] + " bps"), nullptr});
+        else if (f[0] == "call" && f.size() >= 6) {
+            unsigned secs = (unsigned)std::atoi(f[3].c_str());
+            std::string v = (f[2].empty() ? std::string("?") : f[2]) + " " + std::to_string(secs / 60) + "m" + std::to_string(secs % 60) + "s " +
+                            std::to_string(std::atoi(f[4].c_str()) / 1024) + "KB";
+            if (!f[5].empty() && f[5] != "-1") v += " " + f[5] + " retrains";
+            calls.push_back({f[1].empty() ? "(no handle)" : f[1], v, nullptr});
+        } else if (f[0] == "found" && f.size() >= 3)
+            found.push_back({f[1], f[2], nullptr});
+        else if (f[0] == "search")
+            searching = true;
+    }
+    auto section = [&](const char* title, std::vector<Item>& v, const char* none) {
+        l.items.push_back({title, "", nullptr});
+        if (v.empty()) l.items.push_back({std::string("  ") + none, "", nullptr});
+        for (auto& i : v) l.items.push_back({"  " + i.label, i.value, nullptr});
+    };
+    section("Radio callers now", now, "none");
+    section("Last radio calls", calls, "none yet");
+    section("Modems on the LAN", found, searching ? "looking..." : "none found");
+    l.items.push_back({"Look for modems again", "", [this] { did(run_("@MODEM scan")); }});
 }
 
 // ---- look: the caller theme and the waiting screen's skin (blank: it follows the theme)
