@@ -485,6 +485,55 @@ void NetCore::trim(uint32_t nowUnix) {
     for (const NetArea& a : sysopNetAreas()) trimArea(a.id, nowDay, nowUnix > kNetClockSet);
 }
 
+bool NetCore::historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& line) {
+    line.clear();
+    const std::vector<NetArea>& areas = sysopNetAreas();
+    while (c.area < areas.size()) {
+        const std::string& area = areas[c.area].id;
+        if (!c.loaded) {
+            c.nums.clear();
+            c.pos = 0;
+            {
+                std::vector<Message> h = store_.headers(area);  // oldest first, at most the newest 200
+                for (const Message& m : h) {
+                    if (netPostId(m.net).empty()) continue;
+                    // The stored date is minute text and never later than the post's own date,
+                    // so a minute of slack keeps posts from the edge of the window.
+                    if (sinceUnix && netDateUnix(m.date) + 60 < sinceUnix) continue;
+                    c.nums.push_back(m.num);
+                }
+            }
+            if (c.nums.size() > kNetHistoryPerArea)
+                c.nums.erase(c.nums.begin(), c.nums.end() - kNetHistoryPerArea);
+            c.nums.shrink_to_fit();
+            c.loaded = true;
+        }
+        while (c.pos < c.nums.size()) {
+            Message m;
+            if (!store_.read(area, c.nums[c.pos++], m)) continue;
+            std::string id = netPostId(m.net);
+            if (id.size() < 17 || state_.held(id) || state_.killed(id) || state_.banned(id.substr(0, 16)))
+                continue;
+            line = std::move(m.net);
+            return true;
+        }
+        c.area++;
+        c.loaded = false;
+        c.nums.clear();
+        c.nums.shrink_to_fit();
+    }
+    return false;
+}
+
+bool NetCore::hasNetPosts() const {
+    for (const NetArea& a : sysopNetAreas()) {
+        std::vector<Message> h = store_.headers(a.id);
+        for (const Message& m : h)
+            if (!netPostId(m.net).empty()) return true;
+    }
+    return false;
+}
+
 // ---- NetPostingStore ----
 
 bool NetPostingStore::hidden(const Message& m) const {

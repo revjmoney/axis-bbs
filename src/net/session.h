@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rev. J. Money
+// NetSession: one board to board sync over a byte stream. The two boards prove who they are,
+// swap the net state, pass a new board its history and pass each other their outbound log
+// entries. A pure state machine: the host feeds it received bytes, sends what takeOut returns
+// and calls tick; it owns no socket and reads no clock of its own.
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "net/areas.h"
+#include "net/record.h"
+#include "net/sign.h"
+
+namespace axis::net {
+
+constexpr size_t kSyncPerTick = 4;                    // data lines (S, H, E) per tick at most
+constexpr size_t kSyncInFlight = 8;                   // E lines sent and not yet answered
+constexpr size_t kSyncMaxLine = kNetMaxFrame + 32;    // a received line longer than this fails
+constexpr uint32_t kSyncTimeoutMs = 30000;            // silence before the session fails
+constexpr uint32_t kSyncHistoryDays = 30;             // what a new board asks for
+constexpr size_t kSyncOutHigh = 2048;                 // no new data lines while this much is unsent
+
+class NetSession {
+public:
+    // me is the card this side presents and signer the key matching me.pub (the board's own key,
+    // or Rev's daily key on Rev's board). nonceHex16 comes from the host's random source.
+    NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, const std::string& nonceHex16, bool dialer);
+
+    void feed(const char* p, size_t n);  // bytes from the socket
+    std::string takeOut();               // bytes for the socket (send them before closing)
+    void tick(uint32_t nowMs, bool heapOk);
+
+    bool done() const { return !failed_ && phase_ == Phase::Sync && sentDone_ && peerDone_; }
+    bool failed() const { return failed_; }
+    const std::string& peer() const { return peer_; }
+    const char* why() const { return why_.c_str(); }
+
+    uint32_t postsSent() const { return postsSent_; }    // posts written out as E or H lines
+    uint32_t postsTaken() const { return postsTaken_; }  // posts from the peer stored here
+    uint32_t naks() const { return naks_; }              // our E lines the peer refused
+    uint32_t naksSent() const { return naksSent_; }      // the peer's E lines we refused
+
+private:
+    enum class Phase { Hello, Proof, Sync };
+    void line(std::string& l);
+    void syncLine(std::string& l);
+    bool hello(const std::string& l);
+    void proof(const std::string& l);
+    void takeEntry(const std::string& idx, const std::string& rec);
+    void takeState(const std::string& rec);
+    void takeHistory(const std::string& rec);
+    void ack(const std::string& idx, bool nak);
+    void sendHello();
+    void send(const std::string& l);
+    void fail(const char* why, const char* bye);
+    bool roomForData() const { return out_.size() < kSyncOutHigh; }
+
+    NetCore& core_;
+    NetCard me_;
+    KeyPair signer_;
+    std::string nonce_;
+    bool dialer_;
+
+    Phase phase_ = Phase::Hello;
+    bool failed_ = false;
+    std::string why_;
+    std::string in_, out_;
+    bool overflow_ = false;
+
+    std::string peer_, peerNonce_;
+    NetCard peerCard_;  // held from the hello to the proof only
+    bool wasLink_ = false;
+
+    // Sync progress, this side.
+    uint32_t mySeq_ = 0;
+    bool sendSnap_ = false, snapLoaded_ = false, sentSend_ = false;
+    std::vector<std::string> snap_;
+    size_t snapPos_ = 0;
+    bool histWanted_ = false, histDone_ = false;
+    uint32_t histDays_ = 0;
+    HistoryCursor hist_;
+    std::deque<std::pair<uint32_t, std::string>> fetched_;
+    std::deque<std::pair<uint32_t, bool>> inFlight_;  // log index, is a post
+    bool sentDone_ = false;
+
+    // Sync progress, the peer.
+    bool peerSeq_ = false, peerWant_ = false, peerSend_ = false, peerDone_ = false;
+
+    bool started_ = false, heard_ = false;
+    uint32_t lastRxMs_ = 0;
+
+    uint32_t postsSent_ = 0, postsTaken_ = 0, naks_ = 0, naksSent_ = 0;
+};
+
+}  // namespace axis::net

@@ -46,6 +46,16 @@ constexpr uint32_t kNetKeepDays = 90;
 constexpr size_t kNetPendingBytes = 12 * 1024;  // pendingFor stops once its lines reach this much
 constexpr uint32_t kNetClockSet = 1700000000;   // below this the board's clock is not set
 constexpr uint8_t kNetReadStrikes = 3;          // pendingFor calls stuck on an unreadable post before it is gone
+constexpr size_t kNetHistoryPerArea = 200;      // posts per area a new board's history pull gets at most
+
+// Where a history walk is: the area it is in and the message numbers left to send there. Only
+// numbers are kept (at most kNetHistoryPerArea), never whole messages.
+struct HistoryCursor {
+    size_t area = 0;
+    bool loaded = false;  // nums holds the current area's picks
+    size_t pos = 0;
+    std::vector<int> nums;
+};
 
 // `store` must be the board's real message store, never the NetPostingStore wrapping it (that
 // would loop through originate and hide held posts from trim and sending).
@@ -101,6 +111,15 @@ public:
     void acked(const std::string& peer, uint32_t index);
     std::string saveCursors() const;  // "<peer> <index> <last sync unix>" per line
     void loadCursors(const std::string& text);
+
+    // History for a new board: the stored posts of every Sysop Net area dated at or after
+    // sinceUnix (0 for all), the newest kNetHistoryPerArea per area, one encoded line per call.
+    // Held, killed and banned-origin posts are skipped. False once the walk is over.
+    bool historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& line);
+    // True if any Sysop Net area holds a post (stops at the first one found).
+    bool hasNetPosts() const;
+    // The clock NetCore was given (unix time); below kNetClockSet it is not set.
+    uint32_t nowUnix() const { return now_(); }
 
     // Log appends that failed (the entry is then never passed on), for the host to report.
     uint32_t appendFailures() const { return appendFailures_; }

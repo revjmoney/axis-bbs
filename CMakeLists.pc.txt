@@ -78,6 +78,7 @@ add_library(axiscore STATIC
     src/net/state.cpp
     src/net/areas.cpp
     src/net/outlog.cpp
+    src/net/session.cpp
     dosemu/door/cpu.cpp
     dosemu/door/guestmem.cpp
     dosemu/door/mz.cpp
