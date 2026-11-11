@@ -460,12 +460,13 @@ void Node::showPrelogon() {  // a random PRELOGON1..9.ANS (else PRELOGON.ANS), t
     for (int i = 1; i <= 9; i++)
         if (has("PRELOGON" + std::to_string(i) + ".ANS")) have.push_back("PRELOGON" + std::to_string(i) + ".ANS");
     if (have.empty() && has("PRELOGON.ANS")) have.push_back("PRELOGON.ANS");
-    if (have.empty()) {
+    std::string art = have.empty() ? std::string() : loadScreen(have[rng_ ? rng_() % have.size() : 0]);
+    if (art.empty()) {  // none, or the chosen one could not be fetched: as if it were absent (no CLS, no lone key prompt)
         showLoginScreen();
         return;
     }
     out_ += theme::CLS;
-    showArt(have[rng_ ? rng_() % have.size() : 0]);
+    paintScreen(art);
     out_ += std::string("\x1b[0m\r\n   ") + theme::DGREY + "(press a key)" + theme::RESET;
     state_ = State::PreLogon;
 }

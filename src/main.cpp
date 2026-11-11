@@ -514,13 +514,16 @@ static bool menuExistsLocal(const std::string& name, bool theme = true) {
 }
 // The follower's answers from the main ("E"), kept until the theme may change (cleared with artCache).
 static std::map<std::string, bool> existsCache;
+static uint32_t                    lastEMissMs = 0;  // millis() of the last unanswered "E" (0: none)
 static bool                        mainKnowsExists = false;  // the main has answered "E" with a "1" once: its "0" can be trusted
 static bool menuExists(const std::string& name) {
     if (menuExistsLocal(name)) return true;
     if (!asFollower() || !cluster) return false;
     if (auto it = existsCache.find(name); it != existsCache.end()) return it->second;
+    if (lastEMissMs && millis() - lastEMissMs < 10000) return !menuFile(name).empty();  // the main was silent a moment ago: no second wait
     std::string reply;
     bool        asked = cluster->request(std::string("E\x1f") + name, reply, 3000);
+    if (!asked) lastEMissMs = millis() | 1;
     if (asked && reply == "1") {
         mainKnowsExists = true;
         return existsCache[name] = true;
@@ -2563,6 +2566,7 @@ static void startCluster() {
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
         artCache.clear();  // the theme may have changed
         existsCache.clear();
+        mainKnowsExists = false;  // (this may be another main: an older one answers every unknown letter "0")
         if (storageHasSd()) {  // the SD board keeps the BBS's settings: a stand-in main's older copy must not replace them
             Serial.println("axis: settings from a main without the card: kept our own");
             return;
