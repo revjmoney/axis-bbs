@@ -201,6 +201,9 @@ private:
     void showWelcome();
     void menuOrLiners();  // after login: the oneliner wall if there is one, then the menu
     void lineKey(char c);
+    static constexpr uint32_t kSplashHoldMs = 1000;  // nothing is sent this long after connect: the modem's link report (a slow radio caller skips the splash) lands first
+    bool                    splashHold_ = false;  // in the start delay, before the splash
+    uint32_t                splashHoldFrom_ = 0;
     std::unique_ptr<Splash> splash_;  // the RotatoCAM splash, before the welcome  // line input for the teleconference and pages
     int                       node_;
     std::function<void(const std::string&, bool)> say_;

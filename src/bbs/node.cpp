@@ -211,9 +211,9 @@ void Node::begin(uint32_t nowMs) {
     lastInput_ = nowMs;
     theme::use(theme::lookFrom(cfg_.theme));  // one look for the whole board: the setting decides
     if (cfg_.loginSplash && !lite()) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
-        state_ = State::Splash;
-        splash_.reset(new Splash(nowMs));
-        out_ += splash_->step(nowMs);
+        state_ = State::Splash;  // (nothing yet: poll() starts it after the hold, unless the link report says lite by then)
+        splashHold_ = true;
+        splashHoldFrom_ = nowMs;
         return;
     }
     showWelcome();
@@ -1577,6 +1577,7 @@ void Node::key(char c) {
     }
     if (state_ == State::Splash) {  // any key: on to the login screen (at the next poll)
         splash_.reset();
+        splashHold_ = false;
         return;
     }
     if (state_ == State::Matrix) {
@@ -3441,9 +3442,15 @@ void Node::poll(uint32_t nowMs) {
         }
     }  // the idle timer covers the application and the pending screen too
     if (state_ == State::Splash) {
-        if (splash_ && lite()) {  // the modem said this caller is slow (its report comes after the splash started): cut it
+        if (lite() && (splash_ || splashHold_)) {  // the modem said this caller is slow: no splash (cut it if it has started)
+            if (splash_) out_ += theme::CLS;
             splash_.reset();
-            out_ += theme::CLS;
+            splashHold_ = false;
+        }
+        if (splashHold_) {
+            if (nowMs - splashHoldFrom_ < kSplashHoldMs) return;
+            splashHold_ = false;
+            splash_.reset(new Splash(nowMs));
         }
         if (splash_ && !splash_->done(nowMs)) {
             out_ += splash_->step(nowMs);

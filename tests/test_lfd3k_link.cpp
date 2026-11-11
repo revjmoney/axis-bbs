@@ -3,6 +3,7 @@
 // LFD3K-LINK (telnet option 90) from the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM.
 // Not testable from the host: src/main.cpp's wiring (pulling the report from the stream into the Node, the sysop
 // System > Modem page, @MODEM). Tested here instead: the filter, the stream, the parser, Node::lite/setLink, the WFC codes.
+#include <regex>
 #include <string>
 
 #include "bbs/config.h"
@@ -56,6 +57,7 @@ struct FakeLine : axis::net::TelnetStream {
 };
 
 SysInfo info() { return SysInfo{}; }
+std::string plain(const std::string& s) { return std::regex_replace(s, std::regex("\x1b\\[[0-9;?]*[A-Za-z]"), ""); }
 LinkInfo report(const std::string& payload) {
     LinkInfo l;
     REQUIRE(axis::net::parseLinkInfo(payload, l));
@@ -401,4 +403,86 @@ TEST_CASE("the modem_link and lite_below_bps settings round trip and default sen
     r = axis::bbs::parseConfig("modemLink=0\nliteBelowBps=500\n");  // the plan's camelCase spellings are read too
     CHECK_FALSE(r.modemLink);
     CHECK(r.liteBelowBps == 500);
+}
+
+namespace {
+// A caller's connect as main.cpp does it: begin() at connect, the modem's report some time later, poll() every 20 ms.
+std::string runCall(Node& n, uint32_t reportAtMs, const std::string& payload, uint32_t endMs, std::string* firstSplashByte = nullptr) {
+    std::string all;
+    n.begin(0);
+    all += n.takeOutput();
+    bool sent = payload.empty();
+    for (uint32_t t = 20; t <= endMs; t += 20) {
+        if (!sent && t >= reportAtMs) {
+            n.setLink(report(payload));
+            sent = true;
+        }
+        n.poll(t);
+        std::string o = n.takeOutput();
+        if (firstSplashByte && firstSplashByte->empty() && !o.empty()) *firstSplashByte = std::to_string(t);
+        all += o;
+    }
+    return all;
+}
+}  // namespace
+
+TEST_CASE("a radio caller at 3906 bps whose report lands 300 ms after connect never gets the splash, only the welcome") {
+    BbsConfig c;
+    c.loginSplash = true;
+    Node n(1, info, c);
+    std::string out = runCall(n, 300, "v=1 kind=radio tier=SF10 bps=3906", 3000);
+    CHECK(n.state() == Node::State::Login);
+    CHECK(plain(out).find("Handle:") != std::string::npos);
+    // no splash frame: the splash clears the screen and types 24 rows, the lite welcome is far smaller
+    Node plain1(1, info, c);
+    std::string splashCall = runCall(plain1, 0, "", 3000);
+    CHECK(out.size() < splashCall.size());
+    CHECK(out.find("ROTATO") == std::string::npos);
+}
+
+TEST_CASE("a caller with no link report gets nothing for the hold, then the splash") {
+    BbsConfig c;
+    c.loginSplash = true;
+    Node n(1, info, c);
+    std::string first;
+    std::string out = runCall(n, 0, "", 3000, &first);
+    CHECK(n.state() == Node::State::Splash);  // still playing at 3 s
+    CHECK(out.find("Handle:") == std::string::npos);
+    CHECK(first == "1000");  // silent until the hold is over
+}
+
+TEST_CASE("a key during the splash hold skips to the welcome") {
+    BbsConfig c;
+    c.loginSplash = true;
+    Node n(1, info, c);
+    n.begin(0);
+    CHECK(n.takeOutput().empty());
+    n.input((const uint8_t*)" ", 1, 500);
+    n.poll(520);
+    CHECK(n.state() == Node::State::Login);
+    CHECK(plain(n.takeOutput()).find("Handle:") != std::string::npos);
+}
+
+TEST_CASE("a link report that makes the caller lite in the middle of the splash ends it and shows the welcome") {
+    BbsConfig c;
+    c.loginSplash = true;
+    Node n(1, info, c);
+    std::string out = runCall(n, 2500, "v=1 kind=radio tier=SF10 bps=3906", 2400);
+    CHECK(n.state() == Node::State::Splash);  // playing, caller not yet known to be slow
+    n.takeOutput();
+    n.setLink(report("v=1 kind=radio tier=SF10 bps=3906"));
+    n.poll(2520);
+    CHECK(n.state() == Node::State::Login);
+    CHECK(plain(n.takeOutput()).find("Handle:") != std::string::npos);
+    n.poll(2540);  // nothing of the splash comes after
+    CHECK(n.takeOutput().empty());
+}
+
+TEST_CASE("with the login splash off, the welcome comes at connect whatever the link") {
+    BbsConfig c;
+    c.loginSplash = false;
+    Node n(1, info, c);
+    n.begin(0);
+    CHECK(n.state() == Node::State::Login);
+    CHECK(plain(n.takeOutput()).find("Handle:") != std::string::npos);
 }
