@@ -71,6 +71,8 @@ add_library(axiscore STATIC
     src/bbs/sysopshell.cpp
     src/bbs/setup_gate.cpp
     third_party/sha256/sha256.c
+    third_party/monocypher/monocypher.c
+    src/net/sign.cpp
     dosemu/door/cpu.cpp
     dosemu/door/guestmem.cpp
     dosemu/door/mz.cpp
@@ -90,7 +92,7 @@ add_library(axiscore STATIC
     src/platform/pc/tcpstream.cpp
     third_party/i8086/i8086.cpp
     third_party/miniz/miniz_tinfl.c)
-target_include_directories(axiscore PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/miniz)
+target_include_directories(axiscore PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
 
 add_executable(axis_tests
     tests/test_main.cpp
