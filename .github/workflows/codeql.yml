@@ -35,8 +35,10 @@ jobs:
         include:
           - language: c-cpp
             build-mode: manual
+            config: ""
           - language: python
             build-mode: none
+            config: "paths: [tools]"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Compilers
@@ -46,9 +48,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          config: |
-            paths:
-              - tools
+          config: ${{ matrix.config }}
       # CodeQL watches this compile. It is the same host build the tests use (core, doors, LORD,
       # cluster, telnet and file transfer code). ESP32 only files (src/platform/cyd, src/main.cpp)
       # need the ESP-IDF toolchain and are not in it.
