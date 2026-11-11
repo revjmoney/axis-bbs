@@ -24,6 +24,7 @@ constexpr size_t kSyncMaxLine = kNetMaxFrame + 32;    // a received line longer 
 constexpr uint32_t kSyncTimeoutMs = 30000;            // silence before the session fails
 constexpr uint32_t kSyncHistoryDays = 30;             // what a new board asks for
 constexpr size_t kSyncOutHigh = 2048;                 // no new data lines while this much is unsent
+constexpr uint32_t kSyncHistoryMax = 800;             // H lines taken per session (4 areas x 200)
 
 class NetSession {
 public:
@@ -94,6 +95,7 @@ private:
     bool started_ = false, heard_ = false;
     uint32_t lastRxMs_ = 0;
 
+    uint32_t histTaken_ = 0;  // H lines passed to take this session
     uint32_t postsSent_ = 0, postsTaken_ = 0, naks_ = 0, naksSent_ = 0;
 };
 

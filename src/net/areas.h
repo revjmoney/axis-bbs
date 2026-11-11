@@ -83,7 +83,9 @@ public:
     // A post from a peer (fromPeer may be empty). Stores it and logs it to pass on. Taken by value
     // so the caller can move it in and the body is held once. With the clock set, a post dated
     // more than keepDays ago or more than a day ahead is Rejected.
-    Took take(NetPost p, const std::string& fromPeer);
+    // history: a post from a new board's history pull; it skips the ingress limit (the session
+    // caps how many it takes), every other check still runs.
+    Took take(NetPost p, const std::string& fromPeer, bool history = false);
     // A card or notice from a peer. True if it changed the state (then it is logged to pass on).
     bool takeCard(const NetCard& c, const std::string& fromPeer);
     bool takeNotice(const NetNotice& n, const std::string& fromPeer);

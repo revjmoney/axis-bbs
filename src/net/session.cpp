@@ -308,10 +308,14 @@ void NetSession::takeState(const std::string& rec) {
     }
 }
 
+// History skips the ingress limit, so this side caps it: past kSyncHistoryMax H lines in one
+// session the rest are read and dropped.
 void NetSession::takeHistory(const std::string& rec) {
+    if (histTaken_ >= kSyncHistoryMax) return;
+    histTaken_++;
     NetPost p;
     if (rec.empty() || rec[0] != (char)NetKind::Post || !decode(rec, p)) return;
-    if (core_.take(std::move(p), peer_) == NetCore::Took::Stored) postsTaken_++;
+    if (core_.take(std::move(p), peer_, true) == NetCore::Took::Stored) postsTaken_++;
 }
 
 void NetSession::tick(uint32_t nowMs, bool heapOk) {

@@ -199,7 +199,7 @@ int NetCore::storePost(NetPost& p, std::string& line) {
     return store_.post(p.area, m);
 }
 
-NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer) {
+NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history) {
     syncLimits();  // the host may have loaded the state directly
     // 1. decode limits: the record must be representable and signed, and (with a clock) in date
     if (p.sig.empty() || p.body.size() > kNetMaxBody || encode(p).empty()) return Took::Rejected;
@@ -219,9 +219,9 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer) {
     if (state_.killed(p.id)) return Took::Rejected;
     // 6. dedupe (it is marked seen only once stored, below)
     if (seen_.has(p.id)) return Took::Duplicate;
-    // 7. ingress, counting the body size
+    // 7. ingress, counting the body size (history pulls are capped by the session instead)
     uint32_t today = day();
-    if (!ingress_.allow(p.board, p.body.size(), today)) return Took::Limited;
+    if (!history && !ingress_.allow(p.board, p.body.size(), today)) return Took::Limited;
 
     std::string cameWith = p.path;
     if (!fromPeer.empty()) p.path = appendHop(p.path, fromPeer);
