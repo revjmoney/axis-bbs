@@ -1,0 +1,18 @@
+# Dependabot version updates. Keeps the SHA pinned GitHub Actions current: once a week it opens
+# one pull request that bumps every action that has a new release (SHA and version comment).
+# There is no pip requirements file in this repo, so only GitHub Actions are watched.
+# PlatformIO libraries (platformio.ini) are not supported by Dependabot and stay pinned by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ["*"]
