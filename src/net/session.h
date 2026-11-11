@@ -7,9 +7,12 @@
 //
 // The handshake: the dialer proves who it is first, and the answerer signs nothing until that
 // proof checks out, so a stranger cannot use the answerer to sign for it. Both proofs sign one
-// transcript binding the role, both nonces and both board ids. Plain TCP has no channel
-// binding, so a live on-path relay between two real boards is still possible; that is the
-// accepted residual, the same as for everything that is signed only.
+// transcript binding the role, both nonces and both board ids. A dialer also checks that the
+// answerer is the board it meant to dial (expectedBoard), so a card whose host points somewhere
+// else gets nowhere. Plain TCP has no channel binding: with an expected board a relay needs a
+// live on-path attacker, the accepted residual (the same as for everything that is signed only).
+// On first contact with the first peer, before its board id is known (empty expectedBoard, trust
+// on first use), a remote relay is still possible that once.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -40,7 +43,11 @@ public:
     // me is the card this side presents and signer the key matching me.pub (the board's own key,
     // or Rev's daily key on Rev's board). nonceHex16 comes from the host's random source. A
     // dialer's peer goes into NetCore's outbound link pool, an answerer's into the inbound one.
-    NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, const std::string& nonceHex16, bool dialer);
+    // expectedBoard (dialer only; an answerer ignores it): the board being dialed. The host passes
+    // the card's board when dialing a card, and the first peer's board once it is known. Empty is
+    // only for the first peer before its board id is known (trust on first use).
+    NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, const std::string& nonceHex16, bool dialer,
+               const std::string& expectedBoard);
 
     void feed(const char* p, size_t n);  // bytes from the socket
     std::string takeOut();               // bytes for the socket (send them before closing)
@@ -79,6 +86,7 @@ private:
     KeyPair signer_;
     std::string nonce_;
     bool dialer_;
+    std::string expected_;  // dialer: the board it meant to dial ("" on first use)
 
     Phase phase_ = Phase::Hello;
     bool failed_ = false;

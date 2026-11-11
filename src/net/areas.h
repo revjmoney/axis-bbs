@@ -38,7 +38,6 @@ std::string netPostId(const std::string& net);
 std::string netDateText(uint32_t unixTime);
 uint32_t netDateUnix(const std::string& text);
 
-constexpr size_t kMaxLinkPeers = 8;        // boards we sync with: both pools together
 constexpr size_t kMaxOutboundPeers = 4;    // boards this board dials, plus the first peer
 constexpr size_t kMaxInboundPeers = 4;     // boards that dialed us; the longest unsynced goes first
 constexpr uint32_t kOutLogKeep = 5000;     // outbound log entries kept

@@ -72,8 +72,9 @@ bool fits(const std::string& rec) { return !rec.empty() && rec.size() <= kNetMax
 }  // namespace
 
 NetSession::NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, const std::string& nonceHex16,
-                       bool dialer)
-    : core_(core), me_(me), signer_(signer), nonce_(nonceHex16), dialer_(dialer) {
+                       bool dialer, const std::string& expectedBoard)
+    : core_(core), me_(me), signer_(signer), nonce_(nonceHex16), dialer_(dialer),
+      expected_(dialer ? expectedBoard : std::string()) {
     if (!isHex(nonce_, 16)) {
         fail("bad nonce", nullptr);
         return;
@@ -184,6 +185,10 @@ bool NetSession::hello(const std::string& l) {
     }
     if (!verifyCard(c) || c.board != boardId(c.pub) || c.board == core_.board() || c.board == me_.board) {
         fail("bad card", "bad");
+        return false;
+    }
+    if (dialer_ && !expected_.empty() && c.board != expected_) {  // not the board we dialed
+        fail("wrong board", "bad");
         return false;
     }
     if (core_.state().banned(c.board)) {
