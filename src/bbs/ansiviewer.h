@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 // ANSI Pack Viewer, a door built into the firmware: browses the artpack ZIPs in a file area (the
 // ANSI Packs area) and shows the pieces straight out of the archives. It runs like any door, on
-// the caller's line. A workspace may be passed in, or the viewer allocates its own
-// inflate window the first time a deflated piece plays and frees it when it goes away.
+// the caller's line. A workspace may be passed in, or the viewer borrows the board's one inflate
+// window (bbs/inflatelease.h) while a deflated piece plays and gives it back when the piece ends.
 #pragma once
 #include <functional>
 #include <memory>
@@ -24,7 +24,6 @@ public:
     AnsiViewer(FileLibrary& lib, std::string areaId, std::string areaName, uint8_t* workspace, size_t workspaceSize,
                door::ByteStream& line);
     ~AnsiViewer();
-    bool holdsRam() const { return ownWs_ || ownState_; }  // this viewer allocated its own inflate window
     void setZipState(uint8_t* state) { state_ = state; }
     // the time, for playing ANSI movies at modem speed (without it they go as fast as the line takes)
     void setClock(std::function<uint32_t()> clock) { clock_ = std::move(clock); }  // ZipReader::kStateBytes, when the workspace is only the window
@@ -52,8 +51,8 @@ private:
     uint32_t now() const { return clock_ ? clock_() : 0; }
     bool key(char c);
     bool inflateReady() const;  // a passed-in block, or our own window plus inflater state
-    bool grabInflate();         // allocate that window; false when the heap is short
-    void releaseInflate();      // drop a window this viewer allocated
+    bool grabInflate();         // borrow the board's window; false when another caller has it or the heap is short
+    void releaseInflate();      // give it back (safe to call any time)
     bool number(char c, int& n);  // line input of a number; true on Enter with n set (0 = empty)
     bool back();                  // Esc or Q on a list: up a level; false when that leaves the viewer
     void showList(const std::string& title, const std::string& help);  // the header, the lightbar list, the help line
@@ -64,7 +63,7 @@ private:
     uint8_t*                     ws_;
     size_t                       wsSize_;
     uint8_t*                     state_ = nullptr;
-    bool                         ownWs_ = false, ownState_ = false;  // malloc'd here, freed with the viewer
+    bool                         leased_ = false;  // ws_ and state_ are the board's window, lent to this viewer
     door::ByteStream&            line_;
     St                           st_ = St::Packs;
     std::vector<FileEntry>       packs_;

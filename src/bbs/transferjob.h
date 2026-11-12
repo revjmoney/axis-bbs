@@ -27,7 +27,8 @@ public:
     TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info = {});
     ~TransferJob();
     bool               step(uint32_t nowMs);  // false once finished
-    // a ZIP upload has arrived and wants checking: the host lends ZipReader::kWorkspace bytes
+    // a ZIP upload has arrived and wants checking: the host lends the board's inflate window (owner: this job,
+    // given back when the job is destroyed)
     bool needsWorkspace() const { return wantWorkspace_; }
     void beginProcessing(uint8_t* workspace, size_t size, uint8_t* zipState = nullptr);  // zipState: see UploadProcessor
     bool processing() const { return proc_ != nullptr; }

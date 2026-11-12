@@ -27,6 +27,7 @@ add_library(axiscore STATIC
     src/bbs/email.cpp
     src/bbs/usersettings.cpp
     src/bbs/ansiviewer.cpp
+    src/bbs/inflatelease.cpp
     src/bbs/rotatelog.cpp
     src/bbs/dosshell.cpp
     src/bbs/script.cpp

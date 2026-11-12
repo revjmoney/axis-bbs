@@ -37,6 +37,7 @@
 #include "platform/cyd/web.h"
 #include "platform/cyd/heapscope.h"
 #include "bbs/ansiviewer.h"
+#include "bbs/inflatelease.h"
 #include "bbs/script.h"
 #include "lord/game.h"
 #include "bbs/ansiterm.h"
@@ -693,41 +694,6 @@ static std::unique_ptr<axis::bbs::TransferJob>  job;     // this session's downl
 static uint32_t                                 jobStartMs = 0, jobDrawnMs = 0;
 static uint32_t                                 doorStartMs = 0;
 
-// The inflate window for a ZIP upload check. Movies allocate their own inside the viewer.
-// The panel sprite stays the waiting screen.
-struct ZipBuf {
-    uint8_t* window = nullptr;
-    uint8_t* state  = nullptr;
-    void     release() {
-        heap_caps_free(window);
-        heap_caps_free(state);
-        window = state = nullptr;
-    }
-    ~ZipBuf() { release(); }
-    ZipBuf() = default;
-    ZipBuf(ZipBuf&& o) noexcept : window(o.window), state(o.state) { o.window = o.state = nullptr; }
-    ZipBuf& operator=(ZipBuf&& o) noexcept {
-        if (this != &o) {
-            release();
-            window   = o.window;
-            state    = o.state;
-            o.window = o.state = nullptr;
-        }
-        return *this;
-    }
-    ZipBuf(const ZipBuf&)            = delete;
-    ZipBuf& operator=(const ZipBuf&) = delete;
-    bool held() const { return window || state; }
-    bool ensure(size_t windowBytes, size_t stateBytes) {
-        if (!window) window = (uint8_t*)heap_caps_malloc(windowBytes, MALLOC_CAP_8BIT);
-        if (!state) state = (uint8_t*)heap_caps_malloc(stateBytes, MALLOC_CAP_8BIT);
-        if (window && state) return true;
-        release();
-        return false;
-    }
-};
-static ZipBuf               zipRam;
-static constexpr size_t     kZipWindow = 32768;
 static std::unique_ptr<axis::bbs::Node>         node;
 static std::unique_ptr<axis::bbs::SetupGate>    gate;
 static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
@@ -806,7 +772,6 @@ struct Session {
     std::unique_ptr<axis::lord::NativeLord> lord;
     std::unique_ptr<axis::door::HostFs>     lordFs;
     std::unique_ptr<axis::door::LockTable>  lordLocks;
-    ZipBuf                                  zip;  // freed after viewer and job (members destruct in reverse)
     std::unique_ptr<axis::bbs::AnsiViewer>  viewer;
     std::unique_ptr<axis::bbs::TransferJob> job;
     uint32_t                                doorStartMs = 0;
@@ -821,7 +786,6 @@ static void bindSession(int i) {
     nativeLord = std::move(sessions[(size_t)i].lord);
     lordFs = std::move(sessions[(size_t)i].lordFs);
     lordLocks = std::move(sessions[(size_t)i].lordLocks);
-    zipRam = std::move(sessions[(size_t)i].zip);
     viewer = std::move(sessions[(size_t)i].viewer);
     job = std::move(sessions[(size_t)i].job);
     callStartMs = sessions[(size_t)i].startMs;
@@ -836,7 +800,6 @@ static void unbindSession() {
     sessions[(size_t)curSession].lord = std::move(nativeLord);
     sessions[(size_t)curSession].lordFs = std::move(lordFs);
     sessions[(size_t)curSession].lordLocks = std::move(lordLocks);
-    sessions[(size_t)curSession].zip = std::move(zipRam);
     sessions[(size_t)curSession].viewer = std::move(viewer);
     sessions[(size_t)curSession].job = std::move(job);
     sessions[(size_t)curSession].startMs = callStartMs;
@@ -864,12 +827,7 @@ static bool boardHasJob() {
         if (s.job) return true;
     return false;
 }
-static bool inflateHeld() {  // a movie is playing, or a ZIP upload is being checked
-    if (zipRam.held() || (viewer && viewer->holdsRam())) return true;
-    for (auto& s : sessions)
-        if (s.zip.held() || (s.viewer && s.viewer->holdsRam())) return true;
-    return false;
-}
+static bool inflateHeld() { return axis::bbs::inflate::busy(); }  // a deflated piece is playing, or a ZIP upload is being checked
 static void noteZipHeap() { web::setDoorRunning(inflateHeld()); }
 static void dropLord() {
     nativeLord.reset();
@@ -1628,8 +1586,7 @@ static void modemSearchPoll() {  // never waits: the results once the search is 
 static void hangUp() {
     noteDoing("idle");
     viewer.reset();
-    job.reset();
-    zipRam.release();
+    job.reset();  // a viewer or job gives the board's inflate window back as it goes
     noteZipHeap();
     dropLord();
     if (line && node && node->failedLogin()) {  // wrong passwords: count it against the caller's address
@@ -2187,7 +2144,6 @@ static void releaseDoorSlot() {
     if (curSession >= 0) (doorRemoteLocks ? *doorRemoteLocks : doorLocks).releaseOwner(sessionNumber(curSession));
     doorRemoteLocks.reset();
     viewer.reset();
-    zipRam.release();
     noteZipHeap();
     nativeLord.reset();
     screenDirty = true;
@@ -2365,7 +2321,7 @@ static void startDoorInner() {
         return;
     }
     doorStartMs = millis();
-    if (!d.exe.empty() && d.exe[0] == '*') {  // one viewer per caller. It allocates an inflate window only while a piece plays.
+    if (!d.exe.empty() && d.exe[0] == '*') {  // one viewer per caller. It borrows the board's inflate window only while a deflated piece plays.
         logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
         std::vector<std::pair<std::string, std::string>> va;  // "ansi,scene-acid,...": several areas, a picker first
         for (size_t from = 0; from <= d.args.size();) {
@@ -4009,11 +3965,11 @@ static void serviceSession(int i) {
         }
     }
     if (job) {  // this caller's download or upload
-        if (job->needsWorkspace() && !zipRam.held()) {  // a ZIP upload: its own inflate window, not the panel
+        if (job->needsWorkspace() && !axis::bbs::inflate::busy()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait for it)
+            uint8_t *w = nullptr, *st = nullptr;
             drawTransfer();
-            if (!zipRam.ensure(kZipWindow, axis::bbs::ZipReader::kStateBytes))
-                logEvent("upload: short on memory to check the ZIP");
-            job->beginProcessing(zipRam.window, zipRam.window ? kZipWindow : 0, zipRam.state);
+            if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
+            job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
             noteZipHeap();
         }
         bool running = job->step(millis());
@@ -4030,8 +3986,7 @@ static void serviceSession(int i) {
             noteDoing("idle");
             if (line && line->carrier()) {
                 node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
-                job.reset();
-                zipRam.release();
+                job.reset();  // gives the inflate window back
                 noteZipHeap();
                 sendApp(node->takeOutput());
             } else {

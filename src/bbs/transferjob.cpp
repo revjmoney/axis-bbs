@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdio>
 
+#include "bbs/inflatelease.h"
 #include "bbs/theme.h"
 
 #include "net/xmodem.h"
@@ -60,6 +61,8 @@ TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream
 
 TransferJob::~TransferJob() {
     if (dst_) dst_->finish(false);  // an unfinished upload leaves nothing behind
+    proc_.reset();                  // it points into the board's inflate window
+    inflate::give(this);            // lent by the host for a ZIP check (a no-op otherwise)
 }
 
 bool TransferJob::startFile(const std::string& name, uint32_t size) {

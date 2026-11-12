@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <map>
 
+#include "bbs/inflatelease.h"
 #include "bbs/theme.h"
 
 namespace axis::bbs {
@@ -53,40 +54,24 @@ bool AnsiViewer::inflateReady() const {
 }
 
 bool AnsiViewer::grabInflate() {
-    if (inflateReady()) return true;
-    if (!ws_) {
-        ws_ = (uint8_t*)std::malloc(32768);
-        if (!ws_) return false;
-        ownWs_ = true;
-        wsSize_ = 32768;
-    }
-    if (!state_) {
-        state_ = (uint8_t*)std::malloc(ZipReader::kStateBytes);
-        if (!state_) {
-            if (ownWs_) {
-                std::free(ws_);
-                ws_ = nullptr;
-                ownWs_ = false;
-                wsSize_ = 0;
-            }
-            return false;
-        }
-        ownState_ = true;
-    }
-    return inflateReady();
+    if (inflateReady()) return true;  // a passed-in block, or the board's window already lent to us
+    uint8_t *w, *s;
+    if (!inflate::take(this, w, s)) return false;
+    ws_ = w;
+    wsSize_ = inflate::kWindow;
+    state_ = s;
+    leased_ = true;
+    return true;
 }
 
 void AnsiViewer::releaseInflate() {
-    stream_.reset();
-    if (ownState_) std::free(state_);
-    if (ownWs_) std::free(ws_);
-    if (ownState_) state_ = nullptr;
-    if (ownWs_) {
-        ws_ = nullptr;
+    stream_.reset();  // first: it points into the window
+    if (leased_) {
+        ws_ = state_ = nullptr;
         wsSize_ = 0;
+        leased_ = false;
     }
-    ownState_ = false;
-    ownWs_ = false;
+    inflate::give(this);  // always: a no-op unless this viewer holds the window
 }
 
 void AnsiViewer::begin() {
@@ -128,6 +113,7 @@ bool AnsiViewer::number(char c, int& n) {
 }
 
 void AnsiViewer::showPacks() {
+    releaseInflate();  // the window is only ever held while a piece plays
     st_ = St::Packs;
     zip_.reset();
     file_.reset();
@@ -189,6 +175,7 @@ int AnsiViewer::columns() const {
 }
 
 void AnsiViewer::showPieces() {
+    releaseInflate();
     st_ = St::Pieces;
     std::vector<std::string> v;
     for (size_t i = 0; i < pieces_.size(); i++) v.push_back(shownName(i));
@@ -199,7 +186,12 @@ void AnsiViewer::showPieces() {
 void AnsiViewer::showPiece(size_t i) {
     piece_ = i;
     const ZipEntry& e = zip_->entries()[pieces_[i]];
-    if (e.method == 8 && !grabInflate()) {  // stored pieces need no window; a second movie waits for one
+    if (e.method == 8 && inflate::busy() && !inflateReady()) {  // another caller has the board's window: nothing waits
+        showPieces();
+        send(std::string("\x1b[22;4H") + AMBER + "Another caller is viewing a pack right now. Here is the file list." + HI);
+        return;
+    }
+    if (e.method == 8 && !grabInflate()) {  // stored pieces need no window
         send(std::string("\r\n\r\n   ") + AMBER +
              "The board is short on memory for another movie right now. Try again in a minute.\r\n" + DIM);
         showPieces();
