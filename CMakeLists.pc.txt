@@ -179,7 +179,13 @@ add_executable(axis_tests
     tests/test_relay.cpp
     tests/test_doorfs.cpp
     tests/test_diag.cpp
-    tests/test_doorlife.cpp)
+    tests/test_doorlife.cpp
+    tests/test_net_sign.cpp
+    tests/test_net_record.cpp
+    tests/test_net_state.cpp
+    tests/test_net_core.cpp
+    tests/test_net_session.cpp
+    tests/test_net_record_log.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)
@@ -193,6 +199,12 @@ add_executable(axis_netkey tools/net/netkey.cpp)
 target_link_libraries(axis_netkey PRIVATE axiscore)
 if(WIN32)
   target_link_libraries(axis_netkey PRIVATE bcrypt)
+endif()
+
+add_executable(axis_netpeer tools/net/netpeer.cpp)
+target_link_libraries(axis_netpeer PRIVATE axiscore)
+if(WIN32)
+  target_link_libraries(axis_netpeer PRIVATE bcrypt)
 endif()
 
 target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data")

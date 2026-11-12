@@ -15,20 +15,24 @@ namespace pc {
 
 class TcpStream : public door::ByteStream {
 public:
-    explicit TcpStream(intptr_t sock);
-    static std::unique_ptr<TcpStream> dial(const char* host, uint16_t port);  // a client connection (tools, tests)
+    // telnet false: a raw byte pipe (no negotiation, no 0xFF escaping), as the Sysop Net speaks.
+    explicit TcpStream(intptr_t sock, bool telnet = true);
+    // A client connection (tools, tests) to an IPv4 address; nullptr if it could not connect.
+    static std::unique_ptr<TcpStream> dial(const char* host, uint16_t port, bool telnet = true);
     ~TcpStream() override;
     int  available() override;
     int  read() override;
     int  peek() override;
     void write(const uint8_t* p, size_t n) override;
     bool carrier() override;
+    std::string takeAll();  // every byte that has arrived (no wait)
     void setSendTimeout(int ms) { sendTimeoutMs_ = ms; }  // a caller that stops reading is treated as gone
 
 private:
     void           pump();
     intptr_t       sock_;
     bool           up_ = true;
+    bool           telnetOn_ = true;
     int            sendTimeoutMs_ = 10000;
     net::TelnetFilter telnet_;
     std::string    in_;
@@ -39,7 +43,7 @@ public:
     explicit TcpListener(uint16_t port);  // 0 = any free port
     ~TcpListener();
     uint16_t                   port() const { return port_; }
-    std::unique_ptr<TcpStream> accept(int timeoutMs);  // nullptr on timeout
+    std::unique_ptr<TcpStream> accept(int timeoutMs, bool telnet = true);  // nullptr on timeout
 
 private:
     intptr_t sock_;

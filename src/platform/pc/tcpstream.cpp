@@ -65,29 +65,29 @@ bool sendAll(intptr_t s, const char* p, size_t n, int timeoutMs = 10000) {
 }
 }  // namespace
 
-TcpStream::TcpStream(intptr_t sock) : sock_(sock) {
+TcpStream::TcpStream(intptr_t sock, bool telnet) : sock_(sock), telnetOn_(telnet) {
     nonBlocking(sock_);
     int one = 1;
     setsockopt((decltype(socket(0, 0, 0)))sock_, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
     setsockopt((decltype(socket(0, 0, 0)))sock_, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char*>(&one), sizeof one);
+    if (!telnetOn_) return;
     std::string hello = telnet_.initialNegotiation();
     sendAll(sock_, hello.data(), hello.size());
 }
 
 TcpStream::~TcpStream() { closeSock(sock_); }
 
-std::unique_ptr<TcpStream> TcpStream::dial(const char* host, uint16_t port) {
+std::unique_ptr<TcpStream> TcpStream::dial(const char* host, uint16_t port, bool telnet) {
     netInit();
     intptr_t    sock = (intptr_t)socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in a = {};
     a.sin_family = AF_INET;
     a.sin_port = htons(port);
-    inet_pton(AF_INET, host, &a.sin_addr);
-    if (connect((decltype(socket(0, 0, 0)))sock, (sockaddr*)&a, sizeof a) != 0) {
+    if (inet_pton(AF_INET, host, &a.sin_addr) != 1 || connect((decltype(socket(0, 0, 0)))sock, (sockaddr*)&a, sizeof a) != 0) {
         closeSock(sock);
         return nullptr;
     }
-    return std::unique_ptr<TcpStream>(new TcpStream(sock));
+    return std::unique_ptr<TcpStream>(new TcpStream(sock, telnet));
 }
 
 void TcpStream::pump() {
@@ -96,6 +96,10 @@ void TcpStream::pump() {
     while (true) {
         int n = ::recv((decltype(socket(0, 0, 0)))sock_, buf, sizeof buf, 0);
         if (n > 0) {
+            if (!telnetOn_) {
+                in_.append(buf, (size_t)n);
+                continue;
+            }
             std::string reply;
             telnet_.fromNet((const uint8_t*)buf, n, in_, reply);
             if (!reply.empty()) sendAll(sock_, reply.data(), reply.size());
@@ -126,9 +130,16 @@ int TcpStream::peek() {
     return in_.empty() ? -1 : (uint8_t)in_[0];
 }
 
+std::string TcpStream::takeAll() {
+    pump();
+    std::string s;
+    s.swap(in_);
+    return s;
+}
+
 void TcpStream::write(const uint8_t* p, size_t n) {
     if (!up_) return;
-    std::string w = telnet_.toNet(p, n);
+    std::string w = telnetOn_ ? telnet_.toNet(p, n) : std::string((const char*)p, n);
     if (!sendAll(sock_, w.data(), w.size(), sendTimeoutMs_)) up_ = false;  // the caller stopped reading
 }
 
@@ -155,14 +166,14 @@ TcpListener::TcpListener(uint16_t port) {
 
 TcpListener::~TcpListener() { closeSock(sock_); }
 
-std::unique_ptr<TcpStream> TcpListener::accept(int timeoutMs) {
+std::unique_ptr<TcpStream> TcpListener::accept(int timeoutMs, bool telnet) {
     fd_set f;
     FD_ZERO(&f);
     FD_SET((decltype(socket(0, 0, 0)))sock_, &f);
     timeval tv = {timeoutMs / 1000, (timeoutMs % 1000) * 1000};
     if (select((int)sock_ + 1, &f, nullptr, nullptr, &tv) <= 0) return nullptr;
     intptr_t c = (intptr_t)::accept((decltype(socket(0, 0, 0)))sock_, nullptr, nullptr);
-    return std::unique_ptr<TcpStream>(new TcpStream(c));
+    return std::unique_ptr<TcpStream>(new TcpStream(c, telnet));
 }
 
 TcpClient::TcpClient(const char* host, uint16_t port) {
