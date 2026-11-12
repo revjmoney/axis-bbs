@@ -99,7 +99,7 @@
 
 - [ ] **Step 1: Failing host tests** for each switch off, and all selectable switches off together.
 - [ ] **Step 2: Fence.**
-- [ ] **Step 3: SD card notice:** when the board has no card but was built with any `needs_sd` feature, the WFC shows "YOU NEED AN SD CARD FOR FULL FUNCTIONS" and `@STATUS` adds `sd=missing`; host test for the message choice (a `needs_sd` feature built in and no card gives the notice; the `no-sd` preset gives none).
+- [ ] **Step 3: SD card notice:** when the board has no card, is not a follower of a main that has one, and was built with any `needs_sd` feature, the WFC shows "YOU NEED AN SD CARD FOR FULL FUNCTIONS" and `@STATUS` adds `sd=missing`; host test for the message choice (a `needs_sd` feature built in, no card and running alone gives the notice; the same as a follower of a main with a card gives none; the `no-sd` preset gives none).
 - [ ] **Step 4: Verify:** every preset in `presets.json` builds with `pio run` (a loop over `buildopts.py presets`); host tests pass for default and `just-bbs`; write the five sizes into the task report.
 - [ ] **Step 5: Commit** `feat: cluster, modem link and web jobs can be built out; the SD card notice`.
 
@@ -172,7 +172,7 @@
 
 - [ ] **Step 1:** Run all host, Python and JS tests; build every preset locally; record sizes and compare with the CI cost table.
 - [ ] **Step 2:** On Rev's boards (MAC checked, board 2 first): flash `no-doors` by the installer page from a local server with real manifests, confirm users, messages and settings survived (`@STATUS`, a login, the message count), then flash `Everything` back; the same through `install.ps1`. Screenshots and a capture of the log.
-- [ ] **Step 3:** The `no-sd` preset on a board with its card taken out (Rev takes it out): logins, messages and menus work, the SD features are absent; then an SD-feature build with no card shows the notice.
+- [ ] **Step 3:** Board 2 already has no card (COM21, MAC 8c:94:df:4f:14:18). As a follower of board 1 it must keep every function and show no SD notice on Everything. Then, with Rev's OK to take it out of the cluster for the test (cluster off in its build, or board 1 left out), flash `no-sd`: logins, messages and menus work and the SD features are absent; and an Everything build running alone with no card shows the notice. Put board 2 back on Everything as a follower afterwards.
 - [ ] **Step 3b:** First-install path on a board Rev chooses (or skip and say so): the warning shows, the confirm is required, the board boots.
 - [ ] **Step 4:** Bare ESP32 path on the ring board (COM15 is the V3 now: ask Rev which port the bare ESP32 is on before touching any port).
 - [ ] **Step 5:** the AXIS site's front page and `docs/INSTALL.md` say "YOU NEED AN SD CARD FOR FULL FUNCTIONS" near the top and link the No SD card preset; `docs/FEATURES.md` lines, the brain note `D:\brain\Projects\AXIS BBS Firmware.md`, and a short report for Rev. Push only with Rev's OK; the first release tag is Rev's.
