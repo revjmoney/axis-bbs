@@ -2112,8 +2112,10 @@ static bool netSeedWrite(const uint8_t seed[32]) {
 // from esp_random(). Both hold 64 hex characters in internal flash, which survives reflashes. Never printed.
 static bool netKeyLoad(axis::net::KeyPair& k) {
     uint8_t seed[32];
-    bool    have = netSeedRead("/netrev.key", seed) || netSeedRead("/netkey.txt", seed);
-    if (!have && !LittleFS.exists("/netkey.txt")) {  // first boot (an unreadable key is never replaced)
+    bool    have = false;
+    if (LittleFS.exists("/netrev.key")) have = netSeedRead("/netrev.key", seed);  // a bad one keeps the net off: no fallback
+    else if (LittleFS.exists("/netkey.txt")) have = netSeedRead("/netkey.txt", seed);  // likewise, never replaced
+    else {  // first boot
         for (size_t i = 0; i < sizeof seed; i += 4) {
             uint32_t r = esp_random();
             std::memcpy(seed + i, &r, 4);
@@ -2500,7 +2502,7 @@ static bool netStart() {
     ::mkdir((std::string(storageRoot()) + "/net").c_str(), 0777);
     std::unique_ptr<NetHost> h(new (std::nothrow) NetHost);
     if (!h || !netKeyLoad(h->key)) {
-        if (!netStartSaid) logEvent("net: no board key (internal flash), Sysop Net is off");
+        if (!netStartSaid) logEvent("net: the board key (/netrev.key or /netkey.txt) could not be read or made, Sysop Net is off, trying every 10 min");
         netStartSaid = true;
         return false;
     }

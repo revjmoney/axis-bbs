@@ -58,10 +58,7 @@ void typeFile(const String& args) {  // a small text file, so a node file can be
         Serial.println("@ERR usage");
         return;
     }
-    String base = path.substring(path.lastIndexOf('/') + 1);
-    base.toLowerCase();
-    while (base.endsWith(".") || base.endsWith(" ")) base.remove(base.length() - 1);  // FAT ignores these
-    if (base == "netkey.txt" || base == "netrev.key" || base == "netkey.tmp") {  // the Sysop Net key, never shown
+    if (isNetKeyPath(path)) {  // the Sysop Net key, never shown
         Serial.println("@ERR refused");
         return;
     }
@@ -91,6 +88,20 @@ void typeFile(const String& args) {  // a small text file, so a node file can be
     if (left) Serial.println("\n@ERR short");
 }
 }  // namespace
+
+bool isNetKeyPath(const String& path) {
+    size_t start = 0, n = path.length();
+    for (size_t i = 0; i <= n; i++) {
+        if (i < n && path[i] != '/' && path[i] != '\\') continue;
+        String part = path.substring(start, i);
+        start = i + 1;
+        part.trim();
+        while (part.endsWith(".") || part.endsWith(" ")) part.remove(part.length() - 1);  // FAT ignores these
+        part.toLowerCase();
+        if (part == "netkey.txt" || part == "netkey.tmp" || part == "netrev.key") return true;
+    }
+    return false;
+}
 
 bool serialFileCommand(const String& cmd) {
     if (cmd.startsWith("@PUT ")) {
