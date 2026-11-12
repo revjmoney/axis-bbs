@@ -137,3 +137,90 @@ Not built. For Rev to decide.
 3. **Line queue 8 x 320 = 2560 bytes.** Four entries would save 1280. Under 4 KB, noted for later.
 
 The panics in section 2 are already Phase 2 items: the output string growing a whole screen (Task 6, #11), the login screen expansion (Task 7, #12), LENEMY.DAT read whole (Task 10, #9) and the viewer's inflate state (Task 11, #20). The busy test now confirms each one with a backtrace.
+
+## Final (Task 18, 2026-11-12)
+
+Measured on branch memory/board1 at 5023104 (cyd image: flash 2070945 bytes, 87.8%; RAM 47840), flashed to both boards after reading their MACs (board 1 8c:94:df:4f:1c:4c on COM20, board 2 8c:94:df:4f:14:18 on COM21). Both boards were backed up first: `local/backups/board1-COM20-2026-11-12-pre-memory-final.bin` and `local/backups/board2-COM21-2026-11-12-pre-memory-final.bin` (4 MB each, in the main checkout, not committed). Theme crt, WFC skin cyan, unchanged. Raw files stay local in `F:\axis-bbs-work\memory\final\`; screenshots in `shots/memory/` (not committed).
+
+### Before and after
+
+| | before (Task 3) | target | after | result |
+|---|---|---|---|---|
+| board 1 idle free | 91468 | 125 KB (128000) or more | 140636 | PASS, 12636 over |
+| board 1 idle largest | 81920 | 90 KB (92160) or more | 110592 | PASS, 18432 over |
+| board 1 lowest free in the busy test (30 s polls) | 46732 | 60 KB (61440) or more | 57704 | FAIL, 3736 short |
+| board 1 windowed low in the busy test (wmin, after @HEAPWIN) | 36568 | 61440 or more | 38560 | FAIL, 22880 short |
+| largest block in the busy test (30 s polls) | 34816 | 32 KB (32768) or more | 28672 | FAIL, 4096 short |
+| largest block in the window (wlarge) | 13312 | 32768 or more | 25600 | FAIL, 7168 short |
+| resets in the busy test | 5 panics on board 1, 2 on board 2 | none | 0 | PASS |
+| ALLOC FAILED lines | 18 | none | 0 | PASS |
+| lowest since boot (min, reported, not judged) | 11492 | | 25804 | |
+
+So the busy test FAILS its memory floors, although nothing panicked or failed to allocate and the callers on board 1 did more work than in the baseline.
+
+Idle readings (15 minutes after boot, two DNS checks past, no callers):
+
+```
+board 1 up 911: heap=140636 largest=110592 min=98876 stack=3224 wmin=101300 wlarge=90112 stk_web=3048 stk_mdns=1300 stk_timer=2372
+board 2 up 1067: heap=149544 largest=110592 min=104192 stack=2820 wmin=139572 wlarge=110592 stk_web=0 stk_mdns=1304 stk_timer=2372
+```
+
+An earlier reading the same night on 3318659 (the image before the fix below) gave board 1 140496 / 102400 at up 951, and board 2 149560 / 110592. Board 1 is now 8908 bytes behind board 2 at idle (it was 21984).
+
+### Busy test
+
+Same callers, events and flags as Task 3: 15 minutes, A (LORD) and B (ANSI viewer) on board 1, C (messages and files) and D (follower menus), the follower reset at 3 minutes, `@DDNS now` at 5 minutes, board 1 restarted 3 minutes before. A was given another test user because the Task 3 warrior is dead today.
+
+| caller | board | did before (Task 3) | did after |
+|---|---|---|---|
+| A, LORD | main | 10 entries, 9 fights won, 1 death | 12 entries, 7 fights won, 1 death, 86 town screens |
+| B, ANSI viewer | main | 13 packs opened, 30 refused for memory | 20 packs opened and played, 38 packs that did not show their pieces (reason not traced; 0 ALLOC FAILED) |
+| C, messages and files | handed to board 2 | 12 areas, 8 posts read | 18 message areas, 12 posts read, 7 file areas |
+| D, follower menus | board 2 | 121 screens | 349 screens |
+
+The ZMODEM download is proven separately, as in Task 3: caller C alone on board 1 took NET1NY09.ZIP, 8233 of 8233 bytes, ZFIN seen, lowest free 123120. In the full run C's test user is refused downloads by the board's upload ratio ("Downloads open up once you've uploaded something"): a test user choice, not memory.
+
+Lowest polled rows: free 57704 with largest 43008 at 62 s, and free 59280 with largest 28672 at 272 s, both while the ANSI viewer played a piece and LORD ran. The window agrees: `wdoing=door_ANSI_Pack_Viewer_by` for wmin 38560 and wlarge 25600. HeapScope's lowest lines are `heap low in door: min 43320->40156, largest 43008` at 60 s (the viewer starting while LORD is open). The lifetime low of 25804 came between two polls and left no "heap low in" line, so it was outside the HeapScope sites. Caller B alone (no LORD) gives wmin 67848 and wlarge 40960, which would pass. The miss is the viewer's 32 KB window plus its 12016 byte state while LORD also runs. After the run the largest block at rest stays at 73728 (110592 after a fresh boot), the same kind of fragmentation Task 3 saw after callers.
+
+`outmax` (the biggest caller output buffer) peaked at 3928 bytes in the run (15712 in the baseline). `artmax` peaked at 10764.
+
+### Bug found on the hardware and fixed
+
+The first busy run on 3318659 reported PASS while A and B never reached the main menu: the end of a screen was held back until the caller's next key. A trace showed the main menu prompt stopping at `[00:59] <handle> -` for 4 s, its last bytes arriving only after the next key. Screens sent in 2 KB pieces (Task 6) go out through the line without a flush, and `sendApp` skipped its flush when the node had nothing left. Fixed in 5023104 (`sendApp` flushes even when empty). The same trace then logged in, reached LORD and won 4 fights with no key nudges. The busy test script now fails a run in which a caller never does its job (fcf990f), so a stuck caller cannot pass again.
+
+### Extra checks
+
+- WFC redraw: no timing line exists, so a script pinged board 1 over serial every 5 ms for 200 s and logged the gaps between answers. Normal gap 5.8 ms; the longest stalls, including the minute redraw, were 60.6 to 63.0 ms. A full redraw (snapshot, art, six bands) holds the loop at most about 63 ms, under the 150 ms budget.
+- New 8x8 WFC font: `@SHOT` of both boards. Box frames join, the node and today panels read cleanly. The second look (`wfc=classic`) draws the same built-in art on this card (the crt/cyan folder has no WFCCYD.ANS); it was set back to cyan, and @SETTINGS hashed the same before and after.
+- `@SPRITEFAIL`, then node 1's detail by `@TAP`: `@SHOT` answers NONE, free stays at 140552 (no 38.4 KB copy made), BACK returns to the WFC and `@SHOT` works again. No ALLOC FAILED. The panel colours on that path were not seen (no camera). The same screen without `@SPRITEFAIL` shoots normally.
+- Web task on demand: Discord is not set on board 1, so no post was tested. Four `@DDNS now` runs: free back at 140476 to 140496 within 25 s each time, largest 102400, `stk_web` 3044 free of 7168 (1108 before). No-IP answered over HTTPS. The runs left no log line of their own, so each one is not individually confirmed. `stk_web` stayed at 3044 to 3052 through the busy test.
+- Stack marks now: mdns 1248 to 1304 free of 3072, esp_timer 2372 of 2560, loop 2280 lowest in the busy test.
+
+### Each issue
+
+| issue | change | measured |
+|---|---|---|
+| #24 (Task 1) | heap window, wdoing, stack marks, HeapScope | works: @HEAPWIN resets the window and wdoing names the viewer; the 25804 low still escaped the HeapScope sites |
+| #8 (Task 4) | TLS gate, no plain No-IP | not separately measurable (no gate note in these runs) |
+| #10 (Task 5) | files read at their size | not separately measurable |
+| #11 (Task 6) | caller output in 2 KB pieces | outmax 15712 to 3928 (11784 less at peak); the three expandArt panics are gone. Its missing flush was the held-tail bug above |
+| #12 (Task 7) | login screen without the whole expansion | the login panic (15361 byte alloc) is gone; not separately measurable |
+| #13 (Task 8) | pre-logon checks without reading files | not separately measurable |
+| #14 (Task 9) | main serves follower screens in place | not separately measurable |
+| #9 (Task 10) | LORD reads one monster | the 31310 byte LENEMY.DAT read is gone (one record now), and its panic with it |
+| #20 (Task 11) | one ZIP window for the board | 0 ALLOC FAILED (13 of 12016 before); 20 packs opened (13 before) |
+| #21, #18 (Task 12) | lists and users.dat streamed | not separately measurable |
+| #15, #16 (Task 13) | WFC art read once, follower art cache 16 KB | artmax 10764, under the cap |
+| #17 (Task 14) | AnsiTerm holds only its cells | AnsiTerm object 4864 to 88 bytes plus 45 x 24 cells (from the build) |
+| #22 (Task 15) | WFC in 40 px bands, full copy only away from the WFC | about 32 KB at the idle WFC (38400 byte copy replaced by a 6400 byte band); redraw at most about 63 ms |
+| Task 15b | real 8x8 font on the WFC | 0 bytes of RAM (font in flash, +1952 flash) |
+| #19 (Task 16) | nodes share one settings copy | about 4 KB per node (estimate from the build) |
+| #23 (Task 17) | FATFS per file cache off, mdns 3072, esp_timer 2560, TIME_WAIT 10 s | 5120 + 1024 + 1024 bytes by size; the stacks keep margin (above) |
+| Task 17b | web task only while it has work | about 7.5 KB at idle (7168 stack plus TCB); heap back to idle after each run |
+| all together | | board 1 idle free 91468 to 140636 (+49168), largest 81920 to 110592 (+28672) |
+
+The main's extra memory at idle is now 8908 bytes (was 21984): the FATFS mount without the per file cache (about 3100), the web line queue (2644), the last callers list (about 1500), and a remainder of about 1650. Task 3's "unexplained ~2100" row was that same remainder: block headers, the main's cluster bookkeeping, the card's structs and the web setting strings.
+
+### Missed targets
+
+The busy floors are missed by 3736 bytes of free (polled), 4096 of largest (polled), and 22880 / 7168 in the window. All of them fall while the ANSI viewer holds its 32 KB window and 12016 byte state at the same time as a LORD game on the same board (wdoing and HeapScope both point there). Nothing panicked. Options for Rev, not built: a smaller viewer window when a door is already running, or the viewer declining to start (with its note) below a heap level.
