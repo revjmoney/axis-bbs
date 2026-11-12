@@ -49,6 +49,9 @@ bool inGroups(const std::string& k) {
     for (auto& g : kGroups)
         for (int i = 0; g.keys[i]; i++)
             if (k == g.keys[i]) return true;
+#if AXIS_NETS
+    if (k.rfind("net_", 0) == 0) return true;  // on the Sysop Net page (net_first_peer never shown in clear)
+#endif
     return k.rfind("area", 0) == 0 || k.rfind("msgarea", 0) == 0 || k.rfind("door", 0) == 0 || k.rfind("menu.", 0) == 0 ||
            k == "messages_on" || k == "files_on" || k == "doors_on" || k == "setup_done" || k[0] == '#';
 }
@@ -57,7 +60,11 @@ bool inGroups(const std::string& k) {
 bool boardOnlyCommand(const std::string& cmd) {
     static const char* const kMine[] = {"@CLUSTERKEY", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
                                         "@BEEP",       "@STATION", "@LED",       "@SHOT",       "@TAP",     "@LKEY",    "@LSCREEN", "@WIFIPICK",
-                                        "@STATS"};
+                                        "@STATS",
+#if AXIS_NETS
+                                        "@NETKEY",     "@NETROTATE",  // Sysop Net: Rev's keys, at the board's serial console only
+#endif
+    };
     std::string word = cmd.substr(0, cmd.find(' '));
     for (char& c : word) c = (char)std::toupper((unsigned char)c);
     for (const char* m : kMine)
@@ -161,6 +168,14 @@ void SysopShell::begin() {
                    {"System", "", [this] { enter(SysopSection::System); }},
                    {"Sections", "", [this] { push("SECTIONS", [this](Layer& x) { sections(x); }); }},
                    {"Look", "", [this] { enter(SysopSection::Look); }}};
+#if AXIS_NETS
+        l.items.push_back({"Network setup", "", [this] {
+                               push("NETWORK SETUP", [this](Layer& x) {
+                                   x.items.push_back({"Network settings", "", [this] { push(kGroups[1].name, [this](Layer& y) { settingGroup(y, 1); }); }});
+                                   x.items.push_back({"Sysop Net", "", [this] { push("SYSOP NET", [this](Layer& y) { sysopNet(y); }); }});
+                               });
+                           }});
+#endif
         if (!local_)  // over telnet the WFC is only ever picked here (at the board it is the home screen)
             l.items.push_back({"Waiting for caller screen", "", [this] {
                                    wantWfc_ = true;
@@ -798,6 +813,71 @@ void SysopShell::lookPick(Layer& l, const std::string& key, bool follow) {
         l.items.push_back({label, id == cur ? "now" : "", [pick, id] { pick(id); }});
     }
 }
+
+#if AXIS_NETS
+// ---- Sysop Net (Network setup > Sysop Net), in the Modem page's style: one list with section rows. Everything goes
+// through the @NET commands and @SET, the same as the serial console; few lambda kinds, to keep the image small.
+SysopShell::Item SysopShell::netAsk(const std::string& label, const std::string& value, const std::string& cmd) {
+    return {label, value, [this, cmd] { ask(cmd, cmd.find("first_peer") != std::string::npos, [this, cmd](const std::string& v) { did(run_(cmd + v)); }); }};
+}
+SysopShell::Item SysopShell::netShow(const std::string& label, const std::string& cmd) {
+    return {label, "", [this, label, cmd] { pushText(label, run_(cmd)); }};
+}
+
+void SysopShell::sysopNet(Layer& l) {
+    // kind: H a section row, V a value from @NET, S a setting (asked, then @SET), A a command asked for its
+    // argument, R the same on Rev's board only, T a text page of a command's answer
+    static const char* const kRows[][3] = {
+        {"T", "Status", "@NET"},
+        {"H", "This node", ""},
+        {"V", "  Board id", "board"},
+        {"V", "  MAC", "mac"},
+        {"V", "  Origin", "origin"},
+        {"S", "  Name", "net_name"},
+        {"S", "  Contact", "net_sysop_name"},
+        {"S", "  Location", "net_location"},
+        {"T", "Peers", "@NET PEERS"},
+        {"H", "Sync and routing", ""},
+        {"S", "  Sync every (min)", "net_sync_min"},
+        {"S", "  Keep posts", "net_keep_posts"},
+        {"S", "  Keep days", "net_keep_days"},
+        {"S", "  First peer", "net_first_peer"},
+        {"T", "  Sync now", "@NET SYNC"},
+        {"T", "Traffic and logs", "@NET RECORD 60"},
+        {"H", "Moderation", ""},
+        {"T", "  Hidden and blocked here", "@NET LOCAL"},
+        {"A", "  Hide a post here", "@NETHIDE "},
+        {"A", "  Unhide a post", "@NETUNHIDE "},
+        {"A", "  Block a board here", "@NETBLOCK "},
+        {"A", "  Unblock a board", "@NETUNBLOCK "},
+        {"R", "  Ban a board (net)", "@NETBAN "},
+        {"R", "  Hold a post (net)", "@NETHOLD "},
+        {"R", "  Kill a post (net)", "@NETKILL "},
+        {"R", "  Lift (net)", "@NETLIFT "},
+        {"R", "  Limits (net)", "@NETLIMITS "},
+    };
+    auto d = lines("@NET");
+    l.items.push_back(netAsk("Sysop Net (1 on, 0 off)", setting("net_sysop") == "0" ? "off" : "on", "@SET net_sysop="));
+    if (after(d, "board").empty()) {  // not running here
+        l.items.push_back({d.empty() ? std::string("(no answer)") : d[0], "", nullptr});
+        return;
+    }
+    bool rev = after(d, "rev board") == "yes";
+    for (const auto& r : kRows) {
+        char        k = r[0][0];
+        std::string arg = r[2];
+        if (k == 'H') l.items.push_back({r[1], "", nullptr});
+        else if (k == 'V') l.items.push_back({r[1], after(d, arg), nullptr});
+        else if (k == 'T') l.items.push_back(netShow(r[1], arg));
+        else if (k == 'A' || (k == 'R' && rev)) l.items.push_back(netAsk(r[1], "", arg));
+        else if (k == 'S') {
+            std::string v = setting(arg);
+            if (arg == "net_first_peer") v = v.empty() ? "none" : "set (hidden)";
+            l.items.push_back(netAsk(r[1], v, "@SET " + arg + "="));
+        }
+    }
+}
+#endif
 
 bool SysopShell::escTimeout() {
     if (esc_ != 1 || layers_.empty()) return open();

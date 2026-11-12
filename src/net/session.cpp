@@ -195,6 +195,10 @@ bool NetSession::hello(const std::string& l) {
         fail("banned", "banned");
         return false;
     }
+    if (core_.blockedHere(c.board)) {  // blocked by this board's sysop (the host gives no back-off for it)
+        fail("blocked", "blocked");
+        return false;
+    }
     peer_ = c.board;
     peerNonce_ = nonce;
     peerCard_ = std::move(c);

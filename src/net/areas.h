@@ -132,6 +132,20 @@ public:
     // Log appends that failed (the entry is then never passed on), for the host to report.
     uint32_t appendFailures() const { return appendFailures_; }
 
+    // The net record (net/netrecord.h): called for every take result, card or notice applied and post made here.
+    // who is the peer it came from ("" for this board), what says what happened, signedLine is the record's encoded
+    // line (only for posts stored or made, cards and notices; "" otherwise).
+    using EventFn = std::function<void(const std::string& who, const std::string& what, const std::string& signedLine)>;
+    void setOnEvent(EventFn f) { onEvent_ = std::move(f); }
+    // This board's own moderation (never flooded): a blocked board's posts are Rejected and its sessions refused,
+    // a hidden post is not shown here (NetPostingStore) but is still passed on.
+    void setLocalFilter(std::function<bool(const std::string& board)> blocked, std::function<bool(const std::string& postId)> hidden) {
+        blocked_ = std::move(blocked);
+        hidden_ = std::move(hidden);
+    }
+    bool blockedHere(const std::string& board) const { return blocked_ && blocked_(board); }
+    bool hiddenHere(const std::string& postId) const { return hidden_ && hidden_(postId); }
+
     uint32_t postSeq() const { return seq_; }
     void setPostSeq(uint32_t s) { seq_ = s ? s : 1; }
 
@@ -178,10 +192,12 @@ private:
     std::map<std::string, Link> links_;
     std::string firstPeer_;
     uint32_t appendFailures_ = 0;
+    EventFn onEvent_;
+    std::function<bool(const std::string&)> blocked_, hidden_;
 };
 
 // The board's message store with the net on top: a post into an sn_ area goes through
-// NetCore::originate, and held or killed posts in sn_ areas are hidden. Everything else passes through.
+// NetCore::originate, and held, killed or locally hidden posts in sn_ areas are hidden. Everything else passes through.
 class NetPostingStore : public bbs::MessageStore {
 public:
     NetPostingStore(bbs::MessageStore& inner, NetCore& core) : inner_(inner), core_(core) {}

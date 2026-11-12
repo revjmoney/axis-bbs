@@ -91,6 +91,8 @@ void typeFile(const String& args) {  // a small text file, so a node file can be
 
 bool isNetKeyPath(const String& path) {
     size_t start = 0, n = path.length();
+    for (size_t i = 0; i < n; i++)
+        if (path[i] == '\0') return true;  // open() stops at a NUL: "netkey.txt\0x" would open the key
     for (size_t i = 0; i <= n; i++) {
         if (i < n && path[i] != '/' && path[i] != '\\') continue;
         String part = path.substring(start, i);

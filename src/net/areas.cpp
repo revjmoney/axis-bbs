@@ -194,8 +194,8 @@ void NetCore::log(const std::string& entry) {
     if (log_.next() - log_.first() > kOutLogKeep + kOutLogSlack) log_.trimTo(kOutLogKeep);
 }
 
-// Moves the body and the line into the stored message (they are not needed after), so the post
-// is held once.
+// Moves the body and the line into the stored message, so the post is held once. The line comes
+// back after the store (for the net record); the body does not.
 int NetCore::storePost(NetPost& p, std::string& line) {
     if (areaIndex(p.area) < 0) return 0;
     Message m;
@@ -209,32 +209,39 @@ int NetCore::storePost(NetPost& p, std::string& line) {
     m.net = std::move(line);
     p.body.clear();
     line.clear();
-    return store_.post(p.area, m);
+    int num = store_.post(p.area, m);
+    line = std::move(m.net);
+    return num;
 }
 
 NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history) {
     syncLimits();  // the host may have loaded the state directly
+    auto res = [&](Took t, const char* why) {  // every result goes to the net record
+        if (onEvent_) onEvent_(fromPeer, std::string("post ") + why + " " + p.id, std::string());
+        return t;
+    };
     // 1. decode limits: the record must be representable and signed, and (with a clock) in date
-    if (p.sig.empty() || p.body.size() > kNetMaxBody || encode(p).empty()) return Took::Rejected;
+    if (p.sig.empty() || p.body.size() > kNetMaxBody || encode(p).empty()) return res(Took::Rejected, "rejected bad");
     if (clockSet()) {
         uint64_t now = now_(), date = p.date;
-        if (date + (uint64_t)keepDays_ * 86400 < now || date > now + 86400) return Took::Rejected;
+        if (date + (uint64_t)keepDays_ * 86400 < now || date > now + 86400) return res(Took::Rejected, "rejected date");
     }
     // 2. banned board
-    if (state_.banned(p.board)) return Took::Banned;
+    if (state_.banned(p.board)) return res(Took::Banned, "banned");
+    if (blockedHere(p.board)) return res(Took::Rejected, "rejected blocked here");
     // 3. a known card, and the post signed by its key
     const NetCard* c = state_.card(p.board);
-    if (!c || !verifyPost(p, c->pub)) return Took::Rejected;
+    if (!c || !verifyPost(p, c->pub)) return res(Took::Rejected, "rejected signature");
     // 4. a Sysop Net area, and Rev's board only for the revOnly ones
     const NetArea* area = sysopNetArea(p.area);
-    if (!area || (area->revOnly && !isRevBoard(p.board))) return Took::Rejected;
+    if (!area || (area->revOnly && !isRevBoard(p.board))) return res(Took::Rejected, "rejected area");
     // 5. killed
-    if (state_.killed(p.id)) return Took::Rejected;
+    if (state_.killed(p.id)) return res(Took::Rejected, "rejected killed");
     // 6. dedupe (it is marked seen only once stored, below)
-    if (seen_.has(p.id)) return Took::Duplicate;
+    if (seen_.has(p.id)) return res(Took::Duplicate, "duplicate");
     // 7. ingress, counting the body size (history pulls are capped by the session instead)
     uint32_t today = day();
-    if (!history && !ingress_.allow(p.board, p.body.size(), today)) return Took::Limited;
+    if (!history && !ingress_.allow(p.board, p.body.size(), today)) return res(Took::Limited, "limited");
 
     std::string cameWith = p.path;
     if (!fromPeer.empty()) p.path = appendHop(p.path, fromPeer);
@@ -244,10 +251,11 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
         line = encode(p);
     }
     cameWith.clear();
-    if (line.empty()) return Took::Rejected;
-    int num = storePost(p, line);  // the body and line are moved out here
-    if (!num) return Took::Rejected;
+    if (line.empty()) return res(Took::Rejected, "rejected path");
+    int num = storePost(p, line);  // the body is moved out here
+    if (!num) return res(Took::Rejected, "rejected store");
     seen_.add(p.id, today);
+    if (onEvent_) onEvent_(fromPeer, "post stored " + p.id + " " + p.area, line);
     log("P " + p.area + " " + std::to_string(num) + " " + p.id + " " + excludeList({fromPeer, p.path, p.board}));
     return Took::Stored;
 }
@@ -255,6 +263,7 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
 bool NetCore::takeCard(const NetCard& c, const std::string& fromPeer) {
     if (!state_.addCard(c)) return false;
     log("C " + c.board + " " + excludeList({fromPeer, c.board}));
+    if (onEvent_) onEvent_(fromPeer, "card " + c.board + " " + std::to_string(c.seq), encode(c));
     return true;
 }
 
@@ -266,6 +275,7 @@ bool NetCore::takeNotice(const NetNotice& n, const std::string& fromPeer) {
     if (group == "rotate") log("N R " + std::to_string(n.seq) + " " + excludeList({fromPeer}));
     else if (plainToken(n.target)) log("N " + group + " " + n.target + " " + excludeList({fromPeer}));
     if (n.kind == "kill") dropPost(n.target);
+    if (onEvent_) onEvent_(fromPeer, "notice " + n.kind + " " + n.target + " seq " + std::to_string(n.seq), encode(n));
     return true;
 }
 
@@ -308,6 +318,7 @@ std::string NetCore::originate(const std::string& area, const Message& m, int* n
     seen_.add(p.id, day());
     if (num) *num = n;
     log("P " + area + " " + std::to_string(n) + " " + p.id + " " + excludeList({myBoard_}));
+    if (onEvent_) onEvent_(std::string(), "post made " + p.id + " " + area, line);
     return p.id;
 }
 
@@ -575,7 +586,7 @@ bool NetCore::hasNetPosts() const {
 
 bool NetPostingStore::hidden(const Message& m) const {
     std::string id = netPostId(m.net);
-    return !id.empty() && (core_.state().held(id) || core_.state().killed(id));
+    return !id.empty() && (core_.state().held(id) || core_.state().killed(id) || core_.hiddenHere(id));
 }
 
 std::vector<Message> NetPostingStore::headers(const std::string& area) {

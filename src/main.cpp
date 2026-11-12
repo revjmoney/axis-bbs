@@ -87,7 +87,9 @@
 #include "net/areas.h"
 #include "net/crc.h"
 #include "net/outlog.h"
+#include "net/netrecord.h"
 #include "net/record.h"
+#include "net/revkeys.h"
 #include "net/session.h"
 #include "net/sign.h"
 #include "monocypher.h"
@@ -1997,6 +1999,8 @@ struct NetHost {
     uint32_t                                postSeq = 0, appendFails = 0, houseDay = 0;
     uint32_t                                crc[4] = {0, 0, 0, 0};  // what state, seen, cursors, postseq last wrote
     size_t                                  dialIx = 0;
+    std::unique_ptr<axis::net::NetRecord>   record;         // the net record (/net/record)
+    std::vector<std::string>                hides, blocks;  // /net/local.txt: this board's own moderation
 };
 static std::unique_ptr<NetHost> netHost;
 static uint32_t                 netStartMs = 0;  // the last start attempt (a failed one is tried again in 10 min)
@@ -2042,10 +2046,9 @@ static void netProven(uint32_t ip) {
     if (NetBackoff* b = netBackoffFind(ip, false)) *b = NetBackoff();
 }
 
-// Boards the sysop blocked locally (Task 7 fills this in). They are never dialed.
+// Boards the sysop blocked here (@NETBLOCK). They are never dialed, their sessions are refused and their posts rejected.
 static bool netBlocked(const std::string& board) {
-    (void)board;
-    return false;
+    return netHost && std::find(netHost->blocks.begin(), netHost->blocks.end(), board) != netHost->blocks.end();
 }
 
 static bool netHeapOk() {
@@ -2090,8 +2093,8 @@ static bool netSeedRead(const char* path, uint8_t seed[32]) {
     return ok;
 }
 
-// A new seed written as hex to /netkey.txt (a temp file, then renamed), through a buffer wiped after.
-static bool netSeedWrite(const uint8_t seed[32]) {
+// A new seed written as hex to dest, /netkey.txt or /netrev.key (a temp file, then renamed), through a buffer wiped after.
+static bool netSeedWrite(const uint8_t seed[32], const char* dest = "/netkey.txt") {
     static const char kHex[] = "0123456789abcdef";
     char              hex[65];
     for (size_t i = 0; i < 32; i++) {
@@ -2103,7 +2106,7 @@ static bool netSeedWrite(const uint8_t seed[32]) {
     bool ok = f && f.write((const uint8_t*)hex, sizeof hex) == sizeof hex;
     if (f) f.close();
     crypto_wipe(hex, sizeof hex);
-    ok = ok && LittleFS.rename("/netkey.tmp", "/netkey.txt");
+    if (ok && !LittleFS.rename("/netkey.tmp", dest)) ok = LittleFS.remove(dest) && LittleFS.rename("/netkey.tmp", dest);
     if (!ok) LittleFS.remove("/netkey.tmp");
     return ok;
 }
@@ -2217,7 +2220,7 @@ static std::vector<NetTarget> netTargets(const NetHost& h) {
     std::vector<NetTarget> v;
     NetTarget              f;
     bool                   haveFirst = netFirstTarget(h, f);
-    if (haveFirst) v.push_back(f);
+    if (haveFirst && !netBlocked(f.board)) v.push_back(f);
     const axis::net::NetState& st = h.core->state();
     for (int pass = 0; pass < 2; pass++)
         st.forEachCard([&](const axis::net::NetCard& c) {
@@ -2289,8 +2292,10 @@ static void netClose(NetHost& h, NetSlot& s, const char* why) {
                  (what.length() ? String(" (") + what + ")" : String()) + ", " + String(s.s->postsSent()) + " out, " +
                  String(s.s->postsTaken()) + " in" + heapText());
         if (ok && s.first && !s.s->peer().empty()) netSaveFirstPeer(h, s.s->peer());
+        if (h.record) h.record->note(s.s->peer().empty() ? std::string("-") : s.s->peer(), std::string(ok ? "session ok " : "session failed ") + what.c_str(), std::string());
+        bool blocked = what == "blocked";  // refused by this board's own block list: no back-off for that
         if (&s == &h.in && s.s->proven()) netProven(s.ip);
-        else if (&s == &h.in && !(why && !std::strcmp(why, "net off"))) netStrike(s.ip);  // never proved who it is
+        else if (&s == &h.in && !blocked && !(why && !std::strcmp(why, "net off"))) netStrike(s.ip);  // never proved who it is
     }
     s.s.reset();
     s.pend.clear();
@@ -2495,6 +2500,381 @@ static void netSaveNow() {
     if (netHost) netSave(*netHost, true);
 }
 
+// ---- the net record, local moderation and the @NET commands
+static constexpr size_t kNetRecordCap = 64 * 1024;  // a main without a card: one record file, the newest half kept
+static constexpr size_t kNetMaxHides = 200, kNetMaxBlocks = 64;
+
+static bool netHas(const std::vector<std::string>& v, const std::string& s) { return std::find(v.begin(), v.end(), s) != v.end(); }
+static bool netIsBoard(const std::string& s) { return s.size() == 16 && s.find_first_not_of("0123456789abcdef") == std::string::npos; }
+static bool netIsPostId(const std::string& s) {
+    if (s.size() < 18 || s.size() > 27 || s[16] != '-' || !netIsBoard(s.substr(0, 16)) || s[17] == '0') return false;
+    return s.find_first_not_of("0123456789", 17) == std::string::npos;
+}
+
+static std::string netYyyymm() {
+    uint32_t now = unixNow();
+    if (now <= axis::net::kNetClockSet) return "nodate";
+    time_t    t = (time_t)now;
+    struct tm tm;
+    localtime_r(&t, &tm);
+    char b[12];
+    snprintf(b, sizeof b, "%04d%02d", tm.tm_year + 1900, tm.tm_mon + 1);
+    return b;
+}
+
+// The record file being written now: /net/record/<yyyymm>.log on the SD card, else the one capped /net/record.log.
+static std::string netRecordFile() {
+    return std::string(storageRoot()) + (storageHasSd() ? "/net/record/" + netYyyymm() + ".log" : std::string("/net/record.log"));
+}
+
+// Internal flash only: the file cut to its newest half (from a line start), through a temp file. A failed cut removes it.
+static bool netRecordHalve(const std::string& file, long size) {
+    std::string tmp = std::string(storageRoot()) + "/net/record.tmp";
+    FILE*       in = std::fopen(file.c_str(), "rb");
+    FILE*       out = in ? std::fopen(tmp.c_str(), "wb") : nullptr;
+    bool        ok = out && std::fseek(in, size / 2, SEEK_SET) == 0;
+    int         c;
+    while (ok && (c = std::fgetc(in)) != EOF && c != '\n') {}
+    char   buf[256];
+    size_t r;
+    while (ok && (r = std::fread(buf, 1, sizeof buf, in)) > 0) ok = std::fwrite(buf, 1, r, out) == r;
+    if (in) std::fclose(in);
+    if (out) ok = std::fclose(out) == 0 && ok;
+    ::unlink(file.c_str());
+    if (ok && ::rename(tmp.c_str(), file.c_str()) == 0) return true;
+    ::unlink(tmp.c_str());
+    return false;
+}
+
+static bool netRecordAppend(const std::string& path, const std::string& line) {
+    std::string file = std::string(storageRoot()) + (storageHasSd() ? path : std::string("/net/record.log"));
+    struct stat st;
+    if (storageHasSd()) ::mkdir((std::string(storageRoot()) + "/net/record").c_str(), 0777);
+    else if (::stat(file.c_str(), &st) == 0 && (size_t)st.st_size + line.size() + 1 > kNetRecordCap && !netRecordHalve(file, (long)st.st_size))
+        return false;
+    FILE* f = std::fopen(file.c_str(), "ab");
+    if (!f) return false;
+    bool ok = std::fwrite(line.data(), 1, line.size(), f) == line.size() && std::fputc('\n', f) != EOF;
+    return std::fclose(f) == 0 && ok;
+}
+
+// The record's newest lines, newest first, skip lines in: their head only ("<unix> <who> <what>", at most 120
+// characters). Read backwards in small blocks; a month's file is never loaded whole.
+static void netRecordTail(size_t skip, size_t count, std::vector<std::string>& out) {
+    std::string path = netRecordFile();
+    FILE*       f = std::fopen(path.c_str(), "rb");
+    if (!f) return;
+    std::fseek(f, 0, SEEK_END);
+    long lineEnd = std::ftell(f), p;
+    if (lineEnd > 0 && std::fseek(f, lineEnd - 1, SEEK_SET) == 0 && std::fgetc(f) == '\n') lineEnd--;
+    size_t seen = 0;
+    auto   emit = [&](long s, long e) {  // the line [s, e); false once there are enough
+        if (e <= s || seen++ < skip) return true;
+        char   h[120];
+        size_t n = (size_t)std::min<long>(e - s, (long)sizeof h);
+        std::fseek(f, s, SEEK_SET);
+        n = std::fread(h, 1, n, f);
+        out.push_back(axis::net::recordHead(std::string(h, n)));
+        return out.size() < count;
+    };
+    char buf[128];
+    bool more = count > 0;
+    for (p = lineEnd; more && p > 0;) {
+        long from = p > (long)sizeof buf ? p - (long)sizeof buf : 0;
+        if (std::fseek(f, from, SEEK_SET) != 0 || std::fread(buf, 1, (size_t)(p - from), f) != (size_t)(p - from)) break;
+        for (long i = p - 1; more && i >= from; i--)
+            if (buf[i - from] == '\n') {
+                more = emit(i + 1, lineEnd);
+                lineEnd = i;
+            }
+        p = from;
+    }
+    if (more && p == 0) emit(0, lineEnd);
+    std::fclose(f);
+}
+
+static void netNote(const std::string& what) {
+    if (netHost && netHost->record) netHost->record->note("sysop", what, "");
+}
+
+// /net/local.txt: "hide <postId>" and "block <board>" lines. This board's own choices, never sent anywhere.
+static void netLocalLoad(NetHost& h) {
+    std::string t = netFileRead("local.txt", 16 * 1024), l;
+    for (char c : t + "\n") {
+        if (c != '\n') {
+            l += c;
+            continue;
+        }
+        if (l.compare(0, 5, "hide ") == 0 && netIsPostId(l.substr(5)) && h.hides.size() < kNetMaxHides) h.hides.push_back(l.substr(5));
+        else if (l.compare(0, 6, "block ") == 0 && netIsBoard(l.substr(6)) && h.blocks.size() < kNetMaxBlocks) h.blocks.push_back(l.substr(6));
+        l.clear();
+    }
+}
+static bool netLocalSave(const NetHost& h) {
+    std::string t;
+    for (const std::string& s : h.hides) t += "hide " + s + "\n";
+    for (const std::string& s : h.blocks) t += "block " + s + "\n";
+    return netFileWrite("local.txt", t);
+}
+
+// Which of Rev's two keys this board signs with (0 or 1), or -1 when it is not Rev's board.
+static int netRevSlot(const NetHost& h) {
+    std::string pub = axis::net::toHex(h.key.pub, 32);
+    return pub == axis::net::revKey(0) ? 0 : pub == axis::net::revKey(1) ? 1 : -1;
+}
+
+// A notice from Rev's board: signed, applied here and logged to flood with the next sync (dialed soon).
+static void netNotice(NetHost& h, const char* kind, const std::string& target, const std::string& value, Print& out) {
+    axis::net::NetNotice n;
+    n.kind = kind;
+    n.target = target;
+    n.value = value;
+    n.seq = h.core->state().highSeq() + 1;
+    n.key = netRevSlot(h);
+    bool ok = n.key >= 0 && axis::net::signNotice(n, h.key) && h.core->originateNotice(n);
+    if (ok) {
+        h.dirty = true;
+        h.postDue = true;
+        h.postMs = millis();
+        logEvent(String("sysop: net ") + kind + " " + target.c_str());
+    }
+    out.printf(ok ? "@OK %s %s, seq %u\n" : "@ERR %s %s not taken\n", kind, target.c_str(), (unsigned)n.seq);
+}
+
+static std::string netAgo(uint32_t t) { return t ? axis::net::netDateText(t) : std::string("never"); }
+
+static const char* netSlotText(const NetSlot& s) { return s.phase == NetPhase::Idle ? "idle" : s.phase == NetPhase::Looking ? "looking up" : "live"; }
+
+// The rest of a NetCore::saveCursors line after its peer, "<index> <last sync> <out|in>": the numbers, then the pool.
+// (No sscanf: it would pull about 24 KB of scanf into the image.)
+static const char* netCursor(const char* p, uint32_t& idx, uint32_t& last) {
+    char* e = nullptr;
+    idx = (uint32_t)std::strtoul(p, &e, 10);
+    last = (uint32_t)std::strtoul(e, &e, 10);
+    while (*e == ' ') e++;
+    return e;
+}
+
+static void netStatus(NetHost& h, Print& out) {
+    axis::net::NetCore& core = *h.core;
+    const axis::net::NetCard& c = h.card;
+    out.printf("net %s\n", cfg.netSysop ? "on" : "off (net_sysop=0)");
+    out.printf("board %s\n", core.board().c_str());
+    out.printf("rev board %s\n", netRevSlot(h) >= 0 ? "yes" : "no");
+    out.printf("name %s\nmac %s\ncontact %s\nlocation %s\n", c.name.c_str(), c.mac.c_str(), c.sysop.c_str(), c.location.c_str());
+    out.printf("origin %s (%s:%d)\n", c.name.c_str(), c.host.c_str(), c.port);
+    out.printf("first peer %s\n", cfg.netFirstPeer.empty() ? "none" : "set");
+    out.printf("high seq %u, cards %u, outlog %u..%u\n", (unsigned)core.state().highSeq(), (unsigned)core.state().cardCount(),
+               (unsigned)h.log->first(), (unsigned)h.log->next());
+    out.printf("sessions in %s, out %s\n", netSlotText(h.in), netSlotText(h.out));
+    uint32_t    next = h.log->next(), idx, last;
+    std::string t = core.saveCursors();
+    for (size_t at = 0, nl; (nl = t.find('\n', at)) != std::string::npos; at = nl + 1) {
+        std::string l = t.substr(at, nl - at);
+        size_t      sp = l.find(' ');
+        if (sp == std::string::npos) continue;
+        const char* pool = netCursor(l.c_str() + sp, idx, last);
+        out.printf("peer %.16s %s queue %u, synced %s\n", l.c_str(), pool, (unsigned)(next > idx ? next - idx : 0), netAgo(last).c_str());
+    }
+    if (h.record && h.record->failures()) out.printf("record writes failed %u\n", (unsigned)h.record->failures());
+}
+
+static void netPeers(NetHost& h, Print& out) {
+    const axis::net::NetState& st = h.core->state();
+    std::string                t = "\n" + h.core->saveCursors();
+    st.forEachCard([&](const axis::net::NetCard& c) {
+        std::string link = "-", seen = "-";
+        size_t      at = t.find("\n" + c.board + " ");
+        if (at != std::string::npos) {
+            uint32_t    idx, last;
+            std::string l = t.substr(at + 18, t.find('\n', at + 1) - at - 18);
+            link = netCursor(l.c_str(), idx, last);
+            seen = netAgo(last);
+        }
+        const char* flags = c.board == h.core->board() ? "this board" : st.banned(c.board) ? "banned" : netHas(h.blocks, c.board) ? "blocked" : "";
+        out.printf("%s | %s | %s | %s:%d | %s | %s | %s\n", netCardName(&c).c_str(), c.board.c_str(), c.mac.c_str(), c.host.c_str(), c.port,
+                   link.c_str(), seen.c_str(), flags);
+    });
+}
+
+// "@NETKEY SET <64 hex>" / "@NETKEY CLEAR", typed at the serial console (handleSerial gives the line straight here and
+// wipes it after; runCommand refuses it from anywhere else). Rev's daily key goes to internal flash as /netrev.key and
+// is used from the next start. The seed is never echoed, logged or kept: it goes from the line into a wiped buffer.
+static bool netKeyLine(const String& cmd) {
+    static const char kWord[] = "@NETKEY";
+    if (cmd.length() < 7) return false;
+    for (int i = 0; i < 7; i++)
+        if (std::toupper((unsigned char)cmd[i]) != kWord[i]) return false;
+    return cmd.length() == 7 || cmd[7] == ' ';
+}
+static void netKeyCommand(const String& cmd) {
+    const char* s = cmd.c_str() + 7;
+    while (*s == ' ') s++;
+    auto said = [&s](const char* w) {
+        size_t n = std::strlen(w);
+        if (strncasecmp(s, w, n) != 0 || (s[n] && s[n] != ' ')) return false;
+        s += n;
+        while (*s == ' ') s++;
+        return true;
+    };
+    if (asFollower()) {
+        Serial.println("@ERR the net key is set on the main board");
+    } else if (said("CLEAR")) {
+        bool had = LittleFS.exists("/netrev.key");
+        bool ok = !had || LittleFS.remove("/netrev.key");
+        if (ok && had) {
+            logEvent("sysop: net key cleared");
+            netNote("netkey cleared");
+        }
+        Serial.println(!ok ? "@ERR net key not cleared" : had ? "@OK net key cleared, @RESTART to use the board's own key" : "@OK no net key was set");
+    } else if (said("SET")) {
+        uint8_t seed[32];
+        bool    ok = true;
+        for (int i = 0; i < 64 && ok; i++) {
+            char c = s[i];
+            int  d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            ok = d >= 0;
+            if (i % 2 == 0) seed[i / 2] = (uint8_t)(d << 4);
+            else seed[i / 2] |= (uint8_t)d;
+        }
+        for (int i = 64; ok && s[i]; i++) ok = s[i] == ' ';
+        axis::net::KeyPair k;
+        if (ok) {
+            k = axis::net::keyFromSeed(seed);
+            std::string pub = axis::net::toHex(k.pub, 32);
+            ok = pub == axis::net::revKey(0) || pub == axis::net::revKey(1);
+            crypto_wipe(&k, sizeof k);
+            if (!ok) Serial.println("@ERR that is not one of Rev's keys");
+        } else {
+            Serial.println("@ERR @NETKEY SET wants 64 hex characters");
+        }
+        if (ok && !netSeedWrite(seed, "/netrev.key")) {
+            ok = false;
+            Serial.println("@ERR net key not saved");
+        }
+        crypto_wipe(seed, sizeof seed);
+        if (ok) {
+            logEvent("sysop: net key set");
+            netNote("netkey set");
+            Serial.println("@OK net key saved, @RESTART to use it");
+        }
+    } else {
+        Serial.println("@ERR @NETKEY SET <64 hex> or @NETKEY CLEAR");
+    }
+}
+
+// Every other @NET command (serial, the sysop menu, the PC panel). The main runs them; a follower forwards them.
+static void netCommand(const String& cmd, Print& out) {
+    std::string c = cmd.c_str(), arg;
+    size_t      sp = c.find(' ');
+    std::string word = c.substr(0, sp);
+    if (sp != std::string::npos) arg = c.substr(sp + 1);
+    while (!arg.empty() && arg.back() == ' ') arg.pop_back();
+    while (!arg.empty() && arg[0] == ' ') arg.erase(0, 1);
+    if (word == "@NETKEY") {  // never from here: only handleSerial takes it
+        out.println("@ERR serial console only");
+        return;
+    }
+    if (asFollower()) {
+        out.println("axis: Sysop Net runs on the main board");
+        return;
+    }
+    if (!netHost) {
+        out.println("axis: Sysop Net is not running");
+        return;
+    }
+    NetHost& h = *netHost;
+    std::string a = arg;
+    for (char& ch : a) ch = (char)std::tolower((unsigned char)ch);
+    if (word == "@NET") {
+        std::string up = arg;
+        for (char& ch : up) ch = (char)std::toupper((unsigned char)ch);
+        if (up.empty()) netStatus(h, out);
+        else if (up == "SYNC") {
+            h.postDue = true;
+            h.postMs = millis() - kNetPostDialMs;
+            out.println("@OK dialing soon");
+        } else if (up == "PEERS") netPeers(h, out);
+        else if (up == "LOCAL") {
+            for (const std::string& s : h.hides) out.printf("hide %s\n", s.c_str());
+            for (const std::string& s : h.blocks) out.printf("block %s\n", s.c_str());
+        } else if (up.compare(0, 6, "RECORD") == 0) {
+            char*         e = nullptr;
+            unsigned long n = std::strtoul(up.c_str() + 6, &e, 10), skip = std::strtoul(e, nullptr, 10);
+            if (!n) n = 20;
+            std::vector<std::string> v;
+            netRecordTail((size_t)skip, (size_t)std::min<unsigned long>(n, 100), v);
+            for (const std::string& l : v) {
+                size_t s1 = l.find(' ');
+                out.printf("%s %s\n", axis::net::netDateText((uint32_t)std::strtoul(l.c_str(), nullptr, 10)).c_str(),
+                           s1 == std::string::npos ? "" : l.c_str() + s1 + 1);
+            }
+            if (v.empty()) out.println("axis: the record is empty");
+        } else out.println("axis: @NET, @NET SYNC, @NET PEERS, @NET RECORD [n], @NET LOCAL");
+        return;
+    }
+    // local moderation: this board only
+    bool hide = word == "@NETHIDE", unhide = word == "@NETUNHIDE", block = word == "@NETBLOCK", unblock = word == "@NETUNBLOCK";
+    if (hide || unhide || block || unblock) {
+        std::vector<std::string>& v = hide || unhide ? h.hides : h.blocks;
+        bool                      ok = hide || unhide ? netIsPostId(a) : netIsBoard(a) && a != h.core->board();
+        if (!ok) {
+            out.println("@ERR bad board or post id");
+            return;
+        }
+        auto it = std::find(v.begin(), v.end(), a);
+        if (hide || block) {
+            if (it == v.end() && v.size() >= (hide ? kNetMaxHides : kNetMaxBlocks)) {
+                out.println("@ERR the list is full");
+                return;
+            }
+            if (it == v.end()) v.push_back(a);
+            if (block)
+                for (NetSlot* s : {&h.in, &h.out})
+                    if (s->s && s->s->peer() == a) netClose(h, *s, "blocked");
+        } else if (it != v.end()) {
+            v.erase(it);
+        }
+        ok = netLocalSave(h);
+        for (char& ch : word) ch = (char)std::tolower((unsigned char)ch);
+        netNote(word.substr(4) + " " + a);
+        out.printf(ok ? "@OK %s %s\n" : "@ERR %s %s not saved\n", word.c_str() + 4, a.c_str());
+        return;
+    }
+    // Rev's notices: only on Rev's board
+    if (netRevSlot(h) < 0) {
+        out.println("@ERR not Rev's board");
+        return;
+    }
+    static const char* const kRev[4][2] = {{"@NETBAN", "ban"}, {"@NETHOLD", "hold"}, {"@NETKILL", "kill"}, {"@NETLIFT", "lift"}};
+    for (const auto& r : kRev)
+        if (word == r[0]) {  // ban: a board; hold, kill: a post; lift: either (the target's shape picks the group)
+            bool board = netIsBoard(a), post = netIsPostId(a);
+            if (r[1][0] == 'b' ? board : r[1][0] == 'l' ? board || post : post) netNotice(h, r[1], a, "", out);
+            else out.println("@ERR bad board or post id");
+            return;
+        }
+    if (word == "@NETLIMITS") {
+        unsigned long posts = 0, bytes = 0;
+        char*         e = nullptr;
+        bool          ok = a.compare(0, 6, "posts=") == 0 && std::isdigit((unsigned char)a[6]);
+        if (ok) posts = std::strtoul(a.c_str() + 6, &e, 10);
+        ok = ok && std::strncmp(e, ",bytes=", 7) == 0 && std::isdigit((unsigned char)e[7]);
+        if (ok) bytes = std::strtoul(e + 7, &e, 10);
+        if (ok && !*e && posts && bytes && posts < 100000 && bytes < 100000000)
+            netNotice(h, "limits", "net", "posts=" + std::to_string(posts) + ",bytes=" + std::to_string(bytes), out);
+        else out.println("@ERR @NETLIMITS posts=<n>,bytes=<n>");
+    } else if (word == "@NETROTATE") {
+        std::string hex = a.substr(0, a.find(' ')), yes = a.size() > 65 ? arg.substr(65) : "";
+        if (&out != &Serial) out.println("@ERR serial console only");
+        else if (hex.size() != 64 || hex.find_first_not_of("0123456789abcdef") != std::string::npos) out.println("@ERR @NETROTATE <64 hex public key> [YES]");
+        else if (yes != "YES") out.printf("axis: replaces Rev's key %d net-wide; to send: @NETROTATE %s YES\n", 1 - netRevSlot(h), hex.c_str());
+        else netNotice(h, "rotate", netRevSlot(h) == 0 ? "1" : "0", hex, out);
+    } else {
+        out.println("axis: unknown @NET command");
+    }
+}
+
 static bool netStart() {
     netStartMs = millis();
     callerMessages();  // makes the board's own store
@@ -2524,6 +2904,16 @@ static bool netStart() {
     }
     axis::net::NetCore& core = *h->core;
     uint32_t            day = unixNow() / 86400;
+    h->record.reset(new (std::nothrow) axis::net::NetRecord(netRecordAppend, netYyyymm, unixNow));
+    netLocalLoad(*h);
+    {
+        NetHost*              hp = h.get();  // (the host outlives the core: both live in netHost from here on)
+        axis::net::NetRecord* rec = h->record.get();
+        if (rec)
+            core.setOnEvent([rec](const std::string& who, const std::string& what, const std::string& line) { rec->note(who, what, line); });
+        core.setLocalFilter([hp](const std::string& b) { return netHas(hp->blocks, b); },
+                            [hp](const std::string& id) { return netHas(hp->hides, id); });
+    }
     core.state().load(netFileRead("state.txt"), day);
     core.seen().load(netFileRead("seen.txt"));
     core.loadCursors(netFileRead("cursors.txt"));  // (clears the link peers: the first peer goes back after)
@@ -3982,6 +4372,10 @@ static void runCommand(const String& cmd, Print& out) {
         }
     } else if (cmd == "@DOORSTATE") {  // the 8086 runtime is dosemu/ and is not in this firmware
         out.println("axis: no 8086 in this firmware");
+#if AXIS_NETS
+    } else if (cmd.startsWith("@NET")) {  // Sysop Net: @NET, @NET SYNC|PEERS|RECORD|LOCAL, local and Rev's moderation
+        netCommand(cmd, out);
+#endif
     } else if (cmd == "@NODES") {  // the cluster as this board sees it (bench)
         if (!cluster) out.println("axis: no cluster");
         else
@@ -4649,10 +5043,16 @@ static void handleSerial() {
             continue;
         }
         if (c != '\n' && c != '\r') {
+            cmd.reserve(168);  // one buffer, never moved: what is typed (a key) is wiped from it below, not left in a freed copy
             if (cmd.length() < 160) cmd += c;
             continue;
         }
-        runCommand(cmd, Serial);
+#if AXIS_NETS
+        if (netKeyLine(cmd)) netKeyCommand(cmd);  // Rev's net key: never echoed, logged or passed on
+        else
+#endif
+            runCommand(cmd, Serial);
+        if (cmd.length()) std::memset((void*)cmd.c_str(), 0, cmd.length());
         cmd = "";
     }
     if (serialWfc) {

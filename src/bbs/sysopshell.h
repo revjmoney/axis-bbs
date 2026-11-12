@@ -12,6 +12,10 @@
 #include <string>
 #include <vector>
 
+#ifndef AXIS_NETS
+#define AXIS_NETS 1  // Sysop Net (main.cpp); -DAXIS_NETS=0 leaves its page and commands out
+#endif
+
 namespace axis::bbs {
 
 // the sysop menu's sections: beginAt() goes straight into one (the Renegade hotkeys and the board's own screen)
@@ -98,6 +102,11 @@ private:
     void lookPick(Layer& l, const std::string& key, bool follow);
     void station(Layer& l);
     void modem(Layer& l);
+#if AXIS_NETS
+    void sysopNet(Layer& l);
+    Item netAsk(const std::string& label, const std::string& value, const std::string& cmd);  // asks, then runs cmd + answer
+    Item netShow(const std::string& label, const std::string& cmd);                           // a text page of cmd's answer
+#endif
 
     std::string&       out_;
     Run                run_;
