@@ -13,6 +13,7 @@
 
 namespace axis::bbs {
 class AnsiTerm;
+class WfcAnim;
 }
 
 // The palette: the CGA colours in attribute order (so an ANSI colour number is its index), with
@@ -37,4 +38,5 @@ LGFX_Sprite* screenBand();          // the band, or nullptr
 void         screenFailNext();      // @SPRITEFAIL (bench): the next screenFull() that has to make the copy fails
 // dump the screen over serial: "@SHOT 320 240", RGB332 hex rows, "@SHOT END"; eachRow keeps the board's work going (it
 // takes ~13 s). wfc: the WFC's terminal, drawn band by band into the dump. No wfc and no full copy: "@SHOT NONE".
-void screenShot(void (*eachRow)() = nullptr, const axis::bbs::AnsiTerm* wfc = nullptr);
+// anim: the WFC is moving: its frame now is dumped instead (wfc must still be given)
+void screenShot(void (*eachRow)() = nullptr, const axis::bbs::AnsiTerm* wfc = nullptr, const axis::bbs::WfcAnim* anim = nullptr);

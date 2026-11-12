@@ -18,6 +18,7 @@ add_library(axiscore STATIC
     src/bbs/filebrowser.cpp
     src/bbs/zipreader.cpp
     src/bbs/ansiterm.cpp
+    src/bbs/wfcanim.cpp
     src/bbs/wfc.cpp
     src/bbs/daystats.cpp
     src/bbs/statsshare.cpp
@@ -147,6 +148,7 @@ add_executable(axis_tests
     tests/test_files.cpp
     tests/test_zip.cpp
     tests/test_ansiterm.cpp
+    tests/test_wfcanim.cpp
     tests/test_wfc.cpp
     tests/test_daystats.cpp
     tests/test_statsshare.cpp
