@@ -2564,6 +2564,12 @@ static void startDoorInner() {
                                                nullptr, 0, *line));
         viewer->setAreas(va);
         if (!node->lite()) viewer->setClock([] { return (uint32_t)millis(); });  // ANSI movies play at modem speed (a lite caller: unpaced)
+        // The viewer limit (Rev, 2026-11-12): with its 44 KB window taken the board keeps the busy test's floors (60 KB free,
+        // 32 KB largest) plus room for the other callers' next turn, or the piece is refused or stopped with a note.
+        viewer->setRoom([] {
+            return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= 61440u + 8192u &&
+                   heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= 32768u + 4096u;
+        });
         viewer->begin();
         line->flush();
         return;

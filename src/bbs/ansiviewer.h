@@ -26,7 +26,10 @@ public:
     ~AnsiViewer();
     void setZipState(uint8_t* state) { state_ = state; }
     // the time, for playing ANSI movies at modem speed (without it they go as fast as the line takes)
-    void setClock(std::function<uint32_t()> clock) { clock_ = std::move(clock); }  // ZipReader::kStateBytes, when the workspace is only the window
+    void setClock(std::function<uint32_t()> clock) { clock_ = std::move(clock); }
+    // whether the board has room for the borrowed window: asked right after it is taken and on every turn a piece
+    // plays, so a busy board refuses the piece (or stops it) with a note instead of going under the heap floor
+    void setRoom(std::function<bool()> room) { room_ = std::move(room); }  // ZipReader::kStateBytes, when the workspace is only the window
     // several file areas (the door's args "ansi,scene-acid,..."): a picker first; id and name each
     void setAreas(std::vector<std::pair<std::string, std::string>> areas) { areas_ = std::move(areas); }
     void begin();  // show the packs (or the areas, when there are several)
@@ -85,6 +88,8 @@ private:
     int                          lines_ = 0;
     uint32_t                     baud_ = 9600, lastPump_ = 0;
     std::function<uint32_t()>    clock_;
+    std::function<bool()>        room_;
+    void shortOnMemory();  // the piece is dropped: back to the list, with the note
 };
 
 bool isAnsiPiece(const std::string& name);  // .ANS .ICE .CIA .DRK .LGO .ASC .NFO .DIZ .TXT .MEM

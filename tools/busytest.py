@@ -254,8 +254,16 @@ class CallerB(Worker):
                 self.count("pack_fail")
                 continue
             self.count("packs_opened")
-            self.keys("\r", None, 3.0)  # view the first piece
-            self.keys("n", None, 5.0)  # non-stop for a few seconds
+            shown = self.keys("\r", r"short on memory", 3.0)  # view the first piece
+            if re.search(r"short on memory", shown, re.I):  # the viewer limit refused it: still on the piece list
+                self.count("pieces_refused")
+                self.keys("q", r"Esc or Q back", 6.0)  # back to the packs
+                continue
+            shown = self.keys("n", r"short on memory", 5.0)  # non-stop for a few seconds
+            if re.search(r"short on memory", shown, re.I):  # stopped part way by the limit: back on the list
+                self.count("pieces_stopped")
+                self.keys("q", r"Esc or Q back", 6.0)
+                continue
             self.count("pieces_played")
             self.keys("q", r"Enter views", 6.0)  # back to the pieces
             self.keys("q", r"Esc or Q back", 6.0)  # back to the packs

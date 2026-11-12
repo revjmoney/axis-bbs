@@ -61,7 +61,18 @@ bool AnsiViewer::grabInflate() {
     wsSize_ = inflate::kWindow;
     state_ = s;
     leased_ = true;
+    if (room_ && !room_()) {  // taken, and now the board is under its floor: give it straight back
+        releaseInflate();
+        return false;
+    }
     return true;
+}
+
+void AnsiViewer::shortOnMemory() {
+    releaseInflate();
+    std::string().swap(chunk_);
+    showPieces();  // then the note, so the list's CLS does not wipe it (80 columns: from column 1)
+    send(std::string("\x1b[22;1H") + AMBER + "The board is short on memory for another movie right now. Try again in a minute." + HI);
 }
 
 void AnsiViewer::releaseInflate() {
@@ -192,8 +203,7 @@ void AnsiViewer::showPiece(size_t i) {
         return;
     }
     if (e.method == 8 && !grabInflate()) {  // stored pieces need no window
-        showPieces();  // then the note, so the list's CLS does not wipe it (80 columns: from column 1)
-        send(std::string("\x1b[22;1H") + AMBER + "The board is short on memory for another movie right now. Try again in a minute." + HI);
+        shortOnMemory();
         return;
     }
     send(CLS);
@@ -218,7 +228,12 @@ void AnsiViewer::showPiece(size_t i) {
 }
 
 void AnsiViewer::pump() {
-    if (st_ != St::Playing || waiting_) return;
+    if (st_ != St::Playing) return;
+    if (leased_ && room_ && !room_()) {  // the board got busy while this piece played (or waits at "more"): it stops here
+        shortOnMemory();
+        return;
+    }
+    if (waiting_) return;
     size_t budget = 2048;  // a still piece: a screenful a turn at most
     if (movie_ && clock_) {  // a movie: what the modem would have carried since last time
         uint32_t t = now(), elapsed = t - lastPump_;

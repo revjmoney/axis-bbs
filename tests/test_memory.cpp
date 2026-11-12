@@ -415,6 +415,56 @@ TEST_CASE("viewer shows the list with the note when the window is lent") {
     run("q");
 }
 
+TEST_CASE("viewer limit: no room refuses the piece; room lost mid-piece stops it; both give the window back") {
+    REQUIRE_FALSE(inflate::busy());
+    PackLibrary lib;
+    {
+        std::ifstream in(std::string(AXIS_TEST_DATA) + "/pack.zip", std::ios::binary);
+        lib.files["AXISTEST.ZIP"] = std::string((std::istreambuf_iterator<char>(in)), {});
+        lib.files["FILES.BBS"] = "AXISTEST.ZIP Test pack\r\n";
+    }
+    axis::door::ScriptStream line;
+    AnsiViewer               v{lib, "ansi", "ANSI Packs", nullptr, 0, line};
+    bool                     room = false;
+    int                      asked = 0;
+    v.setRoom([&] {
+        asked++;
+        return room;
+    });
+    auto run = [&](const std::string& keys) {
+        line.push(keys);
+        for (int i = 0; i < 20 && v.step(); i++) {
+        }
+        std::string out = line.output();
+        line.clearOutput();
+        return out;
+    };
+    const char* note = "The board is short on memory for another movie right now. Try again in a minute.";
+    v.begin();
+    CHECK(asked == 0);  // lists never ask
+    run("1\r");
+    std::string out = run("1\r");  // REV-AXIS.ANS, deflated: the window is taken, the board has no room
+    CHECK(asked >= 1);
+    CHECK(out.find(note) != std::string::npos);
+    CHECK(out.find("REV-AXIS.ANS") != std::string::npos);  // back on the list
+    CHECK(out.find("line 1") == std::string::npos);        // nothing of the piece went out
+    CHECK_FALSE(inflate::busy());
+
+    room = true;
+    out = run("1\r");  // room now: it plays, and stops at "more" (40 lines) holding the window
+    CHECK(out.find("line 1") != std::string::npos);
+    CHECK(out.find(note) == std::string::npos);
+    CHECK(inflate::busy());
+    room = false;  // another caller took the memory while this one reads
+    out = run("");
+    CHECK(out.find(note) != std::string::npos);
+    CHECK(out.find("line 40") == std::string::npos);
+    CHECK_FALSE(inflate::busy());
+    run("q");
+    run("q");
+    run("q");
+}
+
 // ---- lists: append, then trim lazily
 
 TEST_CASE("list append then trim keeps the newest cap lines in order") {
