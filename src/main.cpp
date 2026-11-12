@@ -2540,9 +2540,11 @@ static bool netRecordHalve(const std::string& file, long size) {
     while (ok && (r = std::fread(buf, 1, sizeof buf, in)) > 0) ok = std::fwrite(buf, 1, r, out) == r;
     if (in) std::fclose(in);
     if (out) ok = std::fclose(out) == 0 && ok;
-    ::unlink(file.c_str());
+    // LittleFS rename replaces the target atomically (esp_littlefs calls lfs_rename, no remove first), so a reset
+    // here leaves either the old file or the new one, never neither. A failed cut removes the file: never past the cap.
     if (ok && ::rename(tmp.c_str(), file.c_str()) == 0) return true;
     ::unlink(tmp.c_str());
+    ::unlink(file.c_str());
     return false;
 }
 
@@ -2629,7 +2631,7 @@ static void netNotice(NetHost& h, const char* kind, const std::string& target, c
     n.kind = kind;
     n.target = target;
     n.value = value;
-    n.seq = h.core->state().highSeq() + 1;
+    n.seq = h.core->state().usedSeq() + 1;  // never a seq used before, even one since pruned or from before a restart
     n.key = netRevSlot(h);
     bool ok = n.key >= 0 && axis::net::signNotice(n, h.key) && h.core->originateNotice(n);
     if (ok) {
@@ -2772,16 +2774,17 @@ static void netKeyCommand(const String& cmd) {
 
 // Every other @NET command (serial, the sysop menu, the PC panel). The main runs them; a follower forwards them.
 static void netCommand(const String& cmd, Print& out) {
+    if (netKeyLine(cmd)) {  // never from here (only handleSerial takes it): refused before any copy, and the line wiped
+        std::memset((void*)cmd.c_str(), 0, cmd.length());
+        out.println("@ERR serial console only");
+        return;
+    }
     std::string c = cmd.c_str(), arg;
     size_t      sp = c.find(' ');
     std::string word = c.substr(0, sp);
     if (sp != std::string::npos) arg = c.substr(sp + 1);
     while (!arg.empty() && arg.back() == ' ') arg.pop_back();
     while (!arg.empty() && arg[0] == ' ') arg.erase(0, 1);
-    if (word == "@NETKEY") {  // never from here: only handleSerial takes it
-        out.println("@ERR serial console only");
-        return;
-    }
     if (asFollower()) {
         out.println("axis: Sysop Net runs on the main board");
         return;
@@ -2856,9 +2859,13 @@ static void netCommand(const String& cmd, Print& out) {
     static const char* const kRev[4][2] = {{"@NETBAN", "ban"}, {"@NETHOLD", "hold"}, {"@NETKILL", "kill"}, {"@NETLIFT", "lift"}};
     for (const auto& r : kRev)
         if (word == r[0]) {  // ban: a board; hold, kill: a post; lift: either (the target's shape picks the group)
-            bool board = netIsBoard(a), post = netIsPostId(a);
-            if (r[1][0] == 'b' ? board : r[1][0] == 'l' ? board || post : post) netNotice(h, r[1], a, "", out);
-            else out.println("@ERR bad board or post id");
+            std::string t = a.substr(0, a.find(' '));
+            bool        board = netIsBoard(t), post = netIsPostId(t), kill = r[1][0] == 'k';
+            if (r[1][0] == 'b' && board && (t == h.core->board() || h.core->isRevBoard(t))) out.println("@ERR never this board or Rev's");
+            else if (!(r[1][0] == 'b' ? board : r[1][0] == 'l' ? board || post : post)) out.println("@ERR bad board or post id");
+            else if (kill && (arg.size() < 4 || arg.compare(arg.size() - 4, 4, " YES") != 0))
+                out.printf("axis: kill drops %s on every board; to send: @NETKILL %s YES\n", t.c_str(), t.c_str());
+            else netNotice(h, r[1], t, "", out);
             return;
         }
     if (word == "@NETLIMITS") {
@@ -2911,13 +2918,17 @@ static bool netStart() {
     }
     axis::net::NetCore& core = *h->core;
     uint32_t            day = unixNow() / 86400;
+    ::unlink((std::string(storageRoot()) + "/net/record.tmp").c_str());  // a cut stopped by a reset
     h->record.reset(new (std::nothrow) axis::net::NetRecord(netRecordAppend, netYyyymm, unixNow));
     netLocalLoad(*h);
     {
         NetHost*              hp = h.get();  // (the host outlives the core: both live in netHost from here on)
         axis::net::NetRecord* rec = h->record.get();
         if (rec)
-            core.setOnEvent([rec](const std::string& who, const std::string& what, const std::string& line) { rec->note(who, what, line); });
+            core.setOnEvent([rec](const std::string& who, const std::string& what, const std::string& line) {
+                if (!storageHasSd() && what.compare(0, 14, "post duplicate") == 0) return;  // internal flash: spare it the wear
+                rec->note(who, what, line);
+            });
         core.setLocalFilter([hp](const std::string& b) { return netHas(hp->blocks, b); },
                             [hp](const std::string& id) { return netHas(hp->hides, id); });
     }
@@ -4324,6 +4335,9 @@ static void pumpPanel() {
         if (panelSession->authed() && panelLine.startsWith("CMD ")) {  // straight to the socket: no copy of a long
             runCommand(panelLine.substring(4), panelClient);           // reply in the main's small heap
             panelClient.print("END\n");
+#if AXIS_NETS
+            if (panelLine.length() >= 11 && strncasecmp(panelLine.c_str() + 4, "@NETKEY", 7) == 0) std::memset((void*)panelLine.c_str(), 0, panelLine.length());  // refused; no seed kept
+#endif
             panelLine = "";
             continue;
         }
@@ -4380,7 +4394,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@DOORSTATE") {  // the 8086 runtime is dosemu/ and is not in this firmware
         out.println("axis: no 8086 in this firmware");
 #if AXIS_NETS
-    } else if (cmd.startsWith("@NET")) {  // Sysop Net: @NET, @NET SYNC|PEERS|RECORD|LOCAL, local and Rev's moderation
+    } else if (cmd.startsWith("@NET") || netKeyLine(cmd)) {  // Sysop Net: @NET, @NET SYNC|PEERS|RECORD|LOCAL, local and Rev's moderation
         netCommand(cmd, out);
 #endif
     } else if (cmd == "@NODES") {  // the cluster as this board sees it (bench)

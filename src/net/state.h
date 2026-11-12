@@ -44,6 +44,9 @@ public:
     bool held(const std::string& postId) const;
     bool killed(const std::string& postId) const;
     uint32_t highSeq() const { return highSeq_; }
+    // The highest notice seq ever applied here, kept across pruning and restarts (save writes it as "H <seq>");
+    // a new notice from Rev's board takes the one after max(this, highSeq), so no seq is ever used twice.
+    uint32_t usedSeq() const { return usedSeq_ > highSeq_ ? usedSeq_ : highSeq_; }
     uint32_t postsPerDay() const { return posts_; }
     uint32_t bytesPerDay() const { return bytes_; }
     size_t cardCount() const { return cards_.size(); }
@@ -85,6 +88,7 @@ private:
     std::function<bool(const std::string&)> pinned_;
     uint64_t counter_ = 0;
     uint32_t highSeq_ = 0;
+    uint32_t usedSeq_ = 0;  // never lowered
     uint32_t posts_ = kDefaultPostsPerDay;
     uint32_t bytes_ = kDefaultBytesPerDay;
 };

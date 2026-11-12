@@ -229,6 +229,7 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
         while (pos != rotates_.end() && pos->n.seq < n.seq) ++pos;
         rotates_.insert(pos, e);
         if (n.seq > highSeq_) highSeq_ = n.seq;
+        if (n.seq > usedSeq_) usedSeq_ = n.seq;
         reverify();
         return true;
     }
@@ -257,6 +258,7 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
     if (g == Group::Post) capGroup("post", kMaxPostNotices);
     if (g == Group::Board) capGroup("board", kMaxBoardNotices);
     if (n.seq > highSeq_) highSeq_ = n.seq;
+    if (n.seq > usedSeq_) usedSeq_ = n.seq;
     return true;
 }
 
@@ -323,7 +325,7 @@ std::vector<std::string> NetState::snapshot() const {
 }
 
 std::string NetState::save() const {
-    std::string out;
+    std::string out = "H " + std::to_string(usedSeq()) + "\n";  // the highest seq ever applied (load skips it as a record)
     for (const Entry& r : rotates_) {
         std::string l = encode(r.n);
         if (!l.empty()) out += std::to_string(r.day) + " " + l + "\n";
@@ -361,6 +363,11 @@ void NetState::load(const std::string& text, uint32_t nowDay) {
             if (line.empty()) continue;
         }
         if (line.size() > kNetMaxFrame) continue;
+        uint32_t used = 0;
+        if (line.compare(0, 2, "H ") == 0 && parseU32(line.substr(2), used)) {
+            if (used > usedSeq_) usedSeq_ = used;
+            continue;
+        }
         if (line[0] == static_cast<char>(NetKind::Card)) {
             NetCard c;
             if (decode(line, c)) addCard(c);

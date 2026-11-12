@@ -196,7 +196,7 @@ bool NetSession::hello(const std::string& l) {
         return false;
     }
     if (core_.blockedHere(c.board)) {  // blocked by this board's sysop (the host gives no back-off for it)
-        fail("blocked", "blocked");
+        fail("blocked", "bad");  // the wire says only "bad"; "blocked" stays in why()
         return false;
     }
     peer_ = c.board;

@@ -168,14 +168,6 @@ void SysopShell::begin() {
                    {"System", "", [this] { enter(SysopSection::System); }},
                    {"Sections", "", [this] { push("SECTIONS", [this](Layer& x) { sections(x); }); }},
                    {"Look", "", [this] { enter(SysopSection::Look); }}};
-#if AXIS_NETS
-        l.items.push_back({"Network setup", "", [this] {
-                               push("NETWORK SETUP", [this](Layer& x) {
-                                   x.items.push_back({"Network settings", "", [this] { push(kGroups[1].name, [this](Layer& y) { settingGroup(y, 1); }); }});
-                                   x.items.push_back({"Sysop Net", "", [this] { push("SYSOP NET", [this](Layer& y) { sysopNet(y); }); }});
-                               });
-                           }});
-#endif
         if (!local_)  // over telnet the WFC is only ever picked here (at the board it is the home screen)
             l.items.push_back({"Waiting for caller screen", "", [this] {
                                    wantWfc_ = true;
@@ -698,8 +690,14 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
     Item modemPage{"Modem", "LFD3K-SM radio callers", [this] { push("MODEM", [this](Layer& x) { modem(x); }); }};  // (last, online and here)
+#if AXIS_NETS
+    Item netPage{"Sysop Net", "board to board net", [this] { push("SYSOP NET", [this](Layer& x) { sysopNet(x); }); }};  // after Modem: no key moves
+#endif
     if (!local_) {  // the rest is for the sysop at the board: never over telnet
         l.items.push_back(modemPage);
+#if AXIS_NETS
+        l.items.push_back(netPage);
+#endif
         return;
     }
     l.items.push_back({"Restart this board", "", [this] { confirm("Restart the board now?", [this] { did(run_("@RESTART")); }); }});
@@ -715,6 +713,9 @@ void SysopShell::system(Layer& l) {
                        }});
     l.items.push_back({"Station", "sensors and relays", [this] { push("STATION", [this](Layer& x) { station(x); }); }});
     l.items.push_back(modemPage);
+#if AXIS_NETS
+    l.items.push_back(netPage);
+#endif
 }
 
 // ---- station: sensors (read only), the relays (pick to flip), a beep
@@ -815,7 +816,7 @@ void SysopShell::lookPick(Layer& l, const std::string& key, bool follow) {
 }
 
 #if AXIS_NETS
-// ---- Sysop Net (Network setup > Sysop Net), in the Modem page's style: one list with section rows. Everything goes
+// ---- Sysop Net (System > Sysop Net, after Modem), in the Modem page's style: one list with section rows. Everything goes
 // through the @NET commands and @SET, the same as the serial console; few lambda kinds, to keep the image small.
 SysopShell::Item SysopShell::netAsk(const std::string& label, const std::string& value, const std::string& cmd) {
     return {label, value, [this, cmd] { ask(cmd, cmd.find("first_peer") != std::string::npos, [this, cmd](const std::string& v) { did(run_(cmd + v)); }); }};
@@ -852,7 +853,7 @@ void SysopShell::sysopNet(Layer& l) {
         {"A", "  Unblock a board", "@NETUNBLOCK "},
         {"R", "  Ban a board (net)", "@NETBAN "},
         {"R", "  Hold a post (net)", "@NETHOLD "},
-        {"R", "  Kill a post (net)", "@NETKILL "},
+        {"R", "  Kill a post (net): id YES", "@NETKILL "},
         {"R", "  Lift (net)", "@NETLIFT "},
         {"R", "  Limits (net)", "@NETLIMITS "},
     };
