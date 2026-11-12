@@ -520,3 +520,41 @@ TEST_CASE("Rev's boards are never ingress limited, and a flood of boards cannot 
     CHECK(b.core.take(decodePost(a.post()), a.board) == Took::Limited);  // a's own limit still holds
     CHECK(b.core.take(decodePost(rev.post("sn_support", "after")), rev.board) == Took::Stored);
 }
+
+TEST_CASE("the post seq is saved before the post is stored, and starts from the clock when lost") {
+    RevKeys rk;
+    Node a(0x96);
+    std::vector<uint32_t> saved;
+    a.core.setSeqReserve([&](uint32_t next) {
+        CHECK(a.ids().size() == saved.size());  // nothing stored for this post yet
+        saved.push_back(next);
+        return true;
+    });
+    std::string id1 = netPostId(a.post());
+    REQUIRE(!id1.empty());
+    CHECK(id1 == a.board + "-1");
+    REQUIRE(saved.size() == 1);
+    CHECK(saved[0] == 2);
+    CHECK(a.core.postSeq() == 2);
+    // A save that fails refuses the post: nothing stored, the seq not used.
+    a.core.setSeqReserve([](uint32_t) { return false; });
+    CHECK(a.post().empty());
+    CHECK(a.ids().size() == 1);
+    CHECK(a.core.postSeq() == 2);
+
+    // Where a counter goes on from.
+    CHECK(netSeqStart(41, true, kNow) == 41);   // saved: kept, even with the clock set
+    CHECK(netSeqStart(0, true, kNow) == 1);     // never 0
+    CHECK(netSeqStart(0, false, kNow) == kNow);  // lost, clock set: the clock
+    CHECK(netSeqStart(7, false, kNow) == kNow);
+    CHECK(netSeqStart(kNow + 5, false, kNow) == kNow + 5);  // never below what was saved
+    CHECK(netSeqStart(0, false, 1000) == 1);    // lost, no clock: from 1 (the board floors it once the clock is set)
+    // A board that lost its counter and starts from the clock posts ids its peers have not seen.
+    Node b(0x97), c(0x98);
+    c.knows(b);
+    REQUIRE(c.core.take(decodePost(b.post()), b.board) == Took::Stored);
+    b.core.setPostSeq(netSeqStart(0, false, b.now));
+    NetPost again = decodePost(b.post());
+    CHECK(again.id == b.board + "-" + std::to_string(kNow));
+    CHECK(c.core.take(again, b.board) == Took::Stored);
+}

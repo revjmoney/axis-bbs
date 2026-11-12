@@ -172,6 +172,11 @@ uint32_t netDateUnix(const std::string& text) {
     return t <= 0 ? 0 : (uint32_t)t;
 }
 
+uint32_t netSeqStart(uint32_t saved, bool found, uint32_t nowUnix) {
+    uint32_t floor = !found && nowUnix > kNetClockSet ? nowUnix : 1;
+    return saved > floor ? saved : floor;
+}
+
 // ---- NetCore ----
 
 NetCore::NetCore(MessageStore& store, KeyPair me, std::function<uint32_t()> nowUnix, OutLog& log)
@@ -324,8 +329,10 @@ std::string NetCore::originate(const std::string& area, const Message& m, int* n
     std::string line = encode(p);
     if (line.empty()) return "";
 
-    // The id is used up from here, stored or not, so a retry never reuses it.
-    seq_ = seq_ == 0xFFFFFFFFu ? 1 : seq_ + 1;
+    // The id is used up from here, stored or not, so a retry never reuses it; the next seq is saved first.
+    uint32_t next = seq_ == 0xFFFFFFFFu ? 1 : seq_ + 1;
+    if (reserve_ && !reserve_(next)) return "";
+    seq_ = next;
     if (seen_.has(p.id)) return "";  // the counter was set back
     int n = storePost(p, line);
     if (!n) return "";

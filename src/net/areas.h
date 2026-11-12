@@ -38,6 +38,11 @@ std::string netPostId(const std::string& net);
 std::string netDateText(uint32_t unixTime);
 uint32_t netDateUnix(const std::string& text);
 
+// Where a seq counter (this board's posts, or its card) goes on from at start. found: a saved value was
+// read (saved). With none and the clock set (nowUnix above kNetClockSet), the clock: above any seq a
+// board would have used, so a lost file never brings back a used one. Never below saved, never 0.
+uint32_t netSeqStart(uint32_t saved, bool found, uint32_t nowUnix);
+
 constexpr size_t kMaxOutboundPeers = 4;    // boards this board dials, plus the first peer
 constexpr size_t kMaxInboundPeers = 4;     // boards that dialed us; the longest unsynced goes first
 constexpr uint32_t kOutLogKeep = 5000;     // outbound log entries kept
@@ -169,8 +174,13 @@ public:
     bool blockedHere(const std::string& board) const { return blocked_ && blocked_(board); }
     bool hiddenHere(const std::string& postId) const { return hidden_ && hidden_(postId); }
 
+    // The seq the next post from this board takes.
     uint32_t postSeq() const { return seq_; }
     void setPostSeq(uint32_t s) { seq_ = s ? s : 1; }
+    // Saves the seq after the one a post takes, before the post is stored or logged: reserve(next) must
+    // keep next durably (the board writes /netseq.txt in internal flash). False refuses the post, so a
+    // reset can skip a seq but never hand one out twice.
+    void setSeqReserve(std::function<bool(uint32_t next)> reserve) { reserve_ = std::move(reserve); }
 
     void setRetention(uint32_t keepPosts, uint32_t keepDays) {
         keepPosts_ = keepPosts;
@@ -213,6 +223,7 @@ private:
     NetSeen seen_;
     Ingress ingress_;
     uint32_t seq_ = 1;
+    std::function<bool(uint32_t)> reserve_;
     uint32_t keepPosts_ = kNetKeepPosts, keepDays_ = kNetKeepDays;
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;

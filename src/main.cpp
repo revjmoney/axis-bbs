@@ -2000,7 +2000,8 @@ struct NetHost {
     bool                                    logSaid = false, dirty = false, postDue = false;
     uint32_t                                logTryMs = 0, minuteMs = 0, saveMs = 0, dialMs = 0, postMs = 0;
     uint32_t                                postSeq = 0, appendFails = 0, houseDay = 0;
-    uint32_t                                crc[4] = {0, 0, 0, 0};  // what state, seen, cursors, postseq last wrote
+    bool                                    seqFloorDue = false;  // no /netseq.txt and no clock at start: floored once it is set
+    uint32_t                                crc[3] = {0, 0, 0};  // what state, seen and cursors last wrote
     size_t                                  dialIx = 0;
     std::unique_ptr<axis::net::NetRecord>   record;         // the net record (/net/record)
     std::vector<std::string>                hides, blocks;  // /net/local.txt: this board's own moderation
@@ -2147,6 +2148,42 @@ static bool netKeyLoad(axis::net::KeyPair& k) {
     return have;
 }
 
+// /netseq.txt in internal flash, beside the key: "<next post seq> <card seq>". It lives there, not under /net, so a
+// board that boots without its SD card keeps its counters with its key (peers drop a reused post id as seen and
+// refuse a card whose seq is not newer). Malformed reads as missing.
+static bool netSeqRead(uint32_t& post, uint32_t& card) {
+    File f = LittleFS.open("/netseq.txt", "r");
+    if (!f) return false;
+    char   b[32];
+    size_t n = f.read((uint8_t*)b, sizeof b - 1);
+    f.close();
+    b[n] = 0;
+    char*         e = nullptr;
+    unsigned long p = std::strtoul(b, &e, 10);
+    if (e == b || *e != ' ') return false;
+    char*         e2 = nullptr;
+    unsigned long c = std::strtoul(e + 1, &e2, 10);
+    if (e2 == e + 1 || (*e2 != '\n' && *e2 != 0) || p == 0 || p > 0xFFFFFFFFul || c > 0xFFFFFFFFul) return false;
+    post = (uint32_t)p;
+    card = (uint32_t)c;
+    return true;
+}
+// Written to a temp file, then renamed over the old one (LittleFS replaces it in one step).
+static bool netSeqWrite(uint32_t post, uint32_t card) {
+    std::string t = std::to_string(post) + " " + std::to_string(card) + "\n";
+    File        f = LittleFS.open("/netseq.tmp", "w");
+    bool        ok = f && f.write((const uint8_t*)t.data(), t.size()) == t.size();
+    if (f) f.close();
+    if (ok && !LittleFS.rename("/netseq.tmp", "/netseq.txt")) ok = LittleFS.remove("/netseq.txt") && LittleFS.rename("/netseq.tmp", "/netseq.txt");
+    if (!ok) {
+        LittleFS.remove("/netseq.tmp");
+        static bool said = false;
+        if (!said) logEvent("net: /netseq.txt could not be written, no post or card change until it can");
+        said = true;
+    }
+    return ok;
+}
+
 // A card field: printable, at most max bytes (record.h refuses control characters and long fields).
 static std::string netField(const std::string& s, size_t max) {
     std::string o;
@@ -2179,12 +2216,16 @@ static bool netSameCard(const axis::net::NetCard& a, const axis::net::NetCard& b
 static bool netCardUpdate(NetHost& h) {
     axis::net::NetCard        c = netCardNow(h);
     const axis::net::NetCard* held = h.core->state().card(c.board);
-    if (held && netSameCard(*held, c)) {
+    // Unchanged and at the saved seq: kept. A held card below the saved seq (the counter was floored from the clock,
+    // or the state was lost) is made again past it, so peers that hold a newer one take it.
+    if (held && netSameCard(*held, c) && held->seq >= h.cardSeq) {
         if (h.card.seq != held->seq) h.card = *held;
         return true;
     }
     uint32_t seq = std::max(h.cardSeq, std::max(h.card.seq, held ? held->seq : 0u));
     c.seq = seq + 1;
+    if (!netSeqWrite(h.core->postSeq(), c.seq)) return false;  // the card seq is saved before it is used
+    h.cardSeq = c.seq;
     if (!axis::net::signCard(c, h.key) || !h.core->setOwnCard(c)) {
         static bool said = false;
         if (!said) logEvent("net: this board's card could not be made (check net_name, net_sysop_name, net_location)");
@@ -2192,10 +2233,20 @@ static bool netCardUpdate(NetHost& h) {
         return false;
     }
     h.card = c;
-    h.cardSeq = c.seq;
-    if (!netFileWrite("card.txt", std::to_string(c.seq) + "\n")) logEvent("net: card.txt SAVE FAILED");
     h.dirty = true;
     return true;
+}
+
+// No /netseq.txt at start and no clock then: once the clock is set, both counters go on from it at least (a lost
+// file never brings back a used seq). Before any post or card is made.
+static void netSeqFloor(NetHost& h) {
+    uint32_t now = unixNow();
+    if (!h.seqFloorDue || now <= axis::net::kNetClockSet) return;
+    uint32_t post = std::max(h.core->postSeq(), now), card = std::max(h.cardSeq, now);
+    if (!netSeqWrite(post, card)) return;
+    h.core->setPostSeq(post);
+    h.cardSeq = card;
+    h.seqFloorDue = false;
 }
 
 // net_first_peer: "host:port" or "host:port@<board>". The board is the @ part, else the one remembered from the
@@ -2461,12 +2512,10 @@ static void netAccept(WiFiClient& c, const std::string& got) {
     s.s->feed(got.data(), got.size());
 }
 
-// A post from here: its counter is saved now (an id is never used twice), and a dial is due in 10 s.
+// A post from here (its counter was saved before it was stored, NetCore::setSeqReserve): a dial is due in 10 s.
 static void netPosted(NetHost& h) {
     if (h.core->postSeq() == h.postSeq) return;
     h.postSeq = h.core->postSeq();
-    std::string text = std::to_string(h.postSeq) + "\n";
-    if (netFileWrite("postseq.txt", text)) h.crc[3] = axis::net::crc32((const uint8_t*)text.data(), text.size());
     h.postDue = true;
     h.postMs = millis();
     h.dirty = true;
@@ -2475,6 +2524,7 @@ static void netPosted(NetHost& h) {
 struct NetStore : axis::net::NetPostingStore {
     using axis::net::NetPostingStore::NetPostingStore;
     int post(const std::string& area, const axis::bbs::Message& m) override {
+        if (netHost && area.compare(0, 3, "sn_") == 0) netSeqFloor(*netHost);
         int n = axis::net::NetPostingStore::post(area, m);
         if (netHost) netPosted(*netHost);
         return n;
@@ -2492,16 +2542,14 @@ static void netLogOpen(NetHost& h) {
     h.logSaid = !ok;
 }
 
-// The /net files that changed since they were last written (state, seen posts, link cursors, post counter).
+// The /net files that changed since they were last written (state, seen posts, link cursors). The counters are not
+// here: they go to /netseq.txt before they are used.
 static bool netSave(NetHost& h, bool force = false) {
     if (!force && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) return false;  // next time
-    static const char* const kNames[4] = {"state.txt", "seen.txt", "cursors.txt", "postseq.txt"};
+    static const char* const kNames[3] = {"state.txt", "seen.txt", "cursors.txt"};
     bool                     ok = true;
-    for (int i = 0; i < 4; i++) {
-        std::string text = i == 0   ? h.core->state().save()
-                           : i == 1 ? h.core->seen().save()
-                           : i == 2 ? h.core->saveCursors()
-                                    : std::to_string(h.core->postSeq()) + "\n";
+    for (int i = 0; i < 3; i++) {
+        std::string text = i == 0 ? h.core->state().save() : i == 1 ? h.core->seen().save() : h.core->saveCursors();
         uint32_t crc = axis::net::crc32((const uint8_t*)text.data(), text.size());
         if (crc == h.crc[i]) continue;
         if (netFileWrite(kNames[i], text)) h.crc[i] = crc;
@@ -2969,9 +3017,28 @@ static bool netStart() {
         NetTarget t;
         if (netFirstTarget(*h, t) && !t.board.empty()) core.setFirstPeer(t.board);
     }
-    core.setPostSeq((uint32_t)std::strtoul(netFileRead("postseq.txt", 32).c_str(), nullptr, 10));
+    {  // the counters: /netseq.txt in internal flash; the old /net/postseq.txt and /net/card.txt are a floor
+        uint32_t    post = 0, card = 0;
+        bool        found = netSeqRead(post, card);
+        std::string oldPost = netFileRead("postseq.txt", 32), oldCard = netFileRead("card.txt", 32);
+        post = std::max(post, (uint32_t)std::strtoul(oldPost.c_str(), nullptr, 10));
+        card = std::max(card, (uint32_t)std::strtoul(oldCard.c_str(), nullptr, 10));
+        found = found || !oldPost.empty() || !oldCard.empty();
+        uint32_t now = unixNow();
+        post = axis::net::netSeqStart(post, found, now);
+        if (!found && now > axis::net::kNetClockSet) card = std::max(card, now);
+        h->seqFloorDue = !found && now <= axis::net::kNetClockSet;
+        if (!netSeqWrite(post, card)) {
+            if (!netStartSaid) logEvent("net: /netseq.txt could not be written, Sysop Net is off, trying every 10 min");
+            netStartSaid = true;
+            return false;
+        }
+        core.setPostSeq(post);
+        h->cardSeq = card;
+        NetHost* hp = h.get();
+        core.setSeqReserve([hp](uint32_t next) { return netSeqWrite(next, hp->cardSeq); });
+    }
     h->postSeq = core.postSeq();
-    h->cardSeq = (uint32_t)std::strtoul(netFileRead("card.txt", 32).c_str(), nullptr, 10);
     {  // the card held in the state; a new one only on first boot (a changed one is made once the log is open)
         axis::net::NetCard        c = netCardNow(*h);
         const axis::net::NetCard* held = core.state().card(c.board);
@@ -3025,6 +3092,7 @@ static void netTick() {
     if (millis() - h.minuteMs >= kNetMinuteMs) {
         h.minuteMs = millis();
         core.setRetention((uint32_t)cfg.netKeepPosts, (uint32_t)cfg.netKeepDays);
+        netSeqFloor(h);
         netCardUpdate(h);
         uint32_t now = unixNow();
         if (now && now / 86400 != h.houseDay && heapOk) {  // once a day: retention, pruning, the log trimmed

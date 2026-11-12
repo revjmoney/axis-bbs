@@ -252,8 +252,11 @@ public:
         core_.state().load(readFile(dir_ / "state.txt"), day);
         core_.seen().load(readFile(dir_ / "seen.txt"));
         core_.loadCursors(readFile(dir_ / "cursors.txt"));  // before the first peer is set
-        uint32_t seq = (uint32_t)std::strtoul(readFile(dir_ / "postseq.txt").c_str(), nullptr, 10);
-        core_.setPostSeq(seq);
+        // The post counter, as the board keeps it: the next seq is saved before a post is stored, and with no
+        // saved counter and a set clock it starts from the clock.
+        std::string seqText = readFile(dir_ / "postseq.txt");
+        core_.setPostSeq(netSeqStart((uint32_t)std::strtoul(seqText.c_str(), nullptr, 10), !seqText.empty(), unixNow()));
+        core_.setSeqReserve([this](uint32_t next) { return writeFile(dir_ / "postseq.txt", std::to_string(next) + "\n"); });
         core_.setOnEvent([](const std::string& who, const std::string& what, const std::string&) {
             say("event: %s %s", who.empty() ? "local" : who.c_str(), what.c_str());  // never the signed line
         });
@@ -274,8 +277,7 @@ public:
 
     void save() {
         bool ok = writeFile(dir_ / "state.txt", core_.state().save()) && writeFile(dir_ / "seen.txt", core_.seen().save()) &&
-                  writeFile(dir_ / "cursors.txt", core_.saveCursors()) &&
-                  writeFile(dir_ / "postseq.txt", std::to_string(core_.postSeq()) + "\n");
+                  writeFile(dir_ / "cursors.txt", core_.saveCursors());  // (postseq.txt is written as each post is made)
         if (!ok) say("warning: saving the net state failed");
     }
 
@@ -287,7 +289,7 @@ public:
         m.body = body;
         int num = 0;
         std::string id = core_.originate(area, m, &num);
-        save();  // the post counter first: an id is never used twice
+        save();
         if (id.empty()) return false;
         say("posted %s in %s as #%d", id.c_str(), area.c_str(), num);
         return true;
@@ -338,13 +340,18 @@ private:
             card_ = *held;
             return true;
         }
-        uint32_t saved = (uint32_t)std::strtoul(readFile(dir_ / "card.txt").c_str(), nullptr, 10);
+        std::string savedText = readFile(dir_ / "card.txt");
+        uint32_t saved = (uint32_t)std::strtoul(savedText.c_str(), nullptr, 10);
+        if (savedText.empty() && unixNow() > kNetClockSet) saved = std::max(saved, unixNow());  // a lost counter: the clock
         c.seq = std::max(saved, held ? held->seq : 0u) + 1;
+        if (!writeFile(dir_ / "card.txt", std::to_string(c.seq) + "\n")) {  // saved before it is used
+            say("card.txt could not be written");
+            return false;
+        }
         if (!signCard(c, key_) || !core_.setOwnCard(c)) {
             say("this node's card could not be made (check --name and --host)");
             return false;
         }
-        writeFile(dir_ / "card.txt", std::to_string(c.seq) + "\n");
         card_ = c;
         return true;
     }
