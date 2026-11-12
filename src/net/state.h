@@ -24,7 +24,7 @@ namespace axis::net {
 constexpr size_t kNetMaxCards = 32;          // the card touched longest ago makes room
 constexpr size_t kNetMaxSeenBoards = 48;     // origin boards in the seen set, least recently used goes
 constexpr uint32_t kSeenWindow = 64;         // seqs tracked below each board's highest
-constexpr size_t kNetMaxIngressBoards = 48;  // boards counted per day
+constexpr size_t kNetMaxIngressBoards = 48;  // boards counted per day; past it the least recently used goes
 constexpr uint32_t kSeenDays = 120;
 constexpr uint32_t kPostNoticeDays = 150;
 constexpr size_t kMaxRotates = 16;
@@ -136,9 +136,11 @@ private:
     struct Rec {
         uint32_t day = 0, posts = 0, bytes = 0;
         bool warned = false;
+        uint64_t used = 0;  // for least recently used eviction
     };
     Rec* rec(const std::string& board, uint32_t nowDay);
     std::map<std::string, Rec> recs_;
+    uint64_t counter_ = 0;
     uint32_t posts_ = kDefaultPostsPerDay;
     uint32_t bytes_ = kDefaultBytesPerDay;
 };

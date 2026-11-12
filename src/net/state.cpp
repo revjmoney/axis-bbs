@@ -498,6 +498,8 @@ void NetSeen::load(const std::string& text) {
 
 // ---- Ingress ----
 
+// Full: other days' records go first, then the one used longest ago, so a flood of boards can never
+// lock the rest out (it costs the evicted board at most a fresh count).
 Ingress::Rec* Ingress::rec(const std::string& board, uint32_t nowDay) {
     auto it = recs_.find(board);
     if (it == recs_.end()) {
@@ -506,14 +508,22 @@ Ingress::Rec* Ingress::rec(const std::string& board, uint32_t nowDay) {
                 if (i->second.day != nowDay) i = recs_.erase(i);
                 else ++i;
             }
-            if (recs_.size() >= kNetMaxIngressBoards) return nullptr;
+        }
+        if (recs_.size() >= kNetMaxIngressBoards) {
+            auto lru = recs_.begin();
+            for (auto i = recs_.begin(); i != recs_.end(); ++i)
+                if (i->second.used < lru->second.used) lru = i;
+            recs_.erase(lru);
         }
         it = recs_.emplace(board, Rec()).first;
         it->second.day = nowDay;
     }
+    it->second.used = ++counter_;
     if (it->second.day != nowDay) {
+        uint64_t used = it->second.used;
         it->second = Rec();
         it->second.day = nowDay;
+        it->second.used = used;
     }
     return &it->second;
 }

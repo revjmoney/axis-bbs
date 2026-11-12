@@ -357,17 +357,22 @@ TEST_CASE("ingress limit drops excess") {
     CHECK_FALSE(bytes.allow(X, 1, 1));
 }
 
-TEST_CASE("ingress counts 48 boards per day") {
+TEST_CASE("ingress counts 48 boards per day, the least recently used making room") {
     Ingress in;
+    in.setLimits(2, 1000);
     auto b = [](int i) {
         char h[17];
         std::snprintf(h, sizeof h, "%016x", i + 1);
         return std::string(h);
     };
     for (int i = 0; i < (int)kNetMaxIngressBoards; i++) REQUIRE(in.allow(b(i), 1, 7));
-    CHECK_FALSE(in.allow(b(100), 1, 7));  // a 49th board that day is refused
-    CHECK(in.allow(b(0), 1, 7));          // known boards still count
-    CHECK(in.allow(b(100), 1, 8));        // the next day there is room again
+    REQUIRE(in.allow(b(0), 1, 7));        // board 0 is at its limit and now the most recently used
+    CHECK_FALSE(in.allow(b(0), 1, 7));
+    CHECK(in.allow(b(100), 1, 7));        // a 49th board that day is counted: board 1 (used longest ago) made room
+    CHECK(in.allow(b(101), 1, 7));        // and so on: a flood of boards never locks the others out
+    CHECK_FALSE(in.allow(b(0), 1, 7));    // board 0 kept its count
+    CHECK(in.allow(b(1), 1, 7));          // board 1 starts a fresh count
+    CHECK(in.allow(b(100), 1, 8));        // the next day
 }
 
 TEST_CASE("state save and load verify every record again") {

@@ -502,3 +502,21 @@ TEST_CASE("a history post below the seen window is taken once, by its area") {
     CHECK(b.core.take(ps[60], a.board, true) == Took::Duplicate);
     CHECK(b.ids("sn_bugs").size() == 1);
 }
+
+TEST_CASE("Rev's boards are never ingress limited, and a flood of boards cannot limit the rest") {
+    RevKeys rk;
+    Node rev(0xA0, kNow, "Rev"), a(0x94), b(0x95);
+    b.knows(rev), b.knows(a);
+    b.core.addLinkPeer(a.board, true);  // pins a's card against the flood of new cards below
+    REQUIRE(b.core.takeNotice(makeNotice(rev0(), 0, "limits", "net", 1, "posts=1,bytes=100000"), ""));
+    for (int i = 0; i < 4; i++) CHECK(b.core.take(decodePost(rev.post("sn_announce", "n" + std::to_string(i))), rev.board) == Took::Stored);
+    // 60 other boards post once each today (more than the 48 counted); then a and Rev still get through.
+    for (int i = 0; i < 60; i++) {
+        KeyPair k = keyOf((uint8_t)(0x10 + i));
+        REQUIRE(b.core.takeCard(makeCard(k, "F" + std::to_string(i)), ""));
+        CHECK(b.core.take(makePost(k, 1, kNow), "") == Took::Stored);
+    }
+    CHECK(b.core.take(decodePost(a.post()), a.board) == Took::Stored);
+    CHECK(b.core.take(decodePost(a.post()), a.board) == Took::Limited);  // a's own limit still holds
+    CHECK(b.core.take(decodePost(rev.post("sn_support", "after")), rev.board) == Took::Stored);
+}

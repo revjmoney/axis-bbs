@@ -250,9 +250,10 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
     // every E line cost an area scan.
     if (seen_.has(p.id) && !(history && seen_.belowWindow(p.id) && !stored(p.area, p.id)))
         return res(Took::Duplicate, "duplicate", nullptr);
-    // 7. ingress, counting the body size (history pulls are capped by the session instead)
+    // 7. ingress, counting the body size (history pulls are capped by the session instead; Rev's
+    // boards are never limited)
     uint32_t today = day();
-    if (!history && !ingress_.allow(p.board, p.body.size(), today)) return res(Took::Limited, "limited", kNakLimited);
+    if (!history && !isRevBoard(p.board) && !ingress_.allow(p.board, p.body.size(), today)) return res(Took::Limited, "limited", kNakLimited);
 
     std::string cameWith = p.path;
     if (!fromPeer.empty()) p.path = appendHop(p.path, fromPeer);
