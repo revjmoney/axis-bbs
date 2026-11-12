@@ -67,6 +67,9 @@
 #include "bbs/wifipicker.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
+#include "bbs/artfetch.h"
+#include "bbs/listtrim.h"
+#include "bbs/memlog.h"
 #include "bbs/setup_wizard.h"
 #include "platform/cyd/ansi_screen.h"
 #include "platform/cyd/board.h"
@@ -263,8 +266,7 @@ static size_t                        listCountOf(const std::string& n) {
 static size_t listSkip(const std::string& n) {
     size_t cap = listCap(n);
     if (!cap) return 0;
-    size_t c = listCountOf(n);
-    return c > cap ? c - cap : 0;
+    return axis::bbs::listReadSkip(listCountOf(n), cap);
 }
 // One random line of a list, read a line at a time (the main menu's rumor: the whole list is more than the main can spare then)
 static std::vector<std::string> listOne(const std::string& n) {
@@ -337,7 +339,8 @@ static bool listAppendLocal(const std::string& n, const std::string& line, size_
     }
     size_t now = had + add;
     listCount[listIdx(n)] = (int32_t)now;
-    if (now <= cap + cap / 4) return true;
+    const size_t skipOld = axis::bbs::listTrimSkip(now, cap);  // (the newest cap stay once it is cap/4 over)
+    if (!skipOld) return true;
     std::string tmp = "/list_" + n + ".tmp";
     File        in = LittleFS.open(listPath(n).c_str(), "r");
     File        t = LittleFS.open(tmp.c_str(), "w");
@@ -349,7 +352,7 @@ static bool listAppendLocal(const std::string& n, const std::string& line, size_
         }
         return true;  // the line is in; the trim waits for the next one
     }
-    size_t skip = now - cap, kept = 0;
+    size_t skip = skipOld, kept = 0;
     bool   wrote = true;
     while (wrote && in.available()) {
         String l = in.readStringUntil('\n');
@@ -412,70 +415,21 @@ static void announceOut(const std::string& line) {
     else cluster->send("", kAnnounceAllKind, 0, line);
 }
 
-// The follower's theme art, at most kArtCacheCap bytes in all: a hit moves the entry to the back, the front (least recently used) goes first.
+// The follower's theme art, at most kArtCacheCap bytes in all (bbs/artfetch.h).
 constexpr size_t kArtCacheCap = 16384;
-static struct ArtCache {
-    std::vector<std::pair<std::string, std::string>> v;
-    size_t                                           bytes = 0;
-    void clear() { v.clear(), v.shrink_to_fit(), bytes = 0; }
-    const std::string* find(const std::string& name) {
-        for (size_t i = 0; i < v.size(); i++)
-            if (v[i].first == name) {
-                if (i + 1 < v.size()) std::rotate(v.begin() + i, v.begin() + i + 1, v.end());
-                return &v.back().second;
-            }
-        return nullptr;
-    }
-    void put(const std::string& name, const std::string& art) {
-        for (size_t i = 0; i < v.size(); i++)  // the old entry goes first: a bigger version that is too big to keep must not leave the stale one
-            if (v[i].first == name) {
-                bytes -= v[i].second.size();
-                v.erase(v.begin() + i);
-                break;
-            }
-        if (art.size() > kArtCacheCap) return;  // (too big to keep: asked again each time)
-        while (!v.empty() && bytes + art.size() > kArtCacheCap) {
-            bytes -= v.front().second.size();
-            v.erase(v.begin());
-        }
-        v.emplace_back(name, art);
-        bytes += art.size();
-    }
-} artCache;
+static axis::bbs::ArtCache artCache(kArtCacheCap);
 constexpr size_t kThemeArtCap = 12288;
 constexpr size_t kPosterCap = 49152;  // SAYLOR.ANS is 37 KB, SAYLORLG.ANS is 45 KB. Not cached.
 constexpr size_t kPosterChunk = 7000;  // a cluster frame is 8 KB, so a follower pulls the poster in pieces
 static bool posterName(const std::string& name) { return name == "SAYLOR.ANS" || name == "SAYLORLG.ANS"; }
-// Append at most min(fileSize - offset, cap) bytes of f (from offset) to out, cut at the first 0x1a. The file's size is asked
-// first so out grows once (a string read in 512-byte pieces doubles its block and costs ~16 KB per screen). False: the
-// seek to offset failed (nothing appended).
-static bool readFileAppend(FILE* f, size_t cap, size_t offset, std::string& out) {
-    const size_t old = out.size();
-    long         end = -1;
-    if (fseek(f, 0, SEEK_END) == 0) end = ftell(f);
-    if (end >= 0) {
-        if (fseek(f, (long)offset, SEEK_SET) != 0) return false;
-        size_t n = (size_t)end > offset ? (size_t)end - offset : 0;
-        if (n > cap) n = cap;
-        out.resize(old + n);
-        n = n ? fread(&out[old], 1, n, f) : 0;
-        out.resize(old + n);
-    } else {  // (no size: the old piece-by-piece read)
-        if (fseek(f, (long)offset, SEEK_SET) != 0) return false;
-        char b[512];
-        for (size_t n; out.size() - old < cap && (n = fread(b, 1, sizeof b, f)) > 0;) out.append(b, n);
-        if (out.size() - old > cap) out.resize(old + cap);
-    }
-    if (size_t sauce = out.find('\x1a', old); sauce != std::string::npos) out.resize(sauce);
-    return true;
-}
+// (readFileAppend: one piece of a file, cut at the first 0x1a: bbs/artfetch.h)
 static bool readThemeFileAppend(const char* folder, const std::string& name, size_t cap, size_t offset, std::string& out) {
     if (!folder || !folder[0]) return false;
     std::string path = std::string("/sd/themes/") + folder + "/" + name;
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return false;
     const size_t old = out.size();
-    readFileAppend(f, cap, offset, out);
+    axis::bbs::readFileAppend(f, cap, offset, out);
     fclose(f);
     if (out.size() - old > artMax) artMax = out.size() - old;
     return true;
@@ -556,27 +510,13 @@ static bool themeArtPieceAppend(const std::string& name, size_t off, size_t want
 // A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
 static std::string themeArtRemote(const std::string& name, bool* answered) {
     constexpr size_t kFollowerWant = 4096;  // a follower asks for 4 KB pieces: the main's reply (and this reply) stay small
-    size_t      cap = posterName(name) ? kPosterCap : kThemeArtCap;
-    std::string all;
-    if (!posterName(name)) all.reserve(cap);  // (one block: the pieces do not double it)
-    *answered = false;
-    for (size_t off = 0; all.size() < cap;) {
-        std::string reply;
-        if (!cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off) + "\x1f" + std::to_string(kFollowerWant), reply, 3000) || reply.empty()) {
-            *answered = false;  // (a piece went missing: not a whole answer)
-            return all;
-        }
-        *answered = true;
-        if (reply[0] != '1') break;
-        reply.erase(0, 1);  // (in place: the piece is the reply)
-        const std::string& chunk = reply;
-        if (chunk.empty()) break;
-        all += chunk;
-        if (chunk.size() < kFollowerWant) break;  // (a short piece is the end; an older main that ignores want sends 7000, never short before the end)
-        off += chunk.size();
-    }
-    if (all.size() > cap) all.resize(cap);
-    return all;
+    return axis::bbs::assembleArt(posterName(name) ? kPosterCap : kThemeArtCap, kFollowerWant, !posterName(name),
+                                  [&name](size_t off, std::string& reply) {
+                                      return cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off) + "\x1f" +
+                                                                  std::to_string(kFollowerWant),
+                                                              reply, 3000);
+                                  },
+                                  answered);
 }
 static std::string themeArt(const std::string& name) {
     if (!asFollower()) return themeArtLocal(name);
@@ -641,7 +581,7 @@ static std::string menuFileLocal(const std::string& name, bool theme = true) {
     if (f) cap = kThemeArtCap;  // (theme screens run to 11 KB)
     else f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
     if (f) {
-        readFileAppend(f, cap, 0, s);
+        axis::bbs::readFileAppend(f, cap, 0, s);
         fclose(f);
     }
     if (s.size() > artMax) artMax = s.size();
@@ -4441,7 +4381,7 @@ void loop() {
     axisDirty = false;
     static uint32_t lastMemLog = 0, seenDropped = 0, seenGated = 0;  // low-memory web notes, at most hourly
     static bool     memLogged = false;
-    if (!memLogged || millis() - lastMemLog > 3600000u) {
+    if (axis::bbs::gateLogDue(millis(), lastMemLog, memLogged)) {
         uint32_t d = web::droppedLines(), g = web::gatedChecks();
         if (d != seenDropped || g != seenGated) {
             if (d != seenDropped) logEvent("discord: " + String(d - seenDropped) + " lines dropped (low memory)");
