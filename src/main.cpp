@@ -1257,9 +1257,11 @@ static std::unique_ptr<axis::bbs::Node> localNode;
 
 // A caller already online keeps a copy of the settings from when they logged in.
 // Section switches and the door list have to reach that copy or the menu stays stale.
-static void pushBoardToCallers() {
-    auto one = [](axis::bbs::Node* n) {
-        if (n) n->applyBoard(boardCfg);
+// prev: the copy boardCfg replaced. Whether the two differ only in what a caller already on picks up is decided once here.
+static void pushBoardToCallers(const std::shared_ptr<const axis::bbs::BbsConfig>& prev) {
+    bool only = prev && axis::bbs::Node::onlySwitches(*prev, *boardCfg);
+    auto one = [&](axis::bbs::Node* n) {
+        if (n) n->applyBoard(boardCfg, prev, only);
     };
     one(node.get());
     one(localNode.get());
@@ -2790,8 +2792,9 @@ static void startCluster() {
         axis::bbs::BbsConfig m = axis::bbs::mergeSettings(*boardCfg, ini);
         if (axis::bbs::formatConfig(m) == axis::bbs::formatConfig(*boardCfg)) return;
         bool wasSetUp = boardCfg->setupDone;
+        std::shared_ptr<const axis::bbs::BbsConfig> prev = boardCfg;
         cfgSet(std::move(m));
-        pushBoardToCallers();
+        pushBoardToCallers(prev);
         bool ok = configSave(*boardCfg);
         logEvent(String("settings from the main") + (ok ? "" : " (SAVE FAILED)"));
         if (!wasSetUp) {  // a fresh (headless) node: ready for callers now
@@ -3854,8 +3857,9 @@ static void runCommand(const String& cmd, Print& out) {
         out.println("axis: no 8086 in this firmware");
     } else if (cmd.startsWith("@SET ") && cmd.indexOf('=') > 5) {  // "@SET location=Myrtle Beach, SC"
         String kv = cmd.substring(5);
+        std::shared_ptr<const axis::bbs::BbsConfig> prev = boardCfg;
         cfgSet(axis::bbs::parseConfig(axis::bbs::formatConfig(*boardCfg) + kv.c_str() + "\n"));  // the later line wins
-        pushBoardToCallers();
+        pushBoardToCallers(prev);
         bool ok = configSave(*boardCfg);
         logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
         if (cluster) cluster->shareSettings();

@@ -141,7 +141,7 @@ void Node::closeMsgs() {
 }
 
 void Node::retire() {
-    if (!retired_) retired_ = cfg_;  // the oldest: anything still reading started there
+    retired_.push_back(cfg_);  // anything still reading it started before this turn
 }
 
 void Node::setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow) {
@@ -1023,7 +1023,23 @@ std::string Node::linkTiers() const {
     return s;
 }
 
-void Node::applyBoard(std::shared_ptr<const BbsConfig> next) {
+bool Node::onlySwitches(const BbsConfig& a, const BbsConfig& b) {
+    auto area = [](const FileArea& x, const FileArea& y) { return x.id == y.id && x.name == y.name && x.minSecurity == y.minSecurity && x.mirror == y.mirror; };
+    auto item = [](const MenuItem& x, const MenuItem& y) { return x.key == y.key && x.name == y.name && x.cmd == y.cmd; };
+    return a.sysopHandle == b.sysopHandle && a.sysopSalt == b.sysopSalt && a.sysopHash == b.sysopHash && a.sysopRealName == b.sysopRealName &&
+           a.sysopLocation == b.sysopLocation && a.sysopEmail == b.sysopEmail && a.sysopTagline == b.sysopTagline && a.dosSalt == b.dosSalt &&
+           a.dosHash == b.dosHash && a.nupSalt == b.nupSalt && a.nupHash == b.nupHash && a.bbsName == b.bbsName && a.location == b.location &&
+           a.boardName == b.boardName && a.publicHost == b.publicHost && a.telnetPort == b.telnetPort && a.timezone == b.timezone &&
+           a.ftnAddress == b.ftnAddress && a.newUserSecurity == b.newUserSecurity && a.dailyMinutes == b.dailyMinutes &&
+           a.idleMinutes == b.idleMinutes && a.sessions == b.sessions && a.nuvYes == b.nuvYes && a.nuvNo == b.nuvNo && a.nuvLevel == b.nuvLevel &&
+           a.ratio == b.ratio && a.freeKb == b.freeKb && a.theme == b.theme && a.wfc == b.wfc && a.loginSplash == b.loginSplash &&
+           a.sysopTelnet == b.sysopTelnet && a.setupDone == b.setupDone && a.unknown == b.unknown &&
+           std::equal(a.areas.begin(), a.areas.end(), b.areas.begin(), b.areas.end(), area) &&
+           std::equal(a.msgAreas.begin(), a.msgAreas.end(), b.msgAreas.begin(), b.msgAreas.end(), area) &&
+           std::equal(a.mainMenu.begin(), a.mainMenu.end(), b.mainMenu.begin(), b.mainMenu.end(), item);
+}
+
+void Node::applyBoard(std::shared_ptr<const BbsConfig> next, const std::shared_ptr<const BbsConfig>& prev, bool onlySwitches) {
     if (!next || next == cfg_) return;
     const BbsConfig& c = *cfg_;
     bool same = c.modemLink == next->modemLink && c.liteBelowBps == next->liteBelowBps && c.messagesOn == next->messagesOn &&
@@ -1033,21 +1049,12 @@ void Node::applyBoard(std::shared_ptr<const BbsConfig> next) {
         same = a.id == b.id && a.name == b.name && a.exe == b.exe && a.args == b.args && a.drop == b.drop && a.enabled == b.enabled;
     }
     if (same) return;  // nothing this caller would see
-    {
-        BbsConfig mine = c;  // only these change for a caller already on: if the rest matches, share the new copy
-        mine.modemLink = next->modemLink;
-        mine.liteBelowBps = next->liteBelowBps;
-        mine.messagesOn = next->messagesOn;
-        mine.filesOn = next->filesOn;
-        mine.doorsOn = next->doorsOn;
-        mine.doors = next->doors;
-        if (formatConfig(mine) == formatConfig(*next)) {
-            retire();
-            cfg_ = std::move(next);
-            cfgOwn_ = false;
-            *liteNow_ = lite();
-            return;
-        }
+    if (onlySwitches && prev && cfg_ == prev) {  // only these change for a caller already on, and the rest matches: share the new copy
+        retire();
+        cfg_ = std::move(next);
+        cfgOwn_ = false;
+        *liteNow_ = lite();
+        return;
     }
     BbsConfig& m = cfgMut();
     m.modemLink = next->modemLink;
@@ -1937,6 +1944,7 @@ void Node::key(char c) {
         } else if (k == 'y') {
             out_ += "yes";
             state_ = State::Applying;
+            app_.reset();
             appCfg_ = cfg_;  // (the application keeps a reference: this copy stays while it runs)
             app_.reset(new NewUserApp(handle_, out_, *appCfg_, rng_));
             app_->begin();
@@ -1953,6 +1961,7 @@ void Node::key(char c) {
             line_.clear();
             if (ok) {
                 state_ = State::Applying;
+                app_.reset();
                 appCfg_ = cfg_;  // (the application keeps a reference: this copy stays while it runs)
                 app_.reset(new NewUserApp(handle_, out_, *appCfg_, rng_));
                 app_->begin();
@@ -3553,7 +3562,7 @@ std::string Node::activityText() const {
 
 void Node::poll(uint32_t nowMs) {
     MciScope mciScope(*this);
-    retired_.reset();  // a settings copy swapped out last turn: nothing reads it now
+    retired_.clear();  // settings copies swapped out last turn: nothing reads them now
     if (state_ == State::Poster) {  // one piece of the poster a turn, nothing else until it is out
         pumpPoster();
         return;

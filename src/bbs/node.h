@@ -166,7 +166,11 @@ public:
     // (LORDCFG, drawn straight to the screen: drop "local")
     std::vector<DoorEntry> doorChoices() const;
     // section switches and the door list, for a caller already on (the rest stays as they called in)
-    void                   applyBoard(std::shared_ptr<const BbsConfig> next);
+    // prev: the copy main replaced with next; onlySwitches: they differ only in the fields above (onlySwitches(), once per push)
+    void                   applyBoard(std::shared_ptr<const BbsConfig> next, const std::shared_ptr<const BbsConfig>& prev = nullptr,
+                                      bool onlySwitches = false);
+    // a and b match outside the section switches, modem_link, lite_below_bps and the door list (no allocation)
+    static bool            onlySwitches(const BbsConfig& a, const BbsConfig& b);
     // The modem's newest report for this call (LFD3K-LINK, net/telnet.h): who is on the radio and how fast. Display only.
     void                   setLink(const net::LinkInfo& l);
     const net::LinkInfo&   link() const { return link_; }
@@ -231,7 +235,7 @@ private:
     std::function<void(const std::string&)>      linersAdd_;
     std::function<SysInfo()>  info_;
     std::shared_ptr<const BbsConfig> cfg_;      // shared with main and the other nodes until this node changes it
-    std::shared_ptr<const BbsConfig> retired_;  // the one swapped out, kept until the next poll (a caller may still hold a piece)
+    std::vector<std::shared_ptr<const BbsConfig>> retired_;  // copies swapped out, kept until the next poll (a caller may still hold a piece)
     std::shared_ptr<const BbsConfig> appCfg_;   // the copy the new user application reads (it holds a reference)
     bool                      cfgOwn_ = false;  // cfg_ is this node's own copy: written in place
     BbsConfig&                cfgMut();         // a write: this node's own copy first
