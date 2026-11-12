@@ -142,7 +142,8 @@ void ddnsCheck() {
 
 volatile bool ddnsDue_ = false;  // bench: @DDNS now makes the next tick check at once
 bool          first_ = true;     // the timer: kept by tick() on the loop (core 1) only
-uint32_t      lastDdns_ = 0, nextTick_ = 0, retryAt_ = 0;
+uint32_t      lastDdns_ = 0, nextTick_ = 0, failedAt_ = 0;
+bool          failed_ = false;  // the last start was refused: wait 2 s (loop core only, like the timer)
 
 uint32_t queued() { return queue_ ? (uint32_t)uxQueueMessagesWaiting(queue_) : 0; }
 
@@ -193,16 +194,20 @@ void run(void*) {
 
 // Start the task unless one is running. Callers publish their work first (queue the line, set the check).
 void kick() {
-    if ((int32_t)(millis() - retryAt_) < 0) return;  // a start just failed for lack of memory
+    if (failed_ && millis() - failedAt_ < 2000) return;  // a start just failed for lack of memory
     bool idle = false;
     if (!running_.compare_exchange_strong(idle, true)) return;
     // A stack this size must fit in one piece: look first, so a doomed start costs no failed allocation.
     size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-    if (largest >= kStack + 512 && xTaskCreatePinnedToCore(run, "web", kStack, nullptr, 1, nullptr, 0) == pdPASS) return;
+    if (largest >= kStack + 512 && xTaskCreatePinnedToCore(run, "web", kStack, nullptr, 1, nullptr, 0) == pdPASS) {
+        failed_ = false;
+        return;
+    }
     running_ = false;  // nothing is lost: the line stays queued, the check stays pending, a later tick tries again
     startLargest_ = largest;
     startFails_++;
-    retryAt_ = millis() + 2000;
+    failed_ = true;
+    failedAt_ = millis();
 }
 
 void ensureQueue() {
