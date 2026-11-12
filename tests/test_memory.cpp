@@ -133,9 +133,10 @@ std::string patternFile(size_t n) {
     for (size_t i = 0; i < n; i++) s[i] = (char)('A' + (i * 7 + i / 251) % 26);
     return s;
 }
-// The main's answer to "T name offset want" as main.cpp builds it (the handler and themeArtPieceAppend are tied to the SD card
-// and the settings, so they stay on the board): want 0 or over 7000 is 7000, no further than the cap, then the real
-// readFileAppend of that piece. requests counts the asks.
+// A stand-in copy of the main's "T name offset want" handler in main.cpp (that handler and themeArtPieceAppend are tied to the
+// SD card and the settings, so they are not host-built): want 0 or over 7000 is 7000, no further than the cap, then the real
+// readFileAppend of that piece. Only the follower side (assembleArt) and readFileAppend are the board's code here: if main's
+// clamp drifts from this copy, this test does not catch it. requests counts the asks.
 std::string mainTAnswer(const std::string& path, size_t off, size_t want, size_t cap, int& requests) {
     requests++;
     constexpr size_t kChunk = 7000;
@@ -268,12 +269,18 @@ TEST_CASE("spill: a write that throws is never sent again") {
     REQUIRE(threw);
     REQUIRE(failed.size() >= Node::kOutSpill);
     REQUIRE(failed.find("line 00000") != std::string::npos);  // it was the art's first piece
-    // the piece that failed is gone from the node: it is not sent a second time (what expandArt still held as it unwound may follow)
+    // the piece that failed is gone from the node, its tail still in expandArt's buffer too: nothing is held to send again
     std::string next = r.n.takeOutput();
-    CHECK(next.find("line 00000") == std::string::npos);
+    CHECK(next.empty());
     r.n.input((const uint8_t*)" ", 1, 1000);  // the call goes on: the next screen
     next += later + r.n.takeOutput();
-    CHECK(next.find("line 00000") == std::string::npos);  // none of the failed piece goes out again
+    // none of the failed piece goes out again: not one of its numbered lines (the last may be cut, so whole ones only)
+    for (size_t at = failed.find("line "); at != std::string::npos; at = failed.find("line ", at + 1)) {
+        std::string tag = failed.substr(at, 10);  // "line 00012"
+        if (tag.size() < 10) break;
+        CAPTURE(tag);
+        CHECK(next.find(tag) == std::string::npos);
+    }
 }
 
 // ---- the front door: LOGIN.ANS fields and pre-logon probes
