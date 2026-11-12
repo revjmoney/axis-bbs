@@ -2000,7 +2000,8 @@ struct NetHost {
     bool                                    logSaid = false, dirty = false, postDue = false;
     uint32_t                                logTryMs = 0, minuteMs = 0, saveMs = 0, dialMs = 0, postMs = 0;
     uint32_t                                postSeq = 0, appendFails = 0, houseDay = 0;
-    bool                                    seqFloorDue = false;  // no /netseq.txt and no clock at start: floored once it is set
+    bool                                    seqFloorDue = false;  // no counters found and no clock: floored once it is set
+    bool                                    cardSeqFree = false;  // cardSeq was saved but no card went out with it
     uint32_t                                crc[3] = {0, 0, 0};  // what state, seen and cursors last wrote
     size_t                                  dialIx = 0;
     std::unique_ptr<axis::net::NetRecord>   record;         // the net record (/net/record)
@@ -2159,10 +2160,11 @@ static bool netKeyLoad(axis::net::KeyPair& k) {
     return have;
 }
 
-// /netseq.txt in internal flash, beside the key: "<next post seq> <card seq>". It lives there, not under /net, so a
-// board that boots without its SD card keeps its counters with its key (peers drop a reused post id as seen and
-// refuse a card whose seq is not newer). Malformed reads as missing.
-static bool netSeqRead(uint32_t& post, uint32_t& card) {
+// /netseq.txt in internal flash, beside the key: "<next post seq> <card seq>", then " f" while the counters still
+// wait to be floored from the clock (none were found and there was no clock), so a restart before the clock is set
+// still floors them. It lives there, not under /net, so a board that boots without its SD card keeps its counters with
+// its key (peers drop a reused post id as seen and refuse a card whose seq is not newer). Malformed reads as missing.
+static bool netSeqRead(uint32_t& post, uint32_t& card, bool& floorDue) {
     File f = LittleFS.open("/netseq.txt", "r");
     if (!f) return false;
     char   b[32];
@@ -2174,14 +2176,18 @@ static bool netSeqRead(uint32_t& post, uint32_t& card) {
     if (e == b || *e != ' ') return false;
     char*         e2 = nullptr;
     unsigned long c = std::strtoul(e + 1, &e2, 10);
-    if (e2 == e + 1 || (*e2 != '\n' && *e2 != 0) || p == 0 || p > 0xFFFFFFFFul || c > 0xFFFFFFFFul) return false;
+    if (e2 == e + 1) return false;
+    bool due = e2[0] == ' ' && e2[1] == 'f';
+    if (due) e2 += 2;
+    if ((*e2 != '\n' && *e2 != 0) || p == 0 || p > 0xFFFFFFFFul || c > 0xFFFFFFFFul) return false;
     post = (uint32_t)p;
     card = (uint32_t)c;
+    floorDue = due;
     return true;
 }
 // Written to a temp file, then renamed over the old one (LittleFS replaces it in one step).
-static bool netSeqWrite(uint32_t post, uint32_t card) {
-    std::string t = std::to_string(post) + " " + std::to_string(card) + "\n";
+static bool netSeqWrite(uint32_t post, uint32_t card, bool floorDue) {
+    std::string t = std::to_string(post) + " " + std::to_string(card) + (floorDue ? " f\n" : "\n");
     File        f = LittleFS.open("/netseq.tmp", "w");
     bool        ok = f && f.write((const uint8_t*)t.data(), t.size()) == t.size();
     if (f) f.close();
@@ -2233,16 +2239,27 @@ static bool netCardUpdate(NetHost& h) {
         if (h.card.seq != held->seq) h.card = *held;
         return true;
     }
-    uint32_t seq = std::max(h.cardSeq, std::max(h.card.seq, held ? held->seq : 0u));
-    c.seq = seq + 1;
-    if (!netSeqWrite(h.core->postSeq(), c.seq)) return false;  // the card seq is saved before it is used
-    h.cardSeq = c.seq;
-    if (!axis::net::signCard(c, h.key) || !h.core->setOwnCard(c)) {
-        static bool said = false;
+    if (h.core->state().banned(c.board)) return false;  // no card is taken for a banned board: nothing to save
+    // The seq: one saved earlier that no card went out with is used again; else one past any used before.
+    uint32_t out = std::max(h.card.seq, held ? held->seq : 0u);
+    c.seq = h.cardSeqFree && h.cardSeq > out ? h.cardSeq : std::max(h.cardSeq, out) + 1;
+    static bool said = false;
+    if (!axis::net::signCard(c, h.key)) {  // fields it refuses: nothing saved, nothing sent
         if (!said) logEvent("net: this board's card could not be made (check net_name, net_sysop_name, net_location)");
         said = true;
         return false;
     }
+    if (c.seq != h.cardSeq) {  // saved before the card goes anywhere
+        if (!netSeqWrite(h.core->postSeq(), c.seq, h.seqFloorDue)) return false;
+        h.cardSeq = c.seq;
+    }
+    h.cardSeqFree = true;
+    if (!h.core->setOwnCard(c)) {
+        if (!said) logEvent("net: this board's card could not be made (check net_name, net_sysop_name, net_location)");
+        said = true;
+        return false;
+    }
+    h.cardSeqFree = false;
     h.card = c;
     h.dirty = true;
     return true;
@@ -2254,9 +2271,10 @@ static void netSeqFloor(NetHost& h) {
     uint32_t now = unixNow();
     if (!h.seqFloorDue || now <= axis::net::kNetClockSet) return;
     uint32_t post = std::max(h.core->postSeq(), now), card = std::max(h.cardSeq, now);
-    if (!netSeqWrite(post, card)) return;
+    if (!netSeqWrite(post, card, false)) return;
     h.core->setPostSeq(post);
     h.cardSeq = card;
+    h.cardSeqFree = false;
     h.seqFloorDue = false;
 }
 
@@ -3030,7 +3048,8 @@ static bool netStart() {
     }
     {  // the counters: /netseq.txt in internal flash; the old /net/postseq.txt and /net/card.txt are a floor
         uint32_t    post = 0, card = 0;
-        bool        found = netSeqRead(post, card);
+        bool        floorDue = false;
+        bool        found = netSeqRead(post, card, floorDue) && !floorDue;  // still waiting for the clock: as not found
         std::string oldPost = netFileRead("postseq.txt", 32), oldCard = netFileRead("card.txt", 32);
         post = std::max(post, (uint32_t)std::strtoul(oldPost.c_str(), nullptr, 10));
         card = std::max(card, (uint32_t)std::strtoul(oldCard.c_str(), nullptr, 10));
@@ -3039,7 +3058,7 @@ static bool netStart() {
         post = axis::net::netSeqStart(post, found, now);
         if (!found && now > axis::net::kNetClockSet) card = std::max(card, now);
         h->seqFloorDue = !found && now <= axis::net::kNetClockSet;
-        if (!netSeqWrite(post, card)) {
+        if (!netSeqWrite(post, card, h->seqFloorDue)) {
             if (!netStartSaid) logEvent("net: /netseq.txt could not be written, Sysop Net is off, trying every 10 min");
             netStartSaid = true;
             return false;
@@ -3047,7 +3066,7 @@ static bool netStart() {
         core.setPostSeq(post);
         h->cardSeq = card;
         NetHost* hp = h.get();
-        core.setSeqReserve([hp](uint32_t next) { return netSeqWrite(next, hp->cardSeq); });
+        core.setSeqReserve([hp](uint32_t next) { return netSeqWrite(next, hp->cardSeq, hp->seqFloorDue); });
     }
     h->postSeq = core.postSeq();
     {  // the card held in the state; a new one only on first boot (a changed one is made once the log is open)
