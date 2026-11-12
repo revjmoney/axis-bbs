@@ -21,6 +21,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <new>
 
@@ -228,15 +229,48 @@ static bool writeWarrior(const std::string& handle);
 static bool listName(const std::string& n) {
     return n == "rumors" || n == "bbslist" || n == "votes" || n == "ballots" || n == "axisnet" || n == "netnotes";
 }
+// How many lines a plain list keeps (0: axisnet and netnotes, which keep their own merge and size rules).
+static size_t listCap(const std::string& n) {
+    return n == "ballots" ? 500u : n == "rumors" ? 300u : n == "bbslist" || n == "votes" ? 50u : 0u;
+}
+// Lines counted per list the first time it is touched, then kept in step by listAppendLocal. listStore forgets it.
+static std::map<std::string, size_t> listCount;
+static std::string                   listPath(const std::string& n) { return "/list_" + n + ".txt"; }
+static size_t                        listCountOf(const std::string& n) {
+    auto it = listCount.find(n);
+    if (it != listCount.end()) return it->second;
+    size_t c = 0;
+    File   f = LittleFS.open(listPath(n).c_str(), "r");
+    while (f && f.available()) {
+        String l = f.readStringUntil('\n');
+        if (l.length()) c++;
+    }
+    if (f) f.close();
+    listCount[n] = c;
+    return c;
+}
+// A plain list is trimmed lazily (listAppendLocal), so the file can hold up to cap + cap/4 lines: readers see the newest cap.
+static size_t listSkip(const std::string& n) {
+    size_t cap = listCap(n);
+    if (!cap) return 0;
+    size_t c = listCountOf(n);
+    return c > cap ? c - cap : 0;
+}
 // One random line of a list, read a line at a time (the main menu's rumor: the whole list is more than the main can spare then)
 static std::vector<std::string> listOne(const std::string& n) {
     std::vector<std::string> v;
     if (!listName(n)) return v;
-    File     f = LittleFS.open(("/list_" + n + ".txt").c_str(), "r");
+    size_t   skip = listSkip(n);
+    File     f = LittleFS.open(listPath(n).c_str(), "r");
     uint32_t seen = 0;
     while (f && f.available()) {
         String l = f.readStringUntil('\n');
-        if (l.length() && esp_random() % ++seen == 0) v.assign(1, l.c_str());
+        if (!l.length()) continue;
+        if (skip) {
+            skip--;
+            continue;
+        }
+        if (esp_random() % ++seen == 0) v.assign(1, l.c_str());
     }
     if (f) f.close();
     return v;
@@ -245,23 +279,80 @@ static std::vector<std::string> listLoad(const std::string& n) {
     std::vector<std::string> v;
     if (n == "rumor") return listOne("rumors");  // the main menu's one rumor
     if (!listName(n)) return v;
-    File f = LittleFS.open(("/list_" + n + ".txt").c_str(), "r");  // a line at a time: one 8 KB block is more than the main can spare
+    size_t skip = listSkip(n);
+    File   f = LittleFS.open(listPath(n).c_str(), "r");  // a line at a time: one 8 KB block is more than the main can spare
     while (f && f.available()) {
         String l = f.readStringUntil('\n');
-        if (l.length()) v.push_back(l.c_str());
+        if (!l.length()) continue;
+        if (skip) {
+            skip--;
+            continue;
+        }
+        v.push_back(l.c_str());
     }
     if (f) f.close();
     return v;
 }
 static void listStore(const std::string& n, const std::vector<std::string>& v) {
     if (!listName(n)) return;
+    listCount.erase(n);  // the file is rewritten: count it again when next needed
     size_t      cap = n == "axisnet" || n == "netnotes" ? 180u : 120u;
     std::string text;
     for (auto& l : v) {
         text += l.substr(0, cap);
         text += '\n';
     }
-    flashWrite(("/list_" + n + ".txt").c_str(), text);
+    flashWrite(listPath(n).c_str(), text);
+}
+// A plain list gets its line appended to the file; once it is cap/4 over, the newest cap lines are streamed to a
+// temp file that replaces it (a failure leaves the original). No copy of the list is held in RAM.
+static bool listAppendLocal(const std::string& n, const std::string& line, size_t cap) {
+    if (!listName(n) || !cap) return false;
+    size_t had = listCountOf(n);  // before the append, so a first count does not include the new line
+    File   f = LittleFS.open(listPath(n).c_str(), "a");
+    if (!f) return false;
+    std::string out = line.substr(0, 120) + '\n';
+    bool        ok = f.write((const uint8_t*)out.data(), out.size()) == out.size();
+    f.close();
+    if (!ok) {
+        listCount.erase(n);  // maybe half a line landed: recount
+        return false;
+    }
+    size_t now = listCount[n] = had + (out.size() > 1 ? 1 : 0);
+    if (now <= cap + cap / 4) return true;
+    std::string tmp = "/list_" + n + ".tmp";
+    File        in = LittleFS.open(listPath(n).c_str(), "r");
+    File        t = LittleFS.open(tmp.c_str(), "w");
+    if (!in || !t) {
+        if (in) in.close();
+        if (t) {
+            t.close();
+            LittleFS.remove(tmp.c_str());
+        }
+        return true;  // the line is in; the trim waits for the next one
+    }
+    size_t skip = now - cap, kept = 0;
+    bool   wrote = true;
+    while (wrote && in.available()) {
+        String l = in.readStringUntil('\n');
+        if (!l.length()) continue;
+        if (skip) {
+            skip--;
+            continue;
+        }
+        String w = l.length() > 120 ? l.substring(0, 120) : l;
+        w += '\n';
+        wrote = t.write((const uint8_t*)w.c_str(), w.length()) == w.length();
+        kept++;
+    }
+    in.close();
+    t.close();
+    if (!wrote || (!LittleFS.rename(tmp.c_str(), listPath(n).c_str()) && !(LittleFS.remove(listPath(n).c_str()) && LittleFS.rename(tmp.c_str(), listPath(n).c_str())))) {
+        LittleFS.remove(tmp.c_str());
+        return true;
+    }
+    listCount[n] = kept;
+    return true;
 }
 static void listAddLocal(const std::string& n, const std::string& line) {
     if (!listName(n)) return;
@@ -286,10 +377,7 @@ static void listAddLocal(const std::string& n, const std::string& line) {
         listStore(n, v);
         return;
     }
-    std::vector<std::string> v = listLoad(n);
-    v.push_back(line.substr(0, 120));
-    while (v.size() > (n == "ballots" ? 500u : n == "rumors" ? 300u : 50u)) v.erase(v.begin());
-    listStore(n, v);
+    listAppendLocal(n, line, listCap(n));
 }
 
 // The sysop's own screens for the theme (MATRIX.ANS, MAIN.ANS): from the card on the main.
@@ -946,9 +1034,26 @@ static void logEvent(const String& what) {
     if (!a.empty()) announceOut(a);
 }
 
+// users.dat written a block at a time (the whole file as one string is more than the main can spare)
+static bool writeUsersFile() {
+    return flashWriteStream("/users.dat", [](File& f) {
+        std::string buf;
+        bool        ok = true;
+        auto        flush = [&] {
+            if (ok && !buf.empty()) ok = f.write((const uint8_t*)buf.data(), buf.size()) == buf.size();
+            buf.clear();
+        };
+        users.formatTo([&](const std::string& piece) {
+            buf += piece;
+            if (buf.size() >= 512) flush();
+        });
+        flush();
+        return ok;
+    });
+}
 static void saveUsers() {
     HeapScope scope("saveUsers");
-    if (!flashWrite("/users.dat", users.format())) logEvent("users: SAVE FAILED");
+    if (!writeUsersFile()) logEvent("users: SAVE FAILED");
     if (cluster)  // a follower tells the main; the main tells every follower
         for (auto& rec : userSync.changed(users)) cluster->sendUser(rec);
     if (users.pending() > pendingSeen) logEvent("new user application waiting: tap USERS");
@@ -2574,7 +2679,7 @@ static void startCluster() {
             saveUsers();  // and on to the other followers
         } else {
             userSync.received(axis::bbs::formatUser(here));
-            if (!flashWrite("/users.dat", users.format())) logEvent("users: SAVE FAILED");
+            if (!writeUsersFile()) logEvent("users: SAVE FAILED");
             pendingSeen = users.pending();
             screenDirty = true;
         }

@@ -5,6 +5,7 @@
 // flash, so accounts work on a board with no SD card.
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <map>
 #include <utility>
@@ -42,6 +43,8 @@ class UserStore {
 public:
     void        parse(const std::string& text);
     std::string format() const;
+    // The same bytes as format(), handed over one piece at a time (the header, then one user block each)
+    void formatTo(const std::function<void(const std::string&)>& put) const;
     User*       find(const std::string& handle);  // any case
     User*       byId(int id);
     const User* byId(int id) const { return const_cast<UserStore*>(this)->byId(id); }

@@ -51,3 +51,16 @@ bool flashWrite(const char* path, const std::string& text) {
     LittleFS.remove(path);
     return LittleFS.rename("/save.tmp", path);
 }
+
+bool flashWriteStream(const char* path, const std::function<bool(File&)>& fill) {
+    File f = LittleFS.open("/save.tmp", "w");
+    if (!f) return false;
+    bool ok = fill(f);
+    f.close();
+    if (!ok) {
+        LittleFS.remove("/save.tmp");  // the old file stays as it was
+        return false;
+    }
+    LittleFS.remove(path);
+    return LittleFS.rename("/save.tmp", path);
+}

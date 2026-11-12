@@ -81,9 +81,14 @@ void UserStore::parse(const std::string& text) {
     }
 }
 
+void UserStore::formatTo(const std::function<void(const std::string&)>& put) const {
+    put("# Axis Micro BBS Firmware users (written by the board)\n");
+    for (const User& u : users_) put(formatUser(u));
+}
+
 std::string UserStore::format() const {
-    std::string s = "# Axis Micro BBS Firmware users (written by the board)\n";
-    for (const User& u : users_) s += formatUser(u);
+    std::string s;
+    formatTo([&](const std::string& p) { s += p; });
     return s;
 }
 
