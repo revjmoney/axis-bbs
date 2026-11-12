@@ -386,9 +386,10 @@ TEST_CASE("session limits: silence, lines and the deadline") {
     CHECK(std::string(t.why()) == "too many lines");
     CHECK(i == (int)kSyncMaxLines - 2);  // hello, proof and SEQ came first
 
-    // 10 minutes at most, however busy.
+    // 10 minutes at most, however busy (for a board that was a link peer already; see below for others).
     NetSession u(b.core, b.card, b.key, nonce(4), false, "");
     RawDialer r2(0xBA);
+    b.core.addLinkPeer(r2.card.board, false);
     r2.handshake(u);
     RawDialer::say(u, "SEQ 0");
     uint32_t ms = 0;
@@ -633,4 +634,45 @@ TEST_CASE("a max-size post line is taken whole through the in-place parse") {
     NetPost back = decodePost(m.net);
     CHECK(back.id == p.id);
     CHECK(back.path == r.card.board);  // the hop was added
+}
+
+TEST_CASE("an inbound session from a board that was not a link peer gets 2 minutes") {
+    RevKeys rk;
+    Node b(0xD2);
+    REQUIRE(!b.post().empty());
+    auto runFor = [&](NetSession& s) {
+        uint32_t ms = 0;
+        s.tick(ms, true);
+        while (!s.failed() && ms < 2 * kSyncDeadlineMs) {
+            ms += 5000;
+            RawDialer::say(s, "E " + std::to_string(ms));
+            s.takeOut();
+            s.tick(ms, true);
+        }
+        return ms;
+    };
+    RawDialer stranger(0xD3);
+    NetSession s(b.core, b.card, b.key, nonce(11), false, "");
+    stranger.handshake(s);
+    REQUIRE(s.proven());
+    CHECK_FALSE(s.wasLinkPeer());
+    RawDialer::say(s, "SEQ 0");
+    uint32_t ms = runFor(s);
+    CHECK(std::string(s.why()) == "too long");
+    CHECK(ms > kSyncStrangerDeadlineMs);
+    CHECK(ms <= kSyncStrangerDeadlineMs + 5000);
+    // Now it is a link peer: its next session gets the full deadline.
+    NetSession t(b.core, b.card, b.key, nonce(12), false, "");
+    stranger.handshake(t);
+    CHECK(t.wasLinkPeer());
+    RawDialer::say(t, "SEQ 0");
+    ms = runFor(t);
+    CHECK(std::string(t.why()) == "too long");
+    CHECK(ms > kSyncDeadlineMs);
+    // A dialer always has the full deadline (it chose the board).
+    Node c(0xD4);
+    c.knows(b);
+    NetSession d(c.core, c.card, c.key, nonce(13), true, b.board);
+    CHECK(d.deadlineMs() == kSyncDeadlineMs);
+    CHECK(s.deadlineMs() == kSyncStrangerDeadlineMs);
 }

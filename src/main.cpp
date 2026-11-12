@@ -2014,10 +2014,14 @@ static bool netMainUp = false;  // a follower: the main's settings frame said it
 static bool netSharedUp = false;  // the main: what the last settings frame said
 
 // Proof back-off: an address whose AXISNET 2 session failed before it proved who it is is refused for 60 s,
-// doubling up to 30 min for repeats. 8 addresses; the one touched longest ago makes room.
+// doubling up to 30 min for repeats. Cooldown: an address whose session came from a board that was not a link peer
+// is refused for 10 min after it (that board's session had 2 min), so one stranger cannot keep the inbound slot.
+// 8 addresses; the one touched longest ago makes room.
+static constexpr uint32_t kNetCooldownSecs = 600;
 struct NetBackoff {
     uint32_t ip = 0, atMs = 0, secs = 0;
     bool     said = false;  // its refusal logged in this back-off
+    bool     cool = false;  // a cooldown, not a proof back-off
 };
 static NetBackoff netBackoff[8];
 static NetBackoff* netBackoffFind(uint32_t ip, bool make) {
@@ -2035,15 +2039,25 @@ static NetBackoff* netBackoffFind(uint32_t ip, bool make) {
 static bool netBackedOff(uint32_t ip) {
     NetBackoff* b = netBackoffFind(ip, false);
     if (!b || millis() - b->atMs >= b->secs * 1000u) return false;
-    if (!b->said) logEvent("net: " + IPAddress(ip).toString() + " refused for " + String(b->secs) + " s (no proof last time)");
+    if (!b->said)
+        logEvent("net: " + IPAddress(ip).toString() + " refused for " + String(b->secs) + " s" +
+                 (b->cool ? " (new board, cooling down)" : " (no proof last time)"));
     b->said = true;
     return true;
 }
 static void netStrike(uint32_t ip) {
     NetBackoff* b = netBackoffFind(ip, true);
-    b->secs = b->secs ? std::min<uint32_t>(b->secs * 2, 1800) : 60;
+    b->secs = b->secs && !b->cool ? std::min<uint32_t>(b->secs * 2, 1800) : 60;
     b->atMs = millis();
     b->said = false;
+    b->cool = false;
+}
+static void netCooldown(uint32_t ip) {
+    NetBackoff* b = netBackoffFind(ip, true);
+    b->secs = kNetCooldownSecs;
+    b->atMs = millis();
+    b->said = false;
+    b->cool = true;
 }
 static void netProven(uint32_t ip) {
     if (NetBackoff* b = netBackoffFind(ip, false)) *b = NetBackoff();
@@ -2297,7 +2311,8 @@ static void netClose(NetHost& h, NetSlot& s, const char* why) {
         if (ok && s.first && !s.s->peer().empty()) netSaveFirstPeer(h, s.s->peer());
         if (h.record) h.record->note(s.s->peer().empty() ? std::string("-") : s.s->peer(), std::string(ok ? "session ok " : "session failed ") + what.c_str(), std::string());
         bool blocked = what == "blocked";  // refused by this board's own block list: no back-off for that
-        if (&s == &h.in && s.s->proven()) netProven(s.ip);
+        if (&s == &h.in && s.s->proven() && !s.s->wasLinkPeer()) netCooldown(s.ip);  // a new board: 10 min before the next
+        else if (&s == &h.in && s.s->proven()) netProven(s.ip);
         else if (&s == &h.in && !blocked && !(why && !std::strcmp(why, "net off"))) netStrike(s.ip);  // never proved who it is
     }
     s.s.reset();

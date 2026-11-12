@@ -33,6 +33,7 @@ constexpr size_t kSyncInFlight = 8;                   // E lines sent and not ye
 constexpr size_t kSyncMaxLine = kNetMaxFrame + 32;    // a line longer than this is never sent or taken
 constexpr uint32_t kSyncTimeoutMs = 30000;            // no complete line for this long fails
 constexpr uint32_t kSyncDeadlineMs = 10 * 60 * 1000;  // a whole session at most
+constexpr uint32_t kSyncStrangerDeadlineMs = 2 * 60 * 1000;  // an inbound session from a board not yet a link peer
 constexpr uint32_t kSyncMaxLines = 4000;              // lines received per session at most
 constexpr uint32_t kSyncHistoryDays = 30;             // what a new board asks for
 constexpr size_t kSyncOutHigh = 2048;                 // no new data lines while this much is unsent
@@ -60,6 +61,13 @@ public:
     const std::string& peer() const { return peer_; }
     const char* why() const { return why_.c_str(); }
     bool proven() const { return phase_ == Phase::Sync; }  // the peer proved who it is (the handshake passed)
+    // The peer was a link peer before this session (known once proven). The host gives the address of an
+    // inbound peer that was not one a cooldown after the session.
+    bool wasLinkPeer() const { return wasLink_; }
+    // How long this session may run in all: kSyncDeadlineMs, except an answerer's until its peer proves
+    // it was a link peer already (kSyncStrangerDeadlineMs), so a stranger cannot hold the one inbound
+    // slot (and with it this board's dialing) for long.
+    uint32_t deadlineMs() const { return deadline_; }
 
     uint32_t postsSent() const { return postsSent_; }    // posts written out as E or H lines
     uint32_t postsTaken() const { return postsTaken_; }  // posts from the peer stored here
@@ -101,6 +109,7 @@ private:
     std::string peer_, peerNonce_;
     NetCard peerCard_;  // held from the hello to the proof only
     bool wasLink_ = false;
+    uint32_t deadline_ = kSyncDeadlineMs;
 
     // Sync progress, this side.
     uint32_t mySeq_ = 0;

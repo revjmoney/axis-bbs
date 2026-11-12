@@ -66,7 +66,7 @@ bool fits(const std::string& rec) { return !rec.empty() && rec.size() <= kNetMax
 NetSession::NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, const std::string& nonceHex16,
                        bool dialer, const std::string& expectedBoard)
     : core_(core), me_(me), signer_(signer), nonce_(nonceHex16), dialer_(dialer),
-      expected_(dialer ? expectedBoard : std::string()) {
+      expected_(dialer ? expectedBoard : std::string()), deadline_(dialer ? kSyncDeadlineMs : kSyncStrangerDeadlineMs) {
     if (!isHex(nonce_, 16)) {
         fail("bad nonce", nullptr);
         return;
@@ -228,6 +228,7 @@ void NetSession::enterSync() {
     // first pins its card so the card is never evicted for room. A board we dialed goes into the
     // outbound pool, one that dialed us into the inbound pool.
     wasLink_ = core_.isLinkPeer(peer_);
+    if (wasLink_) deadline_ = kSyncDeadlineMs;
     core_.addLinkPeer(peer_, dialer_);
     core_.takeCard(peerCard_, peer_);
     peerCard_ = NetCard();
@@ -399,7 +400,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         heard_ = false;
         lastRxMs_ = nowMs;
     }
-    if ((uint32_t)(nowMs - startMs_) > kSyncDeadlineMs) return fail("too long", "timeout");
+    if ((uint32_t)(nowMs - startMs_) > deadline_) return fail("too long", "timeout");
     if ((uint32_t)(nowMs - lastRxMs_) > kSyncTimeoutMs) return fail("timeout", "timeout");
     if (outOverflow()) return;
     if (phase_ != Phase::Sync || !heapOk) return;
