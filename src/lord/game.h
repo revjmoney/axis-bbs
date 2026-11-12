@@ -128,6 +128,8 @@ private:
     void        ladyEnd();
     void        execLine(const std::string& t);
     bool        nextRaw(std::string& raw);
+    bool        scriptLine(size_t pos, std::string& line, size_t& next);  // the line at file offset pos ('\n' and on left off)
+    void        scriptClose();
     std::string expand(const std::string& s);
     bool        ladyGet(const std::string& name, int& out);
     void        ladySet(const std::string& name, int v);
@@ -160,7 +162,12 @@ private:
     void*             mailCtx_ = nullptr;
     int               (*mailPull_)(void*, char*, int, char*, int) = nullptr;
     void              (*mailPost_)(void*, const char*, const char*, const char*) = nullptr;
-    std::string       script_;
+    // The running .LDY script, read from its file a window at a time (EVENTS.LDY is 18 KB: held whole, it sat on top
+    // of an ANSI viewer's 44 KB window at the busy test's lowest point). Positions (ladyPos_ and the rest) are file offsets.
+    std::string       scriptPath_;  // the file as found ("" = no script running)
+    size_t            scriptSize_ = 0;
+    std::string       scriptWin_;   // bytes [scriptBase_, scriptBase_ + scriptWin_.size()) of the file
+    size_t            scriptBase_ = 0;
     std::string       compose_;
     std::string       ladyKeys_;
     std::string       ladyFile_;

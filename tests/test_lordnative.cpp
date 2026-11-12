@@ -874,3 +874,45 @@ TEST_CASE("LORD picks the same monster") {
             CHECK(plain(line.output()).find(want) != std::string::npos);  // name and hp: one record, all its fields (str too) read together
         }
 }
+
+namespace {
+uint32_t oneRng() { return 1; }
+}  // namespace
+
+TEST_CASE("native lord plays a forest event from a script read a window at a time") {
+    fs::path root = stage("axis_lordnative_events");
+    saveBytes(root / "LENEMY.DAT", oneMonster());
+    std::string filler;
+    for (int i = 0; i < 40; i++) filler += "; filler line to push the next part past a 1 KB window\r\n";
+    std::string ldy = filler + "@#FIRST\r\n@writeln the first event\r\n@endquest\r\n" + filler +
+                      "@#SECOND\r\n@writeln the second event\r\n@runsub HELPER\r\n@writeln back from the helper\r\n@goto far\r\n"
+                      "@writeln skipped by the jump\r\n" + filler +
+                      "@label far\r\n@writeln after the jump\r\n@endquest\r\n" + filler +
+                      "@#HELPER\r\n@writeln in the helper\r\n@endquest\r\n";
+    REQUIRE(ldy.size() > 8000);
+    {
+        std::ofstream f(root / "EVENTS.LDY", std::ios::binary);
+        f << ldy;
+    }
+    axis::pc::StdHostFs host(root);
+    axis::door::ScriptStream line;
+    axis::lord::NativeLord game(host, line, "Redking", nullptr, 1);
+    game.setRng(oneRng);  // roll(5) == 1: an event; of FIRST SECOND HELPER, roll(3) == 1 picks SECOND
+    game.begin();
+    line.clearOutput();
+    line.push("f");
+    game.step();
+    std::string out = plain(line.output());
+    size_t a = out.find("the second event"), b = out.find("in the helper"), c = out.find("back from the helper"),
+           d = out.find("after the jump");
+    CHECK(a != std::string::npos);
+    CHECK(b != std::string::npos);
+    CHECK(c != std::string::npos);
+    CHECK(d != std::string::npos);
+    CHECK(a < b);
+    CHECK(b < c);
+    CHECK(c < d);
+    CHECK(out.find("skipped by the jump") == std::string::npos);
+    CHECK(out.find("the first event") == std::string::npos);
+    CHECK(out.find('\r' + std::string("\r")) == std::string::npos);  // the file's CR is not sent twice
+}
