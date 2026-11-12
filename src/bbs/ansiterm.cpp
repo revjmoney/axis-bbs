@@ -13,8 +13,7 @@ const uint8_t kCga[8] = {0, 4, 2, 6, 1, 5, 3, 7};  // ANSI colour number to CGA'
 }
 
 void AnsiTerm::clear() {
-    for (auto& r : cells_)
-        for (auto& c : r) c = Cell();  // the whole array, whatever the size
+    for (auto& c : cells_) c = Cell();  // all of this terminal's cells
     dirty_ = true;
 }
 
@@ -22,8 +21,8 @@ void AnsiTerm::newline() {
     if (++y_ < rows_) return;
     y_ = rows_ - 1;  // scroll everything up a line
     for (int r = 1; r < rows_; r++)
-        for (int c = 0; c < cols_; c++) cells_[r - 1][c] = cells_[r][c];
-    for (int c = 0; c < cols_; c++) cells_[rows_ - 1][c] = Cell();
+        for (int c = 0; c < cols_; c++) at(r - 1, c) = at(r, c);
+    for (int c = 0; c < cols_; c++) at(rows_ - 1, c) = Cell();
 }
 
 void AnsiTerm::put(uint8_t ch) {
@@ -31,7 +30,7 @@ void AnsiTerm::put(uint8_t ch) {
         x_ = 0;
         newline();
     }
-    Cell& c = cells_[y_][x_++];
+    Cell& c = at(y_, x_++);
     c.ch = ch;
     c.attr = (uint8_t)((bold_ ? fg_ | 8 : fg_) | bg_ << 4);
     dirty_ = true;
@@ -73,14 +72,14 @@ void AnsiTerm::csi(char f) {
                 clear();
                 x_ = y_ = 0;
             } else {  // from the cursor to the end of the screen
-                for (int c = x_; c < cols_; c++) cells_[y_][c] = Cell();
+                for (int c = x_; c < cols_; c++) at(y_, c) = Cell();
                 for (int r = y_ + 1; r < rows_; r++)
-                    for (int c = 0; c < cols_; c++) cells_[r][c] = Cell();
+                    for (int c = 0; c < cols_; c++) at(r, c) = Cell();
                 dirty_ = true;
             }
             break;
         case 'K':
-            for (int c = x_ < 0 ? 0 : x_; c < cols_; c++) cells_[y_][c] = Cell();
+            for (int c = x_ < 0 ? 0 : x_; c < cols_; c++) at(y_, c) = Cell();
             dirty_ = true;
             break;
         default: break;

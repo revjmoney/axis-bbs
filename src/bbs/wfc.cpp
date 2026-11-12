@@ -78,7 +78,7 @@ WfcRadio wfcRadio(const net::LinkInfo& l, const std::string& who) {
 }
 
 ArtValue wfcValues(const WfcSnapshot& s) {
-    return [s](const std::string& k) -> std::string {
+    return [&s](const std::string& k) -> std::string {
         if (k == "BN") return s.bbsName;
         if (k == "SN") return s.sysop;
         if (k == "CT") return std::to_string(s.callsToday);
@@ -123,7 +123,7 @@ ArtValue wfcValues(const WfcSnapshot& s) {
     };
 }
 
-std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, AnsiTerm& term) {
+std::vector<WfcHotspot> drawWfc(std::string_view art, const WfcSnapshot& s, AnsiTerm& term) {
     // expandArt buffers its output, so the terminal has not seen the text before a code when its value is asked for. The value of a
     // K? or N? code therefore leads with a one-byte marker; the emit callback feeds the text up to each marker to the terminal and
     // records where the cursor stands. The marker takes one column inside an @XX###@ field, so those fields are made one wider.

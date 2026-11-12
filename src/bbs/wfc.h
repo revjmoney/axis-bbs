@@ -5,6 +5,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "bbs/ansiterm.h"
@@ -50,7 +51,7 @@ struct WfcSnapshot {
     }
 };
 
-// the |XX / @XX###@ value function for expandArt
+// the |XX / @XX###@ value function for expandArt (it reads `s` in place: `s` must outlive the function it returns)
 ArtValue wfcValues(const WfcSnapshot& s);
 
 struct WfcHotspot {
@@ -61,7 +62,7 @@ struct WfcHotspot {
 };
 
 // Expands WFC art into `term`, recording where the |K? and |N? codes landed.
-std::vector<WfcHotspot> drawWfc(const std::string& art, const WfcSnapshot& s, AnsiTerm& term);
+std::vector<WfcHotspot> drawWfc(std::string_view art, const WfcSnapshot& s, AnsiTerm& term);
 
 // A theme's WFC art made safe to draw or send: cut at kWfcArtCap and at a SAUCE/EOF mark, no escape left open at the end, bare LF
 // made CR LF.

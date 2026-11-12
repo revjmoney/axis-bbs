@@ -1208,7 +1208,8 @@ static std::vector<axis::bbs::WfcHotspot> wfcSpots;            // where the keys
 static axis::bbs::WfcSnapshot             wfcShown;            // the values on the screen
 static uint32_t                           wfcDrawnMs = 0, wfcSoonUntil = 0;  // last expanded; a "coming soon" line until then
 static bool                               wfcStale = true;     // draw it at the next turn (another screen was up, a key was tapped)
-static std::string                        wfcArt, wfcArtFolder;  // the art while the WFC is up, and the skin folder it came from
+static std::string                        wfcArt, wfcArtFolder;  // the theme's art while the WFC is up, and the skin folder it came from
+static bool                               wfcArtLoaded = false;  // wfcArt is current (empty: the theme has none, the built-in art is drawn from flash)
 static const int                          kWfcLeft = 2;        // 45 cells of 7 pixels: 2 spare pixels on the left, 3 on the right
 static axis::bbs::WfcSnapshot             wfcSnapshot();
 // The sysop menu on the board's own screen: the one SysopShell, 40 columns in 8x16 letters, a tap picks the row.
@@ -1315,7 +1316,9 @@ static bool drawWfc() {
     wfcDrawnMs = now;
     axis::bbs::WfcSnapshot s = wfcSnapshot();
     if (!wfcStale && s == wfcShown) return false;
-    std::unique_ptr<axis::bbs::AnsiTerm> t(new (std::nothrow) axis::bbs::AnsiTerm(45, 24));
+    std::unique_ptr<axis::bbs::AnsiTerm> t;
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= 3072)  // (the cells are a vector: it aborts rather than returns null)
+        t.reset(new (std::nothrow) axis::bbs::AnsiTerm(45, 24));
     if (!t) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
         scr.fillScreen(pal::BLACK);
         scr.setFont(&fonts::Font0);
@@ -1324,14 +1327,17 @@ static bool drawWfc() {
         return true;
     }
     std::string folder = axis::bbs::wfcFolder(cfg);
-    if (wfcArt.empty() || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
+    if (!wfcArtLoaded || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
         std::string art = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
-        wfcArt = art.empty() ? std::string(kWfcCydAns) : art;  // the theme has none: the built-in art/wfccyd.ans
+        wfcArt = std::move(art);  // empty: the theme has none, and the built-in art/wfccyd.ans is read from flash where it stands
+        wfcArtLoaded = true;
         // a follower's empty answer may be a request that failed: the built-in for now, and ask again at the next redraw
         // (a theme that really has none is answered from the art cache then, without asking the main)
-        if (!art.empty() || !asFollower()) wfcArtFolder = folder;
+        if (!wfcArt.empty() || !asFollower()) wfcArtFolder = folder;
+        else wfcArtLoaded = false;
     }
-    wfcSpots = axis::bbs::drawWfc(wfcArt, s, *t);
+    const char* wfcBuiltin = kWfcCydAns;
+    wfcSpots = axis::bbs::drawWfc(wfcArt.empty() ? std::string_view(wfcBuiltin, sizeof kWfcCydAns - 1) : std::string_view(wfcArt), s, *t);
     if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
     AnsiScreen::renderCells(scr, *t);
     wfcShown = std::move(s);
@@ -1422,7 +1428,7 @@ static void shellFeed() {  // what the shell wrote, onto its terminal; a questio
     }
 }
 static void openShell(axis::bbs::SysopSection s) {
-    shellTerm.reset(new (std::nothrow) axis::bbs::AnsiTerm(40, 15));
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= 2048) shellTerm.reset(new (std::nothrow) axis::bbs::AnsiTerm(40, 15));
     boardShell.reset(new (std::nothrow) axis::bbs::SysopShell(shellOut, sysopRun, 40, true));  // (at the board: every item)
     if (!shellTerm || !boardShell) {
         closeShell();
@@ -1587,12 +1593,12 @@ static void drawPicker() {
 static void drawScreen() {
     if (!screenReady()) {  // a door is running
         wfcStale = true;
-        if (!wfcArt.empty()) std::string().swap(wfcArt);
+        if (wfcArtLoaded) std::string().swap(wfcArt), wfcArtLoaded = false;
         return;
     }
     if (mode != Mode::Normal || job || localNode || boardShell || detailSession >= 0) {  // the WFC is drawn afresh when it is back
         wfcStale = true;
-        if (!wfcArt.empty()) std::string().swap(wfcArt);  // and its art read again then (the skin may change meanwhile)
+        if (wfcArtLoaded) std::string().swap(wfcArt), wfcArtLoaded = false;  // and its art read again then (the skin may change meanwhile)
     }
     if (mode == Mode::WifiPick) {
         drawPicker();
