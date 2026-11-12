@@ -24,7 +24,8 @@ before anyone dials and one after they hang up. CSV columns: see CSV_HEAD. Every
 goes to a raw log next to the CSV (it can hold the public hostname: keep it local), and the
 board's @LOG is added at the end. Ends with what each caller did, PASS or FAIL and the lowest
 numbers seen. FAIL on: a reset (up= goes down or the ROM's rst: line), a line with ALLOC FAILED,
-wmin < 61440, wlarge < 32768, or @STATUS without wmin/wlarge. Stops early after --max-resets
+wmin < 61440, wlarge < 32768, @STATUS without wmin/wlarge, or a caller that never did its job
+(A no fight or town screen, B no pack, C no ZMODEM download, D no screen). Stops early after --max-resets
 resets, 90 s without @STATUS, or the main coming back without its role or card.
 BUSY_TRACE=1 prints every key whose expected answer never came.
 
@@ -842,6 +843,7 @@ def main(argv=None):
         want = {"caller-A": "fights_won", "caller-B": "packs_opened", "caller-C": "zmodem_ok", "caller-D": "screens"}[w.name]
         if not w.stats.get(want) and not (want == "fights_won" and w.stats.get("town_screens")):
             ledger.note("%s never did its job (%s=0)" % (w.name, want))
+            reasons.append("%s made no progress" % w.name)  # a caller stuck at a menu put no load on the board
     for line in mon.panic_lines[:10]:
         say("panic: " + line)
     verdict = "FAIL" if reasons else "PASS"
