@@ -1202,7 +1202,7 @@ static void bigButton(int y, const char* label, uint16_t color) {
 // The waiting-for-caller screen on the board's own screen: the WFC skin's WFCCYD.ANS (or the built-in art/wfccyd.ans) in 45x24
 // cells of 7x10 (315x240, centred), the live values of wfcSnapshot(), its keys and node lines tappable. Expanded again every 5 s
 // when the values changed, and whenever it comes back from another screen. The art is read from the card once and kept while
-// the WFC is up; the terminal (~5 KB) is only held while the art is drawn.
+// the WFC is up; the terminal (~2.2 KB of cells) is only held while the art is drawn.
 static int                                detailSession = -1;  // the node detail screen is up for this session (-1: the WFC)
 static std::vector<axis::bbs::WfcHotspot> wfcSpots;            // where the keys and node lines landed
 static axis::bbs::WfcSnapshot             wfcShown;            // the values on the screen
@@ -1236,7 +1236,7 @@ static void pushBoardToCallers() {
     for (size_t i = 0; i < sessions.size(); i++)  // modem_link off: calls already on stop taking link reports
         if (WifiStream* l = sessionLine(i)) l->acceptLink(cfg.modemLink);
 }
-static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~9 KB)
+static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~4 KB)
 static std::unique_ptr<AnsiScreen>          localScreen;
 static bool                              localKeys = false;  // the keyboard is up
 static bool                              localZoom = true;   // 40 columns in 8x8 cells (readable), or all 80 in 4x8
@@ -1317,8 +1317,10 @@ static bool drawWfc() {
     axis::bbs::WfcSnapshot s = wfcSnapshot();
     if (!wfcStale && s == wfcShown) return false;
     std::unique_ptr<axis::bbs::AnsiTerm> t;
-    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= 3072)  // (the cells are a vector: it aborts rather than returns null)
-        t.reset(new (std::nothrow) axis::bbs::AnsiTerm(45, 24));
+    try {  // (the cells are a vector: a failed allocation throws std::bad_alloc)
+        t.reset(new axis::bbs::AnsiTerm(45, 24));
+    } catch (const std::bad_alloc&) {
+    }
     if (!t) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
         scr.fillScreen(pal::BLACK);
         scr.setFont(&fonts::Font0);
@@ -1428,7 +1430,10 @@ static void shellFeed() {  // what the shell wrote, onto its terminal; a questio
     }
 }
 static void openShell(axis::bbs::SysopSection s) {
-    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= 2048) shellTerm.reset(new (std::nothrow) axis::bbs::AnsiTerm(40, 15));
+    try {
+        shellTerm.reset(new axis::bbs::AnsiTerm(40, 15));
+    } catch (const std::bad_alloc&) {
+    }
     boardShell.reset(new (std::nothrow) axis::bbs::SysopShell(shellOut, sysopRun, 40, true));  // (at the board: every item)
     if (!shellTerm || !boardShell) {
         closeShell();
