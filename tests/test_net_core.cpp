@@ -374,9 +374,9 @@ TEST_CASE("link peers: two pools of 4, the first peer pinned") {
         n.core.addLinkPeer(bd(i), false);
     }
     size_t out = 0, in = 0;
-    for (const auto& l : lines(n.core.saveCursors())) {
-        if (l.size() > 4 && l.compare(l.size() - 4, 4, " out") == 0) out++;
-        if (l.size() > 3 && l.compare(l.size() - 3, 3, " in") == 0) in++;
+    for (const auto& l : lines(n.core.saveCursors())) {  // "<peer> <index> <last sync> <out|in> <sessions>"
+        if (l.find(" out ") != std::string::npos) out++;
+        if (l.find(" in ") != std::string::npos) in++;
     }
     CHECK(out == kMaxOutboundPeers);
     CHECK(in == kMaxInboundPeers);
@@ -390,6 +390,29 @@ TEST_CASE("link peers: two pools of 4, the first peer pinned") {
     Node m(0x82);
     m.core.loadCursors(saved);
     CHECK(m.core.saveCursors() == saved);
+}
+
+TEST_CASE("trusted link peers: outbound ones, inbound ones after two completed sessions, and older files") {
+    Node n(0x83);
+    const std::string in = "00000000000000a1", out = "00000000000000a2", old = "00000000000000a3";
+    n.core.addLinkPeer(in, false);
+    n.core.addLinkPeer(out, true);
+    CHECK(n.core.isLinkPeer(in));
+    CHECK_FALSE(n.core.trustedPeer(in));
+    CHECK(n.core.trustedPeer(out));  // a board this board dials
+    CHECK_FALSE(n.core.trustedPeer("00000000000000a4"));  // not a link peer at all
+    n.core.sessionDone(in);
+    CHECK_FALSE(n.core.trustedPeer(in));
+    n.core.sessionDone(in);
+    CHECK(n.core.trustedPeer(in));
+    // An older cursors.txt has no sessions field: its peers were link peers already, so they stay trusted.
+    // A line with the field keeps its count; a bad count drops the line.
+    Node m(0x84);
+    m.core.loadCursors(old + " 5 100 in\n" + in + " 5 100 in 1\n" + out + " 5 100 in x\n");
+    CHECK(m.core.trustedPeer(old));
+    CHECK(m.core.isLinkPeer(in));
+    CHECK_FALSE(m.core.trustedPeer(in));
+    CHECK_FALSE(m.core.isLinkPeer(out));
 }
 
 TEST_CASE("netDateUnix reads what the old sscanf parse read") {

@@ -476,11 +476,21 @@ bool NetCore::nakedTransient(const std::string& peer, uint32_t index) {
     return true;
 }
 
+bool NetCore::trustedPeer(const std::string& board) const {
+    auto it = links_.find(board);
+    return it != links_.end() && (it->second.outbound || it->second.sessions >= kNetTrustSessions);
+}
+
+void NetCore::sessionDone(const std::string& board) {
+    auto it = links_.find(board);
+    if (it != links_.end() && it->second.sessions < 255) it->second.sessions++;
+}
+
 std::string NetCore::saveCursors() const {
     std::string out;
     for (const auto& kv : links_)
         out += kv.first + " " + std::to_string(kv.second.cursor) + " " + std::to_string(kv.second.lastSync) +
-               (kv.second.outbound ? " out\n" : " in\n");
+               (kv.second.outbound ? " out " : " in ") + std::to_string(kv.second.sessions) + "\n";
     return out;
 }
 
@@ -504,6 +514,9 @@ void NetCore::loadCursors(const std::string& text) {
         } else {
             l.outbound = poolSize(true) < kMaxOutboundPeers;  // an older file without pools
         }
+        uint32_t n = kNetTrustSessions;  // an older file without the count: it was a link peer already
+        if (t.size() > 4 && !parseSeq(t[4], n)) continue;
+        l.sessions = (uint8_t)std::min<uint32_t>(n, 255);
         if (poolSize(l.outbound) >= (l.outbound ? kMaxOutboundPeers : kMaxInboundPeers)) continue;
         links_[t[0]] = l;
     }

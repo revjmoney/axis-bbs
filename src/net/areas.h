@@ -54,6 +54,7 @@ constexpr uint32_t kNetClockSet = 1700000000;   // below this the board's clock 
 constexpr uint8_t kNetReadStrikes = 3;          // pendingFor calls stuck on an unreadable post before it is gone
 constexpr size_t kNetHistoryPerArea = 200;      // posts per area a new board's history pull gets at most
 constexpr uint8_t kNetNakStrikes = 3;           // sessions in a row a transient NAK may hold an entry
+constexpr uint8_t kNetTrustSessions = 2;        // completed sessions before an inbound-only link peer is trusted
 
 // The words a receiver puts after NAK <index>. Permanent ones move the sender's cursor past the entry;
 // transient ones (nocard, store) do not: the sender sends nothing more that session and tries the
@@ -133,6 +134,12 @@ public:
     // The board's first peer: added as an outbound link peer and pinned.
     void setFirstPeer(const std::string& board);
     bool isLinkPeer(const std::string& board) const { return links_.count(board) > 0; }
+    // A link peer this board dials (outbound pool), or an inbound one with kNetTrustSessions completed
+    // sessions. Anything else is a stranger: its inbound session gets the short deadline and its address
+    // the cooldown, so a board cannot escape both just by being added to the inbound pool once.
+    bool trustedPeer(const std::string& board) const;
+    // A session with this link peer completed (both sides sent DONE).
+    void sessionDone(const std::string& board);
     // Up to max (log index, encoded line) pairs for a link peer, oldest first, stopping once the
     // lines reach kNetPendingBytes (at least one is returned if any is ready). Entries excluded for
     // it or confirmed gone (killed, banned origin, card or notice no longer held, post not in the
@@ -144,8 +151,10 @@ public:
     // has now held it kNetNakStrikes sessions in a row (the sender cannot fix it, say it lacks the
     // origin's card too), then it moves past. True if the cursor moved.
     bool nakedTransient(const std::string& peer, uint32_t index);
-    // "<peer> <index> <last sync unix> <out|in>" per line. On load the pool field is optional:
-    // without it a peer goes to the outbound pool while it has room, else the inbound one.
+    // "<peer> <index> <last sync unix> <out|in> <completed sessions>" per line. On load the pool field
+    // is optional: without it a peer goes to the outbound pool while it has room, else the inbound one.
+    // Without the sessions field (an older file) a peer counts as trusted: it was a link peer before
+    // this build.
     std::string saveCursors() const;
     void loadCursors(const std::string& text);
 
@@ -203,6 +212,7 @@ private:
         uint32_t nakAt = 0xFFFFFFFFu;    // the entry the peer last answered with a transient NAK
         uint8_t nakStrikes = 0;          // sessions in a row it did
         bool outbound = false;           // which pool it is in
+        uint8_t sessions = 0;            // completed sessions with it (capped at 255)
     };
     size_t poolSize(bool outbound) const;
     bool makeRoom(bool outbound, const std::string& keep);  // evicts within one pool

@@ -71,7 +71,7 @@ Under `/net/` on the storage root:
 - `local.txt` holds this board's own hide and block lines.
 - `firstpeer.txt` remembers the first peer's address and the board id learned from it.
 
-Also under `/net/`: `state.txt` (cards and Rev's notices), `seen.txt` (which posts this board has seen) and `cursors.txt` (how far each link peer has been sent).
+Also under `/net/`: `state.txt` (cards and Rev's notices), `seen.txt` (which posts this board has seen) and `cursors.txt` (how far each link peer has been sent, and how many calls with it completed).
 
 In internal flash:
 
@@ -138,7 +138,7 @@ Without a clock, posts are trimmed by count only, once every 24 hours the board 
 ### Busy and back-off
 
 - One call in and one call out at a time. While the board is short of memory it stops reading the call (the other board waits) and its silence timer stands still; a call still ends after 10 minutes.
-- A call from a board that is not already one of this board's link peers gets 2 minutes instead of 10. When such a call ends, that address is answered `BYE busy` for 10 minutes.
+- A call from a board this board does not trust yet gets 2 minutes instead of 10. When such a call ends, that address is answered `BYE busy` for 10 minutes. Trusted means: a board this board dials itself, or a board that dialed in and has had 2 calls that ran to the end (both sides said `DONE`). Being dialed once does not make a board trusted, so a stranger's second call is still a stranger's call. A board that only ever dials in gets the short time and the 10-minute wait for its first two completed calls, then the full 10 minutes. Whether a board was trusted is decided as its call starts. Link peers saved by an older build count as trusted.
 - An address whose call fails before it proves which board it is gets `BYE busy` for 60 seconds, doubling on each repeat up to 30 minutes.
 
 ## A board without an SD card

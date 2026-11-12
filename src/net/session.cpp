@@ -172,6 +172,7 @@ void NetSession::line(std::string& l) {
             return;
         case Phase::Sync:
             syncLine(l);
+            countDone();
             return;
     }
 }
@@ -206,6 +207,9 @@ bool NetSession::hello(const std::string& l) {
         return false;
     }
     peer_ = c.board;
+    // Who it was before this session: enterSync adds it to a pool, so this is the last moment to tell.
+    wasLink_ = core_.isLinkPeer(peer_);
+    trusted_ = core_.trustedPeer(peer_);
     peerNonce_ = nonce;
     peerCard_ = std::move(c);
     return true;
@@ -228,11 +232,10 @@ void NetSession::proof(const std::string& l) {
 }
 
 void NetSession::enterSync() {
-    // Proven. Whether it was a link peer before decides the snapshot on first contact; adding it
-    // first pins its card so the card is never evicted for room. A board we dialed goes into the
-    // outbound pool, one that dialed us into the inbound pool.
-    wasLink_ = core_.isLinkPeer(peer_);
-    if (wasLink_) deadline_ = kSyncDeadlineMs;
+    // Proven. Whether it was a link peer before (taken at its hello) decides the snapshot on first
+    // contact; adding it first pins its card so the card is never evicted for room. A board we dialed
+    // goes into the outbound pool, one that dialed us into the inbound pool.
+    if (trusted_) deadline_ = kSyncDeadlineMs;
     core_.addLinkPeer(peer_, dialer_);
     core_.takeCard(peerCard_, peer_);
     peerCard_ = NetCard();
@@ -336,6 +339,13 @@ bool NetSession::cardAhead(const std::string& postLine) {
     if (cardsSent_.size() < kSyncCardsAhead) cardsSent_.push_back(origin);
     send("S ", l);
     return true;
+}
+
+// A completed session (both DONEs) counts once towards trusting an inbound-only link peer.
+void NetSession::countDone() {
+    if (counted_ || !done()) return;
+    counted_ = true;
+    core_.sessionDone(peer_);
 }
 
 // rec is a view into line. A post is decoded from it, then line is let go before the post is stored,
@@ -511,6 +521,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
     if (nothingPending && peerSend_ && fetched_.empty() && inFlight_.empty()) {
         send("DONE");
         sentDone_ = true;
+        countDone();
     }
     outOverflow();
 }

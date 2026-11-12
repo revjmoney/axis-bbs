@@ -65,12 +65,15 @@ public:
     const std::string& peer() const { return peer_; }
     const char* why() const { return why_.c_str(); }
     bool proven() const { return phase_ == Phase::Sync; }  // the peer proved who it is (the handshake passed)
-    // The peer was a link peer before this session (known once proven). The host gives the address of an
-    // inbound peer that was not one a cooldown after the session.
+    // The peer was a trusted link peer (NetCore::trustedPeer) before this session started: captured at
+    // its hello, before this session adds it to a pool. The host gives the address of an inbound peer
+    // that was not one a cooldown after the session.
+    bool wasTrusted() const { return trusted_; }
+    // The peer was in a link pool at its hello (trusted or not); decides the snapshot on first contact.
     bool wasLinkPeer() const { return wasLink_; }
-    // How long this session may run in all: kSyncDeadlineMs, except an answerer's until its peer proves
-    // it was a link peer already (kSyncStrangerDeadlineMs), so a stranger cannot hold the one inbound
-    // slot (and with it this board's dialing) for long.
+    // How long this session may run in all: kSyncDeadlineMs, except an answerer's with a peer that was not
+    // trusted (kSyncStrangerDeadlineMs), so a stranger cannot hold the one inbound slot (and with it this
+    // board's dialing) for long.
     uint32_t deadlineMs() const { return deadline_; }
 
     uint32_t postsSent() const { return postsSent_; }    // posts written out as E or H lines
@@ -91,6 +94,7 @@ private:
     void takeHistory(std::string_view rec, std::string& line);
     void ack(std::string_view idx, bool nak, std::string_view reason);
     bool cardAhead(const std::string& postLine);
+    void countDone();
     void sendHello();
     void send(std::string_view l);
     void send(std::string_view prefix, std::string_view rec);
@@ -112,7 +116,9 @@ private:
 
     std::string peer_, peerNonce_;
     NetCard peerCard_;  // held from the hello to the proof only
-    bool wasLink_ = false;
+    bool wasLink_ = false;  // a link peer at its hello (decides the snapshot on first contact)
+    bool trusted_ = false;  // a trusted link peer at its hello (decides the deadline and the cooldown)
+    bool counted_ = false;  // this session's completion went to NetCore::sessionDone
     uint32_t deadline_ = kSyncDeadlineMs;
 
     // Sync progress, this side.

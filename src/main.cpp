@@ -2391,7 +2391,7 @@ static void netClose(NetHost& h, NetSlot& s, const char* why) {
         if (ok && s.first && !s.s->peer().empty()) netSaveFirstPeer(h, s.s->peer());
         if (h.record) h.record->note(s.s->peer().empty() ? std::string("-") : s.s->peer(), std::string(ok ? "session ok " : "session failed ") + what.c_str(), std::string());
         bool blocked = what == "blocked";  // refused by this board's own block list: no back-off for that
-        if (&s == &h.in && s.s->proven() && !s.s->wasLinkPeer()) netCooldown(s.ip);  // a new board: 10 min before the next
+        if (&s == &h.in && s.s->proven() && !s.s->wasTrusted()) netCooldown(s.ip);  // a new board: 10 min before the next
         else if (&s == &h.in && s.s->proven()) netProven(s.ip);
         else if (&s == &h.in && !blocked && !(why && !std::strcmp(why, "net off"))) netStrike(s.ip);  // never proved who it is
     }
@@ -2744,14 +2744,16 @@ static std::string netAgo(uint32_t t) { return t ? axis::net::netDateText(t) : s
 
 static const char* netSlotText(const NetSlot& s) { return s.phase == NetPhase::Idle ? "idle" : s.phase == NetPhase::Looking ? "looking up" : "live"; }
 
-// The rest of a NetCore::saveCursors line after its peer, "<index> <last sync> <out|in>": the numbers, then the pool.
+// The rest of a NetCore::saveCursors line after its peer, "<index> <last sync> <out|in> <sessions>": the numbers, then the pool.
 // (No sscanf: it would pull about 24 KB of scanf into the image.)
-static const char* netCursor(const char* p, uint32_t& idx, uint32_t& last) {
+static std::string netCursor(const char* p, uint32_t& idx, uint32_t& last) {
     char* e = nullptr;
     idx = (uint32_t)std::strtoul(p, &e, 10);
     last = (uint32_t)std::strtoul(e, &e, 10);
     while (*e == ' ') e++;
-    return e;
+    const char* w = e;
+    while (*e && *e != ' ') e++;  // the pool word only (the completed sessions follow it)
+    return std::string(w, (size_t)(e - w));
 }
 
 static void netStatus(NetHost& h, Print& out) {
@@ -2771,9 +2773,9 @@ static void netStatus(NetHost& h, Print& out) {
     for (size_t at = 0, nl; (nl = t.find('\n', at)) != std::string::npos; at = nl + 1) {
         std::string l = t.substr(at, nl - at);
         size_t      sp = l.find(' ');
-        if (sp == std::string::npos) continue;
-        const char* pool = netCursor(l.c_str() + sp, idx, last);
-        out.printf("peer %.16s %s queue %u, synced %s\n", l.c_str(), pool, (unsigned)(next > idx ? next - idx : 0), netAgo(last).c_str());
+        if (sp != 16) continue;  // peer lines only
+        std::string pool = netCursor(l.c_str() + sp, idx, last);
+        out.printf("peer %.16s %s queue %u, synced %s\n", l.c_str(), pool.c_str(), (unsigned)(next > idx ? next - idx : 0), netAgo(last).c_str());
     }
     if (h.record && h.record->failures()) out.printf("record writes failed %u\n", (unsigned)h.record->failures());
 }

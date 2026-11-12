@@ -389,7 +389,8 @@ TEST_CASE("session limits: silence, lines and the deadline") {
     // 10 minutes at most, however busy (for a board that was a link peer already; see below for others).
     NetSession u(b.core, b.card, b.key, nonce(4), false, "");
     RawDialer r2(0xBA);
-    b.core.addLinkPeer(r2.card.board, false);
+    b.core.addLinkPeer(r2.card.board, false);  // an inbound link peer with two completed sessions: trusted
+    for (uint8_t k = 0; k < kNetTrustSessions; k++) b.core.sessionDone(r2.card.board);
     r2.handshake(u);
     RawDialer::say(u, "SEQ 0");
     uint32_t ms = 0;
@@ -624,7 +625,8 @@ TEST_CASE("short of heap the silence timer stands still; the deadline does not")
     RevKeys rk;
     Node b(0xCD);
     RawDialer r(0xCE);
-    b.core.addLinkPeer(r.card.board, false);  // a link peer: the full deadline
+    b.core.addLinkPeer(r.card.board, false);  // a trusted link peer: the full deadline
+    for (uint8_t k = 0; k < kNetTrustSessions; k++) b.core.sessionDone(r.card.board);
     NetSession s(b.core, b.card, b.key, nonce(8), false, "");
     s.tick(0, true);
     r.handshake(s);
@@ -705,18 +707,64 @@ TEST_CASE("an inbound session from a board that was not a link peer gets 2 minut
     CHECK(std::string(s.why()) == "too long");
     CHECK(ms > kSyncStrangerDeadlineMs);
     CHECK(ms <= kSyncStrangerDeadlineMs + 5000);
-    // Now it is a link peer: its next session gets the full deadline.
+    // The first session put it in the inbound pool, but that alone buys nothing: its second session is
+    // still a stranger's (2 minutes, and the host cools its address down afterwards).
+    REQUIRE(b.core.isLinkPeer(stranger.card.board));
     NetSession t(b.core, b.card, b.key, nonce(12), false, "");
     stranger.handshake(t);
     CHECK(t.wasLinkPeer());
+    CHECK_FALSE(t.wasTrusted());
+    CHECK(t.deadlineMs() == kSyncStrangerDeadlineMs);
     RawDialer::say(t, "SEQ 0");
     ms = runFor(t);
     CHECK(std::string(t.why()) == "too long");
-    CHECK(ms > kSyncDeadlineMs);
+    CHECK(ms > kSyncStrangerDeadlineMs);
+    CHECK(ms <= kSyncStrangerDeadlineMs + 5000);
     // A dialer always has the full deadline (it chose the board).
     Node c(0xD4);
     c.knows(b);
     NetSession d(c.core, c.card, c.key, nonce(13), true, b.board);
     CHECK(d.deadlineMs() == kSyncDeadlineMs);
     CHECK(s.deadlineMs() == kSyncStrangerDeadlineMs);
+}
+
+TEST_CASE("an inbound-only link peer is trusted after two completed sessions; failed ones do not count") {
+    RevKeys rk;
+    Node b(0xD5);
+    REQUIRE(!b.post().empty());
+    RawDialer peer(0xD6);
+    // One session to the end: SEQ, SEND, DONE both ways.
+    auto complete = [&](uint8_t n) {
+        NetSession s(b.core, b.card, b.key, nonce(n), false, "");
+        peer.handshake(s);
+        bool trusted = s.wasTrusted();
+        RawDialer::say(s, "SEQ 0");
+        RawDialer::say(s, "SEND");
+        for (uint32_t ms = 0; ms < 1000 && !s.done(); ms += 10) s.tick(ms, true);
+        RawDialer::say(s, "DONE");
+        CHECK_MESSAGE(s.done(), s.why());
+        return trusted;
+    };
+    {  // A failed session (cut by its deadline) counts for nothing.
+        NetSession s(b.core, b.card, b.key, nonce(30), false, "");
+        peer.handshake(s);
+        CHECK_FALSE(s.wasTrusted());
+        s.tick(0, true);
+        s.tick(kSyncStrangerDeadlineMs + 1, true);
+        REQUIRE(s.failed());
+    }
+    CHECK_FALSE(b.core.trustedPeer(peer.card.board));
+    CHECK_FALSE(complete(31));  // still a stranger: no completed session yet
+    CHECK_FALSE(b.core.trustedPeer(peer.card.board));
+    CHECK_FALSE(complete(32));  // one completed session
+    CHECK(b.core.trustedPeer(peer.card.board));
+    NetSession s(b.core, b.card, b.key, nonce(33), false, "");
+    peer.handshake(s);
+    CHECK(s.wasTrusted());
+    CHECK(s.deadlineMs() == kSyncDeadlineMs);
+    // The count survives a reboot with the cursors.
+    std::string saved = b.core.saveCursors();
+    b.core.loadCursors(saved);
+    CHECK(b.core.trustedPeer(peer.card.board));
+    CHECK(b.core.saveCursors() == saved);
 }
