@@ -11,18 +11,22 @@
 
 namespace web {
 
-void begin();                                     // load the settings; starts the task when anything is set
+void begin();                                     // load the settings
+void tick();                                      // the main loop, often: starts the task when a check or a line is waiting
 void setMain(bool isMain);                        // only the main announces and updates DNS
 void setDoorRunning(bool on);                     // a door has the heap: hold HTTPS until it returns
 bool busy();                                      // the web task is inside a request right now
 uint32_t droppedLines();                          // Discord lines dropped because TLS did not fit (not doors)
 uint32_t gatedChecks();                           // DNS / No-IP checks held back for lack of memory
 uint32_t gatedLargestKb();                        // largest block (KB) the last held check saw
+uint32_t startFails();                            // task starts refused for lack of memory (the work waits)
+uint32_t startLargestKb();                        // largest block (KB) the last refused start saw
+uint32_t stackMark();                             // the task's lowest stack high-water mark so far (0: never ran)
 void announce(const String& line);                // queue a Discord line (dropped when the queue is full)
 bool setDiscord(const String& webhookUrl);        // "" turns it off
 bool setDdns(const String& spec);                 // "domain|host|key|secret", "" turns it off
 bool setNoip(const String& spec);                 // No-IP: "host|username|password", "" turns it off
-void ddnsSoon();                                  // bench: the web task checks DNS on its next turn
+void ddnsSoon();                                  // bench: the next tick hands the web task a DNS check
 void noipNow();                                   // bench: update No-IP right now (blocking)
 String status();                                  // for the serial console: what's set (no secrets)
 String ping();                                    // bench: the public IP over HTTPS (proves TLS and the roots), blocking

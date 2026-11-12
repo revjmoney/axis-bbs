@@ -11,6 +11,7 @@
 #include <WiFiClientSecure.h>
 
 #include "bbs/noip.h"
+#include "bbs/webwork.h"
 #include "heapscope.h"
 #include "web_roots.h"
 
@@ -18,7 +19,7 @@ namespace web {
 
 namespace {
 QueueHandle_t      queue_ = nullptr;
-TaskHandle_t       task_ = nullptr;
+std::atomic<bool>  running_{false};  // a web task exists (set by whoever starts it, cleared by the task as it ends)
 volatile bool      main_ = true;  // (any board with the settings does the work)
 String             discord_, domain_, host_, key_, secret_, lastIp_, lastResult_ = "idle";
 String             noipHost_, noipUser_, noipPass_, noipIp_, noipResult_ = "idle";
@@ -27,12 +28,14 @@ volatile bool      busy_ = false;    // inside request()
 volatile bool      door_ = false;    // a door is using the heap: do not start a handshake
 SemaphoreHandle_t  lock_ = nullptr;  // the settings, shared with the task
 constexpr size_t   kLine = 320;
-constexpr uint32_t kDdnsEveryMs = 10 * 60 * 1000;
-constexpr uint32_t kFirstCheckMs = 60 * 1000;  // after boot: time to clear bad settings before any network call
+constexpr uint32_t kStack = 7168;              // TLS wants a deep stack (about 1 KB spare at its peak)
 constexpr size_t   kTlsNeeds = 48 * 1024;      // a TLS handshake wants about 45 KB in one piece
 constexpr size_t   kTlsReserve = 32 * 1024;    // and a callers' worth of heap must stay free besides
 std::atomic<uint32_t> dropped_{0}, gated_{0};  // Discord lines dropped / DNS checks held for lack of memory
 volatile uint32_t     gatedLargest_ = 0;       // the largest block the last held DNS check saw
+std::atomic<uint32_t> startFails_{0}, stackMark_{0};  // task starts refused for lack of memory / lowest stack mark seen
+volatile uint32_t     startLargest_ = 0;       // the largest block the last refused start saw
+std::atomic<bool>     checkPending_{false};    // a DNS check handed to the task (the loop's tick keeps the timer)
 
 // a busy CYD main can't spare a TLS handshake: trying anyway starves the whole board.
 // A running door wins even when the largest block still looks big enough: the handshake
@@ -137,51 +140,94 @@ void ddnsCheck() {
     if (code == 200) lastIp_ = ip;
 }
 
-volatile bool ddnsDue_ = false;  // bench: @DDNS now makes the next turn check at once
+volatile bool ddnsDue_ = false;  // bench: @DDNS now makes the next tick check at once
+bool          first_ = true;     // the timer: kept by tick() on the loop (core 1) only
+uint32_t      lastDdns_ = 0, nextTick_ = 0, retryAt_ = 0;
 
-void run(void*) {
-    uint32_t lastDdns = 0;
-    bool     first = true;
-    char     line[kLine];
-    bool     holding = false;  // one Discord line kept across a door, instead of dropped
-    for (;;) {
-        if (!holding && xQueueReceive(queue_, line, pdMS_TO_TICKS(door_ ? 500 : 2000)) == pdTRUE) holding = true;
-        if (holding && door_) {
-            vTaskDelay(pdMS_TO_TICKS(500));  // the door has the heap: post this line when it returns
-        } else if (holding) {
-            xSemaphoreTake(lock_, portMAX_DELAY);
-            String url = discord_;
-            xSemaphoreGive(lock_);
-            // A door can start between the check above and this one: keep the line if it did.
-            if (main_ && url.length() && WiFi.status() == WL_CONNECTED && tlsFits()) {
-                holding = false;
-                int code = request("POST", url, String("{\"content\":\"") + jsonText(line) + "\"}", "", nullptr);
-                if (code == -2 && door_) holding = true;  // the handshake refused because a door started
-                else if (code != 204 && code != 200) Serial.printf("axis: discord post failed (HTTP %d)\n", code);
-                if (!holding) vTaskDelay(pdMS_TO_TICKS(1500));  // Discord's rate limit: a few posts a second at most
-            } else if (door_) {
-                vTaskDelay(pdMS_TO_TICKS(500));
-            } else {
-                if (main_ && url.length() && WiFi.status() == WL_CONNECTED && !door_) dropped_++;  // TLS did not fit (not a door)
-                holding = false;  // no webhook, or the heap cannot spare TLS: drop it, as before
-            }
-        }
-        if (door_) continue;  // DNS checks allocate too; the timer is not consumed, so they run after
-        if (main_ && WiFi.status() == WL_CONNECTED && millis() > kFirstCheckMs && (first || ddnsDue_ || millis() - lastDdns > kDdnsEveryMs)) {
-            first = false;
-            ddnsDue_ = false;
-            lastDdns = millis();
-            ddnsCheck();
+uint32_t queued() { return queue_ ? (uint32_t)uxQueueMessagesWaiting(queue_) : 0; }
+
+bool hasWork() { return axis::bbs::webHasWork(door_, checkPending_, queued()); }
+
+// Discord lines, oldest first. A line leaves the queue only once posted or dropped, so a door can start
+// at any point and the line just waits in the queue for it (the task ends meanwhile).
+void postLines() {
+    char line[kLine];
+    while (queue_ && !door_ && xQueuePeek(queue_, line, 0) == pdTRUE) {
+        xSemaphoreTake(lock_, portMAX_DELAY);
+        String url = discord_;
+        xSemaphoreGive(lock_);
+        // A door can start between the check above and this one: keep the line if it did.
+        if (main_ && url.length() && WiFi.status() == WL_CONNECTED && tlsFits()) {
+            int code = request("POST", url, String("{\"content\":\"") + jsonText(line) + "\"}", "", nullptr);
+            if (code == -2 && door_) return;  // the handshake refused because a door started
+            xQueueReceive(queue_, line, 0);
+            if (code != 204 && code != 200) Serial.printf("axis: discord post failed (HTTP %d)\n", code);
+            vTaskDelay(pdMS_TO_TICKS(1500));  // Discord's rate limit: a few posts a second at most
+        } else if (door_) {
+            return;
+        } else {
+            if (main_ && url.length() && WiFi.status() == WL_CONNECTED && !door_) dropped_++;  // TLS did not fit (not a door)
+            xQueueReceive(queue_, line, 0);  // no webhook, or the heap cannot spare TLS: drop it, as before
         }
     }
 }
 
-void startTask() {
-    if (task_) return;
+// Each pass is its own call, so nothing it allocated (TLS client, HTTP client, Strings) is alive when the task ends.
+void run(void*) {
+    for (;;) {
+        postLines();
+        if (!door_ && checkPending_) {  // DNS checks allocate too: during a door the check stays pending for after it
+            checkPending_ = false;
+            ddnsCheck();
+        }
+        uint32_t mark = uxTaskGetStackHighWaterMark(nullptr), was = stackMark_;
+        if (!was || mark < was) stackMark_ = mark;
+        // Hand over before the last look: work queued after this store finds no task and starts a new one;
+        // work queued before it is seen here, and this task keeps going if it wins the flag back.
+        running_ = false;
+        bool idle = false;
+        if (!hasWork() || !running_.compare_exchange_strong(idle, true)) break;
+    }
+    vTaskDelete(nullptr);  // the idle task on core 0 frees the stack and control block
+}
+
+// Start the task unless one is running. Callers publish their work first (queue the line, set the check).
+void kick() {
+    if ((int32_t)(millis() - retryAt_) < 0) return;  // a start just failed for lack of memory
+    bool idle = false;
+    if (!running_.compare_exchange_strong(idle, true)) return;
+    // A stack this size must fit in one piece: look first, so a doomed start costs no failed allocation.
+    size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    if (largest >= kStack + 512 && xTaskCreatePinnedToCore(run, "web", kStack, nullptr, 1, nullptr, 0) == pdPASS) return;
+    running_ = false;  // nothing is lost: the line stays queued, the check stays pending, a later tick tries again
+    startLargest_ = largest;
+    startFails_++;
+    retryAt_ = millis() + 2000;
+}
+
+void ensureQueue() {
     if (!queue_) queue_ = xQueueCreate(8, kLine);
-    xTaskCreatePinnedToCore(run, "web", 7168, nullptr, 1, &task_, 0);  // TLS wants a deep stack; core 0 with WiFi
 }
 }  // namespace
+
+void tick() {
+    uint32_t now = millis();
+    if ((int32_t)(now - nextTick_) < 0) return;
+    nextTick_ = now + 1000;
+    bool dns = domain_.length() || noipHost_.length();  // (the settings change only on this core)
+    if (main_ && !door_ && !checkPending_ && (dns || discord_.length()) && WiFi.status() == WL_CONNECTED &&
+        axis::bbs::webCheckDue(now, first_, ddnsDue_, lastDdns_)) {
+        first_ = false;
+        ddnsDue_ = false;
+        lastDdns_ = now;
+        if (dns) checkPending_ = true;  // (with only Discord set the check had nothing to do, as before)
+    }
+    if (hasWork()) kick();
+}
+
+uint32_t stackMark() { return stackMark_; }
+uint32_t startFails() { return startFails_; }
+uint32_t startLargestKb() { return startLargest_ / 1024; }
 
 bool busy() { return busy_; }
 
@@ -202,7 +248,7 @@ void begin() {
     noipUser_ = p.getString("noip_user", "");
     noipPass_ = p.getString("noip_pass", "");
     p.end();
-    if (discord_.length() || domain_.length() || noipHost_.length()) startTask();
+    if (discord_.length() || domain_.length() || noipHost_.length()) ensureQueue();
 }
 
 void setMain(bool isMain) { main_ = isMain; }
@@ -214,6 +260,7 @@ void announce(const String& line) {
     char b[kLine];
     strlcpy(b, line.c_str(), sizeof b);
     xQueueSend(queue_, b, 0);
+    if (hasWork()) kick();  // (during a door the line waits in the queue; the tick starts the task after it)
 }
 
 bool setDiscord(const String& url) {
@@ -226,7 +273,7 @@ bool setDiscord(const String& url) {
     xSemaphoreTake(lock_, portMAX_DELAY);
     discord_ = url;
     xSemaphoreGive(lock_);
-    if (url.length()) startTask();
+    if (url.length()) ensureQueue();
     return true;
 }
 
@@ -253,7 +300,7 @@ bool setDdns(const String& spec) {
     domain_ = f[0], host_ = f[1], key_ = f[2], secret_ = f[3];
     lastIp_ = "";
     xSemaphoreGive(lock_);
-    if (f[0].length()) startTask();
+    if (f[0].length()) ensureQueue();
     return true;
 }
 
@@ -274,11 +321,14 @@ bool setNoip(const String& spec) {
     noipStopped_ = false;
     noipResult_ = host.length() ? "waiting for the first check" : "idle";
     xSemaphoreGive(lock_);
-    if (host.length()) startTask();
+    if (host.length()) ensureQueue();
     return true;
 }
 
-void ddnsSoon() { ddnsDue_ = true; }
+void ddnsSoon() {
+    ddnsDue_ = true;
+    nextTick_ = millis();  // the very next tick hands the check over
+}
 
 void noipNow() {
     xSemaphoreTake(lock_, portMAX_DELAY);

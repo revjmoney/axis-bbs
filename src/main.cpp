@@ -3501,7 +3501,7 @@ static void runCommand(const String& cmd, Print& out) {
         sample.winLargest = heapWin.lowLargest == UINT32_MAX ? sample.largest : heapWin.lowLargest;
         sample.winDoing = heapWin.lowDoing;
         auto stk = [](const char* n) { TaskHandle_t h = xTaskGetHandle(n); return h ? (uint32_t)uxTaskGetStackHighWaterMark(h) : 0u; };
-        sample.stkWeb = stk("web");
+        sample.stkWeb = web::stackMark();  // (the task comes and goes: its own lowest mark, no foreign handle)
         sample.stkMdns = stk("mdns");
         sample.stkTimer = stk("esp_timer");
         sample.outMax = (uint32_t)axis::bbs::Node::outMax();
@@ -4288,6 +4288,7 @@ void loop() {
     lastLoop = millis();
     heapWin.sample((uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT), (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), doingNow());
     heapScopeFlush();  // a line the web task (core 0) held
+    web::tick();       // the web task exists only while a DNS check or a Discord line waits
     handleSerial();
     modemSearchPoll();  // (before any early return: a network re-apply may be waiting on it)
     applyNetworkDue();
@@ -4379,14 +4380,15 @@ void loop() {
         unbindSession();
     }
     axisDirty = false;
-    static uint32_t lastMemLog = 0, seenDropped = 0, seenGated = 0;  // low-memory web notes, at most hourly
+    static uint32_t lastMemLog = 0, seenDropped = 0, seenGated = 0, seenStarts = 0;  // low-memory web notes, at most hourly
     static bool     memLogged = false;
     if (axis::bbs::gateLogDue(millis(), lastMemLog, memLogged)) {
-        uint32_t d = web::droppedLines(), g = web::gatedChecks();
-        if (d != seenDropped || g != seenGated) {
+        uint32_t d = web::droppedLines(), g = web::gatedChecks(), f = web::startFails();
+        if (d != seenDropped || g != seenGated || f != seenStarts) {
             if (d != seenDropped) logEvent("discord: " + String(d - seenDropped) + " lines dropped (low memory)");
             if (g != seenGated) logEvent("ddns: waiting for memory (largest " + String(web::gatedLargestKb()) + " KB)");
-            seenDropped = d, seenGated = g;
+            if (f != seenStarts) logEvent("web: task waiting for memory (largest " + String(web::startLargestKb()) + " KB)");
+            seenDropped = d, seenGated = g, seenStarts = f;
             lastMemLog = millis(), memLogged = true;
         }
     }

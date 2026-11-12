@@ -24,6 +24,7 @@
 #include "bbs/password.h"
 #include "bbs/pipecodes.h"
 #include "bbs/users.h"
+#include "bbs/webwork.h"
 #include "bbs/wfc.h"
 #include "bbs/zipreader.h"
 #include "door/bytestream.h"
@@ -636,6 +637,19 @@ TEST_CASE("web gate logs once an hour while gated") {
     last = 62u * 60000u;  // logged then
     CHECK_FALSE(gateLogDue(62u * 60000u + 59u * 60000u, last, logged));
     CHECK(gateLogDue(0xFFFFFFF0u + 3600001u, 0xFFFFFFF0u, true));  // across the millis() wrap
+}
+
+TEST_CASE("web task: checks keep today's timing, and it runs only while there is work") {
+    CHECK_FALSE(webCheckDue(60000u, true, true, 0));  // nothing in the first minute, not even @DDNS now
+    CHECK(webCheckDue(60001u, true, false, 0));      // then the first check
+    CHECK_FALSE(webCheckDue(60001u + 600000u, false, false, 60001u));
+    CHECK(webCheckDue(60002u + 600000u, false, false, 60001u));  // every ten minutes after
+    CHECK(webCheckDue(70000u, false, true, 65000u));             // @DDNS now
+    CHECK(webCheckDue(0xFFFFF000u + 700001u, false, false, 0xFFFFF000u));  // across the millis() wrap
+    CHECK_FALSE(webHasWork(false, false, 0));  // idle: no task
+    CHECK(webHasWork(false, true, 0));
+    CHECK(webHasWork(false, false, 1));
+    CHECK_FALSE(webHasWork(true, true, 3));  // a door holds the heap: the work waits
 }
 
 // ---- WFC refresh ESC[K
