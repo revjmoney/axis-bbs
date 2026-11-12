@@ -195,3 +195,27 @@ TEST_CASE("the main refuses a follower's request with a path in an area or file 
     CHECK(r.sd.areas["ansi"].count("README.TXT") == 1);
     CHECK(r.sd.areas[".."].count("users.dat") == 1);
 }
+
+TEST_CASE("small reads on a follower come out of one link-sized piece: one round trip per 2 KB, bytes intact") {
+    Rig  r;
+    auto f = r.remote.open("ansi", "ACID-96.ZIP");
+    REQUIRE(f);
+    const std::string& want = r.sd.areas["ansi"]["ACID-96.ZIP"];
+    int                before = r.asks;
+    std::string        got;
+    for (uint32_t off = 0; off < 4096; off += 512) {  // a stored piece read the way the viewer does
+        uint8_t b[512];
+        REQUIRE(f->readAt(off, b, sizeof b));
+        got.append((const char*)b, sizeof b);
+    }
+    CHECK(got == want.substr(0, 4096));
+    CHECK(r.asks - before == 2);  // 4 KB in two pieces, not eight
+    uint8_t tail[3];
+    REQUIRE(f->readAt(10000, tail, 3));  // a short last piece near the end
+    CHECK(tail[0] == 0x1f);
+    CHECK(tail[2] == 0xff);
+    uint8_t back[4];
+    REQUIRE(f->readAt(100, back, 4));  // back to the start: fetched again, still right
+    CHECK(std::string((const char*)back, 4) == want.substr(100, 4));
+    CHECK_FALSE(f->readAt(10000, tail, 4));
+}

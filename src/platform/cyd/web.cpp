@@ -236,6 +236,7 @@ uint32_t startFails() { return startFails_; }
 uint32_t startLargestKb() { return startLargest_ / 1024; }
 
 bool busy() { return busy_; }
+bool working() { return running_ || hasWork(); }
 
 uint32_t droppedLines() { return dropped_; }
 uint32_t gatedChecks() { return gated_; }

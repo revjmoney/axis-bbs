@@ -76,7 +76,7 @@ private:
     uint32_t                           outBytes_ = 0;
     std::vector<Rec>                   recs_;
     std::unique_ptr<ZipReader::Stream> stream_;  // the piece being copied (declared last: it goes first)
-    uint32_t                           crc_ = 0;
+    uint32_t                           crc_ = 0, pieceOut_ = 0;
     bool                               ok_ = true, leased_ = false;
     bool                               openFailed_ = false;  // a pack that could not be read: no copy is deleted this pass
     int                                waitSteps_ = 0;       // after the heap said no: steps to wait before asking again

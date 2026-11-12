@@ -16,6 +16,7 @@ void tick();                                      // the main loop, often: start
 void setMain(bool isMain);                        // only the main announces and updates DNS
 void setDoorRunning(bool on);                     // a door has the heap: hold HTTPS until it returns
 bool busy();                                      // the web task is inside a request right now
+bool working();                                   // the task is up, or a DNS check or a Discord line waits for it
 uint32_t droppedLines();                          // Discord lines dropped because TLS did not fit (not doors)
 uint32_t gatedChecks();                           // DNS / No-IP checks held back for lack of memory
 uint32_t gatedLargestKb();                        // largest block (KB) the last held check saw

@@ -142,6 +142,19 @@ public:
     uint32_t size() const override { return size_; }
     bool     readAt(uint32_t off, uint8_t* buf, size_t n) override {
         if ((uint64_t)off + n > size_) return false;
+        // Small reads (a stored ANSI piece goes 512 bytes at a time) come out of the last 2 KB piece fetched: one round
+        // trip per kChunk instead of one per read.
+        if (n < FileServer::kChunk) {
+            if (!(off >= aheadAt_ && (uint64_t)off + n <= (uint64_t)aheadAt_ + ahead_.size())) {
+                uint32_t k = size_ - off < FileServer::kChunk ? size_ - off : (uint32_t)FileServer::kChunk;
+                std::string data;
+                if (!lib_.call({"A", area_, name_, std::to_string(off), std::to_string(k)}, data) || data.size() != k) return false;
+                ahead_ = std::move(data);
+                aheadAt_ = off;
+            }
+            std::memcpy(buf, ahead_.data() + (off - aheadAt_), n);
+            return true;
+        }
         while (n) {
             size_t      k = n < FileServer::kChunk ? n : FileServer::kChunk;
             std::string data;
@@ -158,6 +171,8 @@ private:
     RemoteFileLibrary& lib_;
     std::string        area_, name_;
     uint32_t           size_;
+    std::string        ahead_;  // the last piece fetched, at aheadAt_
+    uint32_t           aheadAt_ = 0;
 };
 
 class RemoteWrite : public bbs::WriteFile {

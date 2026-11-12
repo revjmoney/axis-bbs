@@ -236,6 +236,7 @@ bool Filler::copyStep() {
         write(h.data(), h.size());
         stream_.reset(new ZipReader::Stream(*zip_, e, w, w ? inflate::kWindow : 0, s));
         crc_ = 0xFFFFFFFFu;
+        pieceOut_ = 0;
         if (!ok_) {
             dropCopy();
             zip_.reset();
@@ -243,23 +244,29 @@ bool Filler::copyStep() {
         }
         return true;
     }
-    uint8_t buf[512];
-    size_t  done = 0;
+    const ZipEntry& e = es[entry_];
+    uint8_t         buf[512];
+    size_t          done = 0;
+    bool            over = false;  // more than the ZIP says the piece holds: a damaged pack must not fill the card
     while (done < stepBytes_) {
         size_t n = stream_->read(buf, sizeof buf);
         if (n == 0) break;
+        if ((uint64_t)pieceOut_ + n > e.usize) {
+            over = true;
+            break;
+        }
+        pieceOut_ += (uint32_t)n;
         crc_ = net::crc32Update(crc_, buf, n);
         if (!write(buf, n)) break;
         done += n;
     }
-    if (ok_ && done >= stepBytes_) return true;  // more next step
-    const ZipEntry& e = es[entry_];
-    bool good = ok_ && stream_->result() == ZipReader::Result::Ok && ~crc_ == e.crc;
+    if (ok_ && !over && done >= stepBytes_) return true;  // more next step
+    bool good = ok_ && !over && stream_->result() == ZipReader::Result::Ok && ~crc_ == e.crc;
     stream_.reset();
     if (leased_) inflate::give(this);
     leased_ = false;
     if (!good) {  // a damaged piece or a failed write: no copy of this pack (the viewer plays it from its ZIP)
-        if (ok_ && failed.size() < 64) failed.push_back(outName_);  // damaged, not a card trouble: not tried again until a reboot
+        if (failed.size() < 64) failed.push_back(outName_);  // damaged, or the card would not take it: not tried again until a reboot
         dropCopy();
         zip_.reset();
         file_.reset();

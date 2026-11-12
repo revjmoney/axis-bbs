@@ -4335,45 +4335,57 @@ static void serviceSession(int i) {
 // so new uploads get copied too. A caller arriving drops the pass (and a copy part way); the next idle restarts it.
 static void viewCacheTick() {
     static std::unique_ptr<axis::bbs::viewcache::Filler> fill;
-    static uint32_t                                       nextMs = 60000;  // the first pass a minute after boot
-    bool anyone = false;
+    static uint32_t nextMs = 300000;  // the first pass five minutes after boot (after the boot DNS check, which needs TLS room)
+    uint32_t        now = millis();
+    bool            anyone = false;
     for (size_t i = 0; i < sessions.size() && !anyone; i++) anyone = sessionLine(i) != nullptr;
     if (cluster)  // a caller on a follower counts too: the main serves its screens and files
         for (auto& n : cluster->nodes()) anyone = anyone || !n.handle.empty();
-    if (anyone || asFollower() || !storageHasSd() || !boardCfg) {
-        fill.reset();
+    // The web task (a DNS check, a Discord line) needs the heap the window would hold: the pass steps aside for it too.
+    bool webWork = web::working();
+    if (anyone || webWork || asFollower() || !storageHasSd() || !boardCfg) {
+        if (fill) {  // dropped (a copy part way is thrown away, the window given back); not back for two minutes
+            fill.reset();
+            if ((int32_t)(nextMs - (now + 120000u)) < 0) nextMs = now + 120000u;
+        }
         return;
     }
     // (The first try, a file per piece in /sd/files/viewcache, is left alone: deleting thousands of files one by one in a FAT
     // folder that big stalls the loop for seconds a file. It is only card space; the sysop can delete it from a PC.)
-    uint32_t now = millis();
-    if (!fill) {
-        if ((int32_t)(now - nextMs) < 0) return;
-        std::vector<std::string> areas;
-        for (auto& d : boardCfg->doors) {
-            std::string exe = d.exe;
-            for (char& c : exe) c = (char)std::toupper((unsigned char)c);
-            if (exe != "*ANSIVIEW") continue;
-            for (size_t from = 0; from <= d.args.size();) {
-                size_t      comma = d.args.find(',', from);
-                std::string id = d.args.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
-                if (!id.empty() && std::find(areas.begin(), areas.end(), id) == areas.end()) areas.push_back(id);
-                if (comma == std::string::npos) break;
-                from = comma + 1;
+    if (!fill && (int32_t)(now - nextMs) < 0) return;
+    try {
+        if (!fill) {
+            std::vector<std::string> areas;
+            for (auto& d : boardCfg->doors) {
+                std::string exe = d.exe;
+                for (char& c : exe) c = (char)std::toupper((unsigned char)c);
+                if (exe != "*ANSIVIEW") continue;
+                for (size_t from = 0; from <= d.args.size();) {
+                    size_t      comma = d.args.find(',', from);
+                    std::string id = d.args.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
+                    if (!id.empty() && std::find(areas.begin(), areas.end(), id) == areas.end()) areas.push_back(id);
+                    if (comma == std::string::npos) break;
+                    from = comma + 1;
+                }
             }
+            fill.reset(new axis::bbs::viewcache::Filler(
+                callerFiles(), std::move(areas),
+                [](uint32_t minFree, uint32_t minLargest) {
+                    return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree &&
+                           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
+                },
+                [](uint64_t bytes) { return storageFreeBytes(true) >= bytes + (256ull << 20); }));  // fresh, and 256 MB left for uploads
         }
-        fill.reset(new axis::bbs::viewcache::Filler(
-            callerFiles(), std::move(areas),
-            [](uint32_t minFree, uint32_t minLargest) {
-                return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
-            },
-            [](uint64_t bytes) { return storageFreeBytes(true) >= bytes + (256ull << 20); }));  // fresh, and 256 MB always left for uploads
-    }
-    if (!fill->step()) {
-        if (fill->copied() || fill->removed())
-            logEvent("view cache: " + String(fill->copied()) + " packs copied, " + String(fill->removed()) + " old copies removed");
+        if (!fill->step()) {
+            if (fill->copied() || fill->removed())
+                logEvent("view cache: " + String(fill->copied()) + " packs copied, " + String(fill->removed()) + " old copies removed");
+            fill.reset();
+            nextMs = now + 30u * 60u * 1000u;
+        }
+    } catch (const std::bad_alloc&) {  // the heap could not spare a listing or a directory: drop the pass, try again later
         fill.reset();
-        nextMs = now + 30u * 60u * 1000u;
+        nextMs = now + 10u * 60u * 1000u;
+        logEvent("view cache: short of memory, the pass waits 10 minutes");
     }
 }
 
