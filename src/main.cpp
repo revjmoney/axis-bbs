@@ -1713,9 +1713,9 @@ static void applyNetworkDue() {  // each loop turn, after modemSearchPoll()
     applyNetworkNow();  // (a search still running after 3.5 s is left to MDNS.end(), which frees it)
 }
 static void sendApp(const std::string& s) {
-    if (s.empty() || !line) return;
-    line->write((const uint8_t*)s.data(), s.size());
-    line->flush();
+    if (!line) return;
+    if (!s.empty()) line->write((const uint8_t*)s.data(), s.size());
+    line->flush();  // (even when empty: a screen that left in 2 KB pieces through setDirect still has its tail held here)
 }
 
 // The LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM: the newest link report on this board (the WFC's |R? codes),
