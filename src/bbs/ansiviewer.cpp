@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <map>
 
+#include "bbs/inflatelease.h"
+#include "bbs/viewcache.h"
 #include "bbs/theme.h"
 
 namespace axis::bbs {
@@ -53,40 +55,35 @@ bool AnsiViewer::inflateReady() const {
 }
 
 bool AnsiViewer::grabInflate() {
-    if (inflateReady()) return true;
-    if (!ws_) {
-        ws_ = (uint8_t*)std::malloc(32768);
-        if (!ws_) return false;
-        ownWs_ = true;
-        wsSize_ = 32768;
+    if (inflateReady()) return true;  // a passed-in block, or the board's window already lent to us
+    uint8_t *w, *s;
+    if (!inflate::take(this, w, s)) return false;
+    ws_ = w;
+    wsSize_ = inflate::kWindow;
+    state_ = s;
+    leased_ = true;
+    if (room_ && !room_(kPlayFree, kPlayLargest)) {  // taken, and now the board is under its floor: give it straight back
+        releaseInflate();
+        return false;
     }
-    if (!state_) {
-        state_ = (uint8_t*)std::malloc(ZipReader::kStateBytes);
-        if (!state_) {
-            if (ownWs_) {
-                std::free(ws_);
-                ws_ = nullptr;
-                ownWs_ = false;
-                wsSize_ = 0;
-            }
-            return false;
-        }
-        ownState_ = true;
-    }
-    return inflateReady();
+    return true;
+}
+
+void AnsiViewer::shortOnMemory() {
+    releaseInflate();
+    std::string().swap(chunk_);
+    showPieces();  // then the note, so the list's CLS does not wipe it (80 columns: from column 1)
+    send(std::string("\x1b[22;1H") + AMBER + "The board is short on memory for another movie right now. Try again in a minute." + HI);
 }
 
 void AnsiViewer::releaseInflate() {
-    stream_.reset();
-    if (ownState_) std::free(state_);
-    if (ownWs_) std::free(ws_);
-    if (ownState_) state_ = nullptr;
-    if (ownWs_) {
-        ws_ = nullptr;
+    stream_.reset();  // first: it points into the window
+    if (leased_) {
+        ws_ = state_ = nullptr;
         wsSize_ = 0;
+        leased_ = false;
     }
-    ownState_ = false;
-    ownWs_ = false;
+    inflate::give(this);  // always: a no-op unless this viewer holds the window
 }
 
 void AnsiViewer::begin() {
@@ -128,6 +125,7 @@ bool AnsiViewer::number(char c, int& n) {
 }
 
 void AnsiViewer::showPacks() {
+    releaseInflate();  // the window is only ever held while a piece plays
     st_ = St::Packs;
     zip_.reset();
     file_.reset();
@@ -158,6 +156,18 @@ bool AnsiViewer::openPack(size_t i) {
     RandomFile* f = file_.get();
     zip_.reset(new ZipReader([f](uint32_t off, uint8_t* buf, size_t n) { return f->readAt(off, buf, n); }, f->size()));
     if (!zip_->open()) return false;
+    if (cache_) {  // the board's uncompressed copy of this pack, when it has one: its pieces play with no window
+        std::unique_ptr<RandomFile> cf = lib_.open(viewcache::kArea, viewcache::cacheName(zip_->entries()));
+        if (cf) {
+            RandomFile*                c = cf.get();
+            std::unique_ptr<ZipReader> cz(new ZipReader([c](uint32_t off, uint8_t* buf, size_t n) { return c->readAt(off, buf, n); },
+                                                        c->size()));
+            if (cz->open() && viewcache::matches(zip_->entries(), cz->entries())) {
+                zip_ = std::move(cz);  // (the copy's reader first: the old one reads through file_)
+                file_ = std::move(cf);
+            }
+        }
+    }
     pieces_.clear();
     for (size_t k = 0; k < zip_->entries().size(); k++)
         if (isAnsiPiece(zip_->entries()[k].name)) pieces_.push_back(k);
@@ -189,6 +199,7 @@ int AnsiViewer::columns() const {
 }
 
 void AnsiViewer::showPieces() {
+    releaseInflate();
     st_ = St::Pieces;
     std::vector<std::string> v;
     for (size_t i = 0; i < pieces_.size(); i++) v.push_back(shownName(i));
@@ -199,10 +210,13 @@ void AnsiViewer::showPieces() {
 void AnsiViewer::showPiece(size_t i) {
     piece_ = i;
     const ZipEntry& e = zip_->entries()[pieces_[i]];
-    if (e.method == 8 && !grabInflate()) {  // stored pieces need no window; a second movie waits for one
-        send(std::string("\r\n\r\n   ") + AMBER +
-             "The board is short on memory for another movie right now. Try again in a minute.\r\n" + DIM);
+    if (e.method == 8 && inflate::busy() && !inflateReady()) {  // another caller has the board's window: nothing waits
         showPieces();
+        send(std::string("\x1b[22;4H") + AMBER + "Another caller is viewing a pack right now. Here is the file list." + HI);
+        return;
+    }
+    if (e.method == 8 && !grabInflate()) {  // stored pieces need no window
+        shortOnMemory();
         return;
     }
     send(CLS);
@@ -227,7 +241,12 @@ void AnsiViewer::showPiece(size_t i) {
 }
 
 void AnsiViewer::pump() {
-    if (st_ != St::Playing || waiting_) return;
+    if (st_ != St::Playing) return;
+    if (leased_ && room_ && !room_(kPlayFree, kPlayLargest)) {  // the board got busy while this piece played (or waits at "more"): it stops here
+        shortOnMemory();
+        return;
+    }
+    if (waiting_) return;
     size_t budget = 2048;  // a still piece: a screenful a turn at most
     if (movie_ && clock_) {  // a movie: what the modem would have carried since last time
         uint32_t t = now(), elapsed = t - lastPump_;
@@ -240,6 +259,7 @@ void AnsiViewer::pump() {
     bool        end = false;
     while (out.size() < budget) {
         if (chunkPos_ >= chunk_.size()) {  // the next part out of the ZIP
+            if (chunk_.capacity() > 1024) std::string().swap(chunk_);  // the 4 KB first read is sent: give it back
             chunk_.assign(512, '\0');
             chunk_.resize(stream_->read((uint8_t*)&chunk_[0], chunk_.size()));
             chunkPos_ = 0;

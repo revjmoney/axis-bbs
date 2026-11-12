@@ -21,6 +21,10 @@ struct DiagSample {
     uint32_t doorStackWords = 0; // that same task's high-water mark when the door returned
     DoorDiag door = DoorDiag::None;
     int      resetCode = 0;  // esp_reset_reason_t as a number (0 unknown ... 10 sdio)
+    uint32_t winFree = 0, winLargest = 0;  // lowest free and lowest largest block since the window was reset
+    std::string winDoing;                  // what the board was doing at winFree
+    uint32_t stkWeb = 0, stkMdns = 0, stkTimer = 0;  // task stack high-water marks, words (0 = task absent)
+    uint32_t outMax = 0, artMax = 0;       // largest Node output buffer, largest art string read
 };
 
 const char* doorDiagToken(DoorDiag d);

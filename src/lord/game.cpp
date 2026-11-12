@@ -357,14 +357,22 @@ void NativeLord::putName(int off, int cap, const std::string& s) {
 }
 
 bool NativeLord::loadMonster(Fighter& out) {
-    std::string b = readFile("LENEMY.DAT", 400000);
-    int n = (int)(b.size() / kMon);
+    // Same gates as readFile(name, 400000): missing, empty or oversize file fails.
+    door::FileInfo fi;
+    if (!fs_.stat("LENEMY.DAT", fi) || fi.size == 0 || fi.size > 400000u) return false;
+    int n = (int)(fi.size / kMon);
     if (n < 1) return false;
     int level = i16(raw_ + O_LEVEL);
     if (level < 1) level = 1;
     int idx = (level - 1) * 11 + (int)roll(11);
     if (idx >= n) idx = (int)roll((uint32_t)n);
-    const uint8_t* p = (const uint8_t*)b.data() + idx * kMon;
+    uint8_t rec[kMon];
+    int h = fs_.open("LENEMY.DAT", 0, false, false);
+    if (h < 0) return false;
+    bool ok = fs_.seek(h, (int64_t)idx * kMon, 0) >= 0 && fs_.read(h, rec, kMon) == kMon;
+    fs_.close(h);
+    if (!ok) return false;
+    const uint8_t* p = rec;
     out.name = trim(pstr(p, 60));
     out.str = i32(p + 61);
     out.gold = i32(p + 65);

@@ -23,6 +23,10 @@ Axis Micro BBS Firmware includes these third-party components, each under its ow
 
 `site/fonts/AxisVGA.woff2` is built by `tools/art/make_vga_webfont.py` from `third_party/vga_font/font8x16.h`: the IBM VGA 8x16 glyphs as packaged by VileR in The Ultimate Oldschool PC Font Pack (https://int10h.org/oldschool-pc-fonts/), licensed CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). The web font is shared under the same license.
 
+## IBM PC BIOS 8x8 font (touchscreen WFC text)
+
+`third_party/ibm_font8x8/font8x8.h` (converted by `tools/art/fon2h.py`) is the IBM PC BIOS 8x8 CP437 font as packaged by VileR in The Ultimate Oldschool PC Font Pack v2.2 (https://int10h.org/oldschool-pc-fonts/), licensed CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). The firmware draws the CYD touchscreen's WFC text cells from it.
+
 ## ViSiON/3 BBS (design reference)
 
 The menu system, menu fields, command names, access strings, art codes and login flow follow ViSiON/3

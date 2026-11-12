@@ -20,12 +20,23 @@ void storageInit() {
     sdSpi.begin(18, 19, 23, 5);
     // a slow first try wakes cards that dislike a fast start, then mount at the normal speed (a card
     // left at 400 kHz reads about 50 KB/s); stay slow only if the fast mount fails
-    SD.begin(5, sdSpi, 400000, "/sd", 10);
-    SD.end();
-    haveSd = SD.begin(5, sdSpi, 20000000, "/sd", 10);
-    if (!haveSd) {
+    // Three rounds, half a second apart: a card still finishing a write when the board was reset can miss the
+    // first mount (2026-11-12: board 1 came up cardless after a flash reset, so the cardless board took main).
+    // All of it happens before the cluster starts, so the board knows it has the card when the main is chosen.
+    haveSd = false;  // (@SDCHECK runs this again on a mounted board)
+    for (int round = 0; round < 3 && !haveSd; round++) {
+        if (round) {
+            SD.end();
+            delay(500);
+        }
+        SD.begin(5, sdSpi, 400000, "/sd", 10);
         SD.end();
-        haveSd = SD.begin(5, sdSpi, 400000, "/sd", 10);
+        haveSd = SD.begin(5, sdSpi, 20000000, "/sd", 10);
+        if (!haveSd) {
+            SD.end();
+            haveSd = SD.begin(5, sdSpi, 400000, "/sd", 10);
+        }
+        if (haveSd && round) Serial.printf("axis: storage: the card mounted on try %d\n", round + 1);
     }
     uint8_t type = SD.cardType();
     if (haveSd) {

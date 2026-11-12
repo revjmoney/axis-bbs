@@ -59,7 +59,9 @@ public:
     static constexpr size_t   kMaxHandle = 30;
 
     // files: the file areas' store (nullptr: the Files menu says the areas are offline)
-    Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {}, FileLibrary* files = nullptr);
+    // cfg: the board's settings, shared by every node (a change makes a new copy; a caller keeps the one they called into)
+    Node(int nodeNumber, std::function<SysInfo()> info, std::shared_ptr<const BbsConfig> cfg, FileLibrary* files = nullptr);
+    Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {}, FileLibrary* files = nullptr);  // (tests: a copy of its own)
     // accounts: without them anyone is let in by handle (the first builds, tests)
     void setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow);
     // true if this handle has a warrior after the call. Registration writes one. Null skips it.
@@ -72,6 +74,8 @@ public:
     // snapshot, redrawn every 5 s when it changed. Keys: S U # B F L open the sysop shell at that section (Esc comes back here),
     // E A ! are coming soon, Space goes to the main menu as this sysop, Q leaves (State::Done).
     void setWfcSnapshot(std::function<WfcSnapshot()> snap) { wfcSnap_ = std::move(snap); }
+    // The cleaned WFC.ANS, read once by the owner and shared (null: the built-in art). When set, wfcDraw uses it instead of setArt.
+    void setWfcArt(std::function<std::shared_ptr<const std::string>()> art) { wfcArt_ = std::move(art); }
     void openWfc(uint32_t nowMs);
     void tapRow(int) {}
     // /scripts/name.axs. An empty name lists the folder. False when that file is not on the card.
@@ -129,7 +133,11 @@ public:
         listGet_ = std::move(get);
         listAdd_ = std::move(add);
     }
+    // Whether a menu screen exists, asked without reading it (showPrelogon's probes). Unset: the screen is loaded to find out.
+    void        setExists(std::function<bool(const std::string&)> exists) { exists_ = std::move(exists); }
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
+    // With direct set, a screen leaves in pieces of about this size as it is drawn, instead of piling up whole in the output.
+    static constexpr size_t kOutSpill = 2048;
     void        begin(uint32_t nowMs);
     void        beginLocal(uint32_t nowMs);
     void        beginLocalMenu(uint32_t nowMs);  // the board's local logon: sysop, then the same login sequence as a caller
@@ -137,6 +145,8 @@ public:
     void        input(const uint8_t* p, size_t n, uint32_t nowMs);
     void        poll(uint32_t nowMs);
     std::string takeOutput();
+    static uint32_t loginScans();  // how many times the login screen's field scan ran (cache misses), for tests
+    static size_t outMax();  // the largest output buffer (capacity) handed out so far, for @STATUS
     bool        wantsHangup() const { return state_ == State::Done; }
     // Axis Net asked to call a remote board, or to ask the boards we know (R, or a new note).
     bool               axisTakeProbe();
@@ -151,11 +161,16 @@ public:
     const std::string& handle() const { return handle_; }
     // the door the caller picked ("" unless InDoor); the host runs it, then calls resumeAfterDoor
     std::string      doorRequested() const { return state_ == State::InDoor ? door().id : ""; }
-    const DoorEntry& door() const { return door_ < doorList_.size() ? doorList_[door_] : cfg_.doors[door_]; }
+    const DoorEntry& door() const { return door_ < doorList_.size() ? doorList_[door_] : cfg_->doors[door_]; }
     // the doors this caller can pick: enabled rows, and for the sysop each enabled LORD's setup program
     // (LORDCFG, drawn straight to the screen: drop "local")
     std::vector<DoorEntry> doorChoices() const;
-    void                   applyBoard(const BbsConfig& next);  // section switches and the door list, for a caller already on
+    // section switches and the door list, for a caller already on (the rest stays as they called in)
+    // prev: the copy main replaced with next; onlySwitches: they differ only in the fields above (onlySwitches(), once per push)
+    void                   applyBoard(std::shared_ptr<const BbsConfig> next, const std::shared_ptr<const BbsConfig>& prev = nullptr,
+                                      bool onlySwitches = false);
+    // a and b match outside the section switches, modem_link, lite_below_bps and the door list (no allocation)
+    static bool            onlySwitches(const BbsConfig& a, const BbsConfig& b);
     // The modem's newest report for this call (LFD3K-LINK, net/telnet.h): who is on the radio and how fast. Display only.
     void                   setLink(const net::LinkInfo& l);
     const net::LinkInfo&   link() const { return link_; }
@@ -219,10 +234,20 @@ private:
     std::map<std::string, int>                   lastRead_;  // without an account (tests, first builds)
     std::function<void(const std::string&)>      linersAdd_;
     std::function<SysInfo()>  info_;
-    BbsConfig                 cfg_;
+    std::shared_ptr<const BbsConfig> cfg_;      // shared with main and the other nodes until this node changes it
+    std::vector<std::shared_ptr<const BbsConfig>> retired_;  // copies swapped out, kept until the next poll (a caller may still hold a piece)
+    std::shared_ptr<const BbsConfig> appCfg_;   // the copy the new user application reads (it holds a reference)
+    bool                      cfgOwn_ = false;  // cfg_ is this node's own copy: written in place
+    BbsConfig&                cfgMut();         // a write: this node's own copy first
+    void                      retire();         // cfg_ is about to be replaced
+    void                      closeFiles();     // the file browser closes: its areas go too
+    void                      closeMsgs();      // the message reader closes: its areas go too
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
+    void spill();  // direct set and the output has reached kOutSpill: all of it goes out now, in order
+    void flushDirect();  // out_ to direct_, emptied even if the write throws (capacity kept)
     std::function<std::string(const std::string&)> art_;
+    std::function<std::shared_ptr<const std::string>()> wfcArt_;
     PosterPiece                                    posterPiece_;
     std::string                                    posterFile_, posterCarry_;  // the poster streaming out, and a cut line
     size_t                                         posterOff_ = 0;
@@ -232,6 +257,7 @@ private:
     void        pumpPoster();
     std::unique_ptr<MenuRunner>                    menu_;
     MenuRunner::Loader                             menuLoad_;
+    std::function<bool(const std::string&)>        exists_;  // setExists: a menu screen's presence, without reading it
     bool                                           frontDoor_ = false;  // ViSiON/3's front door (PDMATRIX) is running
     bool                                           backToMatrix_ = false;  // a key after check access: the matrix again
     int                                            wanders_ = 0;        // matrix picks without logging in (10, then goodbye)

@@ -13,7 +13,7 @@ telnet address and port yourself (the repo and the website never carry them).
 | Telnet address | (yours to type) |
 | Port | (yours to type) |
 | Connection | Telnet |
-| Software | Axis Micro BBS Firmware 0.51 (pick "Other" if it isn't in the list) |
+| Software | Axis Micro BBS Firmware 0.52 (pick "Other" if it isn't in the list) |
 | Nodes | 4 |
 | Online since | November 2026 |
 | Website | https://revjmoney.github.io/axis-bbs/ |

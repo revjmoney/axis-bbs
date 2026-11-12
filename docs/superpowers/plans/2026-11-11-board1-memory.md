@@ -279,6 +279,19 @@
 - [ ] **Step 3:** `@SHOT` and `@SPRITEFAIL`, headless skip.
 - [ ] **Step 4:** Build cyd and headless. Commit: `feat: WFC drawn in strips, full screen sprite only when needed`.
 
+### Task 15b: WFC text in a real 8x8 font (Rev's request, 2026-11-11)
+
+Rev: "the wfc text is mildly unreadable". He picked "Real small font" (preview F in font8cmp.png). Same file as Task 15, so it runs right after it.
+
+**Files:** Create: `third_party/ibm_font8x8/font8x8.h` (already in the tree, sha256 1c3e54f5...4e87, IBM PC BIOS 8x8 CP437 from VileR's Ultimate Oldschool PC Font Pack v2.2, CC BY-SA 4.0), `tools/art/fon2h.py` (its converter). Modify: `src/platform/cyd/ansi_screen.cpp` (`renderCells` and Task 15's `renderCellsBand` only).
+
+**Interfaces:** `ibm_font8x8[2048]`: 8 rows per glyph, bit 7 leftmost.
+
+- [ ] **Step 1:** Draw each 7x10 cell from `ibm_font8x8`, not by 2x2 sampling and blending the 8x16 VGA font. Columns: bits 7..1 (drop bit 0). Rows: ordinary glyphs get one blank row above and one below; glyphs 0xB0..0xDF (box drawing and blocks) repeat their first row on top and their last row at the bottom so lines and shades join between cells. No blending: lit pixel takes the foreground (lut level 4), unlit the background (level 0).
+- [ ] **Step 2:** The 80-column renderers and BigText stay on the VGA font. RAM unchanged (font is const, in flash); flash grows about 2 KB.
+- [ ] **Step 3:** Build cyd and headless. Commit: `feat: WFC text in a real 8x8 font`.
+- Task 18 checks it on the panel: `@SHOT` via `tools/screenshots/cyd_shot.py`, box frames join on both WFC looks, node and today panels read cleanly; the PNG goes to Rev.
+
 ### Task 16: One shared settings copy (#19)
 
 **Files:** Modify: `src/bbs/node.h/.cpp`, `src/main.cpp` (Node construction and `applyBoard` callers)

@@ -60,7 +60,7 @@ bool inGroups(const std::string& k) {
 bool boardOnlyCommand(const std::string& cmd) {
     static const char* const kMine[] = {"@CLUSTERKEY", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
                                         "@BEEP",       "@STATION", "@LED",       "@SHOT",       "@TAP",     "@LKEY",    "@LSCREEN", "@WIFIPICK",
-                                        "@STATS",
+                                        "@STATS", "@HEAPWIN", "@SPRITEFAIL",
 #if AXIS_NETS
                                         "@NETKEY",     "@NETROTATE",  // Sysop Net: Rev's keys, at the board's serial console only
 #endif
