@@ -35,7 +35,7 @@ TEST_CASE("status diagnostics name the reset reason and the last door in one tok
         CHECK(tok.find("password") == std::string::npos);
         CHECK(tok.find("webhook") == std::string::npos);
     }
-    CHECK(n == 16);  // the ten original fields plus min, stack, door_peak, door, door_stack, reset
+    CHECK(n == 24);  // the ten original fields plus min, stack, door_peak, door, door_stack, reset, wmin, wlarge, wdoing, stk_web, stk_mdns, stk_timer, outmax, artmax
 }
 
 TEST_CASE("status diagnostics use a single word for every reset and door result") {

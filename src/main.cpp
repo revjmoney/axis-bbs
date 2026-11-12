@@ -21,6 +21,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <new>
 
@@ -32,9 +33,13 @@
 #include "bbs/daystats.h"
 #include "bbs/statsshare.h"
 #include "bbs/diag.h"
+#include "bbs/heapwin.h"
 #include "bbs/votebooth.h"
 #include "platform/cyd/web.h"
+#include "platform/cyd/heapscope.h"
 #include "bbs/ansiviewer.h"
+#include "bbs/inflatelease.h"
+#include "bbs/viewcache.h"
 #include "bbs/script.h"
 #include "lord/game.h"
 #include "bbs/ansiterm.h"
@@ -63,6 +68,9 @@
 #include "bbs/wifipicker.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
+#include "bbs/artfetch.h"
+#include "bbs/listtrim.h"
+#include "bbs/memlog.h"
 #include "bbs/setup_wizard.h"
 #include "platform/cyd/ansi_screen.h"
 #include "platform/cyd/board.h"
@@ -98,6 +106,42 @@ static void noteDoing(const String& what) {
     std::snprintf(doing_, sizeof doing_, "%s", what.c_str());
     doingMagic_ = kDoingMagic;
 }
+static const char* doingNow() { return doingMagic_ == kDoingMagic ? doing_ : ""; }  // the same text noteDoing keeps
+static axis::bbs::HeapWindow heapWin;  // lowest heap since boot or the last @HEAPWIN
+#if AXIS_HEAP_TRACE
+// Bench build only (env cyd-trace): what is live, and who took it, each time the heap reaches a new low.
+#include "esp_heap_trace.h"
+#include "esp_rom_sys.h"
+static heap_trace_record_t traceRecs_[250];
+static uint32_t            traceDumpFree_ = UINT32_MAX;
+static int                 traceDumps_ = 0;
+static void heapTraceRestart() {
+    heap_trace_stop();
+    heap_trace_start(HEAP_TRACE_LEAKS);
+    traceDumpFree_ = UINT32_MAX;
+    traceDumps_ = 0;
+}
+static void heapTraceLow(uint32_t freeB, uint32_t largest) {
+    if (freeB >= 64000 || freeB + 3072 > traceDumpFree_ || traceDumps_ >= 8) return;
+    traceDumpFree_ = freeB;
+    traceDumps_++;
+    size_t n = heap_trace_get_count();
+    uint32_t total = 0;
+    heap_trace_record_t r;
+    for (size_t i = 0; i < n; i++)
+        if (heap_trace_get(i, &r) == ESP_OK && r.address) total += r.size;
+    esp_rom_printf("@HT low free=%u largest=%u live=%u bytes=%u doing=%s\n", (unsigned)freeB, (unsigned)largest, (unsigned)n,
+                   (unsigned)total, doingNow());
+    for (size_t i = 0; i < n; i++) {
+        if (heap_trace_get(i, &r) != ESP_OK || !r.address || r.size < 256) continue;
+        esp_rom_printf("@HT %u", (unsigned)r.size);
+        for (int d = 0; d < CONFIG_HEAP_TRACING_STACK_DEPTH; d++) esp_rom_printf(" %p", r.alloced_by[d]);
+        esp_rom_printf("\n");
+    }
+    esp_rom_printf("@HT end\n");
+}
+#endif
+static size_t                artMax = 0;  // largest art string read from the SD (theme or menu file)
 
 static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
     boardDiag_.door = how;
@@ -107,7 +151,15 @@ static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
 
 enum class Mode { Normal, SetupChoice, SetupTelnet, SetupTouch, WifiPick };
 
-static axis::bbs::BbsConfig cfg;
+// The board's settings: one copy that main and every Node share (about 4 KB). A change makes a new copy while a Node
+// still holds the current one, so a caller already on keeps the settings they called into, as before; pushBoardToCallers
+// hands them the switches. Read with boardCfg->, change with cfgEdit() or cfgSet().
+static std::shared_ptr<const axis::bbs::BbsConfig> boardCfg = std::make_shared<axis::bbs::BbsConfig>();
+static axis::bbs::BbsConfig& cfgEdit() {
+    if (boardCfg.use_count() > 1) boardCfg = std::make_shared<axis::bbs::BbsConfig>(*boardCfg);
+    return const_cast<axis::bbs::BbsConfig&>(*boardCfg);  // (every copy is made here or in cfgSet: not const underneath)
+}
+static void cfgSet(axis::bbs::BbsConfig c) { boardCfg = std::make_shared<axis::bbs::BbsConfig>(std::move(c)); }
 static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
@@ -222,15 +274,49 @@ static bool writeWarrior(const std::string& handle);
 static bool listName(const std::string& n) {
     return n == "rumors" || n == "bbslist" || n == "votes" || n == "ballots" || n == "axisnet" || n == "netnotes";
 }
+// How many lines a plain list keeps (0: axisnet and netnotes, which keep their own merge and size rules).
+static size_t listCap(const std::string& n) {
+    return n == "ballots" ? 500u : n == "rumors" ? 300u : n == "bbslist" || n == "votes" ? 50u : 0u;
+}
+// Lines counted per list the first time it is touched, then kept in step by listAppendLocal. listStore forgets it.
+static int32_t listCount[4] = {-1, -1, -1, -1};  // rumors, bbslist, votes, ballots; -1 = not counted yet
+static int     listIdx(const std::string& n) { return n == "rumors" ? 0 : n == "bbslist" ? 1 : n == "votes" ? 2 : n == "ballots" ? 3 : -1; }
+static std::string                   listPath(const std::string& n) { return "/list_" + n + ".txt"; }
+static size_t                        listCountOf(const std::string& n) {
+    int i = listIdx(n);
+    if (i < 0) return 0;
+    if (listCount[i] >= 0) return (size_t)listCount[i];
+    size_t c = 0;
+    File   f = LittleFS.open(listPath(n).c_str(), "r");
+    while (f && f.available()) {
+        String l = f.readStringUntil('\n');
+        if (l.length()) c++;
+    }
+    if (f) f.close();
+    listCount[i] = (int32_t)c;
+    return c;
+}
+// A plain list is trimmed lazily (listAppendLocal), so the file can hold up to cap + cap/4 lines: readers see the newest cap.
+static size_t listSkip(const std::string& n) {
+    size_t cap = listCap(n);
+    if (!cap) return 0;
+    return axis::bbs::listReadSkip(listCountOf(n), cap);
+}
 // One random line of a list, read a line at a time (the main menu's rumor: the whole list is more than the main can spare then)
 static std::vector<std::string> listOne(const std::string& n) {
     std::vector<std::string> v;
     if (!listName(n)) return v;
-    File     f = LittleFS.open(("/list_" + n + ".txt").c_str(), "r");
+    size_t   skip = listSkip(n);
+    File     f = LittleFS.open(listPath(n).c_str(), "r");
     uint32_t seen = 0;
     while (f && f.available()) {
         String l = f.readStringUntil('\n');
-        if (l.length() && esp_random() % ++seen == 0) v.assign(1, l.c_str());
+        if (!l.length()) continue;
+        if (skip) {
+            skip--;
+            continue;
+        }
+        if (esp_random() % ++seen == 0) v.assign(1, l.c_str());
     }
     if (f) f.close();
     return v;
@@ -239,23 +325,89 @@ static std::vector<std::string> listLoad(const std::string& n) {
     std::vector<std::string> v;
     if (n == "rumor") return listOne("rumors");  // the main menu's one rumor
     if (!listName(n)) return v;
-    File f = LittleFS.open(("/list_" + n + ".txt").c_str(), "r");  // a line at a time: one 8 KB block is more than the main can spare
+    size_t skip = listSkip(n);
+    File   f = LittleFS.open(listPath(n).c_str(), "r");  // a line at a time: one 8 KB block is more than the main can spare
     while (f && f.available()) {
         String l = f.readStringUntil('\n');
-        if (l.length()) v.push_back(l.c_str());
+        if (!l.length()) continue;
+        if (skip) {
+            skip--;
+            continue;
+        }
+        v.push_back(l.c_str());
     }
     if (f) f.close();
     return v;
 }
 static void listStore(const std::string& n, const std::vector<std::string>& v) {
     if (!listName(n)) return;
+    if (listIdx(n) >= 0) listCount[listIdx(n)] = -1;  // the file is rewritten: count it again when next needed
     size_t      cap = n == "axisnet" || n == "netnotes" ? 180u : 120u;
     std::string text;
     for (auto& l : v) {
         text += l.substr(0, cap);
         text += '\n';
     }
-    flashWrite(("/list_" + n + ".txt").c_str(), text);
+    flashWrite(listPath(n).c_str(), text);
+}
+// A plain list gets its line appended to the file; once it is cap/4 over, the newest cap lines are streamed to a
+// temp file that replaces it (a failure leaves the original). No copy of the list is held in RAM.
+static bool listAppendLocal(const std::string& n, const std::string& line, size_t cap) {
+    if (!listName(n) || !cap) return false;
+    std::string out = line.substr(0, 120) + '\n';
+    size_t      add = 0;  // non-empty segments written (a follower's text may hold newlines)
+    for (size_t p = 0; p < out.size();) {
+        size_t e = out.find('\n', p);
+        if (e > p) add++;
+        p = e + 1;
+    }
+    if (!add) return false;  // an empty line is never shown: write nothing
+    size_t had = listCountOf(n);  // before the append, so a first count does not include the new line
+    File   f = LittleFS.open(listPath(n).c_str(), "a");
+    if (!f) return false;
+    bool        ok = f.write((const uint8_t*)out.data(), out.size()) == out.size();
+    f.close();
+    if (!ok) {
+        listCount[listIdx(n)] = -1;  // maybe half a line landed: recount
+        return false;
+    }
+    size_t now = had + add;
+    listCount[listIdx(n)] = (int32_t)now;
+    const size_t skipOld = axis::bbs::listTrimSkip(now, cap);  // (the newest cap stay once it is cap/4 over)
+    if (!skipOld) return true;
+    std::string tmp = "/list_" + n + ".tmp";
+    File        in = LittleFS.open(listPath(n).c_str(), "r");
+    File        t = LittleFS.open(tmp.c_str(), "w");
+    if (!in || !t) {
+        if (in) in.close();
+        if (t) {
+            t.close();
+            LittleFS.remove(tmp.c_str());
+        }
+        return true;  // the line is in; the trim waits for the next one
+    }
+    size_t skip = skipOld, kept = 0;
+    bool   wrote = true;
+    while (wrote && in.available()) {
+        String l = in.readStringUntil('\n');
+        if (!l.length()) continue;
+        if (skip) {
+            skip--;
+            continue;
+        }
+        String w = l.length() > 120 ? l.substring(0, 120) : l;
+        w += '\n';
+        wrote = t.write((const uint8_t*)w.c_str(), w.length()) == w.length();
+        kept++;
+    }
+    in.close();
+    t.close();
+    if (!wrote || (!LittleFS.rename(tmp.c_str(), listPath(n).c_str()) && !(LittleFS.remove(listPath(n).c_str()) && LittleFS.rename(tmp.c_str(), listPath(n).c_str())))) {
+        LittleFS.remove(tmp.c_str());
+        return true;
+    }
+    listCount[listIdx(n)] = (int32_t)kept;
+    return true;
 }
 static void listAddLocal(const std::string& n, const std::string& line) {
     if (!listName(n)) return;
@@ -280,10 +432,7 @@ static void listAddLocal(const std::string& n, const std::string& line) {
         listStore(n, v);
         return;
     }
-    std::vector<std::string> v = listLoad(n);
-    v.push_back(line.substr(0, 120));
-    while (v.size() > (n == "ballots" ? 500u : n == "rumors" ? 300u : 50u)) v.erase(v.begin());
-    listStore(n, v);
+    listAppendLocal(n, line, listCap(n));
 }
 
 // The sysop's own screens for the theme (MATRIX.ANS, MAIN.ANS): from the card on the main.
@@ -295,38 +444,34 @@ static void listAddLocal(const std::string& n, const std::string& line) {
 // hands its news to the main, the main sends it to every board, and the board with the webhook posts.
 constexpr int kAnnounceKind = 21, kAnnounceAllKind = 22;
 static void announceOut(const std::string& line) {
-    if (!cluster) web::announce(String("**") + cfg.bbsName.c_str() + "** " + line.c_str());
+    if (!cluster) web::announce(String("**") + boardCfg->bbsName.c_str() + "** " + line.c_str());
     else if (asFollower()) cluster->send("", kAnnounceKind, 0, line);
     else cluster->send("", kAnnounceAllKind, 0, line);
 }
 
-static std::map<std::string, std::string> artCache;
+// The follower's theme art, at most kArtCacheCap bytes in all (bbs/artfetch.h).
+constexpr size_t kArtCacheCap = 16384;
+static axis::bbs::ArtCache artCache(kArtCacheCap);
 constexpr size_t kThemeArtCap = 12288;
 constexpr size_t kPosterCap = 49152;  // SAYLOR.ANS is 37 KB, SAYLORLG.ANS is 45 KB. Not cached.
 constexpr size_t kPosterChunk = 7000;  // a cluster frame is 8 KB, so a follower pulls the poster in pieces
 static bool posterName(const std::string& name) { return name == "SAYLOR.ANS" || name == "SAYLORLG.ANS"; }
-static std::string readThemeFile(const char* folder, const std::string& name, size_t cap, size_t offset, bool* opened) {
-    std::string s;
-    if (opened) *opened = false;
-    if (!folder || !folder[0]) return s;
+// (readFileAppend: one piece of a file, cut at the first 0x1a: bbs/artfetch.h)
+static bool readThemeFileAppend(const char* folder, const std::string& name, size_t cap, size_t offset, std::string& out) {
+    if (!folder || !folder[0]) return false;
     std::string path = std::string("/sd/themes/") + folder + "/" + name;
     FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return s;
-    if (opened) *opened = true;
-    if (offset && fseek(f, (long)offset, SEEK_SET) != 0) {
-        fclose(f);
-        return s;
-    }
-    char b[512];
-    for (size_t n; s.size() < cap && (n = fread(b, 1, sizeof b, f)) > 0;) {
-        s.append(b, n);
-        if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) {
-            s.resize(sauce);
-            break;
-        }
-    }
+    if (!f) return false;
+    const size_t old = out.size();
+    axis::bbs::readFileAppend(f, cap, offset, out);
     fclose(f);
-    if (s.size() > cap) s.resize(cap);
+    if (out.size() - old > artMax) artMax = out.size() - old;
+    return true;
+}
+static std::string readThemeFile(const char* folder, const std::string& name, size_t cap, size_t offset, bool* opened) {
+    std::string s;
+    bool        ok = readThemeFileAppend(folder, name, cap, offset, s);
+    if (opened) *opened = ok;
     return s;
 }
 static std::string readThemeFile(const char* folder, const std::string& name) {
@@ -335,14 +480,17 @@ static std::string readThemeFile(const char* folder, const std::string& name) {
 // One piece of the Saylor poster, from the theme's folder (`want` bytes at most, never more than a cluster frame takes).
 // It is never read whole: Node streams it a piece at a time (Node::setPoster). A short read at a later offset means
 // the end of the file, not "try the other folder".
-static std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened) {
-    *opened = false;
-    if (!storageHasSd() || !posterName(name) || offset >= kPosterCap) return "";
+static bool posterPieceLocalAppend(const std::string& name, size_t offset, size_t want, std::string& out) {
+    if (!storageHasSd() || !posterName(name) || offset >= kPosterCap) return false;
     if (want > kPosterChunk) want = kPosterChunk;
     if (want > kPosterCap - offset) want = kPosterCap - offset;
-    std::string s = readThemeFile(cfg.theme.c_str(), name, want, offset, opened);
-    if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(cfg.theme), name, want, offset, opened);
-    if (!*opened) s = readThemeFile("axis", name, want, offset, opened);  // a look without its own poster shows the axis one
+    if (readThemeFileAppend(boardCfg->theme.c_str(), name, want, offset, out)) return true;
+    if (readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(boardCfg->theme), name, want, offset, out)) return true;
+    return readThemeFileAppend("axis", name, want, offset, out);  // a look without its own poster shows the axis one
+}
+static std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened) {
+    std::string s;
+    *opened = posterPieceLocalAppend(name, offset, want, s);
     return s;
 }
 // A follower asks the main for the same piece ("T name offset want"); *exists false when the main has none (or did not answer).
@@ -371,63 +519,78 @@ static std::string themeArtLocal(const std::string& name) {
     }
     if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never read whole
     // The waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme.
-    const std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg) : cfg.theme;
+    const std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(*boardCfg) : boardCfg->theme;
     std::string s = readThemeFile(folder.c_str(), name);
     if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name);
     return s;
 }
 // The main's answer to "T name offset": one piece of a theme file, at most kPosterChunk bytes, so the reply stays under the
-// cluster's 8 KB frame (a bigger one drops the link). *opened: the file is there.
-static std::string themeArtPiece(const std::string& name, size_t off, size_t want, bool* opened) {
-    *opened = false;
-    if (!storageHasSd() || name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return "";
-    if (posterName(name)) return posterPieceLocal(name, off, want, opened);
+// cluster's 8 KB frame (a bigger one drops the link). The piece is appended to out (the reply being built: no second copy).
+// Returns whether the file is there.
+static bool themeArtPieceAppend(const std::string& name, size_t off, size_t want, std::string& out) {
+    if (!storageHasSd() || name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
+    if (posterName(name)) return posterPieceLocalAppend(name, off, want, out);
     size_t cap = kThemeArtCap;
-    if (off >= cap) return "";
+    if (off >= cap) return false;
     if (!want || want > kPosterChunk) want = kPosterChunk;
     if (want > cap - off) want = cap - off;
     // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
     // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
-    std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg) : cfg.theme, file = name, look;
+    std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(*boardCfg) : boardCfg->theme, file = name, look;
     if (axis::bbs::theme::splitLookFile(name, look, file)) folder = look;
-    std::string s = readThemeFile(folder.c_str(), file, want, off, opened);
-    if (!*opened) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, opened);
-    return s;
+    if (readThemeFileAppend(folder.c_str(), file, want, off, out)) return true;
+    return readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, out);
 }
 // A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
 static std::string themeArtRemote(const std::string& name, bool* answered) {
-    size_t      cap = posterName(name) ? kPosterCap : kThemeArtCap;
-    std::string all;
-    *answered = false;
-    for (size_t off = 0; all.size() < cap;) {
-        std::string reply;
-        if (!cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off), reply, 3000) || reply.empty()) {
-            *answered = false;  // (a piece went missing: not a whole answer)
-            return all;
-        }
-        *answered = true;
-        if (reply[0] != '1') break;
-        std::string chunk = reply.substr(1);
-        if (chunk.empty()) break;
-        all += chunk;
-        if (chunk.size() < kPosterChunk) break;
-        off += chunk.size();
-    }
-    if (all.size() > cap) all.resize(cap);
-    return all;
+    constexpr size_t kFollowerWant = 4096;  // a follower asks for 4 KB pieces: the main's reply (and this reply) stay small
+    return axis::bbs::assembleArt(posterName(name) ? kPosterCap : kThemeArtCap, kFollowerWant, !posterName(name),
+                                  [&name](size_t off, std::string& reply) {
+                                      return cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off) + "\x1f" +
+                                                                  std::to_string(kFollowerWant),
+                                                              reply, 3000);
+                                  },
+                                  answered);
 }
 static std::string themeArt(const std::string& name) {
     if (!asFollower()) return themeArtLocal(name);
     if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never fetched whole
     bool poster = posterName(name) || name.find(':') != std::string::npos;  // (a preview is seen once: never cached either)
     if (!poster) {
-        auto it = artCache.find(name);
-        if (it != artCache.end()) return it->second;
+        if (const std::string* hit = artCache.find(name)) return *hit;
     }
     bool        answered = false;
     std::string art = themeArtRemote(name, &answered);
-    if (!poster && answered) artCache[name] = art;  // (the poster is one login screen, then it can go; a failed ask is asked again)
+    if (!poster && answered) artCache.put(name, art);  // (the poster is one login screen, then it can go; a failed ask is asked again)
     return art;
+}
+// The cleaned WFC.ANS every WFC screen (telnet, serial, local) draws: read once, shared, and read again only when something may have
+// changed. wfcAnsKey says what it was read from: the WFC folder plus (here on a board with the card) the file's size and time in the
+// folder and its legacy folder, so a new WFC.ANS from any writer (the sysop's @PUT, the web, a theme install) is seen on the next draw,
+// as when it was read every time. On a follower the key is the folder and the settings arrival clears it (with artCache). A follower
+// that got no art does not keep the key, so it asks again as before. Null (no art): the built-in screen.
+static std::shared_ptr<const std::string> wfcAnsShared;
+static std::string                        wfcAnsKey;
+static std::shared_ptr<const std::string> wfcArtShared() {
+    const std::string folder = axis::bbs::wfcFolder(*boardCfg);
+    std::string       key = folder;
+    if (!asFollower()) {
+        const char* dirs[2] = {folder.c_str(), axis::bbs::theme::legacyThemeFolder(folder)};
+        for (const char* d : dirs) {
+            struct stat st;
+            key += '|';
+            if (d && d[0] && storageHasSd() && stat((std::string("/sd/themes/") + d + "/WFC.ANS").c_str(), &st) == 0)
+                key += std::to_string((unsigned long)st.st_size) + "." + std::to_string((unsigned long)st.st_mtime);
+        }
+    } else {
+        key += "|F";
+    }
+    if (key == wfcAnsKey) return wfcAnsShared;
+    std::string art = axis::bbs::cleanWfcArt(themeArt("WFC.ANS"));
+    wfcAnsShared = art.empty() ? nullptr : std::make_shared<const std::string>(std::move(art));
+    if (wfcAnsShared || !asFollower()) wfcAnsKey = key;
+    else wfcAnsKey.clear();
+    return wfcAnsShared;
 }
 // ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): this board's own /menus first (its SD card or flash),
 // then the main's over the cluster. Only the small .MNU files are cached; art is fetched each time it shows.
@@ -436,10 +599,10 @@ static std::map<std::string, std::string> menuCache;
 // switches the menus too. Null when the theme has none (or the name is a menu file): the menu set's own then.
 static FILE* openThemeScreen(const std::string& name) {
     const char* file = axis::bbs::theme::menuScreenFile(name);
-    if (!file || !storageHasSd() || cfg.theme.empty()) return nullptr;
-    FILE* f = fopen((std::string("/sd/themes/") + cfg.theme + "/" + file).c_str(), "rb");
+    if (!file || !storageHasSd() || boardCfg->theme.empty()) return nullptr;
+    FILE* f = fopen((std::string("/sd/themes/") + boardCfg->theme + "/" + file).c_str(), "rb");
     if (!f)
-        if (const char* old = axis::bbs::theme::legacyThemeFolder(cfg.theme)) f = fopen((std::string("/sd/themes/") + old + "/" + file).c_str(), "rb");
+        if (const char* old = axis::bbs::theme::legacyThemeFolder(boardCfg->theme)) f = fopen((std::string("/sd/themes/") + old + "/" + file).c_str(), "rb");
     return f;
 }
 // theme: a menu screen the theme draws comes from the theme (off for the main's "U" answer to a follower: theme
@@ -452,12 +615,10 @@ static std::string menuFileLocal(const std::string& name, bool theme = true) {
     if (f) cap = kThemeArtCap;  // (theme screens run to 11 KB)
     else f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
     if (f) {
-        char b[512];
-        for (size_t n; s.size() < cap && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
+        axis::bbs::readFileAppend(f, cap, 0, s);
         fclose(f);
     }
-    if (size_t sauce = s.find('\x1a'); sauce != std::string::npos) s.resize(sauce);
-    if (s.size() > cap) s.resize(cap);
+    if (s.size() > artMax) artMax = s.size();
     return s;
 }
 static std::string menuFile(const std::string& name) {
@@ -479,6 +640,40 @@ static std::string menuFile(const std::string& name) {
     }
     if (mnu) menuCache[name] = s;
     return s;
+}
+
+// Does a menu screen exist and have a body? The same lookup as menuFileLocal (theme screen first, then /menus/name) but only
+// fopen + the file's size, no read: showPrelogon probes up to ten names and must not load 16 to 24 KB for each.
+static bool menuExistsLocal(const std::string& name, bool theme = true) {
+    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
+    FILE* f = theme ? openThemeScreen(name) : nullptr;
+    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
+    if (!f) return false;
+    bool has = fseek(f, 0, SEEK_END) == 0 && ftell(f) > 0;
+    fclose(f);
+    return has;
+}
+// The follower's answers from the main ("E"), kept until the theme may change (cleared with artCache).
+static std::map<std::string, bool> existsCache;
+static uint32_t                    lastEMissMs = 0;  // millis() of the last unanswered "E" (0: none)
+static bool                        mainKnowsExists = false;  // the main has answered "E" with a "1" once: its "0" can be trusted
+static bool menuExists(const std::string& name) {
+    if (menuExistsLocal(name)) return true;
+    if (!asFollower() || !cluster) return false;
+    if (auto it = existsCache.find(name); it != existsCache.end()) return it->second;
+    if (lastEMissMs && millis() - lastEMissMs < 10000) return !menuFile(name).empty();  // the main was silent a moment ago: no second wait
+    std::string reply;
+    bool        asked = cluster->request(std::string("E\x1f") + name, reply, 3000);
+    if (!asked) lastEMissMs = millis() | 1;
+    if (asked && reply == "1") {
+        mainKnowsExists = true;
+        return existsCache[name] = true;
+    }
+    if (asked && reply == "0" && mainKnowsExists) return existsCache[name] = false;
+    // No answer, or a "0" from a main that may be older (it answers every letter it doesn't know with "0"): read it as before
+    bool has = !menuFile(name).empty();
+    if (asked) existsCache[name] = has;  // (an unanswered ask is asked again)
+    return has;
 }
 
 // /scripts/NAME.axs. 8000 bytes so a follower can carry the file in one 8 KB cluster frame.
@@ -616,7 +811,7 @@ static std::vector<axis::cluster::PoolCard> poolCards() {
 static axis::cluster::PooledFileLibrary pooledFiles(poolCards);
 static axis::cluster::MirrorJob         mirrorJob(pooledFiles, [] {
     std::vector<std::string> v;
-    for (auto& a : cfg.areas)
+    for (auto& a : boardCfg->areas)
         if (a.mirror) v.push_back(a.id);
     return v;
 });
@@ -628,48 +823,13 @@ static std::unique_ptr<axis::door::HostFs>      doorFs;     // the door's folder
 static std::unique_ptr<axis::door::LockTable>   doorRemoteLocks;  // a follower's door locks the main's records
 static axis::door::LockTable                    doorLocks;
 static std::unique_ptr<axis::bbs::AnsiViewer>   viewer;  // this session's movie or pack door
-static std::unique_ptr<axis::lord::NativeLord>  nativeLord;  // this session's LORD, parked with the session
 static std::unique_ptr<axis::door::HostFs>      lordFs;
+static std::unique_ptr<axis::lord::NativeLord>  nativeLord;  // this session's LORD, parked with the session
 static std::unique_ptr<axis::door::LockTable>   lordLocks;
 static std::unique_ptr<axis::bbs::TransferJob>  job;     // this session's download or upload
 static uint32_t                                 jobStartMs = 0, jobDrawnMs = 0;
 static uint32_t                                 doorStartMs = 0;
 
-// The inflate window for a ZIP upload check. Movies allocate their own inside the viewer.
-// The panel sprite stays the waiting screen.
-struct ZipBuf {
-    uint8_t* window = nullptr;
-    uint8_t* state  = nullptr;
-    void     release() {
-        heap_caps_free(window);
-        heap_caps_free(state);
-        window = state = nullptr;
-    }
-    ~ZipBuf() { release(); }
-    ZipBuf() = default;
-    ZipBuf(ZipBuf&& o) noexcept : window(o.window), state(o.state) { o.window = o.state = nullptr; }
-    ZipBuf& operator=(ZipBuf&& o) noexcept {
-        if (this != &o) {
-            release();
-            window   = o.window;
-            state    = o.state;
-            o.window = o.state = nullptr;
-        }
-        return *this;
-    }
-    ZipBuf(const ZipBuf&)            = delete;
-    ZipBuf& operator=(const ZipBuf&) = delete;
-    bool held() const { return window || state; }
-    bool ensure(size_t windowBytes, size_t stateBytes) {
-        if (!window) window = (uint8_t*)heap_caps_malloc(windowBytes, MALLOC_CAP_8BIT);
-        if (!state) state = (uint8_t*)heap_caps_malloc(stateBytes, MALLOC_CAP_8BIT);
-        if (window && state) return true;
-        release();
-        return false;
-    }
-};
-static ZipBuf               zipRam;
-static constexpr size_t     kZipWindow = 32768;
 static std::unique_ptr<axis::bbs::Node>         node;
 static std::unique_ptr<axis::bbs::SetupGate>    gate;
 static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
@@ -745,10 +905,9 @@ struct Session {
     std::unique_ptr<axis::bbs::Node>        node;
     uint32_t                                startMs = 0;
     std::string                             lastStatus;
-    std::unique_ptr<axis::lord::NativeLord> lord;
     std::unique_ptr<axis::door::HostFs>     lordFs;
-    std::unique_ptr<axis::door::LockTable>  lordLocks;
-    ZipBuf                                  zip;  // freed after viewer and job (members destruct in reverse)
+    std::unique_ptr<axis::door::LockTable>  lordLocks;  // (before lord: members die in reverse, and a LORD still in a script closes its file)
+    std::unique_ptr<axis::lord::NativeLord> lord;
     std::unique_ptr<axis::bbs::AnsiViewer>  viewer;
     std::unique_ptr<axis::bbs::TransferJob> job;
     uint32_t                                doorStartMs = 0;
@@ -763,7 +922,6 @@ static void bindSession(int i) {
     nativeLord = std::move(sessions[(size_t)i].lord);
     lordFs = std::move(sessions[(size_t)i].lordFs);
     lordLocks = std::move(sessions[(size_t)i].lordLocks);
-    zipRam = std::move(sessions[(size_t)i].zip);
     viewer = std::move(sessions[(size_t)i].viewer);
     job = std::move(sessions[(size_t)i].job);
     callStartMs = sessions[(size_t)i].startMs;
@@ -778,7 +936,6 @@ static void unbindSession() {
     sessions[(size_t)curSession].lord = std::move(nativeLord);
     sessions[(size_t)curSession].lordFs = std::move(lordFs);
     sessions[(size_t)curSession].lordLocks = std::move(lordLocks);
-    sessions[(size_t)curSession].zip = std::move(zipRam);
     sessions[(size_t)curSession].viewer = std::move(viewer);
     sessions[(size_t)curSession].job = std::move(job);
     sessions[(size_t)curSession].startMs = callStartMs;
@@ -806,12 +963,7 @@ static bool boardHasJob() {
         if (s.job) return true;
     return false;
 }
-static bool inflateHeld() {  // a movie is playing, or a ZIP upload is being checked
-    if (zipRam.held() || (viewer && viewer->holdsRam())) return true;
-    for (auto& s : sessions)
-        if (s.zip.held() || (s.viewer && s.viewer->holdsRam())) return true;
-    return false;
-}
+static bool inflateHeld() { return axis::bbs::inflate::busy(); }  // a deflated piece is playing, or a ZIP upload is being checked
 static void noteZipHeap() { web::setDoorRunning(inflateHeld()); }
 static void dropLord() {
     nativeLord.reset();
@@ -880,7 +1032,7 @@ static String timeText() {
     return b;
 }
 
-static String dialName() { return String(cfg.boardName.c_str()) + ".local"; }
+static String dialName() { return String(boardCfg->boardName.c_str()) + ".local"; }
 
 static axis::bbs::SysInfo sysInfo() {
     axis::bbs::SysInfo s;
@@ -930,8 +1082,26 @@ static void logEvent(const String& what) {
     if (!a.empty()) announceOut(a);
 }
 
+// users.dat written a block at a time (the whole file as one string is more than the main can spare)
+static bool writeUsersFile() {
+    return flashWriteStream("/users.dat", [](File& f) {
+        std::string buf;
+        bool        ok = true;
+        auto        flush = [&] {
+            if (ok && !buf.empty()) ok = f.write((const uint8_t*)buf.data(), buf.size()) == buf.size();
+            buf.clear();
+        };
+        users.formatTo([&](const std::string& piece) {
+            buf += piece;
+            if (buf.size() >= 512) flush();
+        });
+        flush();
+        return ok;
+    });
+}
 static void saveUsers() {
-    if (!flashWrite("/users.dat", users.format())) logEvent("users: SAVE FAILED");
+    HeapScope scope("saveUsers");
+    if (!writeUsersFile()) logEvent("users: SAVE FAILED");
     if (cluster)  // a follower tells the main; the main tells every follower
         for (auto& rec : userSync.changed(users)) cluster->sendUser(rec);
     if (users.pending() > pendingSeen) logEvent("new user application waiting: tap USERS");
@@ -984,43 +1154,68 @@ static uint32_t unixNow() {
 static void makeAreaFolders() {
     if (!storageHasSd()) return;
     ::mkdir("/sd/files", 0777);
-    for (auto& a : cfg.areas) ::mkdir(("/sd/files/" + a.id).c_str(), 0777);
+    ::mkdir((std::string("/sd/files/") + axis::bbs::viewcache::kArea).c_str(), 0777);  // the ANSI viewer's unpacked pieces
+    for (auto& a : boardCfg->areas) ::mkdir(("/sd/files/" + a.id).c_str(), 0777);
 }
 
 // ------------------------------------------------------------------ screens (placeholder look)
-static void title(const char* sub) {
-    scr.fillScreen(pal::BLACK);
-    scr.setTextDatum(textdatum_t::top_left);
-    scr.setTextColor(pal::ORANGE, pal::BLACK);
-    scr.setTextSize(2);
-    String t = cfg.bbsName.c_str();
-    t.toUpperCase();
-    scr.drawString(t.c_str(), 8, 8);
-    scr.setTextSize(1);
-    scr.setTextColor(pal::ORANGE, pal::BLACK);
-    scr.drawString(sub, 8, 30);
+// Each screen draws into screenGfx() (the full copy, or the panel itself when there was no room for it) in pc() colours. The
+// WFC draws through the band instead; the full copy goes when the WFC is back (drawScreen), never while a screen is drawing.
+static uint32_t pc(uint8_t p) { return screenColor(p); }
+
+// Cells written straight into a 4-bit buffer (BigText, AnsiScreen): into the full copy, or with none, through the band 40 pixel
+// rows at a time straight to the panel. f(dst, y0) draws with its row 0 at y0 in dst.
+template <typename F>
+static void renderRows(int height, F f) {
+    if (LGFX_Sprite* s = screenSprite()) return f(*s, 0);
+    LGFX_Sprite* b = screenBand();
+    if (!b) return;
+    for (int top = 0; top < height; top += 40) {
+        b->fillScreen(pal::BLACK);
+        f(*b, -top);
+        b->pushSprite(0, top);
+        tft.waitDMA();  // the next band is drawn into the same buffer
+    }
 }
 
-static void bigButton(int y, const char* label, uint16_t color) {
-    scr.fillRoundRect(16, y, 288, 52, 8, color);
-    scr.setTextColor(pal::WHITE, color);
-    scr.setTextSize(2);
-    scr.setTextDatum(textdatum_t::middle_center);
-    scr.drawString(label, 160, y + 26);
-    scr.setTextDatum(textdatum_t::top_left);
-    scr.setTextSize(1);
+static void title(const char* sub) {
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
+    g.setTextDatum(textdatum_t::top_left);
+    g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+    g.setTextSize(2);
+    String t = boardCfg->bbsName.c_str();
+    t.toUpperCase();
+    g.drawString(t.c_str(), 8, 8);
+    g.setTextSize(1);
+    g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+    g.drawString(sub, 8, 30);
+}
+
+static void bigButton(int y, const char* label, uint8_t colour) {
+    auto&    g = screenGfx();
+    uint32_t color = pc(colour);
+    g.fillRoundRect(16, y, 288, 52, 8, color);
+    g.setTextColor(pc(pal::WHITE), color);
+    g.setTextSize(2);
+    g.setTextDatum(textdatum_t::middle_center);
+    g.drawString(label, 160, y + 26);
+    g.setTextDatum(textdatum_t::top_left);
+    g.setTextSize(1);
 }
 
 // The waiting-for-caller screen on the board's own screen: the WFC skin's WFCCYD.ANS (or the built-in art/wfccyd.ans) in 45x24
 // cells of 7x10 (315x240, centred), the live values of wfcSnapshot(), its keys and node lines tappable. Expanded again every 5 s
 // when the values changed, and whenever it comes back from another screen. The art is read from the card once and kept while
-// the WFC is up; the terminal (~5 KB) is only held while the art is drawn.
+// the WFC is up; the terminal (~2.2 KB of cells) is only held while the art is drawn.
 static int                                detailSession = -1;  // the node detail screen is up for this session (-1: the WFC)
 static std::vector<axis::bbs::WfcHotspot> wfcSpots;            // where the keys and node lines landed
 static axis::bbs::WfcSnapshot             wfcShown;            // the values on the screen
 static uint32_t                           wfcDrawnMs = 0, wfcSoonUntil = 0;  // last expanded; a "coming soon" line until then
 static bool                               wfcStale = true;     // draw it at the next turn (another screen was up, a key was tapped)
-static std::string                        wfcArt, wfcArtFolder;  // the art while the WFC is up, and the skin folder it came from
+static bool                               wfcOnPanel = false;  // the panel shows the WFC (@SHOT draws it again band by band)
+static std::string                        wfcArt, wfcArtFolder;  // the theme's art while the WFC is up, and the skin folder it came from
+static bool                               wfcArtLoaded = false;  // wfcArt is current (empty: the theme has none, the built-in art is drawn from flash)
 static const int                          kWfcLeft = 2;        // 45 cells of 7 pixels: 2 spare pixels on the left, 3 on the right
 static axis::bbs::WfcSnapshot             wfcSnapshot();
 // The sysop menu on the board's own screen: the one SysopShell, 40 columns in 8x16 letters, a tap picks the row.
@@ -1037,17 +1232,19 @@ static std::unique_ptr<axis::bbs::Node> localNode;
 
 // A caller already online keeps a copy of the settings from when they logged in.
 // Section switches and the door list have to reach that copy or the menu stays stale.
-static void pushBoardToCallers() {
-    auto one = [](axis::bbs::Node* n) {
-        if (n) n->applyBoard(cfg);
+// prev: the copy boardCfg replaced. Whether the two differ only in what a caller already on picks up is decided once here.
+static void pushBoardToCallers(const std::shared_ptr<const axis::bbs::BbsConfig>& prev) {
+    bool only = prev && axis::bbs::Node::onlySwitches(*prev, *boardCfg);
+    auto one = [&](axis::bbs::Node* n) {
+        if (n) n->applyBoard(boardCfg, prev, only);
     };
     one(node.get());
     one(localNode.get());
     for (size_t i = 0; i < sessions.size(); i++) one(sessions[i].node.get());
     for (size_t i = 0; i < sessions.size(); i++)  // modem_link off: calls already on stop taking link reports
-        if (WifiStream* l = sessionLine(i)) l->acceptLink(cfg.modemLink);
+        if (WifiStream* l = sessionLine(i)) l->acceptLink(boardCfg->modemLink);
 }
-static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~9 KB)
+static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~4 KB)
 static std::unique_ptr<AnsiScreen>          localScreen;
 static bool                              localKeys = false;  // the keyboard is up
 static bool                              localZoom = true;   // 40 columns in 8x8 cells (readable), or all 80 in 4x8
@@ -1071,23 +1268,24 @@ static void endLocal() {
     screenDirty = true;
 }
 static void drawLocal() {
-    scr.fillScreen(pal::BLACK);
-    scr.setFont(&fonts::Font2);
-    auto button = [](int x, int y, int w, int h, const char* label, bool lit) {
-        uint16_t fill = lit ? pal::ORANGE : pal::DIM;
-        scr.fillRoundRect(x, y, w, h, 5, fill);
-        scr.drawRoundRect(x, y, w, h, 5, lit ? pal::WHITE : pal::ORANGE);
-        scr.setTextColor(lit ? pal::BLACK : pal::WHITE, fill);
-        scr.setTextDatum(textdatum_t::middle_center);
-        scr.drawString(label, x + w / 2, y + h / 2);
-        scr.setTextDatum(textdatum_t::top_left);
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
+    g.setFont(&fonts::Font2);
+    auto button = [&g](int x, int y, int w, int h, const char* label, bool lit) {
+        uint32_t fill = lit ? pc(pal::ORANGE) : pc(pal::DIM);
+        g.fillRoundRect(x, y, w, h, 5, fill);
+        g.drawRoundRect(x, y, w, h, 5, lit ? pc(pal::WHITE) : pc(pal::ORANGE));
+        g.setTextColor(lit ? pc(pal::BLACK) : pc(pal::WHITE), fill);
+        g.setTextDatum(textdatum_t::middle_center);
+        g.drawString(label, x + w / 2, y + h / 2);
+        g.setTextDatum(textdatum_t::top_left);
     };
     if (localKeys) {  // typing: what's typed on top, the keys below
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString("LOCAL: type, then OK", 8, 4);
-        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
-        scr.setTextColor(pal::WHITE, pal::BLACK);
-        scr.drawString((localKb.shown() + "_").c_str(), 10, 35);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString("LOCAL: type, then OK", 8, 4);
+        g.drawRect(4, 28, 312, 30, pc(pal::ORANGE));
+        g.setTextColor(pc(pal::WHITE), pc(pal::BLACK));
+        g.drawString((localKb.shown() + "_").c_str(), 10, 35);
         for (auto& k : localKb.keys()) button(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
     } else {
         for (int r = 0; r < localTerm->rows(); r++)
@@ -1102,9 +1300,13 @@ static void drawLocal() {
                 if (lastCol >= localPan + 40) localPan = 40;
                 else if (lastCol < localPan) localPan = 0;
             }
-            localScreen->renderZoom(scr, localTerm->rows(), localPan);  // 200 pixels, 40 columns
+            renderRows(localTerm->rows() * 8, [](LGFX_Sprite& d, int y0) {
+                localScreen->renderZoom(d, localTerm->rows(), localPan, y0);  // 200 pixels, 40 columns
+            });
         } else {
-            localScreen->renderSharp(scr, localTerm->rows());  // 200 pixels of the BBS, all 80 columns, crisp
+            renderRows(localTerm->rows() * 8, [](LGFX_Sprite& d, int y0) {
+                localScreen->renderSharp(d, localTerm->rows(), y0);  // 200 pixels of the BBS, all 80 columns, crisp
+            });
         }
         button(4, 206, 58, 30, "KEYS", false);
         button(66, 206, 58, 30, "ENTER", false);
@@ -1112,47 +1314,81 @@ static void drawLocal() {
         button(190, 206, 58, 30, localPan ? "<<" : ">>", false);
         button(256, 206, 60, 30, "EXIT", true);
     }
-    scr.setFont(&fonts::Font0);
+    g.setFont(&fonts::Font0);
     localTerm->clean();
 }
 
-// The WFC on the board: false when it is unchanged (nothing to push). The art is expanded into a heap terminal that goes again
-// once the screen copy has it, so the loop's stack only holds the snapshot.
+// The WFC's terminal: the art expanded with these values (and the "coming soon" line), on the heap; nullptr when short of memory.
+// Nothing on the screen changes here (drawWfc and @SHOT both build it): spots, if asked, gets where the keys landed.
+static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot& s, bool soon,
+                                                    std::vector<axis::bbs::WfcHotspot>* spots = nullptr) {
+    std::unique_ptr<axis::bbs::AnsiTerm> t;
+    try {  // (the cells are a vector: a failed allocation throws std::bad_alloc)
+        t.reset(new axis::bbs::AnsiTerm(45, 24));
+    } catch (const std::bad_alloc&) {
+    }
+    if (!t) return t;
+    std::string folder = axis::bbs::wfcFolder(*boardCfg);
+    if (!wfcArtLoaded || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
+        std::string art = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
+        wfcArt = std::move(art);  // empty: the theme has none, and the built-in art/wfccyd.ans is read from flash where it stands
+        wfcArtLoaded = true;
+        // a follower's empty answer may be a request that failed: the built-in for now, and ask again at the next redraw
+        // (a theme that really has none is answered from the art cache then, without asking the main)
+        if (!wfcArt.empty() || !asFollower()) wfcArtFolder = folder;
+        else wfcArtLoaded = false;
+    }
+    const char* wfcBuiltin = kWfcCydAns;
+    auto        at = axis::bbs::drawWfc(wfcArt.empty() ? std::string_view(wfcBuiltin, sizeof kWfcCydAns - 1) : std::string_view(wfcArt), s, *t);
+    if (spots) *spots = std::move(at);
+    if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
+    return t;
+}
+
+static bool wfcSoon() { return wfcSoonUntil && (int32_t)(millis() - wfcSoonUntil) < 0; }
+
+// The WFC on the board: false when it is unchanged. The terminal is drawn through the band (320x40, 4 rows of cells) straight
+// to the panel, top to bottom, and goes again, so the loop's stack only holds the snapshot.
 static bool drawWfc() {
+    HeapScope scope("drawWfc");
     uint32_t now = millis();
-    bool     soon = wfcSoonUntil && (int32_t)(now - wfcSoonUntil) < 0;
+    bool     soon = wfcSoon();
     if (wfcSoonUntil && !soon) wfcSoonUntil = 0, wfcStale = true;  // the "coming soon" line goes
     if (!wfcStale && now - wfcDrawnMs < 5000) return false;
     wfcDrawnMs = now;
     axis::bbs::WfcSnapshot s = wfcSnapshot();
     if (!wfcStale && s == wfcShown) return false;
-    std::unique_ptr<axis::bbs::AnsiTerm> t(new (std::nothrow) axis::bbs::AnsiTerm(45, 24));
-    if (!t) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
-        scr.fillScreen(pal::BLACK);
-        scr.setFont(&fonts::Font0);
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString("low memory: the waiting screen will be back", 8, 116);
+    std::vector<axis::bbs::WfcHotspot> spots;
+    std::unique_ptr<axis::bbs::AnsiTerm> t;
+    if (screenBandsInit()) t = wfcTerm(s, soon, &spots);  // (the band is made at boot: this only tries again if that failed)
+    LGFX_Sprite* band = screenBand();
+    if (!t || !band) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
+        auto& g = screenGfx();
+        g.fillScreen(pc(pal::BLACK));
+        g.setFont(&fonts::Font0);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString("low memory: the waiting screen will be back", 8, 116);
+        wfcOnPanel = false;
         return true;
     }
-    std::string folder = axis::bbs::wfcFolder(cfg);
-    if (wfcArt.empty() || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
-        std::string art = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
-        wfcArt = art.empty() ? std::string(kWfcCydAns) : art;  // the theme has none: the built-in art/wfccyd.ans
-        // a follower's empty answer may be a request that failed: the built-in for now, and ask again at the next redraw
-        // (a theme that really has none is answered from the art cache then, without asking the main)
-        if (!art.empty() || !asFollower()) wfcArtFolder = folder;
+    tft.startWrite();  // (one bus hold for the six bands)
+    for (int row = 0; row < 24; row += 4) {
+        AnsiScreen::renderCellsBand(*band, *t, row, 4);
+        band->pushSprite(0, row * 10);
+        tft.waitDMA();  // the next band is drawn into the same buffer
     }
-    wfcSpots = axis::bbs::drawWfc(wfcArt, s, *t);
-    if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
-    AnsiScreen::renderCells(scr, *t);
+    tft.endWrite();
+    wfcSpots = std::move(spots);
     wfcShown = std::move(s);
     wfcStale = false;
+    wfcOnPanel = true;
     return true;
 }
 
 // A node's details (tap its line on the WFC): who, where, how long, and a KICK for the sysop.
 static void drawNodeDetail(int i) {
-    scr.fillScreen(pal::BLACK);
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
     axis::bbs::Node* n = sessionNode((size_t)i);
     WifiStream*      l = sessionLine((size_t)i);
     int num = cluster && (size_t)i < cluster->numbers().size() ? cluster->numbers()[(size_t)i] : i + 1;
@@ -1184,33 +1420,34 @@ static void drawNodeDetail(int i) {
             row(8, "up/down", String(u->uploads / 1024) + " KB / " + String(u->downloads / 1024) + " KB");
         }
     }
-    t.render(scr, 0, 13);
-    scr.setFont(&fonts::Font2);
-    scr.setTextDatum(textdatum_t::middle_center);
-    scr.fillRoundRect(8, 204, 100, 30, 6, pal::DIM);
-    scr.drawRoundRect(8, 204, 100, 30, 6, pal::ORANGE);
-    scr.setTextColor(pal::WHITE, pal::DIM);
-    scr.drawString("BACK", 58, 219);
+    renderRows(13 * 16, [&t](LGFX_Sprite& d, int y0) { t.render(d, y0, 13); });
+    g.setFont(&fonts::Font2);
+    g.setTextDatum(textdatum_t::middle_center);
+    g.fillRoundRect(8, 204, 100, 30, 6, pc(pal::DIM));
+    g.drawRoundRect(8, 204, 100, 30, 6, pc(pal::ORANGE));
+    g.setTextColor(pc(pal::WHITE), pc(pal::DIM));
+    g.drawString("BACK", 58, 219);
     if (n && l) {
-        scr.fillRoundRect(212, 204, 100, 30, 6, pal::ORANGE);
-        scr.drawRoundRect(212, 204, 100, 30, 6, pal::WHITE);
-        scr.setTextColor(pal::BLACK, pal::ORANGE);
-        scr.drawString("KICK", 262, 219);
+        g.fillRoundRect(212, 204, 100, 30, 6, pc(pal::ORANGE));
+        g.drawRoundRect(212, 204, 100, 30, 6, pc(pal::WHITE));
+        g.setTextColor(pc(pal::BLACK), pc(pal::ORANGE));
+        g.drawString("KICK", 262, 219);
     }
-    scr.setTextDatum(textdatum_t::top_left);
-    scr.setFont(&fonts::Font0);
+    g.setTextDatum(textdatum_t::top_left);
+    g.setFont(&fonts::Font0);
 }
 
 // The sysop menu on the board's own screen (a key tapped on the WFC): the one SysopShell in 40 columns of 8x16 letters, a tap
 // on a row picks it, KEYS / ENTER / BACK / EXIT under it, and the touch keyboard for its questions.
 static void touchButton(int x, int y, int w, int h, const char* label, bool lit) {
-    uint16_t fill = lit ? pal::ORANGE : pal::DIM;
-    scr.fillRoundRect(x, y, w, h, 5, fill);
-    scr.drawRoundRect(x, y, w, h, 5, lit ? pal::WHITE : pal::ORANGE);
-    scr.setTextColor(lit ? pal::BLACK : pal::WHITE, fill);
-    scr.setTextDatum(textdatum_t::middle_center);
-    scr.drawString(label, x + w / 2, y + h / 2);
-    scr.setTextDatum(textdatum_t::top_left);
+    auto&    g = screenGfx();
+    uint32_t fill = lit ? pc(pal::ORANGE) : pc(pal::DIM);
+    g.fillRoundRect(x, y, w, h, 5, fill);
+    g.drawRoundRect(x, y, w, h, 5, lit ? pc(pal::WHITE) : pc(pal::ORANGE));
+    g.setTextColor(lit ? pc(pal::BLACK) : pc(pal::WHITE), fill);
+    g.setTextDatum(textdatum_t::middle_center);
+    g.drawString(label, x + w / 2, y + h / 2);
+    g.setTextDatum(textdatum_t::top_left);
 }
 static void closeShell() {
     boardShell.reset();
@@ -1233,7 +1470,10 @@ static void shellFeed() {  // what the shell wrote, onto its terminal; a questio
     }
 }
 static void openShell(axis::bbs::SysopSection s) {
-    shellTerm.reset(new (std::nothrow) axis::bbs::AnsiTerm(40, 15));
+    try {
+        shellTerm.reset(new axis::bbs::AnsiTerm(40, 15));
+    } catch (const std::bad_alloc&) {
+    }
     boardShell.reset(new (std::nothrow) axis::bbs::SysopShell(shellOut, sysopRun, 40, true));  // (at the board: every item)
     if (!shellTerm || !boardShell) {
         closeShell();
@@ -1289,14 +1529,15 @@ static void shellTap(int x, int y) {
     }
 }
 static void drawShell() {
-    scr.fillScreen(pal::BLACK);
-    scr.setFont(&fonts::Font2);
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
+    g.setFont(&fonts::Font2);
     if (shellKeys) {
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString(localKb.title().c_str(), 8, 4);
-        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
-        scr.setTextColor(pal::WHITE, pal::BLACK);
-        scr.drawString((localKb.shown() + "_").c_str(), 10, 35);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString(localKb.title().c_str(), 8, 4);
+        g.drawRect(4, 28, 312, 30, pc(pal::ORANGE));
+        g.setTextColor(pc(pal::WHITE), pc(pal::BLACK));
+        g.drawString((localKb.shown() + "_").c_str(), 10, 35);
         for (auto& k : localKb.keys()) touchButton(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
     } else {
         bigText.clear(0x07);
@@ -1305,19 +1546,19 @@ static void drawShell() {
                 const auto& cell = shellTerm->cell(r, c);
                 bigText.cells[r][c] = {cell.ch, cell.attr};
             }
-        bigText.render(scr, 0, kShellRows);
+        renderRows(kShellRows * 16, [](LGFX_Sprite& d, int y0) { bigText.render(d, y0, kShellRows); });
         bool yn = boardShell->yesNo();
         touchButton(4, 210, 74, 28, yn ? "YES" : "KEYS", yn);
         touchButton(82, 210, 74, 28, yn ? "NO" : "ENTER", false);
         touchButton(160, 210, 76, 28, "BACK", false);
         touchButton(242, 210, 74, 28, "EXIT", true);
     }
-    scr.setFont(&fonts::Font0);
+    g.setFont(&fonts::Font0);
 }
 
 // The sysop panel while a caller downloads or uploads: a drippy window with a live progress bar.
 static void drawTransfer() {
-    if (!screenReady()) return;
+    wfcOnPanel = false;  // (called from the sessions too: the panel no longer shows the WFC, so @SHOT must not dump it)
     static BigText t;
     const auto&    r = job->request();
     uint32_t       done = job->bytes(), size = job->size(), secs = (millis() - jobStartMs) / 1000;
@@ -1350,64 +1591,71 @@ static void drawTransfer() {
     int fill = size ? (int)((uint64_t)done * 38 / size) : (int)(secs % 38);
     t.fill(11, 1, 38, 0xB0, G);
     t.fill(11, 1, fill, 0xDB, O);
-    t.render(scr, 0, 15);
-    screenPush();
+    renderRows(240, [](LGFX_Sprite& d, int y0) { t.render(d, y0, 15); });
+    screenPushIfSprite();
 }
 
 // The WiFi picker: networks in range, or the on-screen keyboard. Rev's scheme: orange, grey, white.
 static void drawPicker() {
-    scr.fillScreen(pal::BLACK);
-    scr.setFont(&fonts::Font2);
-    scr.setTextDatum(textdatum_t::top_left);
-    auto button = [](int x, int y, int w, int h, const char* label, bool lit) {
-        uint16_t fill = lit ? pal::ORANGE : pal::DIM;
-        scr.fillRoundRect(x, y, w, h, 5, fill);
-        scr.drawRoundRect(x, y, w, h, 5, lit ? pal::WHITE : pal::ORANGE);
-        scr.setTextColor(lit ? pal::BLACK : pal::WHITE, fill);
-        scr.setTextDatum(textdatum_t::middle_center);
-        scr.drawString(label, x + w / 2, y + h / 2);
-        scr.setTextDatum(textdatum_t::top_left);
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
+    g.setFont(&fonts::Font2);
+    g.setTextDatum(textdatum_t::top_left);
+    auto button = [&g](int x, int y, int w, int h, const char* label, bool lit) {
+        uint32_t fill = lit ? pc(pal::ORANGE) : pc(pal::DIM);
+        g.fillRoundRect(x, y, w, h, 5, fill);
+        g.drawRoundRect(x, y, w, h, 5, lit ? pc(pal::WHITE) : pc(pal::ORANGE));
+        g.setTextColor(lit ? pc(pal::BLACK) : pc(pal::WHITE), fill);
+        g.setTextDatum(textdatum_t::middle_center);
+        g.drawString(label, x + w / 2, y + h / 2);
+        g.setTextDatum(textdatum_t::top_left);
     };
     if (picker.screen() == axis::bbs::WifiPicker::Screen::List) {
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString("W I F I", 8, 4);
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString("tap your network", 90, 4);
-        scr.drawString(picker.message().substr(0, 40).c_str(), 8, 20);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString("W I F I", 8, 4);
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString("tap your network", 90, 4);
+        g.drawString(picker.message().substr(0, 40).c_str(), 8, 20);
         auto rows = picker.rows();
         for (size_t i = 0; i < rows.size(); i++) {
             int y = axis::bbs::WifiPicker::kRowTop + (int)i * axis::bbs::WifiPicker::kRowH;
-            scr.drawRect(4, y, 312, axis::bbs::WifiPicker::kRowH - 3, pal::DARKGREY);
-            scr.setTextColor(pal::WHITE, pal::BLACK);
-            scr.drawString(rows[i].c_str(), 10, y + 6);
+            g.drawRect(4, y, 312, axis::bbs::WifiPicker::kRowH - 3, pc(pal::DARKGREY));
+            g.setTextColor(pc(pal::WHITE), pc(pal::BLACK));
+            g.drawString(rows[i].c_str(), 10, y + 6);
         }
-        if (rows.empty()) scr.drawString("no networks found: RESCAN", 10, 60);
+        if (rows.empty()) g.drawString("no networks found: RESCAN", 10, 60);
         for (auto& b : picker.buttons()) button(b.x, b.y, b.w, b.h, b.label.c_str(), false);
     } else {
         auto& kb = picker.keyboard();
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString(kb.title().substr(0, 26).c_str(), 70, 4);
-        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
-        scr.setTextColor(pal::WHITE, pal::BLACK);
-        scr.drawString((kb.shown() + "_").c_str(), 10, 35);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString(kb.title().substr(0, 26).c_str(), 70, 4);
+        g.drawRect(4, 28, 312, 30, pc(pal::ORANGE));
+        g.setTextColor(pc(pal::WHITE), pc(pal::BLACK));
+        g.drawString((kb.shown() + "_").c_str(), 10, 35);
         for (auto& k : kb.keys()) button(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
     }
-    scr.setFont(&fonts::Font0);
+    g.setFont(&fonts::Font0);
 }
 
 static void drawScreen() {
-    if (!screenReady()) {  // a door is running
-        wfcStale = true;
-        if (!wfcArt.empty()) std::string().swap(wfcArt);
+    if (!boardHasPanel()) {  // headless: no panel, no copies, nothing to draw
+        screenDirty = false;
         return;
     }
+    static bool fullAsked = false;  // this stay away from the WFC asked for the full copy (no room: straight to the panel until the WFC)
     if (mode != Mode::Normal || job || localNode || boardShell || detailSession >= 0) {  // the WFC is drawn afresh when it is back
         wfcStale = true;
-        if (!wfcArt.empty()) std::string().swap(wfcArt);  // and its art read again then (the skin may change meanwhile)
+        wfcOnPanel = false;
+        if (wfcArtLoaded) std::string().swap(wfcArt), wfcArtLoaded = false;  // and its art read again then (the skin may change meanwhile)
+        if (!fullAsked) fullAsked = true, screenFull();
+    } else {  // every way back to the WFC comes through here: the full copy goes before the WFC is drawn
+        screenFullRelease();
+        fullAsked = false;
     }
+    auto& g = screenGfx();  // (nothing below releases the full copy)
     if (mode == Mode::WifiPick) {
         drawPicker();
-        screenPush();
+        screenPushIfSprite();
         screenDirty = false;
         return;
     }
@@ -1418,36 +1666,36 @@ static void drawScreen() {
     }
     if (mode == Mode::SetupChoice) {
         title("first-boot setup");
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString(("WiFi: " + String(wifiSsid()) + "   " + WiFi.localIP().toString()).c_str(), 8, 50);
-        scr.drawString("How do you want to set up your BBS?", 8, 70);
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString(("WiFi: " + String(wifiSsid()) + "   " + WiFi.localIP().toString()).c_str(), 8, 50);
+        g.drawString("How do you want to set up your BBS?", 8, 70);
         bigButton(92, "ON THIS SCREEN", pal::DIM);
         bigButton(156, "OVER TELNET", pal::BLUE);
-        scr.setTextColor(pal::DARKGREY, pal::BLACK);
-        scr.drawString("tap a button", 8, 222);
+        g.setTextColor(pc(pal::DARKGREY), pc(pal::BLACK));
+        g.drawString("tap a button", 8, 222);
     } else if (mode == Mode::SetupTelnet) {
         title("first-boot setup");
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString("From a computer on this network:", 8, 56);
-        scr.setTextSize(2);
-        scr.setTextColor(pal::LIGHTCYAN, pal::BLACK);
-        scr.drawString(("telnet " + dialName()).c_str(), 8, 76);
-        scr.setTextSize(1);
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString(("or telnet " + WiFi.localIP().toString() + " " + String(cfg.telnetPort)).c_str(), 8, 100);
-        scr.drawString("Setup PIN:", 8, 128);
-        scr.setTextSize(4);
-        scr.setTextColor(pal::YELLOW, pal::BLACK);
-        scr.drawString(setupPin.c_str(), 8, 144);
-        scr.setTextSize(1);
-        scr.setTextColor(wizard ? pal::LIGHTGREEN : pal::DARKGREY, pal::BLACK);
-        scr.drawString(wizard ? "setup in progress over telnet..."
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString("From a computer on this network:", 8, 56);
+        g.setTextSize(2);
+        g.setTextColor(pc(pal::LIGHTCYAN), pc(pal::BLACK));
+        g.drawString(("telnet " + dialName()).c_str(), 8, 76);
+        g.setTextSize(1);
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString(("or telnet " + WiFi.localIP().toString() + " " + String(boardCfg->telnetPort)).c_str(), 8, 100);
+        g.drawString("Setup PIN:", 8, 128);
+        g.setTextSize(4);
+        g.setTextColor(pc(pal::YELLOW), pc(pal::BLACK));
+        g.drawString(setupPin.c_str(), 8, 144);
+        g.setTextSize(1);
+        g.setTextColor(wizard ? pc(pal::LIGHTGREEN) : pc(pal::DARKGREY), pc(pal::BLACK));
+        g.drawString(wizard ? "setup in progress over telnet..."
                               : gate ? "caller connected, waiting for the PIN" : "waiting for the sysop to call",
                        8, 200);
     } else if (mode == Mode::SetupTouch) {
         title("first-boot setup");
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString("On-screen setup is coming in the next build.", 8, 70);
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString("On-screen setup is coming in the next build.", 8, 70);
         bigButton(156, "BACK", pal::DIM);
     } else if (localNode) {
         drawLocal();
@@ -1455,11 +1703,11 @@ static void drawScreen() {
         drawShell();
     } else if (detailSession >= 0) {
         drawNodeDetail(detailSession);
-    } else if (!drawWfc()) {  // the WFC: nothing changed, nothing to push
+    } else if (!drawWfc()) {  // the WFC: nothing changed (drawn, it went straight to the panel band by band)
         screenDirty = false;
         return;
     }
-    screenPush();
+    screenPushIfSprite();
     screenDirty = false;
 }
 
@@ -1471,20 +1719,20 @@ static uint32_t networkPendingMs = 0;
 static void applyNetworkNow() {
     modemSearchForget();  // MDNS.end() must never meet a search: one that is done is freed here
     MDNS.end();
-    if (MDNS.begin(cfg.boardName.c_str())) MDNS.addService("telnet", "tcp", cfg.telnetPort);
+    if (MDNS.begin(boardCfg->boardName.c_str())) MDNS.addService("telnet", "tcp", boardCfg->telnetPort);
     server.end();
-    server.begin(cfg.telnetPort);
+    server.begin(boardCfg->telnetPort);
     server.setNoDelay(true);
     panelServer.begin();
     panelServer.setNoDelay(true);
-    Serial.printf("axis: listening on %s:%d, byte heap %u, largest %u\n", dialName().c_str(), cfg.telnetPort,
+    Serial.printf("axis: listening on %s:%d, byte heap %u, largest %u\n", dialName().c_str(), boardCfg->telnetPort,
                   heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
 // The clock zone at once; mDNS and the listeners now, or (an mDNS search for modems is running) once it has ended or
 // 3.5 s have passed: applyNetworkDue() in the loop. Callers and the panel keep running meanwhile.
 static void applyNetwork() {
-    setenv("TZ", axis::bbs::tzRule(cfg.timezone), 1);
+    setenv("TZ", axis::bbs::tzRule(boardCfg->timezone), 1);
     tzset();
     if (!modemSearchRunning()) {
         networkPending = false;
@@ -1500,9 +1748,9 @@ static void applyNetworkDue() {  // each loop turn, after modemSearchPoll()
     applyNetworkNow();  // (a search still running after 3.5 s is left to MDNS.end(), which frees it)
 }
 static void sendApp(const std::string& s) {
-    if (s.empty() || !line) return;
-    line->write((const uint8_t*)s.data(), s.size());
-    line->flush();
+    if (!line) return;
+    if (!s.empty()) line->write((const uint8_t*)s.data(), s.size());
+    line->flush();  // (even when empty: a screen that left in 2 KB pieces through setDirect still has its tail held here)
 }
 
 // The LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM: the newest link report on this board (the WFC's |R? codes),
@@ -1568,8 +1816,7 @@ static void modemSearchPoll() {  // never waits: the results once the search is 
 static void hangUp() {
     noteDoing("idle");
     viewer.reset();
-    job.reset();
-    zipRam.release();
+    job.reset();  // a viewer or job gives the board's inflate window back as it goes
     noteZipHeap();
     dropLord();
     if (line && node && node->failedLogin()) {  // wrong passwords: count it against the caller's address
@@ -1639,7 +1886,7 @@ static bool passCaller(WiFiClient& incoming) {
     uint32_t ip = axis::cluster::pickFreeNode(cluster->nodes(), cluster->nodeNumber(), reserved);
     if (!ip) return false;
     WiFiClient out;
-    if (!out.connect(IPAddress(ip), (uint16_t)cfg.telnetPort, 1500)) return false;
+    if (!out.connect(IPAddress(ip), (uint16_t)boardCfg->telnetPort, 1500)) return false;
     out.setNoDelay(true);
     incoming.setNoDelay(true);
     std::unique_ptr<Passing> p(new Passing);
@@ -1715,11 +1962,11 @@ static bool axisSame(const std::string& a, const std::string& b) {
 
 static axis::bbs::AxisCard axisSelfCard() {
     axis::bbs::AxisCard me;
-    me.name = cfg.bbsName;
-    me.host = cfg.publicHost.empty() ? std::string(WiFi.localIP().toString().c_str()) : cfg.publicHost;
-    me.port = cfg.telnetPort > 0 ? cfg.telnetPort : 23;
-    me.location = cfg.location;
-    me.sysop = cfg.sysopHandle;
+    me.name = boardCfg->bbsName;
+    me.host = boardCfg->publicHost.empty() ? std::string(WiFi.localIP().toString().c_str()) : boardCfg->publicHost;
+    me.port = boardCfg->telnetPort > 0 ? boardCfg->telnetPort : 23;
+    me.location = boardCfg->location;
+    me.sysop = boardCfg->sysopHandle;
     me.blurb = std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion;
     int on = 0;
     for (size_t i = 0; i < sessions.size(); i++) on += sessionLine(i) ? 1 : 0;
@@ -1915,7 +2162,7 @@ static void answer(WiFiClient incoming) {
     }
     int free = -1;  // setup takes one caller; a set-up board as many as its sessions
     for (size_t i = 0; i < sessions.size() && free < 0; i++)
-        if (!sessionLine(i) && (i == 0 || (cfg.setupDone && mode == Mode::Normal))) free = (int)i;
+        if (!sessionLine(i) && (i == 0 || (boardCfg->setupDone && mode == Mode::Normal))) free = (int)i;
     if (free >= 0) {
         bindSession(free);
         answerIn(incoming, giveBack);
@@ -1941,8 +2188,8 @@ static int sessionNumber(int i) {  // the node number a session answers as
 // The waiting-for-caller screen's live values: every node in the cluster, the newest events, today's counters.
 static axis::bbs::WfcSnapshot wfcSnapshot() {
     axis::bbs::WfcSnapshot w;
-    w.bbsName = cfg.bbsName;
-    w.sysop = cfg.sysopHandle;
+    w.bbsName = boardCfg->bbsName;
+    w.sysop = boardCfg->sysopHandle;
     w.lastCaller = statsLastCaller();
     w.ip = WiFi.localIP().toString().c_str();
     std::string t = timeText().c_str();  // "YYYY-MM-DD HH:MM"
@@ -1978,15 +2225,15 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     if (panelConsoleNew) line.reset(new PanelStream());
     else line.reset(new WifiStream(incoming));
     line->tapNode = sessionNumber(curSession);
-    line->acceptLink(cfg.modemLink);  // the LFD3K-SM modem's link reports (LFD3K-LINK, telnet option 90)
+    line->acceptLink(boardCfg->modemLink);  // the LFD3K-SM modem's link reports (LFD3K-LINK, telnet option 90)
     callStartMs = millis();
     logEvent((panelConsoleNew ? String("sysop console from the panel") : "call from " + line->remoteIP().toString()) + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
              " KB, largest " + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024) + " KB)");
     line->start();
     if (!giveBack.empty()) line->inject(giveBack);
-    if (cfg.setupDone && mode == Mode::Normal) {
+    if (boardCfg->setupDone && mode == Mode::Normal) {
         countCall();
-        node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, cfg, &callerFiles()));
+        node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, boardCfg, &callerFiles()));
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
         node->setWarrior(writeWarrior);
@@ -2028,8 +2275,10 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         });
         node->setMessages(&callerMessages());
         node->setArt([](const std::string& name) { return themeArt(name); });
+        node->setWfcArt(wfcArtShared);
         node->setPoster(posterPiece);
         node->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+        node->setExists(menuExists);
         wireScripts(node.get());
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
         node->setOneLiners(
@@ -2099,8 +2348,11 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
                     cluster->request(std::string("Q\x1f") + line, reply, 3000);
                 }
             });
-        node->setDirect([](const char* p, size_t n) {  // the login art, from flash in 1 KB pieces
-            if (line) line->write((const uint8_t*)p, n);
+        // The login art from flash, and any screen as it is drawn (2 KB at a time), straight to this session's own line:
+        // looked up by slot each time (the line moves between `line` and sessions[slot], and hangUp drops it first).
+        node->setDirect([slot](const char* p, size_t n) {
+            WifiStream* l = (size_t)slot < sessions.size() ? sessionLine((size_t)slot) : nullptr;
+            if (l) l->write((const uint8_t*)p, n);
         });
         if (panelConsoleNew) {  // the sysop, from the panel: no password asked, and the WFC is the first screen
             node->beginLocal(millis());
@@ -2123,7 +2375,6 @@ static void releaseDoorSlot() {
     if (curSession >= 0) (doorRemoteLocks ? *doorRemoteLocks : doorLocks).releaseOwner(sessionNumber(curSession));
     doorRemoteLocks.reset();
     viewer.reset();
-    zipRam.release();
     noteZipHeap();
     nativeLord.reset();
     screenDirty = true;
@@ -2148,7 +2399,7 @@ static void abortDoor(axis::bbs::Node::DoorEnd how) {
 }
 
 static std::string areaName(const std::string& id) {
-    for (auto& a : cfg.areas)
+    for (auto& a : boardCfg->areas)
         if (a.id == id) return a.name;
     return id;
 }
@@ -2230,7 +2481,7 @@ static void lordPost(void* ctx, const char* from, const char* to, const char* bo
 }
 
 static std::string lordFolderId() {
-    for (auto& d : cfg.doors)
+    for (auto& d : boardCfg->doors)
         if (d.exe == "*LORD" && !d.id.empty()) return d.id;
     return "lord";
 }
@@ -2258,7 +2509,7 @@ static bool writeWarrior(const std::string& handle) {
 }
 
 static void startDoorInner() {
-    const axis::bbs::DoorEntry& d = node->door();
+    const axis::bbs::DoorEntry d = node->door();  // (a copy: new settings may arrive while it starts)
     sendApp(node->takeOutput());
     if (d.exe == "*LORD") {  // one game per caller. The EXE slot stays free.
         logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
@@ -2301,7 +2552,7 @@ static void startDoorInner() {
         return;
     }
     doorStartMs = millis();
-    if (!d.exe.empty() && d.exe[0] == '*') {  // one viewer per caller. It allocates an inflate window only while a piece plays.
+    if (!d.exe.empty() && d.exe[0] == '*') {  // one viewer per caller. It borrows the board's inflate window only while a deflated piece plays.
         logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
         std::vector<std::pair<std::string, std::string>> va;  // "ansi,scene-acid,...": several areas, a picker first
         for (size_t from = 0; from <= d.args.size();) {
@@ -2315,6 +2566,13 @@ static void startDoorInner() {
                                                nullptr, 0, *line));
         viewer->setAreas(va);
         if (!node->lite()) viewer->setClock([] { return (uint32_t)millis(); });  // ANSI movies play at modem speed (a lite caller: unpaced)
+        // The viewer limit (Rev, 2026-11-12): with its 44 KB window taken the board keeps the floors the viewer asks for (the
+        // busy test's 60 KB and 32 KB while a piece plays from the window; a little less for a moment's unpack into the SD
+        // view cache), or the piece is refused or stopped with a note. No cushion above them (Rev: "loosen the margin").
+        viewer->setRoom([](uint32_t minFree, uint32_t minLargest) {
+            return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
+        });
+        viewer->setCache(storageHasSd() || asFollower());  // the cache is on the main's card (a follower reaches it over the link)
         viewer->begin();
         line->flush();
         return;
@@ -2377,7 +2635,10 @@ static void callerInput(const std::string& app) {
     const uint8_t* p = (const uint8_t*)app.data();
     if (node) {
         std::string before = node->handle();
-        node->input(p, app.size(), millis());
+        {
+            HeapScope scope("node");
+            node->input(p, app.size(), millis());
+        }
         if (node->handle() != before) screenDirty = true;
         return;
     }
@@ -2385,8 +2646,8 @@ static void callerInput(const std::string& app) {
         wizard->input(p, app.size());
         sendApp(wizard->takeOutput());
         if (wizard->finished()) {
-            cfg = wizard->result();
-            bool ok = configSave(cfg);
+            cfgSet(wizard->result());
+            bool ok = configSave(*boardCfg);
             if (!wizard->noip().host.empty())  // the No-IP login stays in this board's own storage
                 web::setNoip(String(wizard->noip().host.c_str()) + "|" + wizard->noip().user.c_str() + "|" + wizard->noip().pass.c_str());
             logEvent(String("setup ") + (ok ? "saved" : "SAVE FAILED") + " over telnet");
@@ -2394,7 +2655,7 @@ static void callerInput(const std::string& app) {
             snprintf(b, sizeof b,
                      "\r\n   \x1b[1;32mSettings saved.\x1b[0;37m Your BBS is open: call %s port %d.\r\n"
                      "   Log in as %s for the sysop menu (coming soon).\x1b[0m\r\n",
-                     dialName().c_str(), cfg.telnetPort, cfg.sysopHandle.c_str());
+                     dialName().c_str(), boardCfg->telnetPort, boardCfg->sysopHandle.c_str());
             sendApp(b);
             hangUp();
             mode = Mode::Normal;
@@ -2411,7 +2672,7 @@ static void callerInput(const std::string& app) {
         if (gate->passed()) {
             mode = Mode::SetupTelnet;  // the right PIN means the sysop chose telnet
             gate.reset();
-            wizard.reset(new axis::bbs::SetupWizard(cfg, hwRandom));
+            wizard.reset(new axis::bbs::SetupWizard(*boardCfg, hwRandom));
             wizard->begin();
             sendApp(wizard->takeOutput());
             screenDirty = true;
@@ -2468,7 +2729,7 @@ static void startCluster() {
             return;
         }
         if (l.kind == kAnnounceAllKind) {  // the board holding the webhook posts it
-            web::announce(String("**") + cfg.bbsName.c_str() + "** " + l.text.c_str());
+            web::announce(String("**") + boardCfg->bbsName.c_str() + "** " + l.text.c_str());
             return;
         }
         if (l.page) {
@@ -2499,24 +2760,28 @@ static void startCluster() {
                 sessionLine(i)->flush();
             }
     };
-    cluster->settings = [] { return axis::bbs::formatConfig(cfg); };
+    cluster->settings = [] { return axis::bbs::formatConfig(*boardCfg); };
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
         artCache.clear();  // the theme may have changed
+        wfcAnsKey.clear();  // (and so may the waiting screen)
+        existsCache.clear();
+        mainKnowsExists = false;  // (this may be another main: an older one answers every unknown letter "0")
         if (storageHasSd()) {  // the SD board keeps the BBS's settings: a stand-in main's older copy must not replace them
             Serial.println("axis: settings from a main without the card: kept our own");
             return;
         }
         Serial.printf("axis: settings from the main: %u bytes\n", (unsigned)ini.size());
-        axis::bbs::BbsConfig m = axis::bbs::mergeSettings(cfg, ini);
-        if (axis::bbs::formatConfig(m) == axis::bbs::formatConfig(cfg)) return;
-        bool wasSetUp = cfg.setupDone;
-        cfg = m;
-        pushBoardToCallers();
-        bool ok = configSave(cfg);
+        axis::bbs::BbsConfig m = axis::bbs::mergeSettings(*boardCfg, ini);
+        if (axis::bbs::formatConfig(m) == axis::bbs::formatConfig(*boardCfg)) return;
+        bool wasSetUp = boardCfg->setupDone;
+        std::shared_ptr<const axis::bbs::BbsConfig> prev = boardCfg;
+        cfgSet(std::move(m));
+        pushBoardToCallers(prev);
+        bool ok = configSave(*boardCfg);
         logEvent(String("settings from the main") + (ok ? "" : " (SAVE FAILED)"));
         if (!wasSetUp) {  // a fresh (headless) node: ready for callers now
             mode = Mode::Normal;
-            sessions.resize((size_t)cfg.sessions);
+            sessions.resize((size_t)boardCfg->sessions);
         }
         screenDirty = true;
     };
@@ -2549,13 +2814,13 @@ static void startCluster() {
             saveUsers();  // and on to the other followers
         } else {
             userSync.received(axis::bbs::formatUser(here));
-            if (!flashWrite("/users.dat", users.format())) logEvent("users: SAVE FAILED");
+            if (!writeUsersFile()) logEvent("users: SAVE FAILED");
             pendingSeen = users.pending();
             screenDirty = true;
         }
     };
     // A follower's request is told apart by its first letter. The file server (cluster/remotefiles.cpp) owns
-    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H B and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
+    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H B E and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
     // until 2026-11-09: that took every file open (packs, views, downloads) and upload away from a follower.
     cluster->onRequest = [](int nodeNum, const std::string& req) {
         servedRequest = true;  // a follower waits on this: no nap this turn
@@ -2570,6 +2835,7 @@ static void startCluster() {
             return out;
         }
         if (req.rfind("T\x1f", 0) == 0) {  // a theme screen, "T name offset": every file in pieces, so the frame stays under 8 KB
+            HeapScope scope("T");
             std::string rest = req.substr(2);
             size_t      sep = rest.find('\x1f');
             std::string name = sep == std::string::npos ? rest : rest.substr(0, sep);
@@ -2586,12 +2852,21 @@ static void startCluster() {
                 }
             }
             if (off > (posterName(name) ? kPosterCap : kThemeArtCap)) return std::string("0");
-            bool        opened = false;
-            std::string piece = themeArtPiece(name, off, want ? want : kPosterChunk, &opened);
+            // built once, in place: '1' then the piece (reserved up front, with room for the cluster to put its frame header and tag round it)
+            size_t w = want ? want : kPosterChunk;
+            if (w > kPosterChunk) w = kPosterChunk;
+            std::string r;
+            r.reserve(1 + w + 64);
+            r = '1';
+            bool opened = themeArtPieceAppend(name, off, w, r);
             if (!opened && posterName(name)) return std::string("0");
-            return "1" + piece;
+            return r;
         }
-        if (req.rfind("U\x1f", 0) == 0) return "1" + menuFileLocal(req.substr(2), false);  // a menu file or its art (/menus only: under 8 KB)
+        if (req.rfind("U\x1f", 0) == 0) {
+            HeapScope scope("U");
+            return "1" + menuFileLocal(req.substr(2), false);
+        }  // a menu file or its art (/menus only: under 8 KB)
+        if (req.rfind("E\x1f", 0) == 0) return std::string(menuExistsLocal(req.substr(2)) ? "1" : "0");  // does a menu screen exist: no read
         if (req.rfind("J\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
             std::string name = req.substr(2);
             if (name.empty()) {
@@ -2750,7 +3025,7 @@ static void startLocal() {
     }
     localTerm.reset(new axis::bbs::AnsiTerm());
     localScreen.reset(new AnsiScreen());
-    localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,
+    localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, boardCfg,
                                         &callerFiles()));
     localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
     localNode->setWarrior(writeWarrior);
@@ -2759,8 +3034,10 @@ static void startLocal() {
     localNode->setWfcSnapshot(wfcSnapshot);
     localNode->setMessages(&callerMessages());
     localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
+    localNode->setWfcArt(wfcArtShared);
     localNode->setPoster(posterPiece);
     localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+    localNode->setExists(menuExists);
     wireScripts(localNode.get());
     localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
     localNode->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
@@ -2784,7 +3061,7 @@ static void startLocal() {
 }
 
 static void handleTap(int x, int y) {
-    if (!screenReady()) return;  // a door has the screen's memory
+    if (!boardHasPanel()) return;  // headless: no screen to tap (and nothing drawn to say where)
     if (mode == Mode::WifiPick) {
         picker.tap(x, y);
         screenDirty = true;
@@ -2944,7 +3221,7 @@ static std::string panelExtra(const std::string& in) {
     if (in == "CON NEW") {
         int free = -1;
         for (size_t i = 0; i < sessions.size() && free < 0; i++)
-            if (!sessionLine(i) && cfg.setupDone && mode == Mode::Normal) free = (int)i;
+            if (!sessionLine(i) && boardCfg->setupDone && mode == Mode::Normal) free = (int)i;
         if (free < 0) return "CON NO every node on this board is busy\n";
         if (curSession >= 0) unbindSession();
         panelConNode = sessionNumber(free), panelConJoined = false;  // (before its first screen goes out)
@@ -2987,7 +3264,7 @@ static void pumpPanel() {
             panelClient = c;
             char nonce[17];
             snprintf(nonce, sizeof nonce, "%08lx%08lx", (unsigned long)hwRandom(), (unsigned long)hwRandom());
-            panelSession.reset(new axis::bbs::PanelSession(cfg, users, nonce));
+            panelSession.reset(new axis::bbs::PanelSession(boardCfg, users, nonce));
             panelSession->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
             panelSession->extra = panelExtra;
             panelWall = false;
@@ -3109,7 +3386,7 @@ static void runCommand(const String& cmd, Print& out) {
             out.println("axis: only the main pools the cards (@CARDS there)");
     } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
         std::string areas;
-        for (auto& a : cfg.areas)
+        for (auto& a : boardCfg->areas)
             if (a.mirror) areas += (areas.empty() ? "" : " ") + a.id;
         out.printf("axis: mirrored areas: %s\n", areas.empty() ? "none (add |m to an areaN line)" : areas.c_str());
 #if AXIS_SD_POOL
@@ -3137,15 +3414,15 @@ static void runCommand(const String& cmd, Print& out) {
             logEvent(String("sysop: ") + arg + " more minutes for " + n->handle().c_str());
             out.printf("axis: node %d gets %d more minutes\n", num, (int)arg.toInt());
         } else if (cmd.startsWith("@FORCETC ")) {
-            n->nodeIn(axis::bbs::Node::kNodeForce, 0, cfg.sysopHandle, "");
+            n->nodeIn(axis::bbs::Node::kNodeForce, 0, boardCfg->sysopHandle, "");
             out.printf("axis: node %d sent to the teleconference\n", num);
         } else {
-            n->nodeIn(axis::bbs::Node::kNodeNote, 0, cfg.sysopHandle, arg.c_str());
+            n->nodeIn(axis::bbs::Node::kNodeNote, 0, boardCfg->sysopHandle, arg.c_str());
             out.printf("axis: note sent to node %d\n", num);
         }
     } else if (cmd.startsWith("@BCAST ")) {  // "@BCAST text": a broadcast to every caller on this board
         for (size_t i = 0; i < sessions.size(); i++)
-            if (sessionNode(i) && sessionLine(i)) sessionNode(i)->nodeIn(axis::bbs::Node::kNodeBroadcast, 0, cfg.sysopHandle, cmd.substring(7).c_str());
+            if (sessionNode(i) && sessionLine(i)) sessionNode(i)->nodeIn(axis::bbs::Node::kNodeBroadcast, 0, boardCfg->sysopHandle, cmd.substring(7).c_str());
         out.println("axis: broadcast sent");
     } else if (cmd == "@USERS") {  // one line per user: id|handle|status|security|calls|flags
         for (auto& u : users.all())
@@ -3196,7 +3473,7 @@ static void runCommand(const String& cmd, Print& out) {
             out.printf("axis: %s updated\n", u->handle.c_str());
         }
     } else if (cmd == "@SETTINGS") {  // axis.ini without any salt or hash line
-        std::string t = axis::bbs::formatConfig(cfg), line;
+        std::string t = axis::bbs::formatConfig(*boardCfg), line;
         for (char ch : t) {
             if (ch != '\n') {
                 line += ch;
@@ -3251,6 +3528,12 @@ static void runCommand(const String& cmd, Print& out) {
             out.printf("@STATS day=%d calls=%u posts=%u uploads=%u total=%u\n", s.day, (unsigned)s.calls, (unsigned)s.posts,
                        (unsigned)s.uploads, (unsigned)s.total);
         }
+    } else if (cmd == "@HEAPWIN") {  // restart the lowest-heap window (the numbers on @STATUS: wmin wlarge wdoing)
+        heapWin.reset();
+#if AXIS_HEAP_TRACE
+        heapTraceRestart();
+#endif
+        out.println("@HEAPWIN reset");
     } else if (cmd == "@STATUS") {  // one line for the panel
         int on = 0;
         for (size_t i = 0; i < sessions.size(); i++) on += sessionLine(i) ? 1 : 0;
@@ -3259,6 +3542,15 @@ static void runCommand(const String& cmd, Print& out) {
         sample.largest = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
         sample.minHeap = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
         sample.stackWords = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
+        sample.winFree = heapWin.lowFree == UINT32_MAX ? sample.heapFree : heapWin.lowFree;
+        sample.winLargest = heapWin.lowLargest == UINT32_MAX ? sample.largest : heapWin.lowLargest;
+        sample.winDoing = heapWin.lowDoing;
+        auto stk = [](const char* n) { TaskHandle_t h = xTaskGetHandle(n); return h ? (uint32_t)uxTaskGetStackHighWaterMark(h) : 0u; };
+        sample.stkWeb = web::stackMark();  // (the task comes and goes: its own lowest mark, no foreign handle)
+        sample.stkMdns = stk("mdns");
+        sample.stkTimer = stk("esp_timer");
+        sample.outMax = (uint32_t)axis::bbs::Node::outMax();
+        sample.artMax = (uint32_t)artMax;
         char line[384];
         std::snprintf(line, sizeof line, "id=%s role=%s nodes=%d on=%d heap=%u largest=%u up=%lu rssi=%d sd_mb=%u ip=%s",
                       WiFi.macAddress().c_str(),
@@ -3305,7 +3597,7 @@ static void runCommand(const String& cmd, Print& out) {
             out.printf("axis: %s deleted\n", h.c_str());
         }
     } else if (cmd == "@AREAS" || cmd == "@MSGAREAS") {  // "N|id|name|level|m" per area
-        auto& v = cmd == "@AREAS" ? cfg.areas : cfg.msgAreas;
+        auto& v = cmd == "@AREAS" ? boardCfg->areas : boardCfg->msgAreas;
         for (size_t i = 0; i < v.size(); i++)
             out.printf("%u|%s|%s|%d|%s\n", (unsigned)i + 1, v[i].id.c_str(), v[i].name.c_str(), v[i].minSecurity, v[i].mirror ? "m" : "");
     } else if (cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) {
@@ -3318,7 +3610,8 @@ static void runCommand(const String& cmd, Print& out) {
             if (bar < 0) break;
             from = bar + 1;
         }
-        auto& v = f[0] == "msgs" ? cfg.msgAreas : cfg.areas;
+        axis::bbs::BbsConfig& e = cfgEdit();
+        auto& v = f[0] == "msgs" ? e.msgAreas : e.areas;
         int   n = f.size() > 1 ? (int)f[1].toInt() : 0;
         bool  ok = n >= 1;
         if (ok && cmd.startsWith("@AREASET ") && f.size() >= 4) {
@@ -3332,7 +3625,7 @@ static void runCommand(const String& cmd, Print& out) {
         } else ok = false;
         if (!ok) out.println("axis: @AREASET files|N|id|name|level, @AREADEL msgs|N, @AREAUP files|N");
         else {
-            configSave(cfg);
+            configSave(*boardCfg);
             if (cluster) cluster->shareSettings();
             makeAreaFolders();
             logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a);
@@ -3397,14 +3690,14 @@ static void runCommand(const String& cmd, Print& out) {
         logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a + " (" + gone + ")");
         out.printf("axis: %d post%s\n", gone, gone == 1 ? "" : "s");
     } else if (cmd == "@MENU") {  // the main menu's items: N|key|name|command (empty: the built-in menu)
-        for (size_t i = 0; i < cfg.mainMenu.size(); i++)
-            out.printf("%u|%s|%s|%s\n", (unsigned)i + 1, cfg.mainMenu[i].key.c_str(), cfg.mainMenu[i].name.c_str(), cfg.mainMenu[i].cmd.c_str());
+        for (size_t i = 0; i < boardCfg->mainMenu.size(); i++)
+            out.printf("%u|%s|%s|%s\n", (unsigned)i + 1, boardCfg->mainMenu[i].key.c_str(), boardCfg->mainMenu[i].name.c_str(), boardCfg->mainMenu[i].cmd.c_str());
     } else if (cmd == "@MENUCMDS") {  // what a menu item can run
         for (auto& c : axis::bbs::menuCommands()) out.printf("%s|%c\n", c.first.c_str(), c.second);
     } else if (cmd.startsWith("@MENUSET ") || cmd.startsWith("@MENUDEL ") || cmd.startsWith("@MENUUP ") || cmd == "@MENURESET" || cmd == "@MENUSTART") {
         // "@MENUSET N|key|name|command" (N past the end adds), "@MENUDEL N", "@MENUUP N", "@MENURESET" (built-in again),
         // "@MENUSTART" (an editable copy of the built-in menu)
-        auto&  v = cfg.mainMenu;
+        auto&  v = cfgEdit().mainMenu;
         String a = cmd.indexOf(' ') > 0 ? cmd.substring(cmd.indexOf(' ') + 1) : String();
         int    n = (int)a.toInt();
         bool   ok = true;
@@ -3433,7 +3726,7 @@ static void runCommand(const String& cmd, Print& out) {
         }
         if (!ok) out.println("axis: @MENUSET N|key|name|command, @MENUDEL N, @MENUUP N, @MENURESET, @MENUSTART");
         else {
-            configSave(cfg);
+            configSave(*boardCfg);
             if (cluster) cluster->shareSettings();
             logEvent(String("sysop: ") + cmd.substring(1));
             out.println("axis: menu saved");
@@ -3472,6 +3765,9 @@ static void runCommand(const String& cmd, Print& out) {
         }
     } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
         out.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
+    } else if (cmd == "@DDNS now") {  // bench: make the web task's DNS check due on its next turn
+        web::ddnsSoon();
+        out.println("axis: ddns check due");
     } else if (cmd.startsWith("@DDNS")) {  // "@DDNS domain|host|key|secret": GoDaddy dynamic DNS; alone: off
         out.println(web::setDdns(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: ddns saved" : "axis: @DDNS domain|host|key|secret");
     } else if (cmd == "@NOIPNOW") {  // bench: update No-IP right now
@@ -3491,7 +3787,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@WEB") {
         out.printf("axis: web: %s\n", web::status().c_str());
     } else if (cmd == "@WEBTEST") {
-        web::announce(String("**") + cfg.bbsName.c_str() + "** is online. Telnet in and feed the scene.");
+        web::announce(String("**") + boardCfg->bbsName.c_str() + "** is online. Telnet in and feed the scene.");
         out.println("axis: test announcement queued");
     } else if (cmd == "@LED") {  // status light (bench): blue LED on the ring, RGB on a CYD
         ledReport = true;
@@ -3500,10 +3796,15 @@ static void runCommand(const String& cmd, Print& out) {
         out.println("@LOG END");
     } else if (cmd == "@SHOT") {
         shotDoneMs = millis();
+        std::unique_ptr<axis::bbs::AnsiTerm> wfc;  // the WFC on the panel: its terminal again, dumped band by band
+        if (wfcOnPanel && !screenSprite()) wfc = wfcTerm(wfcShown, wfcSoon());
         screenShot([] {  // the cluster keeps its heartbeat while the screen streams out
             if (cluster) cluster->tick(millis());
-        });
+        }, wfc.get());
         shotDoneMs = millis();  // (the loop's stall check comes next: this one was on purpose)
+    } else if (cmd == "@SPRITEFAIL") {  // bench: the next screen away from the WFC finds no room for the full copy
+        screenFailNext();
+        out.println("axis: the next full screen copy fails");
     } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
         SD.end();
         storageInit();
@@ -3541,17 +3842,19 @@ static void runCommand(const String& cmd, Print& out) {
         out.println("axis: no 8086 in this firmware");
     } else if (cmd.startsWith("@SET ") && cmd.indexOf('=') > 5) {  // "@SET location=Myrtle Beach, SC"
         String kv = cmd.substring(5);
-        cfg = axis::bbs::parseConfig(axis::bbs::formatConfig(cfg) + kv.c_str() + "\n");  // the later line wins
-        pushBoardToCallers();
-        bool ok = configSave(cfg);
+        std::shared_ptr<const axis::bbs::BbsConfig> prev = boardCfg;
+        cfgSet(axis::bbs::parseConfig(axis::bbs::formatConfig(*boardCfg) + kv.c_str() + "\n"));  // the later line wins
+        pushBoardToCallers(prev);
+        bool ok = configSave(*boardCfg);
         logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
         if (cluster) cluster->shareSettings();
         screenDirty = true;
     } else if (cmd.startsWith("@NUP")) {  // "@NUP secret": the new user password asked before Apply; alone, anyone can apply
         String pw = cmd.length() > 5 ? cmd.substring(5) : String();
-        cfg.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
-        cfg.nupHash = pw.length() ? axis::bbs::hashPassword(cfg.nupSalt, pw.c_str()) : std::string();
-        bool ok = configSave(cfg);
+        axis::bbs::BbsConfig& e = cfgEdit();
+        e.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
+        e.nupHash = pw.length() ? axis::bbs::hashPassword(e.nupSalt, pw.c_str()) : std::string();
+        bool ok = configSave(*boardCfg);
         if (cluster) cluster->shareSettings();  // every board asks the same one
         logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
     } else if (cmd == "@HEADLESS" || cmd == "@HEADLESS on" || cmd == "@HEADLESS off") {
@@ -3639,9 +3942,10 @@ static void runCommand(const String& cmd, Print& out) {
         if (pw.length() < 4) {
             out.println("axis: @SYSOPPASS needs 4 or more characters");
         } else {
-            cfg.sysopSalt = axis::bbs::makeSalt(hwRandom);
-            cfg.sysopHash = axis::bbs::hashPassword(cfg.sysopSalt, pw.c_str());
-            bool ok = configSave(cfg);
+            axis::bbs::BbsConfig& e = cfgEdit();
+            e.sysopSalt = axis::bbs::makeSalt(hwRandom);
+            e.sysopHash = axis::bbs::hashPassword(e.sysopSalt, pw.c_str());
+            bool ok = configSave(*boardCfg);
             if (cluster) cluster->shareSettings();  // every board takes the same sysop login
             logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
         }
@@ -3654,7 +3958,8 @@ static void runCommand(const String& cmd, Print& out) {
         ESP.restart();
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
-    } else if (&out == &Serial && serialFileCommand(cmd)) {  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py)
+    } else if (&out == &Serial && serialFileCommand(cmd)) {
+        for (int32_t& c : listCount) c = -1;  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py) (a list file may have changed)
     } else if (cmd == "@RERUNSETUP" && boardIsHeadless()) {  // the wizard is on a screen this board hasn't got
         out.println("axis: setup refused: this board is headless (no screen to run setup on)");
     } else if (cmd == "@RERUNSETUP" && callersBesideSysop()) {
@@ -3709,12 +4014,12 @@ static void handleSerial() {
         }
         if ((c == 0x0A || c == 0x0D) && cmd.equalsIgnoreCase("WFC")) {
             cmd = "";
-            if (mode != Mode::Normal || !cfg.setupDone) {
-                Serial.println(cfg.setupDone ? "axis: WFC is not available right now (the board is not at its normal screen)"
+            if (mode != Mode::Normal || !boardCfg->setupDone) {
+                Serial.println(boardCfg->setupDone ? "axis: WFC is not available right now (the board is not at its normal screen)"
                                              : "axis: WFC is not available until setup is done");
                 continue;
             }
-            serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg, &callerFiles()));
+            serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, boardCfg, &callerFiles()));
             serialWfc->setAccounts(&users, saveUsers, hwRandom, unixNow);
             serialWfc->setWarrior(writeWarrior);
             serialWfc->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
@@ -3722,8 +4027,10 @@ static void handleSerial() {
             serialWfc->setWfcSnapshot(wfcSnapshot);
             serialWfc->setMessages(&callerMessages());
             serialWfc->setArt([](const std::string& name) { return themeArt(name); });
+            serialWfc->setWfcArt(wfcArtShared);
             serialWfc->setPoster(posterPiece);
             serialWfc->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+            serialWfc->setExists(menuExists);
             wireScripts(serialWfc.get());
             serialWfc->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& l) { sharedListAdd(n, l); });
             serialWfc->setLastCallers([] { return sharedList("callers"); }, [](const std::string&) {});
@@ -3755,25 +4062,28 @@ static void allocFailed(size_t size, uint32_t caps, const char* fn) {
 }
 
 void setup() {
+#if AXIS_HEAP_TRACE
+    heap_trace_init_standalone(traceRecs_, sizeof traceRecs_ / sizeof traceRecs_[0]);
+#endif
+    heapScopeHook([](const std::string& l) { logEvent(String(l.c_str())); });
     boardDiag_.resetCode = (int)esp_reset_reason();
     heap_caps_register_failed_alloc_callback(allocFailed);
     ledBegin();
     Serial.begin(115200);
     delay(200);
     const char* panel = boardInit(1, 40000000);
-    if (!screenInit()) Serial.println("axis: no memory for the screen copy");
+    if (boardHasPanel() && !screenBandsInit()) Serial.println("axis: no memory for the screen band");  // (headless: none)
     Serial.printf("\naxis: Axis Micro BBS Firmware %s booting, panel %s, heap %u\n", axis::bbs::kAxisVersion, panel,
                   ESP.getFreeHeap());
-    title("starting...");
-    screenPush();
+    if (boardHasPanel()) title("starting...");  // straight to the panel: the full copy is only made for a screen other than the WFC
     storageInit();
     if (!configMount()) Serial.println("axis: internal flash filesystem failed to mount");
     web::begin();
-    cfg = configLoad();
-    sessions.resize(cfg.setupDone ? (size_t)cfg.sessions : 1);  // callers at once (setup takes one)
+    cfgSet(configLoad());
+    sessions.resize(boardCfg->setupDone ? (size_t)boardCfg->sessions : 1);  // callers at once (setup takes one)
     bool lordArgs = false;  // stock LORD tails gain NOEMS; a sysop's own arguments stay
-    for (auto& d : cfg.doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
-    if (lordArgs) configSave(cfg);
+    for (auto& d : cfgEdit().doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
+    if (lordArgs) configSave(*boardCfg);
     users.parse(flashRead("/users.dat"));
     linersLoad();
     callersLoad();
@@ -3796,19 +4106,19 @@ void setup() {
     }
     pendingSeen = users.pending();
     makeAreaFolders();
-    if (!cfg.setupDone) {
+    if (!boardCfg->setupDone) {
         if (boardIsHeadless()) {  // nothing to set up on the ring: the main's settings arrive over the link
             String mac = WiFi.macAddress();
             mac.replace(":", "");
-            cfg.boardName = ("axis-" + mac.substring(8)).c_str();
-            cfg.sessions = 3;  // no screen to draw: room for a third caller
+            cfgEdit().boardName = ("axis-" + mac.substring(8)).c_str();
+            cfgEdit().sessions = 3;  // no screen to draw: room for a third caller
             newSetupPin();     // (only used if a caller arrives before the settings do)
         } else {
             mode = Mode::SetupChoice;
             newSetupPin();
         }
     }
-    Serial.printf("axis: settings %s\n", cfg.setupDone ? "loaded" : "not set up yet, first-boot setup");
+    Serial.printf("axis: settings %s\n", boardCfg->setupDone ? "loaded" : "not set up yet, first-boot setup");
     if (!wifiJoinSaved()) {
         if (boardIsHeadless()) {
             startHotspot();
@@ -3873,7 +4183,7 @@ static void ledUpdate() {
 static uint32_t lastRadioMs = 0;
 static void takeLinkReport() {
     axis::net::LinkInfo li;
-    if (line && node && cfg.modemLink && line->takeLink(li)) {  // (at most one a second per line: TelnetStream::takeLink)
+    if (line && node && boardCfg->modemLink && line->takeLink(li)) {  // (at most one a second per line: TelnetStream::takeLink)
         bool first = !node->viaModem();
         node->setLink(li);
         // the WFC's |R? codes: this caller's link when it is the one shown, a new call, a new tier, or the shown one is a minute old
@@ -3912,12 +4222,26 @@ static void serviceSession(int i) {
         }
     }
     if (job) {  // this caller's download or upload
-        if (job->needsWorkspace() && !zipRam.held()) {  // a ZIP upload: its own inflate window, not the panel
-            drawTransfer();
-            if (!zipRam.ensure(kZipWindow, axis::bbs::ZipReader::kStateBytes))
-                logEvent("upload: short on memory to check the ZIP");
-            job->beginProcessing(zipRam.window, zipRam.window ? kZipWindow : 0, zipRam.state);
-            noteZipHeap();
+        if (job->needsWorkspace()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait up to 60 s)
+            bool busy = axis::bbs::inflate::busy();
+            if (busy && (!line || !line->carrier())) {  // hung up while waiting
+                hangUp();
+                return;
+            }
+            if (busy && !job->waiting) {
+                job->waiting = true;
+                job->waitSince = millis();
+                sendApp("\r\n  Checking your upload, waiting for the ZIP checker...\r\n");
+            }
+            bool late = busy && millis() - job->waitSince >= 60000u;
+            if (!busy || late) {
+                uint8_t *w = nullptr, *st = nullptr;  // late: today's short-memory path (no window)
+                drawTransfer();
+                if (late) logEvent("upload: ZIP window busy");
+                else if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
+                job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
+                noteZipHeap();
+            }
         }
         bool running = job->step(millis());
         if (line) line->flush();
@@ -3933,8 +4257,7 @@ static void serviceSession(int i) {
             noteDoing("idle");
             if (line && line->carrier()) {
                 node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
-                job.reset();
-                zipRam.release();
+                job.reset();  // gives the inflate window back
                 noteZipHeap();
                 sendApp(node->takeOutput());
             } else {
@@ -3945,7 +4268,11 @@ static void serviceSession(int i) {
         return;
     }
     if (nativeLord) {  // this caller is in LORD
-        bool running = nativeLord->step();
+        bool running;
+        {
+            HeapScope scope("door");
+            running = nativeLord->step();
+        }
         if (line) line->flush();
         if (!running) finishLord();
         delay(5);
@@ -3977,7 +4304,10 @@ static void serviceSession(int i) {
             return;
         }
         if (line && node) {
-            node->poll(millis());
+            {
+                HeapScope scope("node");
+                node->poll(millis());
+            }
             if (node->state() == axis::bbs::Node::State::InDoor) {
                 startDoor();
                 return;
@@ -3985,7 +4315,7 @@ static void serviceSession(int i) {
             if (node->state() == axis::bbs::Node::State::Transfer && !job) {
                 sendApp(node->takeOutput());  // the transfer window, before the protocol starts
                 jobStartMs = jobDrawnMs = millis();
-                axis::bbs::UploadInfo info{cfg.bbsName, dialName().c_str(), cfg.location,
+                axis::bbs::UploadInfo info{boardCfg->bbsName, dialName().c_str(), boardCfg->location,
                                            std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion};
                 noteDoing(String(node->transfer().upload ? "upload " : "download ") + node->transfer().name.c_str() + " by " +
                           node->handle().c_str());
@@ -3999,11 +4329,77 @@ static void serviceSession(int i) {
     }
 }
 
+// The SD view cache filled ahead of callers: on the main with a card, only while nobody is online on any board (one small step a
+// loop turn: a pack looked at, or 16 KB of one copied; the inflate window only for a deflated piece and only above the fill floor).
+// A pass goes through every *ANSIVIEW door's areas, then deletes copies no pack matches; the next starts 30 minutes after one ends,
+// so new uploads get copied too. A caller arriving drops the pass (and a copy part way); the next idle restarts it.
+static void viewCacheTick() {
+    static std::unique_ptr<axis::bbs::viewcache::Filler> fill;
+    static uint32_t nextMs = 300000;  // the first pass five minutes after boot (after the boot DNS check, which needs TLS room)
+    uint32_t        now = millis();
+    bool            anyone = false;
+    for (size_t i = 0; i < sessions.size() && !anyone; i++) anyone = sessionLine(i) != nullptr;
+    if (cluster)  // a caller on a follower counts too: the main serves its screens and files
+        for (auto& n : cluster->nodes()) anyone = anyone || !n.handle.empty();
+    // The web task (a DNS check, a Discord line) needs the heap the window would hold: the pass steps aside for it too.
+    bool webWork = web::working();
+    if (anyone || webWork || asFollower() || !storageHasSd() || !boardCfg) {
+        if (fill) {  // dropped (a copy part way is thrown away, the window given back); not back for two minutes
+            fill.reset();
+            if ((int32_t)(nextMs - (now + 120000u)) < 0) nextMs = now + 120000u;
+        }
+        return;
+    }
+    // (The first try, a file per piece in /sd/files/viewcache, is left alone: deleting thousands of files one by one in a FAT
+    // folder that big stalls the loop for seconds a file. It is only card space; the sysop can delete it from a PC.)
+    if (!fill && (int32_t)(now - nextMs) < 0) return;
+    try {
+        if (!fill) {
+            std::vector<std::string> areas;
+            for (auto& d : boardCfg->doors) {
+                std::string exe = d.exe;
+                for (char& c : exe) c = (char)std::toupper((unsigned char)c);
+                if (exe != "*ANSIVIEW") continue;
+                for (size_t from = 0; from <= d.args.size();) {
+                    size_t      comma = d.args.find(',', from);
+                    std::string id = d.args.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
+                    if (!id.empty() && std::find(areas.begin(), areas.end(), id) == areas.end()) areas.push_back(id);
+                    if (comma == std::string::npos) break;
+                    from = comma + 1;
+                }
+            }
+            fill.reset(new axis::bbs::viewcache::Filler(
+                callerFiles(), std::move(areas),
+                [](uint32_t minFree, uint32_t minLargest) {
+                    return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree &&
+                           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
+                },
+                [](uint64_t bytes) { return storageFreeBytes(true) >= bytes + (256ull << 20); }));  // fresh, and 256 MB left for uploads
+        }
+        if (!fill->step()) {
+            if (fill->copied() || fill->removed())
+                logEvent("view cache: " + String(fill->copied()) + " packs copied, " + String(fill->removed()) + " old copies removed");
+            fill.reset();
+            nextMs = now + 30u * 60u * 1000u;
+        }
+    } catch (const std::bad_alloc&) {  // the heap could not spare a listing or a directory: drop the pass, try again later
+        fill.reset();
+        nextMs = now + 10u * 60u * 1000u;
+        logEvent("view cache: short of memory, the pass waits 10 minutes");
+    }
+}
+
 void loop() {
     static uint32_t lastLoop = millis();
     if (millis() - lastLoop > 2000 && millis() - shotDoneMs > 1000)  // (a bench screenshot stalls on purpose)
         logEvent("loop stalled " + String(millis() - lastLoop) + " ms");
     lastLoop = millis();
+    heapWin.sample((uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT), (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), doingNow());
+#if AXIS_HEAP_TRACE
+    heapTraceLow((uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT), (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif
+    heapScopeFlush();  // a line the web task (core 0) held
+    web::tick();       // the web task exists only while a DNS check or a Discord line waits
     handleSerial();
     modemSearchPoll();  // (before any early return: a network re-apply may be waiting on it)
     applyNetworkDue();
@@ -4044,7 +4440,7 @@ void loop() {
                 startCluster();
             } else {
                 picker.joinFailed();
-                if (afterPick == Mode::Normal || cfg.setupDone) wifiJoinSaved();  // never strand a working board
+                if (afterPick == Mode::Normal || boardCfg->setupDone) wifiJoinSaved();  // never strand a working board
             }
             screenDirty = true;
         }
@@ -4095,6 +4491,24 @@ void loop() {
         unbindSession();
     }
     axisDirty = false;
+    static uint32_t lastMemLog = 0, seenDropped = 0, seenGated = 0, seenStarts = 0;  // low-memory web notes, at most hourly
+    static bool     memLogged = false;
+    if (axis::bbs::gateLogDue(millis(), lastMemLog, memLogged)) {
+        uint32_t d = web::droppedLines(), g = web::gatedChecks(), f = web::startFails();
+        if (d != seenDropped || g != seenGated || f != seenStarts) {
+            if (d != seenDropped) logEvent("discord: " + String(d - seenDropped) + " lines dropped (low memory)");
+            if (g != seenGated) logEvent("ddns: waiting for memory (largest " + String(web::gatedLargestKb()) + " KB)");
+            if (f != seenStarts) logEvent("web: task waiting for memory (largest " + String(web::startLargestKb()) + " KB)");
+            seenDropped = d, seenGated = g, seenStarts = f;
+            lastMemLog = millis(), memLogged = true;
+        }
+    }
+    viewCacheTick();
+    static uint32_t lastRoll = 0;  // the day counters roll at midnight on every board, screen or not (the WFC used to be the only one)
+    if (millis() - lastRoll > 5000u) {
+        lastRoll = millis();
+        rollDayCounters();
+    }
     static uint32_t lastTick = 0;  // keep the clock and the time-online count moving
     if (millis() - lastTick > 300u) {  // the status lights blink, long lines scroll, the times tick
         lastTick = millis();

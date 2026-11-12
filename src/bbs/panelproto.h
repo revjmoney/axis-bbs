@@ -8,6 +8,7 @@
 // account or a user at security 255 gets in; the password itself never crosses the wire.
 #pragma once
 #include <functional>
+#include <memory>
 #include <string>
 
 #include "bbs/config.h"
@@ -18,6 +19,8 @@ namespace axis::bbs {
 class PanelSession {
 public:
     PanelSession(const BbsConfig& cfg, const UserStore& users, std::string nonce);
+    // live: the board's settings as they are now (the holder is replaced on every change)
+    PanelSession(const std::shared_ptr<const BbsConfig>& live, const UserStore& users, std::string nonce);
     std::string greeting() const { return "AXISPANEL 1 " + nonce_ + "\n"; }
     std::string line(const std::string& in);  // what to send back
     bool        authed() const { return authed_; }
@@ -30,7 +33,9 @@ public:
 private:
     bool lookup(const std::string& handle, std::string& salt, std::string& hash, std::string& name) const;
 
-    const BbsConfig& cfg_;
+    const BbsConfig* fixed_ = nullptr;
+    const std::shared_ptr<const BbsConfig>* live_ = nullptr;
+    const BbsConfig& cfg() const { return live_ ? **live_ : *fixed_; }
     const UserStore& users_;
     std::string      nonce_, who_;
     bool             authed_ = false, closed_ = false;

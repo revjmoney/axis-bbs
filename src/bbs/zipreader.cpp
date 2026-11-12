@@ -3,6 +3,7 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/zipreader.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -50,6 +51,7 @@ bool ZipReader::open() {
     if (cdSize >= 46 && cdSize <= kMaxDirectory && (uint64_t)cdOffset + cdSize <= size_) {
         if (uint8_t* cd = (uint8_t*)std::malloc(cdSize)) {
             bool ok = read_(cdOffset, cd, cdSize);
+            entries_.reserve(std::min<size_t>(std::min<size_t>(count, kMaxEntries), cdSize / 46));  // exact: a doubling vector sat at up to twice this
             uint32_t at = 0;
             for (uint16_t i = 0; ok && i < count && entries_.size() < kMaxEntries; i++) {
                 if (at + 46 > cdSize || u32(cd + at) != 0x02014b50) {

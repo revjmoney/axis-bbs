@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <exception>
 
 namespace axis::bbs {
 
@@ -63,7 +64,9 @@ bool keepGroup(const std::string& inner, const ArtValue& value) {
 class Out {
 public:
     explicit Out(const ArtEmit& emit) : emit_(emit) { buf_.reserve(520); }
-    ~Out() { flush(); }
+    ~Out() {
+        if (std::uncaught_exceptions() == unwinding_) flush();  // (not while a failed write unwinds: nothing more goes out)
+    }
     void put(char c) {
         buf_ += c;
         if (buf_.size() >= 480) flush();
@@ -72,11 +75,16 @@ public:
         for (char c : s) put(c);
     }
     void flush() {
-        if (!buf_.empty()) emit_(buf_.data(), buf_.size());
-        buf_.clear();
+        if (buf_.empty()) return;
+        struct Clear {  // emptied even when the write throws (bad_alloc): the piece is never handed over twice
+            std::string& b;
+            ~Clear() { b.clear(); }
+        } clear{buf_};
+        emit_(buf_.data(), buf_.size());
     }
 
 private:
+    const int      unwinding_ = std::uncaught_exceptions();
     const ArtEmit& emit_;
     std::string    buf_;
 };

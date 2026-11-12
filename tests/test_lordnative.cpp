@@ -821,3 +821,104 @@ TEST_CASE("native lord writes a level 1 warrior on registration and leaves the o
     auto after = load(root / "PLAYER.DAT");
     CHECK(std::memcmp(after.data(), before.data(), before.size()) == 0);
 }
+
+namespace {
+// LENEMY.DAT with n records, every field different per record, so the wrong record (a wrong seek) shows
+std::vector<uint8_t> monsters(int n) {
+    std::vector<uint8_t> f((size_t)n * kMon, 0);
+    for (int i = 0; i < n; i++) {
+        uint8_t* r = f.data() + (size_t)i * kMon;
+        char     name[16], weapon[16], death[16];
+        std::snprintf(name, sizeof name, "Mon%02d", i);
+        std::snprintf(weapon, sizeof weapon, "Claw%02d", i);
+        std::snprintf(death, sizeof death, "Fell%02d", i);
+        pstr(r, 0, 60, name);
+        w32(r, 61, 100 + i);  // str
+        w32(r, 65, 300 + i);  // gold
+        pstr(r, 69, 60, weapon);
+        w32(r, 130, 400 + i);  // xp
+        w32(r, 134, 200 + i);  // hp
+        pstr(r, 138, 100, death);
+    }
+    return f;
+}
+uint32_t g_monRoll = 0;
+uint32_t monRng() { return g_monRoll; }
+}  // namespace
+
+TEST_CASE("LORD picks the same monster") {
+    const int n = 30;
+    for (int level = 1; level <= 3; level++)
+        for (uint32_t c : {0u, 7u, 10u}) {  // (c % 5 != 1: no forest event first)
+            fs::path root = stage("axis_lordnative_monsters");
+            saveBytes(root / "LENEMY.DAT", monsters(n));
+            auto file = load(root / "PLAYER.DAT");
+            w16(file.data(), 127, level);
+            saveBytes(root / "PLAYER.DAT", file);
+            g_monRoll = c;
+            // the old code's pick, from the whole file in RAM: (level-1)*11 + roll(11), else roll(n) past the end
+            int idx = (level - 1) * 11 + (int)(c % 11);
+            if (idx >= n) idx = (int)(c % (uint32_t)n);
+            axis::pc::StdHostFs      host(root);
+            axis::door::ScriptStream line;
+            axis::lord::NativeLord   game(host, line, "Redking", nullptr, 1);
+            game.setRng(monRng);
+            game.begin();
+            line.clearOutput();
+            line.push("f");
+            CHECK(game.step());
+            char want[48];
+            std::snprintf(want, sizeof want, "Mon%02d   HP %d", idx, 200 + idx);
+            CAPTURE(level);
+            CAPTURE(c);
+            CHECK(plain(line.output()).find(want) != std::string::npos);  // name and hp: one record, all its fields (str too) read together
+        }
+}
+
+namespace {
+uint32_t oneRng() { return 1; }
+}  // namespace
+
+
+TEST_CASE("native lord plays a forest event from a script read a window at a time") {
+    // pad moves every 2 KB window edge through each spot of a 58-byte filler line: on a CR, between CR and LF, on an LF
+    for (int pad = 0; pad < 58; pad++) {
+        CAPTURE(pad);
+        fs::path root = stage("axis_lordnative_events");
+        saveBytes(root / "LENEMY.DAT", oneMonster());
+        std::string filler;
+        for (int i = 0; i < 40; i++) filler += "; filler line to push the next part past a 2 KB window\r\n";
+        std::string ldy = std::string((size_t)pad, ';') + "\r\n" + filler + "@#FIRST\r\n@writeln the first event\r\n@endquest\r\n" +
+                          filler + "@#SECOND\r\n@writeln the second event\r\n@runsub HELPER\r\n@writeln back from the helper\r\n" +
+                          "; " + std::string(3000, 'x') + "@writeln hidden in a long comment\r\n@goto far\r\n" +
+                          "@writeln skipped by the jump\r\n" + filler + "@label far\r\n@writeln after the jump\r\n@endquest\r\n" +
+                          filler + "@#HELPER\r\n@writeln in the helper\r\n@endquest";  // the last line has no CR LF
+        REQUIRE(ldy.size() > 12000);
+        {
+            std::ofstream f(root / "EVENTS.LDY", std::ios::binary);
+            f << ldy;
+        }
+        axis::pc::StdHostFs host(root);
+        axis::door::ScriptStream line;
+        axis::lord::NativeLord game(host, line, "Redking", nullptr, 1);
+        game.setRng(oneRng);  // roll(5) == 1: an event; of FIRST SECOND HELPER, roll(3) == 1 picks SECOND
+        game.begin();
+        line.clearOutput();
+        line.push("f");
+        game.step();
+        std::string out = plain(line.output());
+        size_t a = out.find("the second event"), b = out.find("in the helper"), c = out.find("back from the helper"),
+               d = out.find("after the jump");
+        CHECK(a != std::string::npos);
+        CHECK(b != std::string::npos);
+        CHECK(c != std::string::npos);
+        CHECK(d != std::string::npos);
+        CHECK(a < b);
+        CHECK(b < c);
+        CHECK(c < d);
+        CHECK(out.find("skipped by the jump") == std::string::npos);
+        CHECK(out.find("hidden in a long comment") == std::string::npos);
+        CHECK(out.find("the first event") == std::string::npos);
+        CHECK(line.output().find("\r\r") == std::string::npos);  // the file's CR is not sent twice
+    }
+}

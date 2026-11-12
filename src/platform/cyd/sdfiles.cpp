@@ -70,6 +70,10 @@ std::vector<FileEntry> SdFileLibrary::list(const std::string& areaId) {
     if (!storageHasSd() || !safeName(areaId)) return {};
     std::string dir = folderOf(areaId);
     if (DIR* d = opendir(dir.c_str())) {
+        struct Close {  // closed on every way out, a bad_alloc from the vector or map below included
+            DIR* d;
+            ~Close() { closedir(d); }
+        } close{d};
         while (dirent* e = readdir(d)) {
             std::string n = e->d_name;
             struct stat st;
@@ -77,7 +81,6 @@ std::vector<FileEntry> SdFileLibrary::list(const std::string& areaId) {
             folder.emplace_back(n, (uint32_t)st.st_size);
             when[n] = (uint32_t)st.st_mtime;
         }
-        closedir(d);
     }
     std::string bbs;
     read(areaId, "FILES.BBS", bbs, 16 * 1024);
