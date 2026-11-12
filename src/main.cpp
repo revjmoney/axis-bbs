@@ -6003,7 +6003,13 @@ void loop() {
     pumpPanel();
     for (size_t i = 0; i < sessions.size(); i++) {
         bindSession((int)i);
+        uint32_t turnMs = millis();
         serviceSession((int)i);
+        turnMs = millis() - turnMs;
+        if (turnMs > 1000)  // one caller held the loop: say what it was doing (node state number, bytes its line still holds)
+            logEvent("slow turn: node " + String(sessionNumber((int)i)) + " " + String(turnMs) + " ms, state " +
+                     String(node ? (int)node->state() : -1) + ", held " + String(line ? (unsigned)line->backlog() : 0u) + " " +
+                     String(sessions[i].lastStatus.c_str()));
         unbindSession();
     }
     drainParkedLines();
