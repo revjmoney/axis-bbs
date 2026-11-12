@@ -3,8 +3,8 @@
 #include "doctest.h"
 #include "bbs/features.h"
 
-// Built with no switches (AXIS_OFF empty) every selectable feature is on and the
-// reserved ones are off. A build with AXIS_OFF set skips this check.
+// Built with no switches (AXIS_OFF empty) every selectable feature (nets included) is on and
+// the reserved ones are off. A build with AXIS_OFF set skips this check.
 #ifndef AXIS_TEST_SWITCHED
 TEST_CASE("features: defaults") {
     CHECK(AXIS_LORD == 1);
@@ -16,7 +16,7 @@ TEST_CASE("features: defaults") {
     CHECK(AXIS_CLUSTER == 1);
     CHECK(AXIS_MODEMLINK == 1);
     CHECK(AXIS_WEB == 1);
-    CHECK(AXIS_NETS == 0);
+    CHECK(AXIS_NETS == 1);
     CHECK(AXIS_GPIO == 0);
 }
 #endif

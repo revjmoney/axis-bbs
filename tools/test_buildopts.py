@@ -32,7 +32,16 @@ class BuildOptsTest(unittest.TestCase):
         ns = next(p for p in PRESETS if p["id"] == "no-sd")
         want = {f["id"] for f in FEATURES if f.get("needs_sd") and not f.get("reserved")}
         self.assertEqual(set(ns["off"]), want)
-        self.assertEqual(want, {"files", "ansiview", "transfers", "lord", "scripts"})
+        self.assertEqual(want, {"files", "ansiview", "transfers", "lord", "scripts", "nets"})
+
+    def test_nets_is_selectable_and_in_the_off_presets(self):
+        self.assertIn("nets", SELECTABLE)
+        for pid in ("just-bbs", "no-sd"):
+            p = next(p for p in PRESETS if p["id"] == pid)
+            self.assertIn("nets", p["off"], pid)
+        ev = next(p for p in PRESETS if p["id"] == "everything")
+        self.assertEqual(ev["off"], [])
+        self.assertEqual(buildopts.build_flags({"nets"}), ["-DAXIS_NETS=0"])
 
     def test_every_feature_has_needs_sd_flag(self):
         for f in FEATURES:
@@ -45,7 +54,7 @@ class BuildOptsTest(unittest.TestCase):
         self.assertIn("transfers", str(cm.exception))
 
     def test_reserved_and_unknown_ids_raise(self):
-        for bad in ("nets", "gpio", "nope", "AXIS_LORD", "a;b"):
+        for bad in ("gpio", "nope", "AXIS_LORD", "a;b"):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
                     buildopts.resolve({bad})

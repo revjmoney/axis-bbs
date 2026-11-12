@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 // Build switches for AXIS Micro BBS. Each AXIS_X is 1 (built in) unless the build
 // sets it to 0 (tools/pio_features.py from AXIS_OFF or AXIS_PRESET; the list is
-// installer/features.json). Selectable features default to 1; AXIS_NETS and
-// AXIS_GPIO are reserved and default to 0.
+// installer/features.json). Selectable features default to 1 (AXIS_NETS agrees with
+// the fallback in main.cpp); AXIS_GPIO is reserved and defaults to 0.
 #pragma once
 
 #ifndef AXIS_LORD
@@ -34,7 +34,7 @@
 #define AXIS_WEB 1
 #endif
 #ifndef AXIS_NETS
-#define AXIS_NETS 0
+#define AXIS_NETS 1
 #endif
 #ifndef AXIS_GPIO
 #define AXIS_GPIO 0
