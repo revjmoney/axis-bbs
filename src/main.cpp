@@ -969,6 +969,19 @@ static axis::bbs::RemoteMessageStore remoteMsgs([](const std::string& req, std::
 });
 #if AXIS_NETS
 static axis::bbs::MessageStore* netMessages();  // the store with Sysop Net on top, once the net runs (main only)
+// The board's store while Sysop Net is not on top of it: a post into a Sysop Net area (sn_) is refused, so none is
+// ever stored unsigned. NetCore itself writes to localMsgs, never through this.
+struct NoNetMsgs : axis::bbs::MessageStore {
+    std::vector<axis::bbs::Message> headers(const std::string& area) override { return localMsgs->headers(area); }
+    bool read(const std::string& area, int num, axis::bbs::Message& out) override { return localMsgs->read(area, num, out); }
+    int  post(const std::string& area, const axis::bbs::Message& m) override {
+        return area.compare(0, 3, "sn_") == 0 ? 0 : localMsgs->post(area, m);
+    }
+    int drop(const std::string& area, const std::function<bool(const axis::bbs::Message&)>& gone) override {
+        return localMsgs->drop(area, gone);
+    }
+};
+static NoNetMsgs noNetMsgs;
 #endif
 static axis::bbs::MessageStore& callerMessages() {
     if (!localMsgs) {
@@ -979,8 +992,10 @@ static axis::bbs::MessageStore& callerMessages() {
     if (asFollower()) return remoteMsgs;
 #if AXIS_NETS
     if (axis::bbs::MessageStore* n = netMessages()) return *n;
-#endif
+    return noNetMsgs;
+#else
     return *localMsgs;
+#endif
 }
 
 // A follower (card or not) sees the main's library, which is every card pooled; the main pools its
@@ -2318,7 +2333,8 @@ static void netDialStep(NetHost& h) {
 // axisServe read "AXISNET 2 ": the rest of the hello comes from the socket. One inbound session at a time.
 static void netAccept(WiFiClient& c, const std::string& got) {
     NetHost* h = netHost.get();
-    if (!h || !cfg.netSysop || asFollower() || h->in.phase != NetPhase::Idle || !netHeapOk()) {
+    if (!h || !cfg.netSysop || asFollower() || h->in.phase != NetPhase::Idle || h->out.phase != NetPhase::Idle ||
+        !netHeapOk()) {  // one session at a time, in or out
         c.print("BYE busy\n");
         delay(10);
         c.stop();
@@ -2502,7 +2518,7 @@ static void netTick() {
     }
     uint32_t every = (uint32_t)(cfg.netSyncMin < 1 ? 1 : cfg.netSyncMin) * 60000u;
     bool     due = millis() - h.dialMs >= every || (h.postDue && millis() - h.postMs >= kNetPostDialMs);
-    if (due && h.out.phase == NetPhase::Idle && heapOk && unixNow() && !inflateHeld()) {
+    if (due && h.out.phase == NetPhase::Idle && h.in.phase == NetPhase::Idle && heapOk && !inflateHeld()) {
         h.dialMs = millis();
         h.postDue = false;
         std::vector<NetTarget> v = netTargets(h);
@@ -2510,10 +2526,20 @@ static void netTick() {
     }
 }
 
-// The settings a new Node gets: the board's, plus the four Sysop Net areas for the sysop alone while the net runs
-// (on a follower, while the main's settings have it on). Never saved: they are not in cfg.msgAreas.
+// True when this board's callers get the Sysop Net areas: on the main, once its NetCore (and so the NetPostingStore)
+// is up and net_sysop is on; on a follower, when the main says so (request "GN").
+static bool netAreasOn() {
+    if (asFollower()) {
+        std::string reply;
+        return cluster && cluster->request("GN", reply, 1500) && reply == "1";
+    }
+    return netHost && cfg.netSysop;
+}
+
+// The settings a new Node gets: the board's, plus the four Sysop Net areas for the sysop alone while the net runs.
+// Never saved: they are not in cfg.msgAreas.
 static axis::bbs::BbsConfig nodeCfg() {
-    if (!cfg.netSysop || !(netHost || asFollower())) return cfg;
+    if (!netAreasOn()) return cfg;
     axis::bbs::BbsConfig c = cfg;
     for (const axis::net::NetArea& a : axis::net::sysopNetAreas()) {
         axis::bbs::FileArea f;
@@ -3376,6 +3402,9 @@ static void startCluster() {
             return std::string("1") + scriptFile(name);
         }
         if (req.rfind("V\x1f", 0) == 0) return "1" + axis::bbs::followerCommand(req.substr(2), sysopRun);  // a follower's @ command (never a board-only one)
+#if AXIS_NETS
+        if (req == "GN") return std::string(netHost && cfg.netSysop ? "1" : "0");  // a follower: show the Sysop Net areas?
+#endif
         if (req == "AN") {  // a follower asked the main to speak to the Axis Net
             axisProbeSoon = true;
             return std::string("1");

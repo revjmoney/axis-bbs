@@ -147,8 +147,21 @@ std::string netDateText(uint32_t unixTime) {
 }
 
 uint32_t netDateUnix(const std::string& text) {
-    int y, mo, d, h, mi;
-    if (std::sscanf(text.c_str(), "%d-%d-%d %d:%d", &y, &mo, &d, &h, &mi) != 5) return 0;
+    // "YYYY-MM-DD HH:MM", read as sscanf("%d-%d-%d %d:%d") would, without sscanf (about 24 KB of
+    // flash on the board for this one call).
+    long        v[5];
+    const char* p = text.c_str();
+    for (int i = 0; i < 5; i++) {
+        char* e = nullptr;
+        v[i] = std::strtol(p, &e, 10);
+        if (e == p) return 0;
+        p = e;
+        if (i == 0 || i == 1 || i == 3) {
+            if (*p != (i == 3 ? ':' : '-')) return 0;
+            p++;
+        }
+    }
+    int y = (int)v[0], mo = (int)v[1], d = (int)v[2], h = (int)v[3], mi = (int)v[4];
     std::tm tm = {};
     tm.tm_year = y - 1900;
     tm.tm_mon = mo - 1;

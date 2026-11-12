@@ -369,9 +369,11 @@ void NetState::load(const std::string& text, uint32_t nowDay) {
             if (decode(line, n)) pending.emplace_back(n, day);
         }
     }
-    std::stable_sort(pending.begin(), pending.end(),
-                     [](const std::pair<NetNotice, uint32_t>& a,
-                        const std::pair<NetNotice, uint32_t>& b) { return a.first.seq < b.first.seq; });
+    // In seq order, ties kept in file order. An insertion sort: a few hundred notices at most, and
+    // std::stable_sort's merge code costs about 10 KB of the board's flash.
+    for (size_t i = 1; i < pending.size(); i++)
+        for (size_t j = i; j > 0 && pending[j].first.seq < pending[j - 1].first.seq; j--)
+            std::swap(pending[j], pending[j - 1]);
     for (const auto& p : pending) applyNotice(p.first, p.second);
     prune(nowDay);
 }
