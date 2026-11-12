@@ -224,3 +224,47 @@ The main's extra memory at idle is now 8908 bytes (was 21984): the FATFS mount w
 ### Missed targets
 
 The busy floors are missed by 3736 bytes of free (polled), 4096 of largest (polled), and 22880 / 7168 in the window. All of them fall while the ANSI viewer holds its 32 KB window and 12016 byte state at the same time as a LORD game on the same board (wdoing and HeapScope both point there). Nothing panicked. Options for Rev, not built: a smaller viewer window when a door is already running, or the viewer declining to start (with its note) below a heap level.
+
+## After the final (2026-11-12, later): the misses traced and closed
+
+Rev chose to trace the busy-test dip, then a viewer limit, then an SD view cache so every piece stays viewable.
+
+### What the dip was
+
+A heap-trace bench build (`pio run -e cyd-trace`, `-DAXIS_HEAP_TRACE=1`, sdkconfig.cyd-trace with standalone heap tracing; prints `@HT` lines of the live allocations and their callers at each new low after `@HEAPWIN`) showed, at the lowest point: the viewer's inflate window and state (32768 + 12016), LORD's whole EVENTS.LDY script held as one string (18047 bytes, `src/lord/game.cpp:198` via `realm.cpp` loadScript), the viewer's 4 KB first read, the open pack's entry list (3072, grown by doubling), WiFi and lwIP buffers, and small lists. The low fell 13 KB when the LORD script loaded.
+
+### What changed
+
+| change | commit | effect |
+|---|---|---|
+| LORD reads .LDY scripts from the file, 2 KB at a time, with the section and label positions found in one pass at load; the file stays open while the script runs | b807a28, 342d2be, 3355438 | about 16 KB less while a forest event runs; on a follower about as many link round trips as the old whole read |
+| viewer gives back its 4 KB first read once sent; ZIP entry list sized exactly | faef180 | about 3.5 KB and 1 to 2 KB |
+| viewer limit: with the window taken the board keeps 60 KB free and a 32 KB block, checked at the start and every turn a piece plays, or the piece is refused or stopped with the note | 9bc3bda, 65db52f | with an 8 KB cushion every piece was refused on a busy board; without it 12 played, 92 refused, low 59724 |
+| SD view cache: one stored (uncompressed) copy of each art pack in file area `viewpacks`, named by a fingerprint of its pieces, made at idle 16 KB a loop turn by a Filler, deleted when no pack matches; the viewer plays cached pieces with no window | 9b606de to 94dbd6a | pieces play on a busy board; the limit only applies to a pack not copied yet |
+| the SD card mount is tried three times at boot | 6c36784 | a flash reset mid-write had left board 1 cardless, so the cardless board took main |
+| final-review fixes: the Filler steps aside while the web task has work, catches bad_alloc, waits 5 minutes after boot; a follower reads remote files through a 2 KB read-ahead; a piece that unpacks past its size fails its pack; a listing closes its folder on bad_alloc | 6f24e79, 644be9e | |
+
+The first try at the cache (a file per piece, `/sd/files/viewcache`) left thousands of files on board 1's card. It is left alone: deleting them one by one in a FAT folder that size stalls the loop for seconds a file. The sysop can delete that folder from a PC.
+
+### Final numbers (6c36784 on the boards; 644be9e adds only the review fixes and was flashed after)
+
+| | target | result |
+|---|---|---|
+| board 1 idle free (before the test, cache already filled) | 128000 | 140692 (140964 on 644be9e right after boot) |
+| board 1 idle largest | 92160 | 110592 |
+| windowed low in the busy test (wmin after @HEAPWIN) | 61440 | 78100, PASS |
+| largest in the window (wlarge) | 32768 | 69632, PASS |
+| lowest polled free / largest | | 101680 / 90112 |
+| resets, ALLOC FAILED | none | 0, 0 |
+| ANSI pieces played by caller B | | 20 of 20, none refused |
+
+The run's summary line says FAIL only because caller C's test user is refused downloads by the upload ratio (a test user choice, not memory); its first row (taken before `@HEAPWIN`, while the cache Filler worked at idle) holds the 67592 / 47104 the summary prints. The cache pass copied 141 packs in 487 s. Caller A had no forest fights left that day, so LORD's script reader ran only in the host tests (a forest event with every 2 KB window edge moved through CR, LF and CR LF).
+
+### Parked (rulings, for later)
+
+- A pack that cannot be opened in a pass stops that pass from deleting stale copies (safe; card growth is capped by the 256 MB the Filler always leaves).
+- Any connection (even a pre-login scanner) drops a pass in progress; it comes back two minutes later and keeps every finished copy.
+- A follower's LORD script handle stays open across key waits; closing it after the main went silent waits for the link timeout.
+- A pack whose copy failed (damaged piece or a card write error) is not tried again until a reboot.
+- Opening a cached pack on a follower reads two central directories over the link.
+- The DNS check every 10 minutes drops a fill pass, which then reopens every pack; finished copies stay.
