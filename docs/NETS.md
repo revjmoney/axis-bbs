@@ -71,7 +71,7 @@ Under `/net/` on the storage root:
 - `local.txt` holds this board's own hide and block lines.
 - `firstpeer.txt` remembers the first peer's address and the board id learned from it.
 
-Also under `/net/`: `state.txt` (cards and Rev's notices), `seen.txt` (which posts this board has seen) and `cursors.txt` (how far each link peer has been sent, and how many calls with it completed).
+Also under `/net/`: `state.txt` (cards and Rev's notices), `seen.txt` (which posts this board has seen) and `cursors.txt` (how far each link peer has been sent, how many calls with it completed, and whether this board's history pull is done).
 
 In internal flash:
 
@@ -129,7 +129,7 @@ Each call trades the net state (cards and Rev's notices), then each side sends w
 
 After a `nocard` or `store` the sender stops sending for the rest of that call and tries the same post again next call. If the same post is refused that way three calls in a row, it is passed over for that peer. Before the first post from a given board in a call, the sender sends that board's card, so `nocard` is rare. If the sender holds no card for the posting board (it was pushed out of a full card list), it had nothing to send ahead and no later call can fix that: a `nocard` for that post is final, the post is passed over at once and the call goes on.
 
-A board that has no Sysop Net posts yet asks for history: up to 200 posts per area from the last 30 days, sent oldest first across all four areas together.
+A new board asks for history: up to 200 posts per area from the last 30 days, sent oldest first across all four areas together. It keeps asking on every call until one pull has run to its end with at least one post in it, so a pull cut short (a dropped call, a time limit, a memory pause) is asked for again next call; posts it already has are skipped. A board updated from a build without this flag that already holds Sysop Net posts counts its history as done. A call in which either side asks for history gets the full 10 minutes, even from a board that is not trusted yet (see below); the 10-minute wait for that address afterwards still applies.
 
 Each board counts at most 48 posting boards a day against the daily limits; when more show up, the one heard from longest ago is dropped from the count. Posts from Rev's boards are never limited.
 
@@ -138,7 +138,7 @@ Without a clock, posts are trimmed by count only, once every 24 hours the board 
 ### Busy and back-off
 
 - One call in and one call out at a time. While the board is short of memory it stops reading the call (the other board waits) and its silence timer stands still; a call still ends after 10 minutes.
-- A call from a board this board does not trust yet gets 2 minutes instead of 10. When such a call ends, that address is answered `BYE busy` for 10 minutes. Trusted means: a board this board dials itself, or a board that dialed in and has had 2 calls that ran to the end (both sides said `DONE`). Being dialed once does not make a board trusted, so a stranger's second call is still a stranger's call. A board that only ever dials in gets the short time and the 10-minute wait for its first two completed calls, then the full 10 minutes. Whether a board was trusted is decided as its call starts. Link peers saved by an older build count as trusted.
+- A call from a board this board does not trust yet gets 2 minutes instead of 10, unless either side asks for history. When such a call ends, that address is answered `BYE busy` for 10 minutes. Trusted means: a board this board dials itself, or a board that dialed in and has had 2 calls that ran to the end (both sides said `DONE`). Dialing in once does not make a board trusted, so a stranger's second call is still a stranger's call. A board that only ever dials in gets the short time and the 10-minute wait for its first two completed calls, then the full 10 minutes. Whether a board was trusted is decided as its call starts. Link peers saved by an older build count as trusted.
 - An address whose call fails before it proves which board it is gets `BYE busy` for 60 seconds, doubling on each repeat up to 30 minutes.
 
 ## A board without an SD card

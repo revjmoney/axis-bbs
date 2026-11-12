@@ -413,6 +413,7 @@ TEST_CASE("trusted link peers: outbound ones, inbound ones after two completed s
     CHECK(m.core.isLinkPeer(in));
     CHECK_FALSE(m.core.trustedPeer(in));
     CHECK_FALSE(m.core.isLinkPeer(out));
+    CHECK(m.core.historyState() == -1);  // no history line: not known yet
 }
 
 TEST_CASE("netDateUnix reads what the old sscanf parse read") {

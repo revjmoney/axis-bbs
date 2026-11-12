@@ -252,6 +252,7 @@ public:
         core_.state().load(readFile(dir_ / "state.txt"), day);
         core_.seen().load(readFile(dir_ / "seen.txt"));
         core_.loadCursors(readFile(dir_ / "cursors.txt"));  // before the first peer is set
+        core_.needHistory();  // a missing history flag is decided before any session adds posts (saved below)
         // The post counter, as the board keeps it: the next seq is saved before a post is stored, and with no
         // saved counter and a set clock it starts from the clock.
         std::string seqText = readFile(dir_ / "postseq.txt");

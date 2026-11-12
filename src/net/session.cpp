@@ -21,6 +21,8 @@
 // "store" are transient and stop the sender for the session without moving its cursor, except a
 // "nocard" for a post whose origin's card the sender does not hold either: no session can cure that,
 // so the cursor moves past it at once.
+// WANT goes out until a history pull has finished (NetCore::needHistory); HEND after at least one H
+// line marks it finished, so a pull cut short is asked for again next session (dedupe drops repeats).
 // BYE <reason> ends the session at any point.
 #include "net/session.h"
 
@@ -282,6 +284,7 @@ void NetSession::syncLine(std::string& l) {
         if (peerWant_ || peerSend_ || !parseNum(rest, n) || n == 0) return fail("bad line", "bad");
         peerWant_ = true;
         histDays_ = n < kSyncHistoryDays ? n : kSyncHistoryDays;
+        deadline_ = kSyncDeadlineMs;  // a history pull; a stranger's address still cools down afterwards
         return;
     }
     if (!rest.empty()) return fail("bad line", "bad");
@@ -293,6 +296,8 @@ void NetSession::syncLine(std::string& l) {
     if (verb == "HEND") {
         if (!sentWant_ || peerHend_) return fail("bad line", "bad");
         peerHend_ = true;
+        // The whole pull came. With no H line at all the peer had nothing to give: ask the next one.
+        if (histTaken_ > 0) core_.historyGot();
         return;
     }
     if (verb == "DONE") {
@@ -425,13 +430,14 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
     if (outOverflow()) return;
     if (phase_ != Phase::Sync || !heapOk) return;
 
-    // 0. Whether to ask for history: only a board whose Sysop Net areas are empty does. Decided
-    // here, with heap to spare, and always before this side's SEND.
+    // 0. Whether to ask for history: until a pull has finished (NetCore::needHistory). Decided here,
+    // with heap to spare (it may read headers), and always before this side's SEND.
     if (!wantDecided_) {
         wantDecided_ = true;
-        if (!core_.hasNetPosts()) {
+        if (core_.needHistory()) {
             send("WANT " + std::to_string(kSyncHistoryDays));
             sentWant_ = true;
+            deadline_ = kSyncDeadlineMs;  // a history pull may take the full deadline
         }
     }
     if (!peerSeq_) return;

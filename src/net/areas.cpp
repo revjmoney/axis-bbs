@@ -491,11 +491,13 @@ std::string NetCore::saveCursors() const {
     for (const auto& kv : links_)
         out += kv.first + " " + std::to_string(kv.second.cursor) + " " + std::to_string(kv.second.lastSync) +
                (kv.second.outbound ? " out " : " in ") + std::to_string(kv.second.sessions) + "\n";
+    if (history_ >= 0) out += history_ ? "history 1\n" : "history 0\n";
     return out;
 }
 
 void NetCore::loadCursors(const std::string& text) {
     links_.clear();
+    history_ = -1;
     size_t pos = 0;
     while (pos < text.size()) {
         size_t e = text.find('\n', pos);
@@ -504,6 +506,10 @@ void NetCore::loadCursors(const std::string& text) {
         pos = e + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::vector<std::string> t = tokens(line);
+        if (t.size() == 2 && t[0] == "history" && (t[1] == "0" || t[1] == "1")) {
+            history_ = t[1] == "1" ? 1 : 0;
+            continue;
+        }
         Link l;
         if (t.size() < 2 || !isHex16(t[0]) || t[0] == myBoard_ || !parseSeq(t[1], l.cursor)) continue;
         if (t.size() > 2 && !parseSeq(t[2], l.lastSync)) continue;
@@ -636,6 +642,11 @@ bool NetCore::stored(const std::string& area, const std::string& id) {
     bool found = false;
     store_.scanHeaders(area, [&](const Message& m) { return !(found = netPostId(m.net) == id); });
     return found;
+}
+
+bool NetCore::needHistory() {
+    if (history_ < 0) history_ = hasNetPosts() ? 1 : 0;  // decided once, then saved with the cursors
+    return history_ == 0;
 }
 
 bool NetCore::hasNetPosts() const {

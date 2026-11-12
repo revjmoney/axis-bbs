@@ -2773,10 +2773,12 @@ static void netStatus(NetHost& h, Print& out) {
     for (size_t at = 0, nl; (nl = t.find('\n', at)) != std::string::npos; at = nl + 1) {
         std::string l = t.substr(at, nl - at);
         size_t      sp = l.find(' ');
-        if (sp != 16) continue;  // peer lines only
+        if (sp != 16) continue;  // peer lines only (not "history <0|1>")
         std::string pool = netCursor(l.c_str() + sp, idx, last);
         out.printf("peer %.16s %s queue %u, synced %s\n", l.c_str(), pool.c_str(), (unsigned)(next > idx ? next - idx : 0), netAgo(last).c_str());
     }
+    int hist = core.historyState();
+    out.printf("history %s\n", hist > 0 ? "done" : hist == 0 ? "not done" : "not asked yet");
     if (h.record && h.record->failures()) out.printf("record writes failed %u\n", (unsigned)h.record->failures());
 }
 
@@ -3034,6 +3036,10 @@ static bool netStart() {
     core.state().load(netFileRead("state.txt"), day);
     core.seen().load(netFileRead("seen.txt"));
     core.loadCursors(netFileRead("cursors.txt"));  // (clears the link peers: the first peer goes back after)
+    if (core.historyState() < 0) {  // no history flag saved yet: decided now, before a session adds posts
+        core.needHistory();
+        h->dirty = true;
+    }
     {
         std::string fp = netFileRead("firstpeer.txt", 256);
         size_t      sp = fp.find(' ');

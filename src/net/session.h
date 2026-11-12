@@ -73,7 +73,8 @@ public:
     bool wasLinkPeer() const { return wasLink_; }
     // How long this session may run in all: kSyncDeadlineMs, except an answerer's with a peer that was not
     // trusted (kSyncStrangerDeadlineMs), so a stranger cannot hold the one inbound slot (and with it this
-    // board's dialing) for long.
+    // board's dialing) for long. A history pull (either side sent WANT) gets kSyncDeadlineMs whoever the
+    // peer is, so a new board's first pull is not cut at 2 minutes.
     uint32_t deadlineMs() const { return deadline_; }
 
     uint32_t postsSent() const { return postsSent_; }    // posts written out as E or H lines

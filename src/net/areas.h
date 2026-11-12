@@ -151,10 +151,10 @@ public:
     // has now held it kNetNakStrikes sessions in a row (the sender cannot fix it, say it lacks the
     // origin's card too), then it moves past. True if the cursor moved.
     bool nakedTransient(const std::string& peer, uint32_t index);
-    // "<peer> <index> <last sync unix> <out|in> <completed sessions>" per line. On load the pool field
-    // is optional: without it a peer goes to the outbound pool while it has room, else the inbound one.
-    // Without the sessions field (an older file) a peer counts as trusted: it was a link peer before
-    // this build.
+    // "<peer> <index> <last sync unix> <out|in> <completed sessions>" per line, and "history <0|1>"
+    // once whether the history pull is done is known. On load the pool field is optional: without it a
+    // peer goes to the outbound pool while it has room, else the inbound one. Without the sessions
+    // field (an older file) a peer counts as trusted: it was a link peer before this build.
     std::string saveCursors() const;
     void loadCursors(const std::string& text);
 
@@ -166,6 +166,14 @@ public:
     bool historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& line);
     // True if any Sysop Net area holds a post (stops at the first one found).
     bool hasNetPosts() const;
+    // Whether a session should ask for history (WANT): until a pull has finished (historyGot). With no
+    // flag saved yet (a fresh board, or one upgraded from a build without it) it is decided once here:
+    // areas holding posts count as done, empty ones as not done. Reads headers then; call it with heap.
+    bool needHistory();
+    // A session got HEND after its WANT, with at least one H line: the pull is done for good.
+    void historyGot() { history_ = 1; }
+    // -1: not known yet (nothing saved), 0: not done, 1: done.
+    int historyState() const { return history_; }
     // The clock NetCore was given (unix time); below kNetClockSet it is not set.
     uint32_t nowUnix() const { return now_(); }
 
@@ -242,6 +250,7 @@ private:
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;
     std::string firstPeer_;
+    int8_t history_ = -1;  // see historyState
     uint32_t appendFailures_ = 0;
     EventFn onEvent_;
     std::function<bool(const std::string&)> blocked_, hidden_;

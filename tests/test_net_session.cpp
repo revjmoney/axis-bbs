@@ -444,6 +444,148 @@ TEST_CASE("history is merged across areas by date, so an origin's posts in later
 }
 
 namespace {
+// Runs two sessions back to back and returns everything the second one (b) said.
+std::string runSaid(NetSession& a, NetSession& b) {
+    std::string allB;
+    uint32_t ms = 0;
+    for (int i = 0; i < 5000 && !(settled(a) && settled(b)); i++) {
+        std::string o = a.takeOut();
+        b.feed(o.data(), o.size());
+        std::string y = b.takeOut();
+        allB += y;
+        a.feed(y.data(), y.size());
+        a.tick(ms, true);
+        b.tick(ms, true);
+        ms += 10;
+    }
+    std::string o = a.takeOut();
+    b.feed(o.data(), o.size());
+    std::string y = b.takeOut();
+    allB += y;
+    a.feed(y.data(), y.size());
+    return allB;
+}
+}  // namespace
+
+TEST_CASE("a history pull cut mid-way resumes on the next session and ends with all posts present") {
+    RevKeys rk;
+    Node a(0xE3), b(0xE4);
+    std::vector<std::string> want;
+    for (int i = 0; i < 40; i++) {
+        a.now = kNow - 3 * kDay + (uint32_t)i * 60;
+        want.push_back(netPostId(a.post("sn_support", "n" + std::to_string(i))));
+    }
+    a.now = kNow;
+    REQUIRE(b.core.historyState() == -1);
+    {  // The first pull is cut after some of it came (a dropped call, a deadline): no HEND.
+        NetSession da(a.core, a.card, a.key, nonce(1), true, b.board);
+        NetSession db(b.core, b.card, b.key, nonce(2), false, "");
+        uint32_t ms = 0;
+        for (int i = 0; i < 2000 && db.postsTaken() < 10 && !settled(da) && !settled(db); i++) {
+            std::string o = da.takeOut();
+            db.feed(o.data(), o.size());
+            std::string y = db.takeOut();
+            da.feed(y.data(), y.size());
+            da.tick(ms, true);
+            db.tick(ms, true);
+            ms += 10;
+        }
+        REQUIRE(db.postsTaken() >= 10);
+        REQUIRE(db.postsTaken() < want.size());
+        CHECK(db.deadlineMs() == kSyncDeadlineMs);  // it sent WANT: the full deadline, though A is no link peer of it
+    }
+    CHECK(b.core.historyState() == 0);
+    CHECK(b.core.hasNetPosts());  // the areas are no longer empty: the old rule would never have asked again
+    // A reboot: the flag goes with the cursors.
+    std::string saved = b.core.saveCursors();
+    CHECK(saved.find("history 0\n") != std::string::npos);
+    b.core.loadCursors(saved);
+    CHECK(b.core.historyState() == 0);
+    {  // The next session asks again; repeats are dropped as duplicates.
+        NetSession da(a.core, a.card, a.key, nonce(3), true, b.board);
+        NetSession db(b.core, b.card, b.key, nonce(4), false, "");
+        std::string said = runSaid(da, db);
+        CHECK(countPrefix(said, "WANT") == 1);
+        CHECK_MESSAGE(da.done(), da.why());
+        CHECK_MESSAGE(db.done(), db.why());
+    }
+    auto got = b.ids();
+    std::sort(got.begin(), got.end());
+    std::sort(want.begin(), want.end());
+    CHECK(got == want);
+    CHECK(b.core.historyState() == 1);
+    saved = b.core.saveCursors();
+    CHECK(saved.find("history 1\n") != std::string::npos);
+    b.core.loadCursors(saved);
+    CHECK(b.core.historyState() == 1);
+    {  // Done: no WANT any more.
+        NetSession da(a.core, a.card, a.key, nonce(5), true, b.board);
+        NetSession db(b.core, b.card, b.key, nonce(6), false, "");
+        std::string said = runSaid(da, db);
+        CHECK_MESSAGE(db.done(), db.why());
+        CHECK(countPrefix(said, "WANT") == 0);
+    }
+}
+
+TEST_CASE("an upgraded board with posts and no history flag does not pull") {
+    RevKeys rk;
+    Node a(0xE5), b(0xE6);
+    REQUIRE(!a.post("sn_support", "a's").empty());
+    REQUIRE(!b.post("sn_bugs", "b's own, from before the upgrade").empty());
+    b.core.loadCursors("");  // an older build's cursors.txt: no history line
+    REQUIRE(b.core.historyState() == -1);
+    NetSession da(a.core, a.card, a.key, nonce(1), true, b.board);
+    NetSession db(b.core, b.card, b.key, nonce(2), false, "");
+    std::string said = runSaid(da, db);
+    CHECK_MESSAGE(db.done(), db.why());
+    CHECK(countPrefix(said, "WANT") == 0);
+    CHECK(db.postsTaken() == 0);
+    CHECK(b.core.historyState() == 1);  // decided once, and saved from now on
+    CHECK(b.core.saveCursors().find("history 1\n") != std::string::npos);
+}
+
+TEST_CASE("a pull that got no H line at all is not done: the next session asks again") {
+    RevKeys rk;
+    Node a(0xE7), b(0xE8);  // both empty
+    for (int round = 0; round < 2; round++) {
+        NetSession da(a.core, a.card, a.key, nonce(1), true, b.board);
+        NetSession db(b.core, b.card, b.key, nonce(2), false, "");
+        std::string said = runSaid(da, db);
+        CHECK_MESSAGE(db.done(), db.why());
+        CHECK(countPrefix(said, "WANT") == 1);
+        CHECK(b.core.historyState() == 0);
+    }
+}
+
+TEST_CASE("WANT gives a stranger's session the full deadline; the stranger stays untrusted") {
+    RevKeys rk;
+    // This side asks: a new board answering a stranger.
+    Node b(0xE9);
+    RawDialer r(0xEA);
+    NetSession s(b.core, b.card, b.key, nonce(1), false, "");
+    r.handshake(s);
+    CHECK(s.deadlineMs() == kSyncStrangerDeadlineMs);
+    RawDialer::say(s, "SEQ 0");
+    s.tick(0, true);
+    CHECK(countPrefix(s.takeOut(), "WANT") == 1);
+    CHECK(s.deadlineMs() == kSyncDeadlineMs);
+    CHECK_FALSE(s.wasTrusted());  // the host still gives its address the cooldown
+    // The stranger asks: a board with posts answering it.
+    Node c(0xEB);
+    REQUIRE(!c.post().empty());
+    RawDialer r2(0xEC);
+    NetSession t(c.core, c.card, c.key, nonce(2), false, "");
+    r2.handshake(t);
+    RawDialer::say(t, "SEQ 0");
+    t.tick(0, true);
+    CHECK(countPrefix(t.takeOut(), "WANT") == 0);
+    CHECK(t.deadlineMs() == kSyncStrangerDeadlineMs);
+    RawDialer::say(t, "WANT 30");
+    CHECK(t.deadlineMs() == kSyncDeadlineMs);
+    CHECK_FALSE(t.wasTrusted());
+}
+
+namespace {
 // The E lines in out, as (index, record).
 std::vector<std::pair<std::string, std::string>> eLines(const std::string& out) {
     std::vector<std::pair<std::string, std::string>> v;
