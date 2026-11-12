@@ -3965,6 +3965,10 @@ static void serviceSession(int i) {
         }
     }
     if (job) {  // this caller's download or upload
+        if (job->needsWorkspace() && axis::bbs::inflate::busy() && (!line || !line->carrier())) {  // hung up while waiting
+            hangUp();
+            return;
+        }
         if (job->needsWorkspace() && !axis::bbs::inflate::busy()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait for it)
             uint8_t *w = nullptr, *st = nullptr;
             drawTransfer();
