@@ -4344,6 +4344,29 @@ static void viewCacheTick() {
         fill.reset();
         return;
     }
+    static bool oldGone = false;  // the first cache (a file per piece, thousands in /sd/files/viewcache): deleted 20 a turn
+    if (!oldGone) {
+        DIR* d = opendir("/sd/files/viewcache");
+        if (!d) {
+            oldGone = true;
+            return;
+        }
+        int            n = 0;
+        struct dirent* de = nullptr;
+        while (n < 20 && (de = readdir(d)) != nullptr) {  // read as it goes: never the whole listing in memory
+            std::string nm = de->d_name;
+            if (nm == "." || nm == "..") continue;
+            ::unlink(("/sd/files/viewcache/" + nm).c_str());
+            n++;
+        }
+        closedir(d);
+        if (n == 0) {
+            ::rmdir("/sd/files/viewcache");
+            oldGone = true;
+            logEvent("view cache: the old piece cache is deleted");
+        }
+        return;
+    }
     uint32_t now = millis();
     if (!fill) {
         if ((int32_t)(now - nextMs) < 0) return;

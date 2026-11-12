@@ -3,7 +3,7 @@
 // The ANSI viewer's SD view cache: each art pack copied once into an uncompressed ("stored") ZIP of just
 // its pieces, so a caller views them straight off the card without the board's 44 KB inflate window (the
 // window was what a busy board could not spare). One file per pack (about 270, not one per piece: a
-// FAT folder of 12,000 files is slow to search), in the file area "viewcache" on the main's card, never
+// FAT folder of 12,000 files is slow to search), in the file area "viewpacks" on the main's card, never
 // on a menu. A copy is named by a fingerprint of its pack's pieces (names, CRC-32s, sizes), so a pack
 // that changes gets a new name, and copies no pack needs any more are deleted. A follower's viewer reads
 // the main's copies over the link like any other file. The ZIPs callers download never change.
@@ -19,7 +19,7 @@
 
 namespace axis::bbs::viewcache {
 
-constexpr const char* kArea = "viewcache";
+constexpr const char* kArea = "viewpacks";  // ("viewcache" was the first try, a file per piece: main.cpp deletes it)
 
 // The copy's file name for a pack with these entries ("1A2B3C4D-0042.ZIP": fingerprint, piece count).
 std::string cacheName(const std::vector<ZipEntry>& packEntries);
