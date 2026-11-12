@@ -415,6 +415,9 @@ std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::str
             }
             if (++link.strikes < kNetReadStrikes) break;
             r = Res::Skip;
+        } else if (link.stuckAt == i) {
+            link.stuckAt = 0xFFFFFFFFu;  // it read fine: only failures in a row count
+            link.strikes = 0;
         }
         if (r == Res::Skip) {
             if (out.empty()) link.cursor = i + 1;  // nothing here for this peer: never look at it again
