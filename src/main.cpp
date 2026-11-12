@@ -3039,6 +3039,7 @@ static bool netStart() {
     if (core.historyState() < 0) {  // no history flag saved yet: decided now, before a session adds posts
         core.needHistory();
         h->dirty = true;
+        netSave(*h, true);  // the decision is on flash now, not up to 30 s later (posts may land first)
     }
     {
         std::string fp = netFileRead("firstpeer.txt", 256);

@@ -406,11 +406,13 @@ void NetSession::takeState(std::string_view rec) {
 // session the rest are read and dropped.
 void NetSession::takeHistory(std::string_view rec, std::string& line) {
     if (histTaken_ >= kSyncHistoryMax) return;
-    histTaken_++;
     NetPost p;
     if (rec.empty() || rec[0] != (char)NetKind::Post || !decode(rec, p)) return;
     std::string().swap(line);  // rec is no longer looked at
-    if (core_.take(std::move(p), peer_, true) == NetCore::Took::Stored) postsTaken_++;
+    // Only an H line the core stored or already had counts as history: junk or a refusal does not.
+    NetCore::Took t = core_.take(std::move(p), peer_, true);
+    if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) histTaken_++;
+    if (t == NetCore::Took::Stored) postsTaken_++;
 }
 
 void NetSession::tick(uint32_t nowMs, bool heapOk) {

@@ -557,6 +557,30 @@ TEST_CASE("a pull that got no H line at all is not done: the next session asks a
     }
 }
 
+TEST_CASE("a junk H line plus HEND leaves history not done; a later real pull completes it") {
+    RevKeys rk;
+    Node a(0xEA), b(0xEB);  // b is empty and asks
+    REQUIRE(!a.post("sn_support", "a's").empty());
+    {
+        NetSession s(b.core, b.card, b.key, nonce(2), false, "");
+        RawDialer r(0xEC);
+        r.handshake(s);
+        s.tick(0, true);
+        CHECK(countPrefix(s.takeOut(), "WANT") == 1);
+        RawDialer::say(s, "SEQ 0");
+        RawDialer::say(s, "H junk-not-a-post");
+        RawDialer::say(s, "HEND");
+        CHECK(b.core.historyState() == 0);
+    }
+    NetSession da(a.core, a.card, a.key, nonce(1), true, b.board);
+    NetSession db(b.core, b.card, b.key, nonce(3), false, "");
+    std::string said = runSaid(da, db);
+    CHECK_MESSAGE(db.done(), db.why());
+    CHECK(countPrefix(said, "WANT") == 1);
+    CHECK(db.postsTaken() == 1);
+    CHECK(b.core.historyState() == 1);
+}
+
 TEST_CASE("WANT gives a stranger's session the full deadline; the stranger stays untrusted") {
     RevKeys rk;
     // This side asks: a new board answering a stranger.
