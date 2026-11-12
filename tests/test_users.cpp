@@ -154,3 +154,25 @@ TEST_CASE("the ratio settings are kept in the settings file") {
     CHECK(back.freeKb == 512);
     CHECK(parseConfig("").ratio == 0);
 }
+
+TEST_CASE("users formatTo matches format") {
+    UserStore st;
+    for (const char* h : {"Rev", "Spindle Kid", "Chip Breaker"}) {
+        User u;
+        u.handle = h;
+        u.salt = "salt";
+        u.hash = "hash";
+        u.answers = {{"Real name", std::string(h) + " Real"}, {"Machine", "Tormach 1100"}};
+        u.votes = {{"Rev", true, "good egg"}, {"Spindle Kid", false, ""}};
+        u.lastRead["general"] = 7;
+        st.add(u);
+    }
+    std::string pieces;
+    int         n = 0;
+    st.formatTo([&](const std::string& p) {
+        pieces += p;
+        n++;
+    });
+    CHECK(pieces == st.format());
+    CHECK(n >= 3);  // one block a user at least: never the whole file in one string
+}

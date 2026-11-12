@@ -29,6 +29,7 @@ struct FakeNet : Net {
     std::vector<uint32_t>                      dialed;  // every connect() asked for, found or not
     size_t                                     cap = 0;  // like the board's kMaxQueue: a link past this many unread bytes dies (0 = no cap)
     std::map<int, size_t>                      peak;     // the most unread bytes each link ever held
+    std::string*                               tap = nullptr;  // when set, a copy of every byte this board sends on a link
 
     void broadcast(const std::string& d) override;
     bool recvDatagram(std::string& d, uint32_t& from) override {
@@ -50,6 +51,7 @@ struct FakeNet : Net {
         if (it == wires.end() || !it->second.first->up) return false;
         std::string& out = it->second.second ? it->second.first->toMain : it->second.first->toFollower;
         out += b;
+        if (tap) *tap += b;
         if (out.size() > peak[link]) peak[link] = out.size();
         if (cap && out.size() > cap) {  // the other board stopped reading
             it->second.first->up = false;
@@ -1225,4 +1227,45 @@ TEST_CASE("two boards joining at the same time each get their own user copy") {
     CHECK(on2.got == 300);  // each record once: one copy per board, not shared or doubled
     CHECK(on3.got == 300);
     for (auto& p : a.net.peak) CHECK(p.second <= Cluster::kSyncQueueBytes);
+}
+
+TEST_CASE("the main's file answer moved into its frame is the same bytes as a plain put") {
+    TwoBoards   t;
+    std::string answer;
+    t.a.c->onRequest = [&answer](int, const std::string&) { return answer; };
+    t.b.c->clockMs = [&t] { return t.now; };
+    t.b.c->sleepMs = [&t](uint32_t) {
+        t.now += 5;
+        t.a.c->tick(t.now);
+    };
+    std::string piece(7000, '\0');
+    for (size_t i = 0; i < piece.size(); i++) piece[i] = (char)(i * 31 + i / 7);
+    piece[10] = kFieldSep;  // a separator and a NUL inside the piece
+    piece[11] = '\0';
+    for (const std::string& r : {std::string("1") + piece, std::string(), std::string("0")}) {
+        answer = r;
+        std::string sent;
+        t.a.net.tap = &sent;
+        std::string reply;
+        REQUIRE(t.b.c->request("T\x1f" "X.ANS\x1f" "0\x1f" "4096", reply));
+        t.a.net.tap = nullptr;
+        CHECK(reply == r);  // the follower checked the tag and took it: the tag covers these exact bytes
+        FrameReader rd;
+        rd.add(sent);
+        Frame       type;
+        std::string body;
+        int         found = 0;
+        while (rd.next(type, body)) {
+            if (type != Frame::FileResp) continue;
+            found++;
+            REQUIRE(body.size() >= kTagBytes);
+            std::string id = body.substr(0, body.find(kFieldSep));
+            std::string plainPut = frame(Frame::FileResp, {id, r});  // what put(l, FileResp, {id, r}) builds before its tag
+            CHECK(body.substr(0, body.size() - kTagBytes) == plainPut.substr(5));
+            uint32_t    n = (uint32_t)(plainPut.size() - 4 + kTagBytes);  // the length it writes once the tag is on
+            std::string head = {(char)(n & 0xff), (char)(n >> 8 & 0xff), (char)(n >> 16 & 0xff), (char)(n >> 24), (char)Frame::FileResp};
+            CHECK(sent.find(head + plainPut.substr(5)) != std::string::npos);
+        }
+        CHECK(found == 1);
+    }
 }

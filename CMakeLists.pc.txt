@@ -172,7 +172,8 @@ add_executable(axis_tests
     tests/test_relay.cpp
     tests/test_doorfs.cpp
     tests/test_diag.cpp
-    tests/test_doorlife.cpp)
+    tests/test_doorlife.cpp
+    tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(WIN32)

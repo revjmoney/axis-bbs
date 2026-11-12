@@ -821,3 +821,56 @@ TEST_CASE("native lord writes a level 1 warrior on registration and leaves the o
     auto after = load(root / "PLAYER.DAT");
     CHECK(std::memcmp(after.data(), before.data(), before.size()) == 0);
 }
+
+namespace {
+// LENEMY.DAT with n records, every field different per record, so the wrong record (a wrong seek) shows
+std::vector<uint8_t> monsters(int n) {
+    std::vector<uint8_t> f((size_t)n * kMon, 0);
+    for (int i = 0; i < n; i++) {
+        uint8_t* r = f.data() + (size_t)i * kMon;
+        char     name[16], weapon[16], death[16];
+        std::snprintf(name, sizeof name, "Mon%02d", i);
+        std::snprintf(weapon, sizeof weapon, "Claw%02d", i);
+        std::snprintf(death, sizeof death, "Fell%02d", i);
+        pstr(r, 0, 60, name);
+        w32(r, 61, 100 + i);  // str
+        w32(r, 65, 300 + i);  // gold
+        pstr(r, 69, 60, weapon);
+        w32(r, 130, 400 + i);  // xp
+        w32(r, 134, 200 + i);  // hp
+        pstr(r, 138, 100, death);
+    }
+    return f;
+}
+uint32_t g_monRoll = 0;
+uint32_t monRng() { return g_monRoll; }
+}  // namespace
+
+TEST_CASE("LORD picks the same monster") {
+    const int n = 30;
+    for (int level = 1; level <= 3; level++)
+        for (uint32_t c : {0u, 7u, 10u}) {  // (c % 5 != 1: no forest event first)
+            fs::path root = stage("axis_lordnative_monsters");
+            saveBytes(root / "LENEMY.DAT", monsters(n));
+            auto file = load(root / "PLAYER.DAT");
+            w16(file.data(), 127, level);
+            saveBytes(root / "PLAYER.DAT", file);
+            g_monRoll = c;
+            // the old code's pick, from the whole file in RAM: (level-1)*11 + roll(11), else roll(n) past the end
+            int idx = (level - 1) * 11 + (int)(c % 11);
+            if (idx >= n) idx = (int)(c % (uint32_t)n);
+            axis::pc::StdHostFs      host(root);
+            axis::door::ScriptStream line;
+            axis::lord::NativeLord   game(host, line, "Redking", nullptr, 1);
+            game.setRng(monRng);
+            game.begin();
+            line.clearOutput();
+            line.push("f");
+            CHECK(game.step());
+            char want[48];
+            std::snprintf(want, sizeof want, "Mon%02d   HP %d", idx, 200 + idx);
+            CAPTURE(level);
+            CAPTURE(c);
+            CHECK(plain(line.output()).find(want) != std::string::npos);  // name and hp: one record, all its fields (str too) read together
+        }
+}
