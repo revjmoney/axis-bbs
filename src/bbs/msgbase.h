@@ -14,6 +14,10 @@ namespace axis::bbs {
 struct Message {
     int         num = 0;
     std::string from, to, subject, date, body;  // body lines separated by '\n'
+    // A Sysop Net post: its encoded NetPost line (one line, fields joined by 0x1F). Empty for local
+    // posts. read() gives the whole line; headers() give only its start, "P" 0x1F "<post id>", to save
+    // memory. The file store writes it as a "net=" header line only when it is non-empty.
+    std::string net;
 };
 
 class MessageStore {
@@ -23,6 +27,13 @@ public:
     virtual bool                 read(const std::string& area, int num, Message& out) = 0;
     virtual int                  post(const std::string& area, const Message& m) = 0;  // its number, or 0
     virtual int drop(const std::string&, const std::function<bool(const Message&)>&) { return 0; }  // the sysop removes posts
+    // Every header of an area, oldest first, one at a time (as headers() gives them: no body, net cut short).
+    // each returns false to stop. This default walks headers(), so it sees only the newest kMaxHeaders;
+    // FileMessageStore streams the whole file and never holds more than one message.
+    virtual void scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) {
+        for (const Message& m : headers(area))
+            if (!each(m)) return;
+    }
     virtual ~MessageStore() = default;
 };
 
@@ -34,6 +45,7 @@ public:
     int                  post(const std::string& area, const Message& m) override;
     // the sysop: rewrite the area without the posts `gone` picks (numbers stay); how many went
     int drop(const std::string& area, const std::function<bool(const Message&)>& gone) override;
+    void scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) override;
 
 private:
     std::string path(const std::string& area) const;

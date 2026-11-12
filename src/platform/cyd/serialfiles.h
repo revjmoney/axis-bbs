@@ -9,3 +9,6 @@
 #include <Arduino.h>
 
 bool serialFileCommand(const String& cmd);  // true if it was one of these commands
+// True if any part of path names the Sysop Net key (netkey.txt, netkey.tmp, netrev.key; any case, trailing dots and
+// spaces ignored, '/' or '\' between parts), or any path holding a NUL byte. Every command that shows a file by a typed path refuses these.
+bool isNetKeyPath(const String& path);

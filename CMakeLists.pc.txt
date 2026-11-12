@@ -74,6 +74,15 @@ add_library(axiscore STATIC
     src/bbs/sysopshell.cpp
     src/bbs/setup_gate.cpp
     third_party/sha256/sha256.c
+    third_party/monocypher/monocypher.c
+    src/net/sign.cpp
+    src/net/record.cpp
+    src/net/revkeys.cpp
+    src/net/state.cpp
+    src/net/areas.cpp
+    src/net/outlog.cpp
+    src/net/session.cpp
+    src/net/netrecord.cpp
     dosemu/door/cpu.cpp
     dosemu/door/guestmem.cpp
     dosemu/door/mz.cpp
@@ -93,7 +102,7 @@ add_library(axiscore STATIC
     src/platform/pc/tcpstream.cpp
     third_party/i8086/i8086.cpp
     third_party/miniz/miniz_tinfl.c)
-target_include_directories(axiscore PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/miniz)
+target_include_directories(axiscore PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
 
 add_executable(axis_tests
     tests/test_main.cpp
@@ -175,6 +184,12 @@ add_executable(axis_tests
     tests/test_doorfs.cpp
     tests/test_diag.cpp
     tests/test_doorlife.cpp
+    tests/test_net_sign.cpp
+    tests/test_net_record.cpp
+    tests/test_net_state.cpp
+    tests/test_net_core.cpp
+    tests/test_net_session.cpp
+    tests/test_net_record_log.cpp
     tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
@@ -184,6 +199,18 @@ endif()
 
 add_executable(doorhost tools/doorhost/main.cpp)
 target_link_libraries(doorhost PRIVATE axiscore)
+
+add_executable(axis_netkey tools/net/netkey.cpp)
+target_link_libraries(axis_netkey PRIVATE axiscore)
+if(WIN32)
+  target_link_libraries(axis_netkey PRIVATE bcrypt)
+endif()
+
+add_executable(axis_netpeer tools/net/netpeer.cpp)
+target_link_libraries(axis_netpeer PRIVATE axiscore)
+if(WIN32)
+  target_link_libraries(axis_netpeer PRIVATE bcrypt)
+endif()
 
 target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data")
 

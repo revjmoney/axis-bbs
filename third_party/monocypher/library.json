@@ -1,0 +1,8 @@
+{
+  "name": "monocypher",
+  "version": "4.0.2",
+  "description": "Monocypher 4.0.2, CC0 or BSD-2-Clause",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": { "srcFilter": "+<*.c> +<*.h>", "includeDir": ".", "flags": ["--optimize=s", "-DBLAKE2_NO_UNROLLING"] }
+}
