@@ -19,7 +19,7 @@
 
 namespace axis::bbs::viewcache {
 
-constexpr const char* kArea = "viewpacks";  // ("viewcache" was the first try, a file per piece: main.cpp deletes it)
+constexpr const char* kArea = "viewpacks";  // ("viewcache" was the first try, a file per piece: left alone, see main.cpp)
 
 // The copy's file name for a pack with these entries ("1A2B3C4D-0042.ZIP": fingerprint, piece count).
 std::string cacheName(const std::vector<ZipEntry>& packEntries);
@@ -78,6 +78,8 @@ private:
     std::unique_ptr<ZipReader::Stream> stream_;  // the piece being copied (declared last: it goes first)
     uint32_t                           crc_ = 0;
     bool                               ok_ = true, leased_ = false;
+    bool                               openFailed_ = false;  // a pack that could not be read: no copy is deleted this pass
+    int                                waitSteps_ = 0;       // after the heap said no: steps to wait before asking again
     int                                copied_ = 0, removed_ = 0;
 };
 

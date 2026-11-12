@@ -4344,29 +4344,8 @@ static void viewCacheTick() {
         fill.reset();
         return;
     }
-    static bool oldGone = false;  // the first cache (a file per piece, thousands in /sd/files/viewcache): deleted 20 a turn
-    if (!oldGone) {
-        DIR* d = opendir("/sd/files/viewcache");
-        if (!d) {
-            oldGone = true;
-            return;
-        }
-        int            n = 0;
-        struct dirent* de = nullptr;
-        while (n < 20 && (de = readdir(d)) != nullptr) {  // read as it goes: never the whole listing in memory
-            std::string nm = de->d_name;
-            if (nm == "." || nm == "..") continue;
-            ::unlink(("/sd/files/viewcache/" + nm).c_str());
-            n++;
-        }
-        closedir(d);
-        if (n == 0) {
-            ::rmdir("/sd/files/viewcache");
-            oldGone = true;
-            logEvent("view cache: the old piece cache is deleted");
-        }
-        return;
-    }
+    // (The first try, a file per piece in /sd/files/viewcache, is left alone: deleting thousands of files one by one in a FAT
+    // folder that big stalls the loop for seconds a file. It is only card space; the sysop can delete it from a PC.)
     uint32_t now = millis();
     if (!fill) {
         if ((int32_t)(now - nextMs) < 0) return;
@@ -4388,7 +4367,7 @@ static void viewCacheTick() {
             [](uint32_t minFree, uint32_t minLargest) {
                 return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
             },
-            [](uint64_t bytes) { return storageFreeBytes() >= bytes; }));
+            [](uint64_t bytes) { return storageFreeBytes(true) >= bytes + (256ull << 20); }));  // fresh, and 256 MB always left for uploads
     }
     if (!fill->step()) {
         if (fill->copied() || fill->removed())

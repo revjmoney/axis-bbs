@@ -17,6 +17,9 @@ namespace {
 // A piece the copy carries: one the viewer shows, packed in a way this reader can open.
 bool viewable(const ZipEntry& e) { return isAnsiPiece(e.name) && (e.method == 0 || e.method == 8); }
 
+// Packs whose copy failed (a damaged piece) since boot: not tried again every pass. A few names at most.
+std::vector<std::string> failed;
+
 bool isZip(const std::string& n) {
     if (n.size() < 4) return false;
     std::string x = n.substr(n.size() - 4);
@@ -98,6 +101,7 @@ bool Filler::nextPack() {
                 zip_.reset(new ZipReader([f](uint32_t off, uint8_t* buf, size_t n) { return f->readAt(off, buf, n); }, f->size()));
                 if (zip_->open()) return startPack();
             }
+            openFailed_ = true;  // (its copy, if it has one, must not look unused)
             zip_.reset();
             file_.reset();
             return true;
@@ -112,15 +116,20 @@ bool Filler::nextPack() {
 bool Filler::startPack() {
     const std::vector<ZipEntry>& es = zip_->entries();
     uint64_t need = 22, pieces = 0;
-    for (const ZipEntry& e : es)
+    bool     oldMethod = false;  // a piece in an old PKZIP method: the viewer must keep showing its note, so no copy
+    for (const ZipEntry& e : es) {
         if (viewable(e)) {
             pieces++;
             need += 30 + 46 + 2 * (uint64_t)e.name.size() + e.usize;
+        } else if (isAnsiPiece(e.name)) {
+            oldMethod = true;
         }
+    }
     std::string name = cacheName(es);
     auto        it = std::find(have_.begin(), have_.end(), name);
     if (it != have_.end()) keep_[(size_t)(it - have_.begin())] = true;  // already copied
-    if (it != have_.end() || pieces == 0 || (space_ && !space_(need + 1048576u))) {
+    bool skip = it != have_.end() || pieces == 0 || oldMethod || std::find(failed.begin(), failed.end(), name) != failed.end();
+    if (skip || (space_ && !space_(need))) {
         zip_.reset();
         file_.reset();
         return true;
@@ -140,9 +149,10 @@ bool Filler::startPack() {
 }
 
 bool Filler::finishCopy() {
-    std::string cd;
-    for (const Rec& r : recs_) {
+    uint32_t dirAt = outBytes_;
+    for (const Rec& r : recs_) {  // a record at a time: never the whole directory in memory
         const ZipEntry& e = zip_->entries()[r.entry];
+        std::string     cd;
         le32(cd, 0x02014b50u);
         le16(cd, 20);
         le16(cd, 10);
@@ -161,8 +171,10 @@ bool Filler::finishCopy() {
         le32(cd, 0);
         le32(cd, r.offset);
         cd += e.name;
+        write(cd.data(), cd.size());
     }
-    uint32_t dirSize = (uint32_t)cd.size(), dirAt = outBytes_;
+    uint32_t    dirSize = outBytes_ - dirAt;
+    std::string cd;
     le32(cd, 0x06054b50u);  // the end record
     le16(cd, 0);
     le16(cd, 0);
@@ -191,11 +203,19 @@ bool Filler::copyStep() {
         const ZipEntry& e = es[entry_];
         uint8_t *w = nullptr, *s = nullptr;
         if (e.method == 8) {
-            if (!inflate::take(this, w, s)) return true;  // a caller's piece or an upload check has it, or the heap is short: later
+            if (waitSteps_ > 0) {  // the heap said no a moment ago: not 44 KB taken and freed every turn
+                waitSteps_--;
+                return true;
+            }
+            if (!inflate::take(this, w, s)) {  // a caller's piece or an upload check has it, or the heap is short: later
+                waitSteps_ = 200;
+                return true;
+            }
             leased_ = true;
             if (room_ && !room_(kFillFree, kFillLargest)) {  // the board is too low with it taken: later
                 inflate::give(this);
                 leased_ = false;
+                waitSteps_ = 200;
                 return true;
             }
         }
@@ -239,6 +259,7 @@ bool Filler::copyStep() {
     if (leased_) inflate::give(this);
     leased_ = false;
     if (!good) {  // a damaged piece or a failed write: no copy of this pack (the viewer plays it from its ZIP)
+        if (ok_ && failed.size() < 64) failed.push_back(outName_);  // damaged, not a card trouble: not tried again until a reboot
         dropCopy();
         zip_.reset();
         file_.reset();
@@ -258,7 +279,7 @@ bool Filler::step() {
     }
     if (out_) return copyStep();
     if (nextPack()) return true;
-    while (removeAt_ < have_.size()) {  // every pack seen: the copies none of them matched go
+    while (!openFailed_ && removeAt_ < have_.size()) {  // every pack seen (and read): the copies none of them matched go
         size_t i = removeAt_++;
         if (keep_[i]) continue;
         if (lib_.remove(kArea, have_[i])) removed_++;

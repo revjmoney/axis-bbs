@@ -266,3 +266,26 @@ TEST_CASE("view cache: a damaged copy is never played; the pack plays from its Z
     vw.run("q");
     CHECK_FALSE(inflate::busy());
 }
+
+TEST_CASE("view cache: a pack with a damaged piece gets no copy and is not tried again every pass") {
+    REQUIRE_FALSE(inflate::busy());
+    Store s = store();
+    std::string& pack = s.areas["ansi"]["AXISTEST.ZIP"];
+    Zip          z(pack);
+    REQUIRE(z.z->open());
+    for (auto& e : z.z->entries())
+        if (e.name == "REV-AXIS.ANS") {  // a byte in the middle of its deflated data
+            uint32_t data = e.local + 30 + (uint8_t)pack[e.local + 26] + 256u * (uint8_t)pack[e.local + 27] +
+                            (uint8_t)pack[e.local + 28] + 256u * (uint8_t)pack[e.local + 29];
+            pack[data + e.csize / 2] ^= 0x5A;
+        }
+    viewcache::Filler f(s, {"ansi"});
+    runPass(f);
+    CHECK(f.copied() == 0);
+    CHECK(s.areas[viewcache::kArea].empty());
+    CHECK_FALSE(inflate::busy());
+    int creates = s.creates;
+    viewcache::Filler g(s, {"ansi"});
+    runPass(g);
+    CHECK(s.creates == creates);  // remembered until a reboot
+}
