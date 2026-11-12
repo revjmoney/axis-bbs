@@ -93,7 +93,10 @@ class NetCore {
 public:
     enum class Took { Stored, Duplicate, Rejected, Banned, Limited };
 
-    NetCore(bbs::MessageStore& store, KeyPair me, std::function<uint32_t()> nowUnix, OutLog& log);
+    NetCore(bbs::MessageStore& store, const KeyPair& me, std::function<uint32_t()> nowUnix, OutLog& log);
+    ~NetCore();  // wipes its copy of the key
+    NetCore(const NetCore&) = delete;
+    NetCore& operator=(const NetCore&) = delete;
 
     NetState& state() { return state_; }
     const NetState& state() const { return state_; }
@@ -187,7 +190,8 @@ public:
         keepDays_ = keepDays;
     }
     // Once a day at most: retention for every Sysop Net area, pruning of the state and the seen
-    // set, and trimming the outbound log.
+    // set, and trimming the outbound log. Without a clock (nowUnix not past kNetClockSet) it runs
+    // whenever called, by count only: the host calls it once per 24 hours of uptime.
     void trim(uint32_t nowUnix);
 
 private:

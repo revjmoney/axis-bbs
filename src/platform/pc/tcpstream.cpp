@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "platform/pc/tcpstream.h"
 
+#include <cstring>
+
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -77,13 +79,21 @@ TcpStream::TcpStream(intptr_t sock, bool telnet) : sock_(sock), telnetOn_(telnet
 
 TcpStream::~TcpStream() { closeSock(sock_); }
 
+namespace {
+// A dotted address, with "localhost" taken as 127.0.0.1 (no name lookup otherwise).
+bool hostAddr(const char* host, in_addr* out) {
+    if (host && std::strcmp(host, "localhost") == 0) host = "127.0.0.1";
+    return host && inet_pton(AF_INET, host, out) == 1;
+}
+}  // namespace
+
 std::unique_ptr<TcpStream> TcpStream::dial(const char* host, uint16_t port, bool telnet) {
     netInit();
     intptr_t    sock = (intptr_t)socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in a = {};
     a.sin_family = AF_INET;
     a.sin_port = htons(port);
-    if (inet_pton(AF_INET, host, &a.sin_addr) != 1 || connect((decltype(socket(0, 0, 0)))sock, (sockaddr*)&a, sizeof a) != 0) {
+    if (!hostAddr(host, &a.sin_addr) || connect((decltype(socket(0, 0, 0)))sock, (sockaddr*)&a, sizeof a) != 0) {
         closeSock(sock);
         return nullptr;
     }
@@ -182,7 +192,7 @@ TcpClient::TcpClient(const char* host, uint16_t port) {
     sockaddr_in a = {};
     a.sin_family = AF_INET;
     a.sin_port = htons(port);
-    inet_pton(AF_INET, host, &a.sin_addr);
+    hostAddr(host, &a.sin_addr);
     connect((decltype(socket(0, 0, 0)))sock_, (sockaddr*)&a, sizeof a);
     nonBlocking(sock_);
 }

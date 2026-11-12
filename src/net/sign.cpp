@@ -48,6 +48,8 @@ bool fromHex(const std::string& hex, uint8_t* out, size_t n) {
     return true;
 }
 
+void wipe(KeyPair& k) { crypto_wipe(&k, sizeof k); }
+
 std::string signHex(const KeyPair& k, const std::string& msg) {
     uint8_t sig[64];
     crypto_eddsa_sign(sig, k.secret, reinterpret_cast<const uint8_t*>(msg.data()), msg.size());

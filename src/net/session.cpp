@@ -78,6 +78,8 @@ NetSession::NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, 
     if (dialer_) sendHello();
 }
 
+NetSession::~NetSession() { wipe(signer_); }
+
 void NetSession::send(std::string_view l) {
     out_ += l;
     out_ += '\n';

@@ -32,13 +32,19 @@ constexpr size_t kMaxPostNotices = 64;   // hold/kill/lift of posts: the oldest 
 constexpr size_t kMaxBoardNotices = 64;  // ban/lift of boards: the oldest lift goes first, then the oldest ban
 constexpr uint32_t kDefaultPostsPerDay = 50;
 constexpr uint32_t kDefaultBytesPerDay = 64 * 1024;
+// Below this day number the board's clock was not set (1700000000 / 86400, as kNetClockSet in areas.h).
+// A day stamp below it is re-stamped to the current day once the clock is set, so nothing stamped
+// before NTP expires the moment the clock arrives.
+constexpr uint32_t kNetClockDay = 1700000000u / 86400u;
 
 class NetState {
 public:
     bool addCard(const NetCard& c);
     // Verified against the keys in force at the notice's seq. nowDay is the local day it is applied.
     bool applyNotice(const NetNotice& n, uint32_t nowDay);
-    void prune(uint32_t nowDay);  // expires post-group notices 150 days after they were applied
+    void prune(uint32_t nowDay);  // expires post-group notices 150 days after they were applied (re-stamps first)
+    // With a set clock (nowDay at or past kNetClockDay): notices applied before it was set get nowDay.
+    void restamp(uint32_t nowDay);
 
     bool banned(const std::string& board) const;
     bool held(const std::string& postId) const;
@@ -106,7 +112,9 @@ public:
     // without knowing.
     bool belowWindow(const std::string& id) const;
     bool add(const std::string& id, uint32_t nowDay);  // false if already seen or not a post id
-    void prune(uint32_t nowDay);  // drops boards not touched for kSeenDays
+    void prune(uint32_t nowDay);  // drops boards not touched for kSeenDays (re-stamps first)
+    // With a set clock (nowDay at or past kNetClockDay): boards last touched before it was set get nowDay.
+    void restamp(uint32_t nowDay);
     size_t size() const { return boards_.size(); }
     std::string save() const;  // "<board> <high> <window as 16 hex> <last day>" per line
     void load(const std::string& text);

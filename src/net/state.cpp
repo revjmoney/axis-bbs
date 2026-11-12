@@ -262,7 +262,16 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
     return true;
 }
 
+void NetState::restamp(uint32_t nowDay) {
+    if (nowDay < kNetClockDay) return;
+    for (Entry& r : rotates_)
+        if (r.day < kNetClockDay) r.day = nowDay;
+    for (auto& kv : notices_)
+        if (kv.second.day < kNetClockDay) kv.second.day = nowDay;
+}
+
 void NetState::prune(uint32_t nowDay) {
+    restamp(nowDay);
     for (auto i = notices_.begin(); i != notices_.end();) {
         if (i->first.first == "post" && nowDay > i->second.day &&
             nowDay - i->second.day > kPostNoticeDays)
@@ -463,7 +472,14 @@ bool NetSeen::add(const std::string& id, uint32_t nowDay) {
     return true;
 }
 
+void NetSeen::restamp(uint32_t nowDay) {
+    if (nowDay < kNetClockDay) return;
+    for (auto& kv : boards_)
+        if (kv.second.day < kNetClockDay) kv.second.day = nowDay;
+}
+
 void NetSeen::prune(uint32_t nowDay) {
+    restamp(nowDay);
     for (auto i = boards_.begin(); i != boards_.end();) {
         if (nowDay > i->second.day && nowDay - i->second.day > kSeenDays) i = boards_.erase(i);
         else ++i;

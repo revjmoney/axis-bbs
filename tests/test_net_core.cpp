@@ -558,3 +558,24 @@ TEST_CASE("the post seq is saved before the post is stored, and starts from the 
     CHECK(again.id == b.board + "-" + std::to_string(kNow));
     CHECK(c.core.take(again, b.board) == Took::Stored);
 }
+
+TEST_CASE("without a clock trim runs by count each time the host calls it") {
+    RevKeys rk;
+    MemStore ms;
+    MemOutLog ml;
+    KeyPair k = keyOf(0x99);
+    NetCore r(ms, k, [] { return 1000u; }, ml);  // no clock
+    REQUIRE(r.setOwnCard(makeCard(k, "NoClock")));
+    r.setRetention(2, kNetKeepDays);
+    Message m;
+    m.from = "Sysop";
+    m.subject = "p";
+    m.body = "b";
+    for (int i = 0; i < 3; i++) REQUIRE(!r.originate("sn_bugs", m).empty());
+    r.trim(1000);
+    CHECK(ms.count("sn_bugs") == 2);
+    for (int i = 0; i < 2; i++) REQUIRE(!r.originate("sn_bugs", m).empty());
+    r.trim(1000);  // the same "day" 0: it still runs (the host spaces these 24 hours of uptime apart)
+    CHECK(ms.count("sn_bugs") == 2);
+    CHECK(netPostId(ms.all("sn_bugs").back().net) == r.board() + "-5");
+}

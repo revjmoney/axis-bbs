@@ -17,6 +17,7 @@ struct KeyPair {
 };
 
 KeyPair keyFromSeed(const uint8_t seed[32]);
+void wipe(KeyPair& k);  // zeroes the secret and the public key (crypto_wipe, never optimised away)
 std::string signHex(const KeyPair& k, const std::string& msg);  // 128 hex characters
 bool verifyHex(const std::string& pubHex, const std::string& msg, const std::string& sigHex);
 std::string toHex(const uint8_t* p, size_t n);

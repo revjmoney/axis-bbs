@@ -179,13 +179,15 @@ uint32_t netSeqStart(uint32_t saved, bool found, uint32_t nowUnix) {
 
 // ---- NetCore ----
 
-NetCore::NetCore(MessageStore& store, KeyPair me, std::function<uint32_t()> nowUnix, OutLog& log)
+NetCore::NetCore(MessageStore& store, const KeyPair& me, std::function<uint32_t()> nowUnix, OutLog& log)
     : store_(store), me_(me), now_(std::move(nowUnix)), log_(log) {
     myBoard_ = boardId(toHex(me_.pub, 32));
     // This board's own card and its link peers' cards are never evicted for room.
     state_.setPinned([this](const std::string& b) { return b == myBoard_ || links_.count(b) > 0; });
     syncLimits();
 }
+
+NetCore::~NetCore() { wipe(me_); }
 
 bool NetCore::isRevBoard(const std::string& board) const {
     const NetCard* c = state_.card(board);
@@ -551,12 +553,13 @@ void NetCore::trimArea(const std::string& area, uint32_t nowDay, bool clock) {
 
 void NetCore::trim(uint32_t nowUnix) {
     uint32_t nowDay = nowUnix / 86400;
-    if (nowDay == lastTrimDay_) return;  // once a day: the area rewrites below touch the SD card
+    bool clock = nowUnix > kNetClockSet;
+    if (clock && nowDay == lastTrimDay_) return;  // once a day: the area rewrites below touch the SD card
     lastTrimDay_ = nowDay;
     state_.prune(nowDay);
     seen_.prune(nowDay);
     log_.trimTo(kOutLogKeep);
-    for (const NetArea& a : sysopNetAreas()) trimArea(a.id, nowDay, nowUnix > kNetClockSet);
+    for (const NetArea& a : sysopNetAreas()) trimArea(a.id, nowDay, clock);
 }
 
 bool NetCore::historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& line) {

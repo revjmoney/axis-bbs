@@ -962,7 +962,7 @@ struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for
     using axis::bbs::FileMessageStore::FileMessageStore;
     int post(const std::string& area, const axis::bbs::Message& m) override {
         int n = axis::bbs::FileMessageStore::post(area, m);
-        if (n && area != "email") countPost();
+        if (n && area != "email" && area.compare(0, 3, "sn_") != 0) countPost();  // net posts are not this board's
         return n;
     }
 };
@@ -2005,6 +2005,17 @@ struct NetHost {
     size_t                                  dialIx = 0;
     std::unique_ptr<axis::net::NetRecord>   record;         // the net record (/net/record)
     std::vector<std::string>                hides, blocks;  // /net/local.txt: this board's own moderation
+    uint32_t                                trimMs = 0;     // no clock: the last trim by count (once per 24 h of uptime)
+    NetHost() = default;
+    NetHost(const NetHost&) = delete;
+    NetHost& operator=(const NetHost&) = delete;
+    ~NetHost() {  // the sessions and the core go first (they hold copies of the key and wipe them), then this one
+        in.s.reset();
+        out.s.reset();
+        store.reset();
+        core.reset();
+        axis::net::wipe(key);
+    }
 };
 static std::unique_ptr<NetHost> netHost;
 static uint32_t                 netStartMs = 0;  // the last start attempt (a failed one is tried again in 10 min)
@@ -3055,7 +3066,7 @@ static bool netStart() {
     core.setRetention((uint32_t)cfg.netKeepPosts, (uint32_t)cfg.netKeepDays);
     netCardUpdate(*h);
     h->appendFails = core.appendFailures();
-    h->minuteMs = h->saveMs = millis();
+    h->minuteMs = h->saveMs = h->trimMs = millis();
     h->dialMs = millis() - (uint32_t)cfg.netSyncMin * 60000u + 30000u;  // the first dial 30 s from now
     netHost = std::move(h);
     logEvent(String("net: Sysop Net on, board ") + netHost->core->board().c_str() + heapText());
@@ -3098,6 +3109,10 @@ static void netTick() {
         if (now && now / 86400 != h.houseDay && heapOk) {  // once a day: retention, pruning, the log trimmed
             h.houseDay = now / 86400;
             core.trim(now);
+            h.dirty = true;
+        } else if (!now && heapOk && millis() - h.trimMs >= 24u * 3600u * 1000u) {  // no clock: by count, once a day of uptime
+            h.trimMs = millis();
+            core.trim(0);
             h.dirty = true;
         }
     }

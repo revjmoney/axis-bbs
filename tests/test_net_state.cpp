@@ -399,3 +399,32 @@ TEST_CASE("state save and load verify every record again") {
     u.load(bad, 5);
     CHECK_FALSE(u.banned(X));
 }
+
+TEST_CASE("notices and seen marks made before the clock was set are dated the day it is set") {
+    RevKeys rk;
+    const uint32_t today = kNow / kDay;
+    REQUIRE(today >= kNetClockDay);
+    NetState s;
+    REQUIRE(s.applyNotice(makeNotice(rev0(), 0, "hold", postId(1), 5), 0));  // no clock: day 0
+    NetState loaded;
+    loaded.load(s.save(), today);  // a load with the clock set keeps it (it used to expire at once)
+    CHECK(loaded.held(postId(1)));
+    s.prune(today);
+    CHECK(s.held(postId(1)));
+    s.prune(today + kPostNoticeDays);
+    CHECK(s.held(postId(1)));
+    s.prune(today + kPostNoticeDays + 1);
+    CHECK_FALSE(s.held(postId(1)));
+
+    NetSeen seen;
+    std::string id = "0123456789abcdef-1";
+    REQUIRE(seen.add(id, 3));  // a small day: no clock yet
+    seen.restamp(today);
+    CHECK(seen.save().find(" " + std::to_string(today) + "\n") != std::string::npos);
+    seen.prune(today + kSeenDays);
+    CHECK(seen.has(id));
+    NetSeen seen2;
+    REQUIRE(seen2.add(id, 0));
+    seen2.prune(today);  // a prune with the clock set re-stamps first
+    CHECK(seen2.has(id));
+}

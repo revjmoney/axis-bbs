@@ -52,6 +52,10 @@ public:
     NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, const std::string& nonceHex16, bool dialer,
                const std::string& expectedBoard);
 
+    ~NetSession();  // wipes its copy of the signing key
+    NetSession(const NetSession&) = delete;
+    NetSession& operator=(const NetSession&) = delete;
+
     void feed(const char* p, size_t n);  // bytes from the socket
     std::string takeOut();               // bytes for the socket (send them before closing)
     void tick(uint32_t nowMs, bool heapOk);
