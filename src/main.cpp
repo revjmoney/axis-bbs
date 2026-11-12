@@ -2027,8 +2027,8 @@ static bool netMainUp = false;  // a follower: the main's settings frame said it
 static bool netSharedUp = false;  // the main: what the last settings frame said
 
 // Proof back-off: an address whose AXISNET 2 session failed before it proved who it is is refused for 60 s,
-// doubling up to 30 min for repeats. Cooldown: an address whose session came from a board that was not a link peer
-// is refused for 10 min after it (that board's session had 2 min), so one stranger cannot keep the inbound slot.
+// doubling up to 30 min for repeats. Cooldown: an address whose session came from a board not trusted at its hello
+// is refused for 10 min after it (that session had 2 min, 10 with a history pull), so one stranger cannot keep the inbound slot.
 // 8 addresses; the one touched longest ago makes room.
 static constexpr uint32_t kNetCooldownSecs = 600;
 struct NetBackoff {
