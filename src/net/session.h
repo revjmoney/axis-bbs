@@ -90,7 +90,7 @@ private:
     void takeState(std::string_view rec);
     void takeHistory(std::string_view rec, std::string& line);
     void ack(std::string_view idx, bool nak, std::string_view reason);
-    void cardAhead(const std::string& postLine);
+    bool cardAhead(const std::string& postLine);
     void sendHello();
     void send(std::string_view l);
     void send(std::string_view prefix, std::string_view rec);
@@ -125,7 +125,9 @@ private:
     uint32_t histDays_ = 0;
     HistoryCursor hist_;
     std::deque<std::pair<uint32_t, std::string>> fetched_;
-    std::deque<std::pair<uint32_t, bool>> inFlight_;  // log index, is a post
+    // Log index, and whether a nocard NAK for it can be cured: a post whose origin's card the peer has
+    // from the handshake or got ahead of it this session. Without one, nocard is final for that entry.
+    std::deque<std::pair<uint32_t, bool>> inFlight_;
     std::vector<std::string> cardsSent_;               // origins whose card went ahead of their first post
     bool held_ = false;                                // a transient NAK came: nothing more this session
     bool sentDone_ = false;

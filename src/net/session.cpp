@@ -18,7 +18,9 @@
 // Before the first E post of an origin board in a session, the sender puts that board's card on an
 // S line of its own (if it holds it), so the receiver has the card to check the post with. Only card
 // records may come as S lines after SEND. A NAK reason is one word (kNak* in areas.h): "nocard" and
-// "store" are transient and stop the sender for the session without moving its cursor.
+// "store" are transient and stop the sender for the session without moving its cursor, except a
+// "nocard" for a post whose origin's card the sender does not hold either: no session can cure that,
+// so the cursor moves past it at once.
 // BYE <reason> ends the session at any point.
 #include "net/session.h"
 
@@ -302,10 +304,12 @@ void NetSession::ack(std::string_view idx, bool nak, std::string_view reason) {
     uint32_t i;
     // Answers come strictly in order: anything else could move the cursor past unsent entries.
     if (!parseNum(idx, i) || inFlight_.empty() || inFlight_.front().first != i) return fail("bad line", "bad");
+    bool curable = inFlight_.front().second;
     inFlight_.pop_front();
     if (nak) naks_++;
     if (held_) return;  // an earlier transient NAK holds the cursor: later answers must not move it past
-    if (nak && netNakTransient(reason)) {
+    // nocard for a post whose origin's card this side lacks too: no later session cures it, so it is final.
+    if (nak && netNakTransient(reason) && (curable || reason != kNakNoCard)) {
         // The peer may take it later (its card arrives, its store recovers): nothing more goes this
         // session and the cursor stays on it, unless it has held it too many sessions in a row.
         held_ = true;
@@ -317,17 +321,21 @@ void NetSession::ack(std::string_view idx, bool nak, std::string_view reason) {
 }
 
 // Before an origin's first post this session: its card on an S line, so the receiver can check the
-// post. Not for this board or the peer (the handshake gave those), nor a card already sent.
-void NetSession::cardAhead(const std::string& postLine) {
+// post. Not for this board or the peer (the handshake gave those), nor a card already sent. True when
+// the peer has the origin's card from this session (so a nocard NAK may yet be cured), false when this
+// side has no card to give.
+bool NetSession::cardAhead(const std::string& postLine) {
     std::string origin = netPostId(postLine).substr(0, 16);
-    if (origin.size() != 16 || origin == me_.board || origin == peer_) return;
-    if (std::find(cardsSent_.begin(), cardsSent_.end(), origin) != cardsSent_.end()) return;
+    if (origin.size() != 16) return false;
+    if (origin == me_.board || origin == peer_) return true;
+    if (std::find(cardsSent_.begin(), cardsSent_.end(), origin) != cardsSent_.end()) return true;
     const NetCard* c = core_.state().card(origin);
-    if (!c) return;
+    if (!c) return false;
     std::string l = encode(*c);
-    if (!fits(l)) return;
+    if (!fits(l)) return false;
     if (cardsSent_.size() < kSyncCardsAhead) cardsSent_.push_back(origin);
     send("S ", l);
+    return true;
 }
 
 // rec is a view into line. A post is decoded from it, then line is let go before the post is stored,
@@ -492,9 +500,9 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         auto e = std::move(front);
         fetched_.pop_front();
         bool post = e.second[0] == (char)NetKind::Post;
-        if (post) cardAhead(e.second);
+        bool curable = post && cardAhead(e.second);
         send("E " + std::to_string(e.first) + " ", e.second);
-        inFlight_.emplace_back(e.first, post);
+        inFlight_.emplace_back(e.first, curable);
         if (post) postsSent_++;
         budget--;
     }

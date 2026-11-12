@@ -521,6 +521,50 @@ TEST_CASE("a refused post gets its NAK word: nocard and store are transient") {
     CHECK(why == nullptr);
 }
 
+TEST_CASE("nocard for a post whose origin's card the sender lacks too moves the cursor at once") {
+    RevKeys rk;
+    Node a(0xE0), x(0xE1);
+    RawDialer r(0xE2);
+    a.knows(x);
+    a.core.addLinkPeer(r.card.board, true);
+    NetPost px = decodePost(x.post("sn_support", "from x"));
+    REQUIRE(a.core.take(px, x.board) == Took::Stored);
+    REQUIRE(!a.post("sn_support", "a's own").empty());
+    // X's card goes the way a card really goes: newer cards push it out of the full state.
+    for (int i = 0; i < (int)kNetMaxCards; i++) REQUIRE(a.core.takeCard(makeCard(keyOf((uint8_t)(0x10 + i)), "Filler"), ""));
+    REQUIRE(a.core.state().card(x.board) == nullptr);
+    NetSession s(a.core, a.card, a.key, nonce(20), false, "");
+    r.handshake(s);
+    RawDialer::say(s, "SEQ 0");
+    RawDialer::say(s, "SEND");
+    s.tick(0, true);
+    // The peer refuses X's post with nocard and takes everything else (A's own post, the filler cards).
+    std::string all;
+    size_t posts = 0;
+    bool doneSent = false;
+    for (uint32_t ms = 10; ms < 1000 && !doneSent && !s.failed(); ms += 10) {
+        s.tick(ms, true);
+        std::string out = s.takeOut();
+        all += out;
+        doneSent = countPrefix(out, "DONE") == 1;
+        for (auto& e : eLines(out)) {
+            bool isX = e.second[0] == (char)NetKind::Post && decodePost(e.second).id == px.id;
+            if (e.second[0] == (char)NetKind::Post) posts++;
+            // nocard for X's post: no session could cure it, so it is final and holds nothing back.
+            RawDialer::say(s, isX ? "NAK " + e.first + " " + kNakNoCard : "ACK " + e.first);
+        }
+    }
+    REQUIRE_FALSE(s.failed());
+    CHECK(doneSent);
+    CHECK(posts == 2);  // X's and A's own, each once: the nocard did not stop the session
+    CHECK(countPrefix(all, "S " + encode(x.card)) == 0);  // no card here to send ahead
+    CHECK(s.naks() == 1);
+    RawDialer::say(s, "DONE");
+    CHECK(s.done());
+    CHECK(a.pendingPosts(r.card.board).empty());  // the cursor moved past X's post at once, no strikes needed
+    CHECK(a.core.pendingFor(r.card.board, 8).empty());
+}
+
 TEST_CASE("an origin's card goes ahead of its first post, and a receiver takes it after SEND") {
     RevKeys rk;
     Node x(0xC6), a(0xC7), b(0xC8);

@@ -124,10 +124,10 @@ Each call trades the net state (cards and Rev's notices), then each side sends w
 | `revonly` | Posted in a Rev-only area by a board that is not Rev's | No |
 | `killed` | Killed by Rev | No |
 | `limited` | Over its board's daily limit | No |
-| `nocard` | The receiver does not hold the posting board's card yet | Yes, next call |
+| `nocard` | The receiver does not hold the posting board's card yet | Yes, next call (unless the sender has no card for that board either) |
 | `store` | The receiver's message base did not take it | Yes, next call |
 
-After a `nocard` or `store` the sender stops sending for the rest of that call and tries the same post again next call. If the same post is refused that way three calls in a row, it is passed over for that peer. Before the first post from a given board in a call, the sender sends that board's card, so `nocard` is rare.
+After a `nocard` or `store` the sender stops sending for the rest of that call and tries the same post again next call. If the same post is refused that way three calls in a row, it is passed over for that peer. Before the first post from a given board in a call, the sender sends that board's card, so `nocard` is rare. If the sender holds no card for the posting board (it was pushed out of a full card list), it had nothing to send ahead and no later call can fix that: a `nocard` for that post is final, the post is passed over at once and the call goes on.
 
 A board that has no Sysop Net posts yet asks for history: up to 200 posts per area from the last 30 days, sent oldest first across all four areas together.
 
