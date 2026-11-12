@@ -55,44 +55,88 @@ std::string TelnetStream::takeInput() {
     return s;
 }
 
-bool TelnetStream::sendAll(const char* p, size_t n) {
-    uint32_t lastProgress = nowMs();
-    while (n > 0) {
-        int w = rawWrite((const uint8_t*)p, n);
-        if (w < 0) return false;
+namespace {
+size_t gHoldPeak = 0;
+}
+
+size_t TelnetStream::holdPeak() { return gHoldPeak; }
+
+void TelnetStream::queue(std::string piece) {
+    if (piece.empty()) return;
+    queued_ += piece.size();
+    if (!out_.empty() && out_.back().size() + piece.size() <= kBatch) out_.back() += piece;
+    else out_.push_back(std::move(piece));
+}
+
+void TelnetStream::drop() {
+    std::vector<std::string>().swap(out_);
+    sent_ = queued_ = 0;
+}
+
+bool TelnetStream::push(size_t leave, bool wait) {
+    while (up_ && queued_ > leave) {
+        const std::string& first = out_.front();
+        int w = rawWrite((const uint8_t*)first.data() + sent_, first.size() - sent_);
+        if (w < 0) {
+            hangUp();
+            return false;
+        }
         if (w > 0) {
-            p += w;
-            n -= (size_t)w;
+            sent_ += (size_t)w;
+            queued_ -= (size_t)w;
             bytesOut_ += (uint32_t)w;
-            lastProgress = nowMs();
-        } else if (nowMs() - lastProgress >= sendTimeoutMs) {
-            return false;  // the caller stopped reading
+            blocked_ = false;
+            if (sent_ == first.size()) {
+                out_.erase(out_.begin());
+                sent_ = 0;
+            }
+        } else if (!blocked_) {
+            blocked_ = true;  // the 10 s start when the socket first takes nothing
+            waitSince_ = nowMs();
+        } else if (nowMs() - waitSince_ >= sendTimeoutMs) {
+            hangUp();  // the caller stopped reading
+            return false;
+        } else if (!wait) {
+            break;
         } else {
             idle();
         }
     }
-    return true;
+    if (out_.empty() && out_.capacity() > 4) drop();  // all of a held screen went: give the list back too
+    return up_;
+}
+
+bool TelnetStream::drain() {
+    if (!up_) return false;
+    if (queued_) push(0, false);
+    return up_;
 }
 
 void TelnetStream::writeRaw(const std::string& s) {
-    out_ += s;
+    queue(s);
     flush();
 }
 
 void TelnetStream::flush() {
-    if (out_.empty()) return;
-    std::string s;
-    s.swap(out_);
-    if (up_ && !sendAll(s.data(), s.size())) hangUp();
+    batch_ = 0;
+    if (!queued_ || !up_) return;
+    if (!hold_) {
+        push(0, true);
+        return;
+    }
+    if (push(0, false) && queued_ > kHoldMax) push(kHoldMax, true);  // a burst bigger than the hold: wait it down
+    if (queued_ > gHoldPeak) gHoldPeak = queued_;
 }
 
 void TelnetStream::write(const uint8_t* p, size_t n) {
     while (n && up_) {  // a piece at a time: a whole screen never needs one big buffer (the heap is fragmented)
-        size_t k = n < kBatch ? n : kBatch;
-        out_ += telnet_.toNet(p, k);
+        size_t      k = n < kBatch ? n : kBatch;
+        std::string piece = telnet_.toNet(p, k);
+        batch_ += piece.size();
+        queue(std::move(piece));
         p += k;
         n -= k;
-        if (out_.size() >= kBatch) flush();
+        if (batch_ >= kBatch) flush();
     }
 }
 
@@ -104,7 +148,7 @@ bool TelnetStream::carrier() {
 void TelnetStream::hangUp() {
     if (!up_) return;
     up_ = false;
-    out_.clear();
+    drop();
     rawClose();
 }
 

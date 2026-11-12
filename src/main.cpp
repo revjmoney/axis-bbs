@@ -1854,6 +1854,25 @@ static void modemSearchPoll() {  // never waits: the results once the search is 
     if (boardShell && boardShell->reloadIf("MODEM")) screenDirty = true;
 }
 
+// Lines hung up with bytes still waiting (a slow caller's goodbye): drained a little each loop turn, closed once empty, after
+// 10 s with no progress (TelnetStream's rule) or after 60 s in all. At most 4; the oldest is closed for a fifth.
+struct ParkedLine {
+    std::unique_ptr<WifiStream> line;
+    uint32_t                    sinceMs = 0;
+};
+static std::vector<ParkedLine> parkedLines;
+static void parkLine(std::unique_ptr<WifiStream> l) {
+    if (parkedLines.size() >= 4) parkedLines.erase(parkedLines.begin());
+    parkedLines.push_back({std::move(l), millis()});
+}
+static void drainParkedLines() {
+    for (size_t i = 0; i < parkedLines.size();) {
+        ParkedLine& p = parkedLines[i];
+        if (!p.line->drain() || !p.line->backlog() || millis() - p.sinceMs > 60000u) parkedLines.erase(parkedLines.begin() + (long)i);
+        else i++;
+    }
+}
+
 static void hangUp() {
     noteDoing("idle");
     viewer.reset();
@@ -1874,6 +1893,7 @@ static void hangUp() {
                                                node->link().retrains});
         if (radioCalls.size() > 10) radioCalls.resize(10);
     }
+    if (line && line->backlog() && line->carrier()) parkLine(std::move(line));  // the goodbye still going out to a slow caller
     line.reset();  // closes the connection
     logEvent("hang up" + heapText() + " " + String(node && !node->handle().empty() ? node->handle().c_str() : "") + " after " +
              String((millis() - callStartMs) / 1000) + "s");
@@ -3664,6 +3684,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     else line.reset(new WifiStream(incoming));
     line->tapNode = sessionNumber(curSession);
     line->acceptLink(boardCfg->modemLink);  // the LFD3K-SM modem's link reports (LFD3K-LINK, telnet option 90)
+    line->setHold(true);  // a slow caller's screens wait in its own line, never in the board's loop (serviceSession drains it)
     callStartMs = millis();
     logEvent((panelConsoleNew ? String("sysop console from the panel") : "call from " + line->remoteIP().toString()) + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
              " KB, largest " + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024) + " KB)");
@@ -3791,6 +3812,10 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setDirect([slot](const char* p, size_t n) {
             WifiStream* l = (size_t)slot < sessions.size() ? sessionLine((size_t)slot) : nullptr;
             if (l) l->write((const uint8_t*)p, n);
+        });
+        node->setBackedUp([slot]() {
+            WifiStream* l = (size_t)slot < sessions.size() ? sessionLine((size_t)slot) : nullptr;
+            return l && l->backlog() >= axis::net::TelnetStream::kHoldLow;
         });
         if (panelConsoleNew) {  // the sysop, from the panel: no password asked, and the WFC is the first screen
             node->beginLocal(millis());
@@ -5009,6 +5034,7 @@ static void runCommand(const String& cmd, Print& out) {
         sample.stkMdns = stk("mdns");
         sample.stkTimer = stk("esp_timer");
         sample.outMax = (uint32_t)axis::bbs::Node::outMax();
+        sample.holdMax = (uint32_t)axis::net::TelnetStream::holdPeak();
         sample.artMax = (uint32_t)artMax;
         char line[384];
         std::snprintf(line, sizeof line, "id=%s role=%s nodes=%d on=%d heap=%u largest=%u up=%lu rssi=%d sd_mb=%u ip=%s",
@@ -5699,6 +5725,15 @@ static void serviceSession(int i) {
             cluster->setStatus(i, handle, activity);
         }
     }
+    if (line) {  // a slow caller (a LoRa radio call): what its line still holds goes out first, and the next screen piece,
+                 // movie frame or LORD step waits for room, so the board's loop never waits on one caller's socket
+        line->setHold(!job);  // (a transfer's protocol needs each block out before it waits for the answer)
+        if (line->backlog() && !line->drain()) {
+            hangUp();
+            return;
+        }
+        if (!job && line->backlog() >= axis::net::TelnetStream::kHoldLow) return;
+    }
     if (job) {  // this caller's download or upload
         if (job->needsWorkspace()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait up to 60 s)
             bool busy = axis::bbs::inflate::busy();
@@ -5971,6 +6006,7 @@ void loop() {
         serviceSession((int)i);
         unbindSession();
     }
+    drainParkedLines();
     axisDirty = false;
     static uint32_t lastMemLog = 0, seenDropped = 0, seenGated = 0, seenStarts = 0;  // low-memory web notes, at most hourly
     static bool     memLogged = false;

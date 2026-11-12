@@ -136,6 +136,9 @@ public:
     // Whether a menu screen exists, asked without reading it (showPrelogon's probes). Unset: the screen is loaded to find out.
     void        setExists(std::function<bool(const std::string&)> exists) { exists_ = std::move(exists); }
     void        setDirect(std::function<void(const char*, size_t)> direct) { direct_ = std::move(direct); }
+    // Whether this caller's line is backed up (a slow radio caller): while it is, the login sequence does not start its next
+    // step or the menu after it (poll does once there is room), so one turn draws at most one screen.
+    void        setBackedUp(std::function<bool()> backedUp) { backedUp_ = std::move(backedUp); }
     // With direct set, a screen leaves in pieces of about this size as it is drawn, instead of piling up whole in the output.
     static constexpr size_t kOutSpill = 2048;
     void        begin(uint32_t nowMs);
@@ -244,6 +247,8 @@ private:
     void                      closeMsgs();      // the message reader closes: its areas go too
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
+    std::function<bool()>                    backedUp_;
+    bool        seqWait();  // the line is backed up: the sequence's next step is left for poll (seqDue_)
     void spill();  // direct set and the output has reached kOutSpill: all of it goes out now, in order
     void flushDirect();  // out_ to direct_, emptied even if the write throws (capacity kept)
     std::function<std::string(const std::string&)> art_;

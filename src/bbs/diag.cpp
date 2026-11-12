@@ -42,12 +42,12 @@ std::string diagFields(const DiagSample& s) {
     for (char& c : tok)
         if (c == '=' || (unsigned char)c < 0x21 || (unsigned char)c > 0x7e) c = '_';  // @STATUS is key=value tokens split on spaces
     if (tok.empty()) tok = "none";
-    char b[320];
+    char b[384];
     std::snprintf(b, sizeof b,
                   " min=%u stack=%u door_peak=%u door=%s door_stack=%u reset=%s wmin=%u wlarge=%u wdoing=%s stk_web=%u stk_mdns=%u "
-                  "stk_timer=%u outmax=%u artmax=%u",
+                  "stk_timer=%u outmax=%u artmax=%u holdmax=%u",
                   s.minHeap, s.stackWords, s.doorPeakKb, doorDiagToken(s.door), s.doorStackWords, resetToken(s.resetCode), s.winFree,
-                  s.winLargest, tok.c_str(), s.stkWeb, s.stkMdns, s.stkTimer, s.outMax, s.artMax);
+                  s.winLargest, tok.c_str(), s.stkWeb, s.stkMdns, s.stkTimer, s.outMax, s.artMax, s.holdMax);
     return b;
 }
 

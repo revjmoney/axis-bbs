@@ -635,6 +635,7 @@ void Node::nextStep() {
         ~Depth() { --n.seqDepth_; }
     } depth(*this);
     while (inSeq_ && seqAt_ < seq_.size()) {
+        if (seqWait()) return;  // a slow caller: the screen before this one is still going out
         const LoginStep s = seq_[seqAt_++];
         if (s.level > menuWho().level) continue;
         const std::string& c = s.cmd;
@@ -714,6 +715,7 @@ void Node::nextStep() {
             return;
         }
     }
+    if (seqWait()) return;  // (and the menu after the last step)
     inSeq_ = false;
     showMainMenu();
 }
@@ -1346,13 +1348,22 @@ void Node::input(const uint8_t* p, size_t n, uint32_t nowMs) {
     if (holdUntil_ && (int32_t)(nowMs - holdUntil_) < 0) return;  // a wrong password: slow the guessing down
     holdUntil_ = 0;
     for (size_t i = 0; i < n && state_ != State::Done; i++) {
+        if (seqDue_) drainSeq();
+        if (seqDue_) break;  // a slow caller's next login step waits for room: keys typed ahead of it are dropped (as on the poster)
         key((char)p[i]);
         drainSeq();
     }
 }
 
+bool Node::seqWait() {
+    if (!backedUp_ || !backedUp_()) return false;
+    seqDue_ = true;
+    return true;
+}
+
 void Node::drainSeq() {
     while (seqDue_ && state_ != State::Done) {
+        if (backedUp_ && backedUp_()) return;  // a slow caller: the next step waits for room (poll resumes it)
         seqDue_ = false;
         seqResume();
     }

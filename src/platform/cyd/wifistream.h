@@ -5,6 +5,8 @@
 #pragma once
 #include <WiFi.h>
 
+#include <cerrno>
+
 #include "net/telnetstream.h"
 
 class WifiStream : public axis::net::TelnetStream {
@@ -31,8 +33,12 @@ protected:
         return r > 0 ? r : 0;
     }
     int rawWrite(const uint8_t* p, size_t n) override {
-        if (!client_.connected()) return -1;
-        int w = (int)client_.write(p, n);  // 0 when the socket is full for now
+        // One send that never waits (0 when the socket is full for now). WiFiClient::write waits on select() up to 1 s a
+        // try, 10 tries, until every byte is out: a slow caller held the whole board's loop for up to 20 s there.
+        int fd = client_.fd();
+        if (fd < 0 || !client_.connected()) return -1;
+        int w = ::send(fd, p, n, MSG_DONTWAIT);
+        if (w < 0) return (errno == EAGAIN || errno == EWOULDBLOCK) ? 0 : -1;
         if (w > 0 && tap) tap(this, p, (size_t)w);
         return w;
     }

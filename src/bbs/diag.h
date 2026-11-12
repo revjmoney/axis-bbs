@@ -25,6 +25,7 @@ struct DiagSample {
     std::string winDoing;                  // what the board was doing at winFree
     uint32_t stkWeb = 0, stkMdns = 0, stkTimer = 0;  // task stack high-water marks, words (0 = task absent)
     uint32_t outMax = 0, artMax = 0;       // largest Node output buffer, largest art string read
+    uint32_t holdMax = 0;                  // most bytes a slow caller's line has held (TelnetStream hold mode)
 };
 
 const char* doorDiagToken(DoorDiag d);

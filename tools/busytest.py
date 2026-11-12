@@ -55,7 +55,7 @@ DDNS_AT_S = 5 * 60
 # @STATUS fields, in CSV order (after t). "min" is the board's lowest since boot; wmin/wlarge the
 # lowest seen at the top of loop() since @HEAPWIN.
 CSV_KEYS = ("up", "on", "heap", "largest", "min", "wmin", "wlarge", "wdoing", "stack", "stk_web", "stk_mdns",
-            "stk_timer", "outmax", "artmax")
+            "stk_timer", "outmax", "artmax", "holdmax")
 CSV_HEAD = "t," + ",".join(CSV_KEYS) + ",resets"
 
 
