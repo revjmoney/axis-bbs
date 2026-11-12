@@ -234,11 +234,13 @@ static size_t listCap(const std::string& n) {
     return n == "ballots" ? 500u : n == "rumors" ? 300u : n == "bbslist" || n == "votes" ? 50u : 0u;
 }
 // Lines counted per list the first time it is touched, then kept in step by listAppendLocal. listStore forgets it.
-static std::map<std::string, size_t> listCount;
+static int32_t listCount[4] = {-1, -1, -1, -1};  // rumors, bbslist, votes, ballots; -1 = not counted yet
+static int     listIdx(const std::string& n) { return n == "rumors" ? 0 : n == "bbslist" ? 1 : n == "votes" ? 2 : n == "ballots" ? 3 : -1; }
 static std::string                   listPath(const std::string& n) { return "/list_" + n + ".txt"; }
 static size_t                        listCountOf(const std::string& n) {
-    auto it = listCount.find(n);
-    if (it != listCount.end()) return it->second;
+    int i = listIdx(n);
+    if (i < 0) return 0;
+    if (listCount[i] >= 0) return (size_t)listCount[i];
     size_t c = 0;
     File   f = LittleFS.open(listPath(n).c_str(), "r");
     while (f && f.available()) {
@@ -246,7 +248,7 @@ static size_t                        listCountOf(const std::string& n) {
         if (l.length()) c++;
     }
     if (f) f.close();
-    listCount[n] = c;
+    listCount[i] = (int32_t)c;
     return c;
 }
 // A plain list is trimmed lazily (listAppendLocal), so the file can hold up to cap + cap/4 lines: readers see the newest cap.
@@ -295,7 +297,7 @@ static std::vector<std::string> listLoad(const std::string& n) {
 }
 static void listStore(const std::string& n, const std::vector<std::string>& v) {
     if (!listName(n)) return;
-    listCount.erase(n);  // the file is rewritten: count it again when next needed
+    if (listIdx(n) >= 0) listCount[listIdx(n)] = -1;  // the file is rewritten: count it again when next needed
     size_t      cap = n == "axisnet" || n == "netnotes" ? 180u : 120u;
     std::string text;
     for (auto& l : v) {
@@ -308,17 +310,25 @@ static void listStore(const std::string& n, const std::vector<std::string>& v) {
 // temp file that replaces it (a failure leaves the original). No copy of the list is held in RAM.
 static bool listAppendLocal(const std::string& n, const std::string& line, size_t cap) {
     if (!listName(n) || !cap) return false;
+    std::string out = line.substr(0, 120) + '\n';
+    size_t      add = 0;  // non-empty segments written (a follower's text may hold newlines)
+    for (size_t p = 0; p < out.size();) {
+        size_t e = out.find('\n', p);
+        if (e > p) add++;
+        p = e + 1;
+    }
+    if (!add) return false;  // an empty line is never shown: write nothing
     size_t had = listCountOf(n);  // before the append, so a first count does not include the new line
     File   f = LittleFS.open(listPath(n).c_str(), "a");
     if (!f) return false;
-    std::string out = line.substr(0, 120) + '\n';
     bool        ok = f.write((const uint8_t*)out.data(), out.size()) == out.size();
     f.close();
     if (!ok) {
-        listCount.erase(n);  // maybe half a line landed: recount
+        listCount[listIdx(n)] = -1;  // maybe half a line landed: recount
         return false;
     }
-    size_t now = listCount[n] = had + (out.size() > 1 ? 1 : 0);
+    size_t now = had + add;
+    listCount[listIdx(n)] = (int32_t)now;
     if (now <= cap + cap / 4) return true;
     std::string tmp = "/list_" + n + ".tmp";
     File        in = LittleFS.open(listPath(n).c_str(), "r");
@@ -351,7 +361,7 @@ static bool listAppendLocal(const std::string& n, const std::string& line, size_
         LittleFS.remove(tmp.c_str());
         return true;
     }
-    listCount[n] = kept;
+    listCount[listIdx(n)] = (int32_t)kept;
     return true;
 }
 static void listAddLocal(const std::string& n, const std::string& line) {
@@ -3810,7 +3820,8 @@ static void runCommand(const String& cmd, Print& out) {
         ESP.restart();
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
-    } else if (&out == &Serial && serialFileCommand(cmd)) {  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py)
+    } else if (&out == &Serial && serialFileCommand(cmd)) {
+        for (int32_t& c : listCount) c = -1;  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py) (a list file may have changed)
     } else if (cmd == "@RERUNSETUP" && boardIsHeadless()) {  // the wizard is on a screen this board hasn't got
         out.println("axis: setup refused: this board is headless (no screen to run setup on)");
     } else if (cmd == "@RERUNSETUP" && callersBesideSysop()) {
