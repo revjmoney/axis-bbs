@@ -1806,6 +1806,9 @@ static void applyNetworkDue() {  // each loop turn, after modemSearchPoll()
 }
 static void sendApp(const std::string& s) {
     if (!line) return;
+    if (s.size() > 4096)  // a turn's output not drawn a piece at a time: which screen (it sits in RAM whole for a slow caller)
+        logEvent("big output " + String((unsigned)s.size()) + " B, state " + String(node ? (int)node->state() : -1) + ", held " +
+                 String((unsigned)line->backlog()));
     if (!s.empty()) line->write((const uint8_t*)s.data(), s.size());
     line->flush();  // (even when empty: a screen that left in 2 KB pieces through setDirect still has its tail held here)
 }
@@ -4110,13 +4113,20 @@ static void finishViewer() {
     sendApp(node->takeOutput());
 }
 
+// The name a "heap low in ..." line gives the node: a key or a poll, the node's state number and what its line holds.
+static const char* nodeScopeName(const char* what) {
+    static char name[40];
+    std::snprintf(name, sizeof name, "node %s s%d held %u", what, node ? (int)node->state() : -1, line ? (unsigned)line->backlog() : 0u);
+    return name;
+}
+
 // keystrokes from the caller, already through the telnet filter
 static void callerInput(const std::string& app) {
     const uint8_t* p = (const uint8_t*)app.data();
     if (node) {
         std::string before = node->handle();
         {
-            HeapScope scope("node");
+            HeapScope scope(nodeScopeName("key"));
             node->input(p, app.size(), millis());
         }
         if (node->handle() != before) screenDirty = true;
@@ -5837,7 +5847,7 @@ static void serviceSession(int i) {
         }
         if (line && node) {
             {
-                HeapScope scope("node");
+                HeapScope scope(nodeScopeName("poll"));
                 node->poll(millis());
             }
             if (node->state() == axis::bbs::Node::State::InDoor) {
