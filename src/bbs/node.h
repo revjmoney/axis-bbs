@@ -119,6 +119,9 @@ public:
     // poster streams out one piece per poll(), so neither the file nor its ANSI ever sits in RAM whole.
     using PosterPiece = std::function<std::string(const std::string& file, size_t offset, size_t want, bool* exists)>;
     void        setPoster(PosterPiece piece) { posterPiece_ = std::move(piece); }
+    // A menu screen (MAIN.ANS: the theme's, else the menu set's) the same way, a piece at a time from the card; *exists false:
+    // not here (a follower), the menu loader's whole copy is drawn instead.
+    void        setMenuArt(PosterPiece piece) { menuArtPiece_ = std::move(piece); }
     static constexpr size_t kPosterPiece = 2048, kPosterMax = 49152;  // (SAYLORLG.ANS is 45 KB)
     // ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): with a MAIN.MNU they drive the main menu; without, the built-in one
     void        setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces = nullptr);
@@ -254,12 +257,30 @@ private:
     std::function<std::string(const std::string&)> art_;
     std::function<std::shared_ptr<const std::string>()> wfcArt_;
     PosterPiece                                    posterPiece_;
-    std::string                                    posterFile_, posterCarry_;  // the poster streaming out, and a cut line
-    size_t                                         posterOff_ = 0;
+    PosterPiece                                    menuArtPiece_;
     bool                                           posterHold_ = false;
     int         startPoster(const std::string& file, bool clear, bool hold);
-    void        posterPiece(const std::string& raw, bool last);
-    void        pumpPoster();
+    // The art drawer: every art screen (menu screens, theme screens, the Saylor poster) goes out through it, a piece at a time
+    // from its source (the card, or the copy already read), each piece expanded as it goes (artPiece). It draws while the
+    // caller's line has room (setBackedUp) and the rest waits for poll(), so a slow caller paces it and its screen never sits
+    // in RAM whole. What the node writes after a screen starts (a lightbar, a prompt, a key's echo) goes out behind it.
+    // With no line check: plain screens draw at once and the poster a piece per poll(), as before.
+    using ArtSource = std::function<std::string(size_t offset, size_t want, bool* exists)>;
+    struct Drawing {
+        size_t      pos = 0;   // where in out_ its next piece goes
+        ArtSource   src;
+        size_t      off = 0;   // the next byte of the source
+        std::string carry;     // a cut line (artPiece)
+        bool        poster = false;  // the poster: State::Poster until it is out, then its pause and the next step
+    };
+    std::vector<Drawing> drawings_;
+    static constexpr size_t kArtCap = 16384;  // a screen's art, at most (the poster: kPosterMax)
+    void        drawArt(ArtSource src, bool poster);  // starts drawing (behind any drawing not finished yet)
+    void        pumpArt(bool onePiece = false);       // as much as the line takes; onePiece: the poster with no line check
+    size_t      ready() const { return drawings_.empty() ? out_.size() : drawings_.front().pos; }  // out_ that may go now
+    bool        drawMenuArt(const std::string& file);  // MenuRunner::drawArt
+    ArtSource   firstThen(std::string first, const std::string& file, const PosterPiece& piece);
+    bool        posterStarting_ = false;  // startPoster's own first pieces: it says what comes next, not pumpArt
     std::unique_ptr<MenuRunner>                    menu_;
     MenuRunner::Loader                             menuLoad_;
     std::function<bool(const std::string&)>        exists_;  // setExists: a menu screen's presence, without reading it
@@ -279,7 +300,7 @@ private:
     void                                           showPrelogon();
     void                                           showLoginScreen();
     std::string                                    loadScreen(const std::string& file) const;  // menu file, else the theme. Empty when it is not there.
-    void                                           paintScreen(const std::string& art);
+    void                                           paintScreen(std::string art);
     bool                                           showArt(const std::string& file);  // false when that screen is not on the card
     std::string                                    menuName_ = "MAIN";
     bool                                           builtin_ = false;  // the menu files failed: the built-in menu this call

@@ -768,6 +768,22 @@ static bool menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& pie
     return true;
 }
 
+// One piece of a menu screen for the art drawer (Node::setMenuArt): the same file menuArtPieces reads, `want` bytes from
+// `offset`, so a screen is never in RAM whole. *exists false: not here (a follower's theme screen comes whole from the main).
+static std::string menuArtPiece(const std::string& name, size_t offset, size_t want, bool* exists) {
+    *exists = false;
+    std::string s;
+    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos || offset >= 16384) return s;
+    if (asFollower() && axis::bbs::theme::menuScreenFile(name)) return s;
+    FILE* f = openThemeScreen(name);  // the theme's screen first
+    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
+    if (!f) return s;
+    *exists = true;
+    axis::bbs::readFileAppend(f, want < 16384 - offset ? want : 16384 - offset, offset, s);
+    fclose(f);
+    return s;
+}
+
 // The shared lists for the local console (callers use the same over their own node setup).
 static std::vector<std::string> sharedList(const std::string& n) {
     if (!asFollower()) return n == "callers" ? lastCallers : listLoad(n);
@@ -3737,6 +3753,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setWfcArt(wfcArtShared);
         node->setPoster(posterPiece);
         node->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+        node->setMenuArt(menuArtPiece);
         node->setExists(menuExists);
         wireScripts(node.get());
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
@@ -4514,6 +4531,7 @@ static void startLocal() {
     localNode->setWfcArt(wfcArtShared);
     localNode->setPoster(posterPiece);
     localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+    localNode->setMenuArt(menuArtPiece);
     localNode->setExists(menuExists);
     wireScripts(localNode.get());
     localNode->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& line) { sharedListAdd(n, line); });
@@ -5524,6 +5542,7 @@ static void handleSerial() {
             serialWfc->setWfcArt(wfcArtShared);
             serialWfc->setPoster(posterPiece);
             serialWfc->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
+            serialWfc->setMenuArt(menuArtPiece);
             serialWfc->setExists(menuExists);
             wireScripts(serialWfc.get());
             serialWfc->setLists([](const std::string& n) { return sharedList(n); }, [](const std::string& n, const std::string& l) { sharedListAdd(n, l); });

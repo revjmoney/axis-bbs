@@ -373,6 +373,7 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
         },
         [this](const std::string& k) { return menuValue(k); }));
     menu_->setArtPieces(std::move(pieces));
+    menu_->drawArt = [this](const std::string& f) { return drawMenuArt(f); };  // (one drawer for every art screen)
     menu_->cantRun = [this](const MenuCmd& c) {  // a DOOR: line whose door can't start here (a DOS .EXE): off the menu
         std::string cmd = c.cmd;
         for (char& ch : cmd) ch = (char)std::toupper((unsigned char)ch);
@@ -461,17 +462,18 @@ std::string Node::loadScreen(const std::string& file) const {  // a menu file, o
     return a;
 }
 
-void Node::paintScreen(const std::string& art) {
-    expandArt(art, menuWho(), [this](const std::string& k) { return menuValue(k); }, [this](const char* d, size_t n) {
-            out_.append(d, n);
-            spill();
-        });
+void Node::paintScreen(std::string art) {  // a screen already read: drawn from that copy, which goes once it is out
+    auto text = std::make_shared<const std::string>(std::move(art));
+    drawArt([text](size_t off, size_t want, bool* has) {
+        *has = true;
+        return off < text->size() ? text->substr(off, want) : std::string();
+    }, false);
 }
 
 bool Node::showArt(const std::string& file) {
     std::string a = loadScreen(file);
     if (a.empty()) return false;
-    paintScreen(a);
+    paintScreen(std::move(a));
     return true;
 }
 
@@ -494,7 +496,7 @@ void Node::showPrelogon() {  // a random PRELOGON1..9.ANS (else PRELOGON.ANS), t
         return;
     }
     out_ += theme::CLS;
-    paintScreen(art);
+    paintScreen(std::move(art));
     out_ += std::string("\x1b[0m\r\n   ") + theme::DGREY + "(press a key)" + theme::RESET;
     state_ = State::PreLogon;
 }
@@ -655,7 +657,7 @@ void Node::nextStep() {
             if (a.empty()) shown = false;
             else {
                 if (s.clear) out_ += theme::CLS;
-                paintScreen(a);
+                paintScreen(std::move(a));
                 if (c == "PRINTNEWS") hold = true;  // stays up for a key so the local screen can show it
             }
         } else if (c == "SYSOPNOTICES" || c == "NMAILSCAN") {
@@ -721,7 +723,7 @@ void Node::nextStep() {
 }
 
 // The poster's first piece: 0 when there is no such poster (nothing shown, nothing cleared), 1 when that was all of it,
-// 2 when the rest follows from poll() a piece at a time.
+// 2 when the rest follows from poll() (State::Poster until it is out, then its pause and the next step).
 int Node::startPoster(const std::string& file, bool clear, bool hold) {
     bool        exists = false;
     std::string use = file, raw;
@@ -734,52 +736,94 @@ int Node::startPoster(const std::string& file, bool clear, bool hold) {
     if (use == file) raw = posterPiece_(file, 0, kPosterPiece, &exists);
     if (!exists || raw.empty()) return 0;
     if (clear) out_ += theme::CLS;
-    posterFile_ = use;
-    posterOff_ = raw.size();
     posterHold_ = hold;
-    posterCarry_.clear();
-    bool last = raw.size() < kPosterPiece;
-    if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;  // (SAUCE: not the picture)
-    posterPiece(raw, last);
-    if (last) return 1;
-    state_ = State::Poster;
-    return 2;
+    State before = state_;
+    posterStarting_ = true;
+    drawArt(firstThen(std::move(raw), use, posterPiece_), true);
+    posterStarting_ = false;
+    for (const Drawing& d : drawings_)
+        if (d.poster) return 2;
+    state_ = before;  // all of it out already
+    return 1;
 }
 
-// one piece out: up to its last line break (a code is never cut in two); the rest waits for the next piece
-void Node::posterPiece(const std::string& raw, bool last) {
-    posterCarry_ += raw;
-    size_t cut = posterCarry_.size();
-    if (!last) {
-        cut = posterCarry_.rfind('\n');
-        cut = cut != std::string::npos ? cut + 1 : posterCarry_.size() > 1024 ? posterCarry_.size() - 32 : 0;
-    }
-    if (cut) {
-        expandArt(posterCarry_.substr(0, cut), menuWho(), [this](const std::string& k) { return menuValue(k); },
-                  [this](const char* d, size_t n) {
-            out_.append(d, n);
+// A source that hands out the first piece already read (to see the file is there), then reads the rest from the card.
+Node::ArtSource Node::firstThen(std::string first, const std::string& file, const PosterPiece& piece) {
+    auto held = std::make_shared<std::string>(std::move(first));
+    return [held, file, piece](size_t off, size_t want, bool* has) {
+        if (!off && !held->empty()) {
+            *has = true;
+            std::string f;
+            f.swap(*held);
+            return f;
+        }
+        return piece(file, off, want, has);
+    };
+}
+
+void Node::drawArt(ArtSource src, bool poster) {
+    Drawing d;
+    d.pos = out_.size();
+    d.src = std::move(src);
+    d.poster = poster;
+    drawings_.push_back(std::move(d));
+    if (poster) state_ = State::Poster;
+    pumpArt(poster && !backedUp_);
+}
+
+void Node::pumpArt(bool onePiece) {
+    while (!drawings_.empty()) {
+        if (backedUp_ && backedUp_()) return;  // a slow caller: the rest when its line has room (poll)
+        Drawing&    d = drawings_.front();
+        size_t      cap = d.poster ? kPosterMax : kArtCap;
+        bool        exists = false;
+        std::string raw = d.off < cap ? d.src(d.off, kPosterPiece, &exists) : std::string();
+        bool        last = !exists || raw.size() < kPosterPiece || d.off + raw.size() >= cap;
+        d.off += raw.size();
+        if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;  // (SAUCE: not the picture)
+        artPiece(d.carry, raw.data(), raw.size(), last, menuWho(), [this](const std::string& k) { return menuValue(k); },
+                 [this](const char* p, size_t n) {  // (512 bytes at most a call: out_ never grows by a whole piece)
+            Drawing& at = drawings_.front();
+            if (at.pos == out_.size()) out_.append(p, n);
+            else out_.insert(at.pos, p, n);  // behind what went before it, ahead of what was written since it started
+            for (Drawing& o : drawings_) o.pos += n;
             spill();
         });
-        posterCarry_.erase(0, cut);
-    }
-    if (last) {
-        std::string().swap(posterCarry_);
-        posterFile_.clear();
+        std::string().swap(raw);
+        if (last) {
+            bool poster = d.poster;
+            drawings_.erase(drawings_.begin());
+            if (poster && !posterStarting_) {
+                state_ = State::SeqPause;  // (until the sequence says what is next)
+                seqPauseNext_ = posterHold_;
+                seqResume();
+            }
+        }
+        spill();
+        if (onePiece) return;
     }
 }
 
-// poll(): the poster's next piece (the caller's line takes each one before the next is read)
-void Node::pumpPoster() {
-    bool        exists = false;
-    std::string raw = posterPiece_ ? posterPiece_(posterFile_, posterOff_, kPosterPiece, &exists) : std::string();
-    bool        last = !exists || raw.size() < kPosterPiece || posterOff_ + raw.size() >= kPosterMax;
-    posterOff_ += raw.size();
-    if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;
-    posterPiece(raw, last);
-    if (!last) return;
-    state_ = State::SeqPause;  // (until the sequence says what is next)
-    seqPauseNext_ = posterHold_;
-    seqResume();
+bool Node::drawMenuArt(const std::string& file) {
+    if (menuArtPiece_) {  // from the card a piece at a time (a lite caller's NAME.LITE.ANS first)
+        bool        exists = false;
+        std::string use = file, raw;
+        if (lite())
+            if (std::string l = liteName(file); !l.empty() && std::find(liteMiss_->begin(), liteMiss_->end(), l) == liteMiss_->end()) {
+                raw = menuArtPiece_(l, 0, kPosterPiece, &exists);
+                if (exists && !raw.empty()) use = l;
+                else liteMiss_->push_back(l);
+            }
+        if (use == file) raw = menuArtPiece_(file, 0, kPosterPiece, &exists);
+        if (exists && !raw.empty()) {
+            drawArt(firstThen(std::move(raw), use, menuArtPiece_), false);
+            return true;
+        }
+    }
+    std::string art = menuLoad_ ? menuLoad_(file) : std::string();  // (a follower: the copy the main sent, lite first)
+    if (art.empty()) return false;
+    paintScreen(std::move(art));
+    return true;
 }
 
 bool Node::o2() const { return theme::lookFrom(cfg_->theme) != theme::Look::Axis; }  // cyan and green share that layout
@@ -1557,7 +1601,7 @@ void Node::drawPreview() {
             spill();
         });
     } else {
-        paintScreen(art);
+        paintScreen(std::move(art));
     }
     std::string name = classic ? "Classic AXIS" : previewLook_;
     out_ += std::string(RST) + "\x1b[25;1H\x1b[K\x1b[0;30;47m " + name + " \x1b[0;37m  Enter: use it   Left/Right: other looks   Esc or Q: back" + RST;
@@ -3574,10 +3618,11 @@ std::string Node::activityText() const {
 void Node::poll(uint32_t nowMs) {
     MciScope mciScope(*this);
     retired_.clear();  // settings copies swapped out last turn: nothing reads them now
-    if (state_ == State::Poster) {  // one piece of the poster a turn, nothing else until it is out
-        pumpPoster();
+    if (state_ == State::Poster) {  // the poster: nothing else until it is out (a piece a turn with no line check)
+        pumpArt(!backedUp_);
         return;
     }
+    if (!drawings_.empty()) pumpArt();  // a screen still going out to a slow caller
     if (state_ == State::Script) pumpScript();
     if (menu_ && !builtin_ && state_ == State::Menu) menu_->tick(nowMs);  // a lone ESC on a lightbar: Esc after a pause
     if (state_ == State::AxisNet && net_ && !net_->tick(nowMs, lastInput_)) {
@@ -3659,12 +3704,21 @@ static size_t outMax_ = 0;
 size_t        Node::outMax() { return outMax_; }
 
 void Node::spill() {
-    if (!direct_ || out_.size() < kOutSpill) return;
+    if (!direct_ || ready() < kOutSpill) return;
     flushDirect();
 }
 
 void Node::flushDirect() {
     if (out_.capacity() > outMax_) outMax_ = out_.capacity();
+    size_t n = ready();
+    if (n < out_.size()) {  // a screen still drawing: only what is ahead of it goes
+        std::string piece = out_.substr(0, n);
+        out_.erase(0, n);
+        for (Drawing& d : drawings_) d.pos -= n;
+        direct_(piece.data(), piece.size());
+        return;
+    }
+    for (Drawing& d : drawings_) d.pos -= n;  // (all of out_ goes: a drawing waiting at its end starts again at 0)
     // out_ is emptied on every exit, so a write that throws partway (bad_alloc) is never sent again later
     std::string piece;
     piece.swap(out_);
@@ -3680,6 +3734,14 @@ void Node::flushDirect() {
 
 std::string Node::takeOutput() {
     if (out_.capacity() > outMax_) outMax_ = out_.capacity();
+    size_t n = ready();
+    if (n < out_.size()) {  // a screen still drawing: what was written behind it waits for it
+        std::string s = out_.substr(0, n);
+        out_.erase(0, n);
+        for (Drawing& d : drawings_) d.pos -= n;
+        return s;
+    }
+    for (Drawing& d : drawings_) d.pos -= n;
     std::string s;
     s.swap(out_);
     return s;
