@@ -34,7 +34,7 @@ Status:
 - `@NET` shows the board id, the net state and counts. Example: `@NET`
 - `@NET SYNC` dials the first peer soon instead of waiting. Example: `@NET SYNC`
 - `@NET PEERS` lists known peers and when each was last reached. Example: `@NET PEERS`
-- `@NET RECORD [n]` shows the newest n lines of the net record (default 20, most 100). Example: `@NET RECORD 50`
+- `@NET RECORD [n [skip]]` shows the newest n lines of the net record (default 20, most 100), newest first. The optional second number skips that many of the newest lines first, so you can page back through older ones. Examples: `@NET RECORD 50`, and `@NET RECORD 20 20` for the 20 lines before the newest 20
 - `@NET LOCAL` lists what this board has hidden or blocked.
 
 Local moderation, which only changes this board and is never sent anywhere:
