@@ -90,6 +90,7 @@
 #include "net/record.h"
 #include "net/session.h"
 #include "net/sign.h"
+#include "monocypher.h"
 #endif
 
 // Size over speed for this file's own functions (screens, menus, the loop). After the includes on
@@ -1979,6 +1980,7 @@ struct NetSlot {
     bool                                    first = false;  // dialing the first peer
     String                                  who;            // for the event log until the peer is known
     uint32_t                                dnsGen = 0, startMs = 0;
+    uint32_t                                ip = 0;  // inbound: the caller's address (the proof back-off)
 };
 struct NetHost {
     NetLogFile                              file;
@@ -2001,6 +2003,44 @@ static uint32_t                 netStartMs = 0;  // the last start attempt (a fa
 static bool                     netStartSaid = false;
 
 static axis::bbs::MessageStore* netMessages() { return netHost ? netHost->store.get() : nullptr; }
+static bool netMainUp = false;  // a follower: the main's settings frame said its net is up ("net_up=1")
+static bool netSharedUp = false;  // the main: what the last settings frame said
+
+// Proof back-off: an address whose AXISNET 2 session failed before it proved who it is is refused for 60 s,
+// doubling up to 30 min for repeats. 8 addresses; the one touched longest ago makes room.
+struct NetBackoff {
+    uint32_t ip = 0, atMs = 0, secs = 0;
+    bool     said = false;  // its refusal logged in this back-off
+};
+static NetBackoff netBackoff[8];
+static NetBackoff* netBackoffFind(uint32_t ip, bool make) {
+    NetBackoff* old = &netBackoff[0];
+    for (NetBackoff& b : netBackoff) {
+        if (b.secs && b.ip == ip) return &b;
+        if (!b.secs) old = &b;
+        else if (old->secs && millis() - b.atMs > millis() - old->atMs) old = &b;
+    }
+    if (!make) return nullptr;
+    *old = NetBackoff();
+    old->ip = ip;
+    return old;
+}
+static bool netBackedOff(uint32_t ip) {
+    NetBackoff* b = netBackoffFind(ip, false);
+    if (!b || millis() - b->atMs >= b->secs * 1000u) return false;
+    if (!b->said) logEvent("net: " + IPAddress(ip).toString() + " refused for " + String(b->secs) + " s (no proof last time)");
+    b->said = true;
+    return true;
+}
+static void netStrike(uint32_t ip) {
+    NetBackoff* b = netBackoffFind(ip, true);
+    b->secs = b->secs ? std::min<uint32_t>(b->secs * 2, 1800) : 60;
+    b->atMs = millis();
+    b->said = false;
+}
+static void netProven(uint32_t ip) {
+    if (NetBackoff* b = netBackoffFind(ip, false)) *b = NetBackoff();
+}
 
 // Boards the sysop blocked locally (Task 7 fills this in). They are never dialed.
 static bool netBlocked(const std::string& board) {
@@ -2028,31 +2068,60 @@ static std::string netNonce() {
     return axis::net::toHex(b, sizeof b);
 }
 
+// 64 hex characters at path into seed. The text goes through a buffer wiped after.
+static bool netSeedRead(const char* path, uint8_t seed[32]) {
+    char hex[64];
+    File f = LittleFS.open(path, "r");
+    if (!f) return false;
+    bool ok = f.read((uint8_t*)hex, sizeof hex) == sizeof hex;
+    f.close();
+    for (size_t i = 0; ok && i < 32; i++) {
+        int v = 0;
+        for (int j = 0; ok && j < 2; j++) {
+            char c = hex[2 * i + j];
+            int  d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            ok = d >= 0;
+            v = v * 16 + d;
+        }
+        seed[i] = (uint8_t)v;
+    }
+    crypto_wipe(hex, sizeof hex);
+    if (!ok) crypto_wipe(seed, 32);
+    return ok;
+}
+
+// A new seed written as hex to /netkey.txt (a temp file, then renamed), through a buffer wiped after.
+static bool netSeedWrite(const uint8_t seed[32]) {
+    static const char kHex[] = "0123456789abcdef";
+    char              hex[65];
+    for (size_t i = 0; i < 32; i++) {
+        hex[2 * i] = kHex[seed[i] >> 4];
+        hex[2 * i + 1] = kHex[seed[i] & 15];
+    }
+    hex[64] = '\n';
+    File f = LittleFS.open("/netkey.tmp", "w");
+    bool ok = f && f.write((const uint8_t*)hex, sizeof hex) == sizeof hex;
+    if (f) f.close();
+    crypto_wipe(hex, sizeof hex);
+    ok = ok && LittleFS.rename("/netkey.tmp", "/netkey.txt");
+    if (!ok) LittleFS.remove("/netkey.tmp");
+    return ok;
+}
+
 // The board's key. /netrev.key (Rev's seed, written by a sysop command) wins; else /netkey.txt, made on first boot
 // from esp_random(). Both hold 64 hex characters in internal flash, which survives reflashes. Never printed.
 static bool netKeyLoad(axis::net::KeyPair& k) {
-    uint8_t     seed[32];
-    std::string hex = flashRead("/netrev.key");
-    if (hex.size() > 64) hex.resize(64);  // (no copies of the key text left about)
-    bool have = hex.size() == 64 && axis::net::fromHex(hex, seed, 32);
-    if (!have) {
-        std::fill(hex.begin(), hex.end(), '\0');
-        hex = flashRead("/netkey.txt");
-        if (hex.size() > 64) hex.resize(64);
-        have = hex.size() == 64 && axis::net::fromHex(hex, seed, 32);
-    }
-    if (!have) {
+    uint8_t seed[32];
+    bool    have = netSeedRead("/netrev.key", seed) || netSeedRead("/netkey.txt", seed);
+    if (!have && !LittleFS.exists("/netkey.txt")) {  // first boot (an unreadable key is never replaced)
         for (size_t i = 0; i < sizeof seed; i += 4) {
             uint32_t r = esp_random();
             std::memcpy(seed + i, &r, 4);
         }
-        std::fill(hex.begin(), hex.end(), '\0');
-        hex = axis::net::toHex(seed, sizeof seed) + "\n";
-        have = flashWrite("/netkey.txt", hex);
+        have = netSeedWrite(seed);
     }
-    std::fill(hex.begin(), hex.end(), '\0');
     if (have) k = axis::net::keyFromSeed(seed);
-    std::memset(seed, 0, sizeof seed);
+    crypto_wipe(seed, sizeof seed);
     return have;
 }
 
@@ -2115,18 +2184,22 @@ struct NetTarget {
     bool        first = false;
 };
 static bool netFirstTarget(const NetHost& h, NetTarget& t) {
+    auto trim = [](std::string x) {
+        while (!x.empty() && (x.back() == ' ' || x.back() == '\t')) x.pop_back();
+        size_t b = x.find_first_not_of(" \t");
+        return b == std::string::npos ? std::string() : x.substr(b);
+    };
     std::string v = cfg.netFirstPeer, at;
     size_t      a = v.find('@');
     if (a != std::string::npos) {
-        at = v.substr(a + 1);
+        at = trim(v.substr(a + 1));
         v.resize(a);
         for (char& c : at) c = (char)std::tolower((unsigned char)c);
     }
-    while (!v.empty() && v.back() == ' ') v.pop_back();
-    while (!v.empty() && v[0] == ' ') v.erase(0, 1);
+    v = trim(v);
     if (v.empty()) return false;
     size_t colon = v.rfind(':');
-    t.host = colon == std::string::npos ? v : v.substr(0, colon);
+    t.host = trim(colon == std::string::npos ? v : v.substr(0, colon));
     t.port = colon == std::string::npos ? 23 : std::atoi(v.c_str() + colon + 1);
     if (t.host.empty() || t.port <= 0 || t.port > 65535) return false;
     t.first = true;
@@ -2214,6 +2287,8 @@ static void netClose(NetHost& h, NetSlot& s, const char* why) {
                  (what.length() ? String(" (") + what + ")" : String()) + ", " + String(s.s->postsSent()) + " out, " +
                  String(s.s->postsTaken()) + " in" + heapText());
         if (ok && s.first && !s.s->peer().empty()) netSaveFirstPeer(h, s.s->peer());
+        if (&s == &h.in && s.s->proven()) netProven(s.ip);
+        else if (&s == &h.in && !(why && !std::strcmp(why, "net off"))) netStrike(s.ip);  // never proved who it is
     }
     s.s.reset();
     s.pend.clear();
@@ -2333,7 +2408,8 @@ static void netDialStep(NetHost& h) {
 // axisServe read "AXISNET 2 ": the rest of the hello comes from the socket. One inbound session at a time.
 static void netAccept(WiFiClient& c, const std::string& got) {
     NetHost* h = netHost.get();
-    if (!h || !cfg.netSysop || asFollower() || h->in.phase != NetPhase::Idle || h->out.phase != NetPhase::Idle ||
+    uint32_t ip = (uint32_t)c.remoteIP();
+    if (netBackedOff(ip) || !h || !cfg.netSysop || asFollower() || h->in.phase != NetPhase::Idle || h->out.phase != NetPhase::Idle ||
         !netHeapOk()) {  // one session at a time, in or out
         c.print("BYE busy\n");
         delay(10);
@@ -2351,11 +2427,32 @@ static void netAccept(WiFiClient& c, const std::string& got) {
         return;
     }
     s.who = c.remoteIP().toString();
+    s.ip = ip;
     s.first = false;
     s.startMs = millis();
     s.phase = NetPhase::Live;
     s.s->feed(got.data(), got.size());
 }
+
+// A post from here: its counter is saved now (an id is never used twice), and a dial is due in 10 s.
+static void netPosted(NetHost& h) {
+    if (h.core->postSeq() == h.postSeq) return;
+    h.postSeq = h.core->postSeq();
+    std::string text = std::to_string(h.postSeq) + "\n";
+    if (netFileWrite("postseq.txt", text)) h.crc[3] = axis::net::crc32((const uint8_t*)text.data(), text.size());
+    h.postDue = true;
+    h.postMs = millis();
+    h.dirty = true;
+}
+// The board's store with the net on top; the counter is saved as the post is made.
+struct NetStore : axis::net::NetPostingStore {
+    using axis::net::NetPostingStore::NetPostingStore;
+    int post(const std::string& area, const axis::bbs::Message& m) override {
+        int n = axis::net::NetPostingStore::post(area, m);
+        if (netHost) netPosted(*netHost);
+        return n;
+    }
+};
 
 // The FileOutLog on /net/outlog.txt; until it opens, nothing new is passed on (tried again every minute).
 static void netLogOpen(NetHost& h) {
@@ -2417,7 +2514,7 @@ static bool netStart() {
     io.replace = [f](const std::string& header, uint32_t from) { return f->replace(header, from); };
     h->log.reset(new (std::nothrow) axis::net::FileOutLog(std::move(io)));
     if (h->log) h->core.reset(new (std::nothrow) axis::net::NetCore(*localMsgs, h->key, unixNow, *h->log));
-    if (h->core) h->store.reset(new (std::nothrow) axis::net::NetPostingStore(*localMsgs, *h->core));
+    if (h->core) h->store.reset(new (std::nothrow) NetStore(*localMsgs, *h->core));
     if (!h->store) {
         if (!netStartSaid) logEvent("net: not enough memory, Sysop Net is off" + heapText());
         netStartSaid = true;
@@ -2471,6 +2568,11 @@ static bool netStart() {
 // From the loop: starts the net on the main, pumps both sessions, dials on schedule, keeps the /net files.
 static void netTick() {
     bool mainBoard = cluster && (cluster->role() == axis::cluster::Role::Main || cluster->role() == axis::cluster::Role::Off);
+    bool up = netHost && cfg.netSysop && mainBoard;
+    if (up != netSharedUp && cluster && cluster->role() == axis::cluster::Role::Main) {  // followers list the areas by it
+        netSharedUp = up;
+        cluster->shareSettings();
+    }
     if (!netHost) {
         if (cfg.setupDone && cfg.netSysop && mainBoard && millis() > 20000 && (!netStartMs || millis() - netStartMs > 600000u))
             netStart();
@@ -2488,14 +2590,7 @@ static void netTick() {
     netDialStep(h);
     netPump(h, h.out, heapOk);
     axis::net::NetCore& core = *h.core;
-    if (core.postSeq() != h.postSeq) {  // a post from here: its counter is saved now (an id is never used twice)
-        h.postSeq = core.postSeq();
-        std::string text = std::to_string(h.postSeq) + "\n";
-        if (netFileWrite("postseq.txt", text)) h.crc[3] = axis::net::crc32((const uint8_t*)text.data(), text.size());
-        h.postDue = true;
-        h.postMs = millis();
-        h.dirty = true;
-    }
+    netPosted(h);  // (a post that went around the store)
     if (h.file.broken || (!h.log->ok() && millis() - h.logTryMs >= kNetMinuteMs)) netLogOpen(h);
     if (millis() - h.minuteMs >= kNetMinuteMs) {
         h.minuteMs = millis();
@@ -2527,14 +2622,8 @@ static void netTick() {
 }
 
 // True when this board's callers get the Sysop Net areas: on the main, once its NetCore (and so the NetPostingStore)
-// is up and net_sysop is on; on a follower, when the main says so (request "GN").
-static bool netAreasOn() {
-    if (asFollower()) {
-        std::string reply;
-        return cluster && cluster->request("GN", reply, 1500) && reply == "1";
-    }
-    return netHost && cfg.netSysop;
-}
+// is up and net_sysop is on; on a follower, when the main's last settings frame said so (never a request: no wait).
+static bool netAreasOn() { return asFollower() ? netMainUp : netHost && cfg.netSysop; }
 
 // The settings a new Node gets: the board's, plus the four Sysop Net areas for the sysop alone while the net runs.
 // Never saved: they are not in cfg.msgAreas.
@@ -3299,8 +3388,19 @@ static void startCluster() {
                 sessionLine(i)->flush();
             }
     };
+#if AXIS_NETS
+    cluster->settings = [] {  // plus "net_up=1" while Sysop Net runs here (an old follower keeps it as an unknown key)
+        std::string s = axis::bbs::formatConfig(cfg);
+        if (netHost && cfg.netSysop) s += "net_up=1\n";
+        return s;
+    };
+#else
     cluster->settings = [] { return axis::bbs::formatConfig(cfg); };
+#endif
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
+#if AXIS_NETS
+        netMainUp = ini.find("\nnet_up=1\n") != std::string::npos;  // an old main never says it: off
+#endif
         artCache.clear();  // the theme may have changed
         if (storageHasSd()) {  // the SD board keeps the BBS's settings: a stand-in main's older copy must not replace them
             Serial.println("axis: settings from a main without the card: kept our own");
@@ -3402,9 +3502,6 @@ static void startCluster() {
             return std::string("1") + scriptFile(name);
         }
         if (req.rfind("V\x1f", 0) == 0) return "1" + axis::bbs::followerCommand(req.substr(2), sysopRun);  // a follower's @ command (never a board-only one)
-#if AXIS_NETS
-        if (req == "GN") return std::string(netHost && cfg.netSysop ? "1" : "0");  // a follower: show the Sysop Net areas?
-#endif
         if (req == "AN") {  // a follower asked the main to speak to the Axis Net
             axisProbeSoon = true;
             return std::string("1");

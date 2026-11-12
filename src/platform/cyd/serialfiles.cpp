@@ -58,6 +58,13 @@ void typeFile(const String& args) {  // a small text file, so a node file can be
         Serial.println("@ERR usage");
         return;
     }
+    String base = path.substring(path.lastIndexOf('/') + 1);
+    base.toLowerCase();
+    while (base.endsWith(".") || base.endsWith(" ")) base.remove(base.length() - 1);  // FAT ignores these
+    if (base == "netkey.txt" || base == "netrev.key" || base == "netkey.tmp") {  // the Sysop Net key, never shown
+        Serial.println("@ERR refused");
+        return;
+    }
     path = full(path);
     int f = ::open(path.c_str(), O_RDONLY);
     if (f < 0) {

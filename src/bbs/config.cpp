@@ -117,6 +117,7 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "net_name") c.netName = v;
         else if (k == "net_sysop_name") c.netSysopName = v;
         else if (k == "net_location") c.netLocation = v;
+        else if (k == "net_up") {}  // the main's settings frame says its Sysop Net runs (main.cpp); never kept
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "nuv_yes") c.nuvYes = (int)n;
         else if (k == "nuv_no") c.nuvNo = (int)n;

@@ -57,6 +57,7 @@ public:
     bool failed() const { return failed_; }
     const std::string& peer() const { return peer_; }
     const char* why() const { return why_.c_str(); }
+    bool proven() const { return phase_ == Phase::Sync; }  // the peer proved who it is (the handshake passed)
 
     uint32_t postsSent() const { return postsSent_; }    // posts written out as E or H lines
     uint32_t postsTaken() const { return postsTaken_; }  // posts from the peer stored here
