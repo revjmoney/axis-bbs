@@ -71,10 +71,13 @@ Under `/net/` on the storage root:
 - `local.txt` holds this board's own hide and block lines.
 - `firstpeer.txt` remembers the first peer's address and the board id learned from it.
 
+Also under `/net/`: `state.txt` (cards and Rev's notices), `seen.txt` (which posts this board has seen) and `cursors.txt` (how far each link peer has been sent).
+
 In internal flash:
 
 - `/netkey.txt` is this board's own signing seed, made on first boot.
 - `/netrev.key` is Rev's seed, written by `@NETKEY SET`. It wins over `/netkey.txt` when present.
+- `/netseq.txt` holds the next post number this board will use and its card's number, beside the key. It lives in internal flash so a board that boots without its SD card keeps counting where it left off; peers drop a post whose number they have already seen. The new number is written before a post is stored or sent, so a reset can skip a number but never use one twice. If the file is missing and the clock is set, both numbers start from the current time (seconds since 1970), which is above any number used before. Older boards kept these as `/net/postseq.txt` and `/net/card.txt`; those are read once as a floor.
 
 The key files are never shown by `@TYPE` or the other serial file commands, in any spelling of the name. A board never sends its seed anywhere.
 
@@ -106,6 +109,37 @@ To rotate, sign in with the key that is still good, make a new seed with `axis_n
 ```
 
 This replaces the other one of Rev's two slots on every board. Then load the new seed the usual way. Because there are two slots, either can be replaced while the other keeps signing.
+
+## How a sync goes
+
+Each call trades the net state (cards and Rev's notices), then each side sends what it has queued for the other. Every post the receiver takes is answered `ACK`; one it refuses is answered `NAK` with one word:
+
+| Word | Meaning | Sent again? |
+| --- | --- | --- |
+| `bad` | Not a valid record, a bad path, or not a Sysop Net area | No |
+| `date` | Dated outside the keep window (only with the clock set) | No |
+| `banned` | Its board is banned | No |
+| `rejected` | Its board is blocked on the receiving board | No |
+| `sig` | The signature does not match the card the receiver holds | No |
+| `revonly` | Posted in a Rev-only area by a board that is not Rev's | No |
+| `killed` | Killed by Rev | No |
+| `limited` | Over its board's daily limit | No |
+| `nocard` | The receiver does not hold the posting board's card yet | Yes, next call |
+| `store` | The receiver's message base did not take it | Yes, next call |
+
+After a `nocard` or `store` the sender stops sending for the rest of that call and tries the same post again next call. If the same post is refused that way three calls in a row, it is passed over for that peer. Before the first post from a given board in a call, the sender sends that board's card, so `nocard` is rare.
+
+A board that has no Sysop Net posts yet asks for history: up to 200 posts per area from the last 30 days, sent oldest first across all four areas together.
+
+Each board counts at most 48 posting boards a day against the daily limits; when more show up, the one heard from longest ago is dropped from the count. Posts from Rev's boards are never limited.
+
+Without a clock, posts are trimmed by count only, once every 24 hours the board has been up. Notices and seen marks made before the clock was set are dated to the day the clock is first set.
+
+### Busy and back-off
+
+- One call in and one call out at a time. While the board is short of memory it stops reading the call (the other board waits) and its silence timer stands still; a call still ends after 10 minutes.
+- A call from a board that is not already one of this board's link peers gets 2 minutes instead of 10. When such a call ends, that address is answered `BYE busy` for 10 minutes.
+- An address whose call fails before it proves which board it is gets `BYE busy` for 60 seconds, doubling on each repeat up to 30 minutes.
 
 ## A board without an SD card
 
