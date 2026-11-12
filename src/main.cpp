@@ -2316,7 +2316,9 @@ static void netPump(NetHost& h, NetSlot& s, bool heapOk) {
     if (s.phase != NetPhase::Live || !s.s) return;
     char   buf[512];
     size_t fed = 0;
-    while (fed < kNetFeedPerTurn) {
+    // Short of heap nothing is read: a received line costs a few copies of itself (up to 9 KB each), so it waits
+    // in the socket and TCP holds the peer back. The session's silence timer stands still meanwhile.
+    while (heapOk && fed < kNetFeedPerTurn) {
         int a = s.c.available();
         if (a <= 0) break;
         int r = s.c.read((uint8_t*)buf, (size_t)a < sizeof buf ? (size_t)a : sizeof buf);

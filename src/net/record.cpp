@@ -45,7 +45,7 @@ bool validArea(const std::string& a) {
 }
 
 // Parse an unsigned decimal of 1..10 digits that fits in uint32_t.
-bool parseU32(const std::string& s, uint32_t& out) {
+bool parseU32(std::string_view s, uint32_t& out) {
     if (s.empty() || s.size() > 10) return false;
     if (s.size() > 1 && s[0] == '0') return false;  // no leading zeros: one spelling per number
     uint64_t v = 0;
@@ -58,20 +58,19 @@ bool parseU32(const std::string& s, uint32_t& out) {
     return true;
 }
 
-std::string escapeBody(const std::string& b) {
-    std::string o;
-    o.reserve(b.size() + 8);
+// Appends the body, escaped, to o (no copy of its own).
+void escapeBody(const std::string& b, std::string& o) {
     for (char c : b) {
         if (c == '\\') o += "\\\\";
         else if (c == '\n') o += "\\n";
         else if (c == '\r') o += "\\r";  // also escaped so a record never holds a raw CR
         else o += c;
     }
-    return o;
 }
 
-bool unescapeBody(const std::string& e, std::string& out) {
+bool unescapeBody(std::string_view e, std::string& out) {
     out.clear();
+    out.reserve(e.size());
     for (size_t i = 0; i < e.size(); i++) {
         char c = e[i];
         if (c == '\n' || c == '\r') return false;
@@ -88,16 +87,18 @@ bool unescapeBody(const std::string& e, std::string& out) {
     return true;
 }
 
-std::vector<std::string> split(const std::string& line) {
-    std::vector<std::string> f;
-    size_t start = 0;
+// The fields of a line as views into it, at most max of them. Returns how many fields the line has
+// (more than max means it has too many).
+size_t split(std::string_view line, std::string_view* f, size_t max) {
+    size_t n = 0, start = 0;
     for (size_t i = 0; i <= line.size(); i++) {
         if (i == line.size() || line[i] == kSep) {
-            f.push_back(line.substr(start, i - start));
+            if (n < max) f[n] = line.substr(start, i - start);
+            n++;
             start = i + 1;
         }
     }
-    return f;
+    return n;
 }
 
 bool validNoticeKind(const std::string& k) {
@@ -146,12 +147,15 @@ std::string u(uint32_t v) { return std::to_string(v); }
 
 std::string signedPart(const NetPost& p) {
     std::string s(1, (char)NetKind::Post);
+    // Room for the whole line (the path and sig come after in encode), so it is built in one buffer.
+    s.reserve(p.id.size() + p.area.size() + p.board.size() + p.from.size() + p.to.size() + p.subject.size() +
+              p.body.size() + p.body.size() / 16 + p.path.size() + 160);
     for (const std::string* f : {&p.id, &p.area, &p.board, &p.from, &p.to, &p.subject}) {
         s += kSep;
         s += *f;
     }
     s += kSep;
-    s += escapeBody(p.body);
+    escapeBody(p.body, s);
     s += kSep;
     s += u(p.date);
     return s;
@@ -190,7 +194,11 @@ std::string signedPart(const NetNotice& n) {
 std::string encode(const NetPost& p) {
     if (!validFields(p)) return "";
     if (!p.sig.empty() && !sigOk(p.sig)) return "";
-    std::string line = signedPart(p) + kSep + p.path + kSep + p.sig;
+    std::string line = signedPart(p);  // appended to in place: one copy of the body's worth
+    line += kSep;
+    line += p.path;
+    line += kSep;
+    line += p.sig;
     return line.size() > kNetMaxFrame ? std::string() : line;
 }
 
@@ -210,10 +218,11 @@ std::string encode(const NetNotice& n) {
 
 // ---- decode ----------------------------------------------------------------------------
 
-bool decode(const std::string& line, NetPost& out) {
+bool decode(std::string_view line, NetPost& out) {
     if (line.size() > kNetMaxFrame) return false;
-    std::vector<std::string> f = split(line);
-    if (f.size() != 11 || f[0] != "P") return false;
+    std::string_view f[11];
+    if (split(line, f, 11) != 11 || f[0] != "P") return false;
+    if (f[7].size() > kNetMaxBody * 2) return false;
     NetPost p;
     p.id = f[1];
     p.area = f[2];
@@ -221,20 +230,19 @@ bool decode(const std::string& line, NetPost& out) {
     p.from = f[4];
     p.to = f[5];
     p.subject = f[6];
-    if (f[7].size() > kNetMaxBody * 2) return false;
     if (!unescapeBody(f[7], p.body)) return false;
     if (!parseU32(f[8], p.date)) return false;
     p.path = f[9];
     p.sig = f[10];
     if (!validFields(p) || !sigOk(p.sig)) return false;
-    out = p;
+    out = std::move(p);
     return true;
 }
 
-bool decode(const std::string& line, NetCard& out) {
+bool decode(std::string_view line, NetCard& out) {
     if (line.size() > kNetMaxFrame) return false;
-    std::vector<std::string> f = split(line);
-    if (f.size() != 12 || f[0] != "C") return false;
+    std::string_view f[12];
+    if (split(line, f, 12) != 12 || f[0] != "C") return false;
     NetCard c;
     c.board = f[1];
     c.pub = f[2];
@@ -250,14 +258,14 @@ bool decode(const std::string& line, NetCard& out) {
     if (!parseU32(f[10], c.seq)) return false;
     c.sig = f[11];
     if (!validFields(c) || !sigOk(c.sig)) return false;
-    out = c;
+    out = std::move(c);
     return true;
 }
 
-bool decode(const std::string& line, NetNotice& out) {
+bool decode(std::string_view line, NetNotice& out) {
     if (line.size() > kNetMaxFrame) return false;
-    std::vector<std::string> f = split(line);
-    if (f.size() != 7 || f[0] != "N") return false;
+    std::string_view f[7];
+    if (split(line, f, 7) != 7 || f[0] != "N") return false;
     NetNotice n;
     n.kind = f[1];
     n.target = f[2];
@@ -268,11 +276,13 @@ bool decode(const std::string& line, NetNotice& out) {
     n.key = (int)key;
     n.sig = f[6];
     if (!validFields(n) || !sigOk(n.sig)) return false;
-    out = n;
+    out = std::move(n);
     return true;
 }
 
 // ---- sign / verify ---------------------------------------------------------------------
+
+bool validPost(const NetPost& p) { return validFields(p) && sigOk(p.sig); }
 
 bool signPost(NetPost& p, const KeyPair& k) {
     if (!validFields(p)) return false;

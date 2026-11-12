@@ -29,7 +29,7 @@ namespace axis::net {
 
 namespace {
 
-bool isHex(const std::string& s, size_t n) {
+bool isHex(std::string_view s, size_t n) {
     if (s.size() != n) return false;
     for (char c : s)
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
@@ -37,7 +37,7 @@ bool isHex(const std::string& s, size_t n) {
 }
 
 // Digits only, no leading zero (except "0" itself), fits in 32 bits.
-bool parseNum(const std::string& s, uint32_t& out) {
+bool parseNum(std::string_view s, uint32_t& out) {
     if (s.empty() || s.size() > 10 || (s.size() > 1 && s[0] == '0')) return false;
     uint64_t v = 0;
     for (char c : s) {
@@ -49,16 +49,12 @@ bool parseNum(const std::string& s, uint32_t& out) {
     return true;
 }
 
-// Splits "VERB rest" at the first space. rest is empty when there is no space.
-void verbOf(const std::string& l, std::string& verb, std::string& rest) {
+// Splits "VERB rest" at the first space, as views into l (nothing copied). rest is empty when there
+// is no space.
+void verbOf(std::string_view l, std::string_view& verb, std::string_view& rest) {
     size_t sp = l.find(' ');
-    if (sp == std::string::npos) {
-        verb = l;
-        rest.clear();
-    } else {
-        verb = l.substr(0, sp);
-        rest = l.substr(sp + 1);
-    }
+    verb = l.substr(0, sp);
+    rest = sp == std::string_view::npos ? std::string_view() : l.substr(sp + 1);
 }
 
 // A record this side may put on the wire: with any prefix (at most 32 characters) it stays within
@@ -82,8 +78,15 @@ NetSession::NetSession(NetCore& core, const NetCard& me, const KeyPair& signer, 
     if (dialer_) sendHello();
 }
 
-void NetSession::send(const std::string& l) {
+void NetSession::send(std::string_view l) {
     out_ += l;
+    out_ += '\n';
+}
+
+// A data line from a prefix and a record, appended straight to the output (no copy of the record).
+void NetSession::send(std::string_view prefix, std::string_view rec) {
+    out_ += prefix;
+    out_ += rec;
     out_ += '\n';
 }
 
@@ -128,6 +131,8 @@ void NetSession::feed(const char* p, size_t n) {
             fail("frame too big", "big");
             return;
         }
+        if (in_.capacity() < in_.size() + seg)  // grows by doubling, but never past one line's worth
+            in_.reserve(std::min(kSyncMaxLine, std::max(in_.size() + seg, 2 * in_.capacity())));
         in_.append(p + i, seg);
         i += seg;
         if (!nl) break;
@@ -232,8 +237,10 @@ void NetSession::enterSync() {
     // WANT (or not) follows in the first tick with heap to spare: hasNetPosts reads headers.
 }
 
+// The line is parsed in place: verb, index and record are views into l. A data line's record is
+// decoded straight from it, and l is let go before the record is stored (see takeEntry).
 void NetSession::syncLine(std::string& l) {
-    std::string verb, rest;
+    std::string_view verb, rest;
     verbOf(l, verb, rest);
     uint32_t n = 0;
     if (verb == "SEQ") {
@@ -244,15 +251,15 @@ void NetSession::syncLine(std::string& l) {
     }
     if (!peerSeq_) return fail("bad line", "bad");  // everything else comes after the peer's SEQ
     if (verb == "ACK" || verb == "NAK") {
-        std::string idx = rest, reason;
+        std::string_view idx = rest, reason;
         if (verb == "NAK") verbOf(rest, idx, reason);
         return ack(idx, verb == "NAK", reason);
     }
     if (verb == "E") {
-        std::string idx, rec;
+        std::string_view idx, rec;
         verbOf(rest, idx, rec);
         peerDone_ = false;  // more after a DONE: a new DONE follows
-        return takeEntry(idx, rec);
+        return takeEntry(idx, rec, l);
     }
     if (verb == "S") {
         // After SEND only a card, sent ahead of its board's posts.
@@ -261,7 +268,7 @@ void NetSession::syncLine(std::string& l) {
     }
     if (verb == "H") {
         if (!sentWant_ || peerHend_) return fail("bad line", "bad");  // history only when asked for
-        return takeHistory(rest);
+        return takeHistory(rest, l);
     }
     if (verb == "WANT") {
         if (peerWant_ || peerSend_ || !parseNum(rest, n) || n == 0) return fail("bad line", "bad");
@@ -288,7 +295,7 @@ void NetSession::syncLine(std::string& l) {
     fail("bad line", "bad");
 }
 
-void NetSession::ack(const std::string& idx, bool nak, const std::string& reason) {
+void NetSession::ack(std::string_view idx, bool nak, std::string_view reason) {
     uint32_t i;
     // Answers come strictly in order: anything else could move the cursor past unsent entries.
     if (!parseNum(idx, i) || inFlight_.empty() || inFlight_.front().first != i) return fail("bad line", "bad");
@@ -317,10 +324,12 @@ void NetSession::cardAhead(const std::string& postLine) {
     std::string l = encode(*c);
     if (!fits(l)) return;
     if (cardsSent_.size() < kSyncCardsAhead) cardsSent_.push_back(origin);
-    send("S " + l);
+    send("S ", l);
 }
 
-void NetSession::takeEntry(const std::string& idx, const std::string& rec) {
+// rec is a view into line. A post is decoded from it, then line is let go before the post is stored,
+// so the line and the stored copies are never all held at once.
+void NetSession::takeEntry(std::string_view idx, std::string_view rec, std::string& line) {
     uint32_t i;
     if (!parseNum(idx, i)) return fail("bad line", "bad");
     const char* reason = nullptr;  // null: ACK
@@ -330,8 +339,9 @@ void NetSession::takeEntry(const std::string& idx, const std::string& rec) {
         NetPost p;
         if (!decode(rec, p)) {
             reason = kNakBad;
-        } else if (core_.take(std::move(p), peer_, false, &reason) == NetCore::Took::Stored) {
-            postsTaken_++;
+        } else {
+            std::string().swap(line);  // idx and rec are no longer looked at
+            if (core_.take(std::move(p), peer_, false, &reason) == NetCore::Took::Stored) postsTaken_++;
         }
     } else if (rec[0] == (char)NetKind::Card) {
         NetCard c;
@@ -344,17 +354,18 @@ void NetSession::takeEntry(const std::string& idx, const std::string& rec) {
     } else {
         reason = kNakBad;
     }
+    std::string num = std::to_string(i);  // the index as it came (parseNum takes one spelling only)
     if (reason) {
         naksSent_++;
-        send("NAK " + idx + " " + reason);
+        send("NAK " + num + " " + reason);
     } else {
-        send("ACK " + idx);
+        send("ACK " + num);
     }
 }
 
 // Snapshot records are not answered. One that does not decode is skipped: the line itself was
 // well formed, and the record is the peer's data, checked again by NetCore anyway.
-void NetSession::takeState(const std::string& rec) {
+void NetSession::takeState(std::string_view rec) {
     if (rec.empty()) return;
     if (rec[0] == (char)NetKind::Card) {
         NetCard c;
@@ -367,11 +378,12 @@ void NetSession::takeState(const std::string& rec) {
 
 // History skips the ingress limit, so this side caps it: past kSyncHistoryMax H lines in one
 // session the rest are read and dropped.
-void NetSession::takeHistory(const std::string& rec) {
+void NetSession::takeHistory(std::string_view rec, std::string& line) {
     if (histTaken_ >= kSyncHistoryMax) return;
     histTaken_++;
     NetPost p;
     if (rec.empty() || rec[0] != (char)NetKind::Post || !decode(rec, p)) return;
+    std::string().swap(line);  // rec is no longer looked at
     if (core_.take(std::move(p), peer_, true) == NetCore::Took::Stored) postsTaken_++;
 }
 
@@ -381,7 +393,9 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         started_ = true;
         startMs_ = lastRxMs_ = nowMs;
     }
-    if (heard_) {
+    if (heard_ || !heapOk) {
+        // Short of heap the host reads nothing (TCP holds the peer back), so the peer's silence is
+        // ours: the silence timer stands still. The whole session's deadline still runs.
         heard_ = false;
         lastRxMs_ = nowMs;
     }
@@ -413,7 +427,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         }
         while (snapPos_ < snap_.size() && budget && roomForData()) {
             if (fits(snap_[snapPos_])) {
-                send("S " + snap_[snapPos_]);
+                send("S ", snap_[snapPos_]);
                 budget--;
                 streamed = true;
             }
@@ -443,7 +457,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
                 break;
             }
             if (!fits(l)) continue;
-            send("H " + l);
+            send("H ", l);
             postsSent_++;
             budget--;
             streamed = true;
@@ -476,7 +490,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         fetched_.pop_front();
         bool post = e.second[0] == (char)NetKind::Post;
         if (post) cardAhead(e.second);
-        send("E " + std::to_string(e.first) + " " + e.second);
+        send("E " + std::to_string(e.first) + " ", e.second);
         inFlight_.emplace_back(e.first, post);
         if (post) postsSent_++;
         budget--;

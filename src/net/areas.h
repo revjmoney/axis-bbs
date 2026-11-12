@@ -63,7 +63,7 @@ constexpr const char* kNakKilled = "killed";    // killed by Rev
 constexpr const char* kNakLimited = "limited";  // over the origin's daily ingress limit
 constexpr const char* kNakNoCard = "nocard";    // transient: the origin's card is not held here
 constexpr const char* kNakStore = "store";      // transient: the message base did not take it
-bool netNakTransient(const std::string& word);
+bool netNakTransient(std::string_view word);
 
 // Where a history walk is: the posts to send, merged across every Sysop Net area oldest first, as
 // (area index << 28 | message number), and how many went. Only these numbers are kept (at most

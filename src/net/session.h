@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <deque>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -73,13 +74,14 @@ private:
     void proof(const std::string& l);
     std::string transcript(char role) const;
     void enterSync();
-    void takeEntry(const std::string& idx, const std::string& rec);
-    void takeState(const std::string& rec);
-    void takeHistory(const std::string& rec);
-    void ack(const std::string& idx, bool nak, const std::string& reason);
+    void takeEntry(std::string_view idx, std::string_view rec, std::string& line);
+    void takeState(std::string_view rec);
+    void takeHistory(std::string_view rec, std::string& line);
+    void ack(std::string_view idx, bool nak, std::string_view reason);
     void cardAhead(const std::string& postLine);
     void sendHello();
-    void send(const std::string& l);
+    void send(std::string_view l);
+    void send(std::string_view prefix, std::string_view rec);
     void fail(const char* why, const char* bye);
     bool roomForData() const { return out_.size() < kSyncOutHigh; }
     bool outOverflow();

@@ -213,7 +213,7 @@ int NetCore::storePost(NetPost& p, std::string& line) {
     return num;
 }
 
-bool netNakTransient(const std::string& word) { return word == kNakNoCard || word == kNakStore; }
+bool netNakTransient(std::string_view word) { return word == kNakNoCard || word == kNakStore; }
 
 NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history, const char** nak) {
     syncLimits();  // the host may have loaded the state directly
@@ -224,8 +224,10 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
         return t;
     };
     if (nak) *nak = nullptr;
-    // 1. decode limits: the record must be representable and signed, and (with a clock) in date
-    if (p.sig.empty() || p.body.size() > kNetMaxBody || encode(p).empty()) return res(Took::Rejected, "rejected bad", kNakBad);
+    // The post is copied as little as it can be: the checks below build no line; the line is encoded
+    // once, after them, and the body and that line are moved into the message base (storePost).
+    // 1. decode limits: the fields valid and signed, and (with a clock) in date
+    if (p.body.size() > kNetMaxBody || !validPost(p)) return res(Took::Rejected, "rejected bad", kNakBad);
     if (clockSet()) {
         uint64_t now = now_(), date = p.date;
         if (date + (uint64_t)keepDays_ * 86400 < now || date > now + 86400) return res(Took::Rejected, "rejected date", kNakDate);
@@ -250,20 +252,20 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
     // every E line cost an area scan.
     if (seen_.has(p.id) && !(history && seen_.belowWindow(p.id) && !stored(p.area, p.id)))
         return res(Took::Duplicate, "duplicate", nullptr);
-    // 7. ingress, counting the body size (history pulls are capped by the session instead; Rev's
-    // boards are never limited)
-    uint32_t today = day();
-    if (!history && !isRevBoard(p.board) && !ingress_.allow(p.board, p.body.size(), today)) return res(Took::Limited, "limited", kNakLimited);
-
+    // 7. the line as it is stored and passed on, with this hop on its path: it must fit a frame
     std::string cameWith = p.path;
     if (!fromPeer.empty()) p.path = appendHop(p.path, fromPeer);
     std::string line = encode(p);
-    if (line.empty()) {  // the hop is not a valid path entry: keep the path as it came
+    if (line.empty() && p.path != cameWith) {  // the hop is not a valid path entry: keep the path as it came
         p.path = cameWith;
         line = encode(p);
     }
-    cameWith.clear();
-    if (line.empty()) return res(Took::Rejected, "rejected path", kNakBad);
+    std::string().swap(cameWith);
+    if (line.empty()) return res(Took::Rejected, "rejected bad", kNakBad);
+    // 8. ingress, counting the body size (history pulls are capped by the session instead; Rev's
+    // boards are never limited)
+    uint32_t today = day();
+    if (!history && !isRevBoard(p.board) && !ingress_.allow(p.board, p.body.size(), today)) return res(Took::Limited, "limited", kNakLimited);
     int num = storePost(p, line);  // the body is moved out here
     if (!num) return res(Took::Rejected, "rejected store", kNakStore);
     seen_.add(p.id, today);

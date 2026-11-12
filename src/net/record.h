@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include "net/sign.h"
 
@@ -47,9 +48,14 @@ std::string encode(const NetPost& p);
 std::string encode(const NetCard& c);
 std::string encode(const NetNotice& n);
 
-bool decode(const std::string& line, NetPost& p);
-bool decode(const std::string& line, NetCard& c);
-bool decode(const std::string& line, NetNotice& n);
+// Parsed in place: the fields are copied once, straight into the record (a post's body is unescaped
+// into it), and nothing else of the line is copied. The record is left as it was on failure.
+bool decode(std::string_view line, NetPost& p);
+bool decode(std::string_view line, NetCard& c);
+bool decode(std::string_view line, NetNotice& n);
+
+// The post's fields are valid and it carries a signature of the right form (no line is built).
+bool validPost(const NetPost& p);
 
 bool signPost(NetPost& p, const KeyPair& k);
 bool verifyPost(const NetPost& p, const std::string& pubHex);

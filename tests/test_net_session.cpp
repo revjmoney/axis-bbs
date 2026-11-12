@@ -574,3 +574,63 @@ TEST_CASE("after SEND an S line may carry only a card") {
     RawDialer::say(s, "S " + encode(makeNotice(rev0(), 0, "ban", "0123456789abcdef", 3)));
     CHECK(s.failed());
 }
+
+TEST_CASE("short of heap the silence timer stands still; the deadline does not") {
+    RevKeys rk;
+    Node b(0xCD);
+    RawDialer r(0xCE);
+    b.core.addLinkPeer(r.card.board, false);  // a link peer: the full deadline
+    NetSession s(b.core, b.card, b.key, nonce(8), false, "");
+    s.tick(0, true);
+    r.handshake(s);
+    RawDialer::say(s, "SEQ 0");
+    uint32_t ms = 0;
+    for (; ms <= 5 * 60 * 1000; ms += 1000) s.tick(ms, false);  // the host reads nothing for 5 minutes
+    CHECK_FALSE(s.failed());
+    s.tick(ms + kSyncTimeoutMs - 1000, true);  // heap back: silence counts from the last paused tick
+    CHECK_FALSE(s.failed());
+    s.tick(ms + kSyncTimeoutMs + 1000, true);
+    CHECK(s.failed());
+    CHECK(std::string(s.why()) == "timeout");
+
+    NetSession t(b.core, b.card, b.key, nonce(9), false, "");
+    t.tick(0, true);
+    r.handshake(t);
+    for (ms = 0; ms <= kSyncDeadlineMs + 2000 && !t.failed(); ms += 1000) t.tick(ms, false);
+    CHECK(t.failed());
+    CHECK(std::string(t.why()) == "too long");
+}
+
+TEST_CASE("a max-size post line is taken whole through the in-place parse") {
+    RevKeys rk;
+    Node a(0xCF), b(0xD0);
+    b.knows(a);
+    RawDialer r(0xD1);
+    // The biggest body that still fits a frame once escaped.
+    std::string body(kNetMaxBody, 'x');
+    for (size_t i = 0; i < body.size(); i += 97) body[i] = '\n';
+    NetPost p;
+    p.board = a.board;
+    p.id = a.board + "-1";
+    p.area = "sn_support";
+    p.from = "Sysop";
+    p.to = "All";
+    p.subject = "Big";
+    p.body = body;
+    p.date = kNow;
+    while (!signPost(p, a.key)) p.body.pop_back();
+    std::string line = encode(p);
+    REQUIRE(line.size() > kNetMaxBody);
+    NetSession s(b.core, b.card, b.key, nonce(10), false, "");
+    r.handshake(s);
+    RawDialer::say(s, "SEQ 0");
+    RawDialer::say(s, "E 7 " + line);
+    CHECK_FALSE(s.failed());
+    CHECK(countPrefix(s.takeOut(), "ACK 7") == 1);
+    axis::bbs::Message m;
+    REQUIRE(b.files.read("sn_support", 1, m));
+    CHECK(m.body == p.body);
+    NetPost back = decodePost(m.net);
+    CHECK(back.id == p.id);
+    CHECK(back.path == r.card.board);  // the hop was added
+}
