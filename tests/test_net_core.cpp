@@ -433,6 +433,11 @@ TEST_CASE("net walks stream the headers and never build a header list") {
     for (int i = 0; i < 6; i++) ids.push_back(core.originate(i % 2 ? "sn_bugs" : "sn_support", m));
     for (const auto& id : ids) REQUIRE(!id.empty());
     CHECK(core.hasNetPosts());
+    HistoryCursor hc;
+    std::string hl;
+    int sent = 0;
+    while (core.historyNext(hc, 0, hl)) sent++;
+    CHECK(sent == 6);
     // A kill drops the post from its area by a header scan.
     REQUIRE(core.takeNotice(makeNotice(rev0(), 0, "kill", ids[3], 1), ""));
     int left = 0;
@@ -479,4 +484,21 @@ TEST_CASE("the file store's header scan sees every post and stops when asked") {
     REQUIRE(files.read("sn_support", 205, back));
     CHECK(back.net == m.net);
     CHECK(back.body == m.body);
+}
+
+TEST_CASE("a history post below the seen window is taken once, by its area") {
+    RevKeys rk;
+    Node a(0x92), b(0x93);
+    b.knows(a);
+    std::vector<NetPost> ps;
+    for (uint32_t s = 1; s <= 100; s++) ps.push_back(makePost(a.key, s, kNow, s < 50 ? "sn_bugs" : "sn_support"));
+    REQUIRE(b.core.take(ps[99], a.board, true) == Took::Stored);  // seq 100 first: the window is 36..99
+    CHECK(b.core.seen().belowWindow(ps[0].id));
+    CHECK_FALSE(b.core.seen().belowWindow(ps[60].id));
+    CHECK(b.core.take(ps[0], a.board) == Took::Duplicate);         // an E line: the window alone decides
+    CHECK(b.core.take(ps[0], a.board, true) == Took::Stored);      // history: not in sn_bugs yet
+    CHECK(b.core.take(ps[0], a.board, true) == Took::Duplicate);   // now it is
+    CHECK(b.core.take(ps[60], a.board, true) == Took::Stored);     // inside the window as before
+    CHECK(b.core.take(ps[60], a.board, true) == Took::Duplicate);
+    CHECK(b.ids("sn_bugs").size() == 1);
 }

@@ -419,6 +419,14 @@ bool NetSeen::has(const std::string& id) const {
     return (r.window >> (d - 1)) & 1u;
 }
 
+bool NetSeen::belowWindow(const std::string& id) const {
+    uint64_t board;
+    uint32_t seq;
+    if (!seenId(id, board, seq)) return false;
+    auto it = boards_.find(board);
+    return it != boards_.end() && seq < it->second.high && it->second.high - seq > kSeenWindow;
+}
+
 void NetSeen::put(uint64_t board, const Rec& r) {
     if (boards_.find(board) == boards_.end() && boards_.size() >= kNetMaxSeenBoards) {
         auto lru = boards_.begin();

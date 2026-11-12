@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // NetSession: two boards syncing in memory, the handshake's checks, and the session's limits.
+#include <algorithm>
+
 #include "net_testutil.h"
 
 using namespace nettest;
@@ -400,4 +402,41 @@ TEST_CASE("session limits: silence, lines and the deadline") {
     CHECK(std::string(u.why()) == "too long");
     CHECK(ms > kSyncDeadlineMs);
     CHECK(ms <= kSyncDeadlineMs + 20000);
+}
+
+TEST_CASE("history is merged across areas by date, so an origin's posts in later areas are not lost") {
+    RevKeys rk;
+    Node a(0xC0), b(0xC1);
+    // One post in the last area first, then 70 in the first area: the first area alone would lift the
+    // receiver's window more than 64 seqs past the early post.
+    a.now = kNow - 2 * kDay;
+    std::string early = netPostId(a.post("sn_bugs", "early"));
+    for (int i = 0; i < 70; i++) {
+        a.now += 60;
+        REQUIRE(!a.post("sn_support", "n" + std::to_string(i)).empty());
+    }
+    a.now = kNow;
+    // The walk itself: oldest first across the areas, so seqs climb.
+    HistoryCursor c;
+    std::string l;
+    std::vector<uint32_t> seqs;
+    while (a.core.historyNext(c, 0, l)) {
+        std::string id = decodePost(l).id;
+        seqs.push_back((uint32_t)std::stoul(id.substr(17)));
+    }
+    REQUIRE(seqs.size() == 71);
+    CHECK(seqs.front() == 1);
+    CHECK(std::is_sorted(seqs.begin(), seqs.end()));
+    // And over a session to a new board.
+    NetSession da(a.core, a.card, a.key, nonce(1), true, b.board);
+    NetSession db(b.core, b.card, b.key, nonce(2), false, "");
+    uint32_t ms = 0;
+    run(da, db, ms);
+    CHECK_MESSAGE(da.done(), da.why());
+    CHECK_MESSAGE(db.done(), db.why());
+    CHECK(db.postsTaken() == 71);
+    auto bugs = b.ids("sn_bugs");
+    REQUIRE(bugs.size() == 1);
+    CHECK(bugs[0] == early);
+    CHECK(b.ids().size() == 70);
 }

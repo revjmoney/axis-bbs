@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <initializer_list>
-#include <set>
 
 #include "net/revkeys.h"
 
@@ -237,8 +236,12 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
     if (!area || (area->revOnly && !isRevBoard(p.board))) return res(Took::Rejected, "rejected area");
     // 5. killed
     if (state_.killed(p.id)) return res(Took::Rejected, "rejected killed");
-    // 6. dedupe (it is marked seen only once stored, below)
-    if (seen_.has(p.id)) return res(Took::Duplicate, "duplicate");
+    // 6. dedupe (it is marked seen only once stored, below). A history post below the seen window
+    // (more than 64 seqs under its origin's highest) is not known from the window alone: it is a
+    // duplicate only if its area already holds it. Only history gets this look, so a peer cannot make
+    // every E line cost an area scan.
+    if (seen_.has(p.id) && !(history && seen_.belowWindow(p.id) && !stored(p.area, p.id)))
+        return res(Took::Duplicate, "duplicate");
     // 7. ingress, counting the body size (history pulls are capped by the session instead)
     uint32_t today = day();
     if (!history && !ingress_.allow(p.board, p.body.size(), today)) return res(Took::Limited, "limited");
@@ -524,41 +527,64 @@ void NetCore::trim(uint32_t nowUnix) {
 bool NetCore::historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& line) {
     line.clear();
     const std::vector<NetArea>& areas = sysopNetAreas();
-    while (c.area < areas.size()) {
-        const std::string& area = areas[c.area].id;
-        if (!c.loaded) {
-            c.nums.clear();
-            c.pos = 0;
-            {
-                std::vector<Message> h = store_.headers(area);  // oldest first, at most the newest 200
-                for (const Message& m : h) {
-                    if (netPostId(m.net).empty()) continue;
-                    // The stored date is minute text and never later than the post's own date,
-                    // so a minute of slack keeps posts from the edge of the window.
-                    if (sinceUnix && netDateUnix(m.date) + 60 < sinceUnix) continue;
-                    c.nums.push_back(m.num);
-                }
-            }
-            if (c.nums.size() > kNetHistoryPerArea)
-                c.nums.erase(c.nums.begin(), c.nums.end() - kNetHistoryPerArea);
-            c.nums.shrink_to_fit();
-            c.loaded = true;
+    if (!c.loaded) {
+        // Each area's newest kNetHistoryPerArea net posts by a header scan, as (date, seq, area, number):
+        // 16 bytes each, at most 800 (about 13 KB) for a moment, sorted, then cut to 4 bytes each.
+        struct Pick {
+            uint32_t date, seq, area;
+            int num;
+        };
+        std::vector<Pick> all;
+        for (size_t a = 0; a < areas.size(); a++) {
+            size_t from = all.size();
+            store_.scanHeaders(areas[a].id, [&](const Message& m) {
+                std::string id = netPostId(m.net);
+                uint32_t seq = 0;
+                if (id.size() < 18 || !parseSeq(id.substr(17), seq) || m.num <= 0 || m.num >= (1 << 28)) return true;
+                // The stored date is minute text and never later than the post's own date, so a
+                // minute of slack keeps posts from the edge of the window.
+                uint32_t date = netDateUnix(m.date);
+                if (sinceUnix && date + 60 < sinceUnix) return true;
+                if (all.size() - from == kNetHistoryPerArea) all.erase(all.begin() + (long)from);  // keep the newest
+                all.push_back(Pick{date, seq, (uint32_t)a, m.num});
+                return true;
+            });
         }
-        while (c.pos < c.nums.size()) {
-            Message m;
-            if (!store_.read(area, c.nums[c.pos++], m)) continue;
-            std::string id = netPostId(m.net);
-            if (id.size() < 17 || state_.held(id) || state_.killed(id) || state_.banned(id.substr(0, 16)))
-                continue;
-            line = std::move(m.net);
-            return true;
-        }
-        c.area++;
-        c.loaded = false;
-        c.nums.clear();
-        c.nums.shrink_to_fit();
+        // Oldest first, ties by seq then area and number. An insertion sort: each area's run is already
+        // about in order, and it costs no flash for a sort template.
+        auto before = [](const Pick& x, const Pick& y) {
+            if (x.date != y.date) return x.date < y.date;
+            if (x.seq != y.seq) return x.seq < y.seq;
+            if (x.area != y.area) return x.area < y.area;
+            return x.num < y.num;
+        };
+        for (size_t i = 1; i < all.size(); i++)
+            for (size_t j = i; j > 0 && before(all[j], all[j - 1]); j--) std::swap(all[j], all[j - 1]);
+        c.picks.clear();
+        c.picks.reserve(all.size());
+        for (const Pick& p : all) c.picks.push_back(p.area << 28 | (uint32_t)p.num);
+        std::vector<Pick>().swap(all);
+        c.pos = 0;
+        c.loaded = true;
     }
+    while (c.pos < c.picks.size()) {
+        uint32_t pick = c.picks[c.pos++];
+        size_t a = pick >> 28;
+        Message m;
+        if (a >= areas.size() || !store_.read(areas[a].id, (int)(pick & 0x0FFFFFFFu), m)) continue;
+        std::string id = netPostId(m.net);
+        if (id.size() < 17 || state_.held(id) || state_.killed(id) || state_.banned(id.substr(0, 16))) continue;
+        line = std::move(m.net);
+        return true;
+    }
+    std::vector<uint32_t>().swap(c.picks);
     return false;
+}
+
+bool NetCore::stored(const std::string& area, const std::string& id) {
+    bool found = false;
+    store_.scanHeaders(area, [&](const Message& m) { return !(found = netPostId(m.net) == id); });
+    return found;
 }
 
 bool NetCore::hasNetPosts() const {

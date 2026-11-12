@@ -97,11 +97,14 @@ private:
 std::string noticeGroup(const NetNotice& n);
 
 // Seen posts, per origin board: post ids are "<board>-<seq>", and each board keeps its highest seq
-// seen plus a 64 bit window of the 64 seqs below it. A seq at or below high - 64 counts as seen.
-// At most kNetMaxSeenBoards boards; the least recently used one goes first.
+// seen plus a 64 bit window of the 64 seqs below it (high - 1 down to high - 64). A seq below
+// high - 64 counts as seen. At most kNetMaxSeenBoards boards; the least recently used one goes first.
 class NetSeen {
 public:
     bool has(const std::string& id) const;
+    // The id is below its board's window (more than 64 under the highest), so has() says seen
+    // without knowing.
+    bool belowWindow(const std::string& id) const;
     bool add(const std::string& id, uint32_t nowDay);  // false if already seen or not a post id
     void prune(uint32_t nowDay);  // drops boards not touched for kSeenDays
     size_t size() const { return boards_.size(); }

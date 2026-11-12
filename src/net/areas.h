@@ -49,13 +49,13 @@ constexpr uint32_t kNetClockSet = 1700000000;   // below this the board's clock 
 constexpr uint8_t kNetReadStrikes = 3;          // pendingFor calls stuck on an unreadable post before it is gone
 constexpr size_t kNetHistoryPerArea = 200;      // posts per area a new board's history pull gets at most
 
-// Where a history walk is: the area it is in and the message numbers left to send there. Only
-// numbers are kept (at most kNetHistoryPerArea), never whole messages.
+// Where a history walk is: the posts to send, merged across every Sysop Net area oldest first, as
+// (area index << 28 | message number), and how many went. Only these numbers are kept (at most
+// kNetHistoryPerArea per area, 4 bytes each), never whole messages.
 struct HistoryCursor {
-    size_t area = 0;
-    bool loaded = false;  // nums holds the current area's picks
+    bool loaded = false;  // picks holds the walk
     size_t pos = 0;
-    std::vector<int> nums;
+    std::vector<uint32_t> picks;
 };
 
 // `store` must be the board's real message store, never the NetPostingStore wrapping it (that
@@ -121,7 +121,9 @@ public:
     void loadCursors(const std::string& text);
 
     // History for a new board: the stored posts of every Sysop Net area dated at or after
-    // sinceUnix (0 for all), the newest kNetHistoryPerArea per area, one encoded line per call.
+    // sinceUnix (0 for all), the newest kNetHistoryPerArea per area, merged across the areas in
+    // date order (oldest first; ties by seq), one encoded line per call. In date order each origin's
+    // posts arrive about in seq order, so the receiver's seen window holds them whatever their area.
     // Held, killed and banned-origin posts are skipped. False once the walk is over.
     bool historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& line);
     // True if any Sysop Net area holds a post (stops at the first one found).
@@ -176,6 +178,7 @@ private:
     Res resolve(const std::string& entry, const std::string& peer, std::string& line);
     bool clockSet() const { return now_() > kNetClockSet; }
     void dropPost(const std::string& id);
+    bool stored(const std::string& area, const std::string& id);  // the post is in that area (a header scan)
     void trimArea(const std::string& area, uint32_t nowDay, bool clock);
 
     bbs::MessageStore& store_;
