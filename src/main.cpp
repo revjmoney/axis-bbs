@@ -1573,6 +1573,7 @@ static void drawShell() {
 
 // The sysop panel while a caller downloads or uploads: a drippy window with a live progress bar.
 static void drawTransfer() {
+    wfcOnPanel = false;  // (called from the sessions too: the panel no longer shows the WFC, so @SHOT must not dump it)
     static BigText t;
     const auto&    r = job->request();
     uint32_t       done = job->bytes(), size = job->size(), secs = (millis() - jobStartMs) / 1000;
@@ -4433,6 +4434,11 @@ void loop() {
             seenDropped = d, seenGated = g;
             lastMemLog = millis(), memLogged = true;
         }
+    }
+    static uint32_t lastRoll = 0;  // the day counters roll at midnight on every board, screen or not (the WFC used to be the only one)
+    if (millis() - lastRoll > 5000u) {
+        lastRoll = millis();
+        rollDayCounters();
     }
     static uint32_t lastTick = 0;  // keep the clock and the time-online count moving
     if (millis() - lastTick > 300u) {  // the status lights blink, long lines scroll, the times tick

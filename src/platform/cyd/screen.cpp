@@ -102,7 +102,7 @@ void screenShot(void (*eachRow)(), const axis::bbs::AnsiTerm* wfc) {
         Serial.println("@SHOT NONE");  // drawn straight to the panel (or no panel): nothing to read back
         return;
     }
-    Serial.println("@SHOT 320 240");
+    Serial.print("@SHOT 320 240\n");  // (LF only, as the header always was)
     if (bands) {
         tft.waitDMA();
         for (int top = 0; top < 240; top += 40) {  // the WFC: its bands one after another
