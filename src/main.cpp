@@ -822,8 +822,8 @@ static std::unique_ptr<axis::door::HostFs>      doorFs;     // the door's folder
 static std::unique_ptr<axis::door::LockTable>   doorRemoteLocks;  // a follower's door locks the main's records
 static axis::door::LockTable                    doorLocks;
 static std::unique_ptr<axis::bbs::AnsiViewer>   viewer;  // this session's movie or pack door
-static std::unique_ptr<axis::lord::NativeLord>  nativeLord;  // this session's LORD, parked with the session
 static std::unique_ptr<axis::door::HostFs>      lordFs;
+static std::unique_ptr<axis::lord::NativeLord>  nativeLord;  // this session's LORD, parked with the session
 static std::unique_ptr<axis::door::LockTable>   lordLocks;
 static std::unique_ptr<axis::bbs::TransferJob>  job;     // this session's download or upload
 static uint32_t                                 jobStartMs = 0, jobDrawnMs = 0;
@@ -904,9 +904,9 @@ struct Session {
     std::unique_ptr<axis::bbs::Node>        node;
     uint32_t                                startMs = 0;
     std::string                             lastStatus;
-    std::unique_ptr<axis::lord::NativeLord> lord;
     std::unique_ptr<axis::door::HostFs>     lordFs;
-    std::unique_ptr<axis::door::LockTable>  lordLocks;
+    std::unique_ptr<axis::door::LockTable>  lordLocks;  // (before lord: members die in reverse, and a LORD still in a script closes its file)
+    std::unique_ptr<axis::lord::NativeLord> lord;
     std::unique_ptr<axis::bbs::AnsiViewer>  viewer;
     std::unique_ptr<axis::bbs::TransferJob> job;
     uint32_t                                doorStartMs = 0;
