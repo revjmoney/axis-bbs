@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The ANSI viewer's SD cache: each deflated piece of an art pack unpacked once into a plain file, so a
-// caller views it straight off the card without the board's 44 KB inflate window (the window was what
-// a busy board could not spare). The files sit in their own folder on the main's card (the file area
-// "viewcache", never on a menu) named by the piece's CRC-32 and size, so a pack that changes gets new
-// names and two packs holding the same piece share one file. The ZIPs callers download never change.
+// The ANSI viewer's SD view cache: each art pack copied once into an uncompressed ("stored") ZIP of just
+// its pieces, so a caller views them straight off the card without the board's 44 KB inflate window (the
+// window was what a busy board could not spare). One file per pack (about 270, not one per piece: a
+// FAT folder of 12,000 files is slow to search), in the file area "viewcache" on the main's card, never
+// on a menu. A copy is named by a fingerprint of its pack's pieces (names, CRC-32s, sizes), so a pack
+// that changes gets a new name, and copies no pack needs any more are deleted. A follower's viewer reads
+// the main's copies over the link like any other file. The ZIPs callers download never change.
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,50 +21,64 @@ namespace axis::bbs::viewcache {
 
 constexpr const char* kArea = "viewcache";
 
-std::string name(const ZipEntry& e);  // "1A2B3C4D-E77.ANS": CRC-32 and size in hex
+// The copy's file name for a pack with these entries ("1A2B3C4D-0042.ZIP": fingerprint, piece count).
+std::string cacheName(const std::vector<ZipEntry>& packEntries);
+// Whether copy holds exactly the pack's viewable pieces, in order, with the same names, CRCs and sizes.
+bool matches(const std::vector<ZipEntry>& packEntries, const std::vector<ZipEntry>& copyEntries);
 
-// The cached copy of e, or nullptr (not there yet, or not the right size).
-std::unique_ptr<RandomFile> open(FileLibrary& lib, const ZipEntry& e);
-
-// Unpacks e into the cache. ws/wsSize/state as for ZipReader::extract (the board's lent window). The
-// copy is kept only when it unpacked whole and its CRC-32 matches the ZIP's; true when the cache has it.
-bool unpack(FileLibrary& lib, ZipReader& zip, const ZipEntry& e, uint8_t* ws, size_t wsSize, uint8_t* state);
-
-// Fills the cache ahead of callers (the main, while nobody is online): one piece per step(), each with
-// the board's inflate window taken and given straight back. Pieces the viewer can show (isAnsiPiece)
-// and deflated ones only: a stored piece needs no window.
+// Makes the copies ahead of callers (the main, while nobody is online), one small step per loop turn:
+// a pack opened, or up to stepBytes of a piece copied (a 1.7 MB movie in one go held the loop 7 s).
+// The board's inflate window is taken only for a deflated piece, from its first step to its last, and
+// only while room(minFree, minLargest) holds with it taken. space(bytes) says whether the card can take
+// a copy that size. Then the copies no pack matches are deleted, one a step.
 class Filler {
 public:
-    static constexpr size_t kStepBytes = 16384;  // unpacked per step: a 1.7 MB movie in one go stalled the loop 7 s
-    Filler(FileLibrary& lib, std::vector<std::string> areas, size_t stepBytes = kStepBytes)
-        : lib_(lib), areas_(std::move(areas)), stepBytes_(stepBytes) {}
-    ~Filler();  // a piece part way is thrown away and the window given back
+    static constexpr size_t   kStepBytes = 16384;
+    static constexpr uint32_t kFillFree = 49152, kFillLargest = 28672;  // a little under the busy-test floors (Rev)
+    using Room = std::function<bool(uint32_t minFree, uint32_t minLargest)>;
+    using Space = std::function<bool(uint64_t bytes)>;
+    Filler(FileLibrary& lib, std::vector<std::string> areas, Room room = nullptr, Space space = nullptr,
+           size_t stepBytes = kStepBytes);
+    ~Filler();  // a copy part way is thrown away and the window given back
     Filler(const Filler&) = delete;
     Filler& operator=(const Filler&) = delete;
-    // Up to stepBytes of one piece unpacked (or one pack looked at). The board's inflate window is
-    // held from a piece's first step to its last. False once every pack of every area has been gone
-    // through; a new Filler starts a new pass.
-    bool step();
-    int  unpacked() const { return unpacked_; }  // pieces this pass added
+    bool step();  // false once the pass is over; a new Filler starts a new pass
+    int  copied() const { return copied_; }    // packs copied this pass
+    int  removed() const { return removed_; }  // stale copies deleted this pass
 
 private:
-    bool nextPack();  // opens the next pack; false when there are none left
-    void dropPiece();  // the piece part way: its copy thrown away, the window given back
-    FileLibrary&                lib_;
-    std::vector<std::string>    areas_;
-    size_t                      area_ = 0;
-    std::vector<std::string>    packs_;  // the current area's ZIPs, listed when the area starts
-    bool                        listed_ = false;
-    size_t                      pack_ = 0;
-    std::unique_ptr<RandomFile> file_;
-    std::unique_ptr<ZipReader>  zip_;
-    size_t                      entry_ = 0;
-    int                         unpacked_ = 0;
+    struct Rec {  // a piece written into the copy: for its central directory
+        size_t   entry;
+        uint32_t offset;
+    };
+    bool nextPack();
+    bool startPack();       // the pack just opened: kept, skipped, or its copy begun
+    bool copyStep();        // the next part of the copy
+    bool finishCopy();      // the directory written and the copy kept
+    void dropCopy();        // the copy part way thrown away, the window given back
+    bool write(const void* p, size_t n);
+
+    FileLibrary&                       lib_;
+    std::vector<std::string>           areas_;
+    Room                               room_;
+    Space                              space_;
     size_t                             stepBytes_;
-    std::unique_ptr<ZipReader::Stream> stream_;  // the piece being unpacked (declared after zip_: it goes first)
-    std::unique_ptr<WriteFile>         out_;
+    bool                               listedCache_ = false;
+    std::vector<std::string>           have_;  // the copies on the card when the pass began
+    std::vector<bool>                  keep_;  // ...and whether a pack still matches each
+    size_t                             area_ = 0, pack_ = 0, entry_ = 0, removeAt_ = 0;
+    bool                               listed_ = false;
+    std::vector<std::string>           packs_;
+    std::unique_ptr<RandomFile>        file_;
+    std::unique_ptr<ZipReader>         zip_;
+    std::unique_ptr<WriteFile>         out_;  // the copy being written
+    std::string                        outName_;
+    uint32_t                           outBytes_ = 0;
+    std::vector<Rec>                   recs_;
+    std::unique_ptr<ZipReader::Stream> stream_;  // the piece being copied (declared last: it goes first)
     uint32_t                           crc_ = 0;
-    bool                               wrote_ = true, leased_ = false;
+    bool                               ok_ = true, leased_ = false;
+    int                                copied_ = 0, removed_ = 0;
 };
 
 }  // namespace axis::bbs::viewcache

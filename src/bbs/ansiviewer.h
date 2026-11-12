@@ -28,20 +28,13 @@ public:
     // the time, for playing ANSI movies at modem speed (without it they go as fast as the line takes)
     void setClock(std::function<uint32_t()> clock) { clock_ = std::move(clock); }
     // Whether the board keeps at least minFree bytes free and a minLargest block with the borrowed window taken:
-    // asked right after it is taken, and on every turn a piece plays from it, so a busy board refuses the piece
-    // (or stops it) with a note instead of going under the heap floor.
+    // asked right after it is taken and on every turn a piece plays from it, so a busy board refuses the piece
+    // (or stops it) with a note instead of going under the heap floor (the busy-test floors below).
     void setRoom(std::function<bool(uint32_t minFree, uint32_t minLargest)> room) { room_ = std::move(room); }
-    static constexpr uint32_t kPlayFree = 61440, kPlayLargest = 32768;    // playing from the window: the busy-test floors
-    static constexpr uint32_t kUnpackFree = 49152, kUnpackLargest = 28672;  // a moment's unpack into the cache (Rev: a little looser)
-    // The SD view cache (bbs/viewcache.h): a deflated piece is unpacked there once and then played from the card
-    // with no window held. Off: pieces play straight from the ZIP as before. A piece bigger than unpackMax is
-    // never unpacked while a caller waits (one in one go held the loop for seconds): until the board's idle
-    // filler has it in the cache, it plays from the ZIP.
-    static constexpr uint32_t kUnpackOnViewMax = 65536;
-    void setCache(bool on, uint32_t unpackMax = kUnpackOnViewMax) {
-        cache_ = on;
-        unpackMax_ = unpackMax;
-    }
+    static constexpr uint32_t kPlayFree = 61440, kPlayLargest = 32768;
+    // The SD view cache (bbs/viewcache.h): a pack the board has already copied there uncompressed is played
+    // from that copy, with no inflate window at all. Off: every pack plays from its own ZIP.
+    void setCache(bool on) { cache_ = on; }
     // several file areas (the door's args "ansi,scene-acid,..."): a picker first; id and name each
     void setAreas(std::vector<std::pair<std::string, std::string>> areas) { areas_ = std::move(areas); }
     void begin();  // show the packs (or the areas, when there are several)
@@ -66,9 +59,7 @@ private:
     uint32_t now() const { return clock_ ? clock_() : 0; }
     bool key(char c);
     bool inflateReady() const;  // a passed-in block, or our own window plus inflater state
-    bool grabInflate(uint32_t minFree, uint32_t minLargest);  // borrow the board's window; false when another caller has it or no room
-    size_t pull(uint8_t* out, size_t max);  // the next bytes of the piece playing: from the cached copy or the ZIP
-    ZipReader::Result pulled() const;       // how that went, once pull gives 0
+    bool grabInflate();         // borrow the board's window; false when another caller has it or the heap is short
     void releaseInflate();      // give it back (safe to call any time)
     bool number(char c, int& n);  // line input of a number; true on Enter with n set (0 = empty)
     bool back();                  // Esc or Q on a list: up a level; false when that leaves the viewer
@@ -104,10 +95,6 @@ private:
     std::function<uint32_t()>    clock_;
     std::function<bool(uint32_t, uint32_t)> room_;
     bool                         cache_ = false;
-    uint32_t                     unpackMax_ = kUnpackOnViewMax;
-    std::unique_ptr<RandomFile>  cached_;  // the piece playing, from the SD view cache (no window held)
-    uint32_t                     cachedAt_ = 0;
-    bool                         cachedBad_ = false;
     void shortOnMemory();  // the piece is dropped: back to the list, with the note
 };
 

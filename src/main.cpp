@@ -4329,14 +4329,17 @@ static void serviceSession(int i) {
     }
 }
 
-// The SD view cache filled ahead of callers: on the main with a card, only while nobody is online (the board's inflate window
-// for a moment per piece, one piece a loop turn). A pass goes through every *ANSIVIEW door's areas; the next starts 30 minutes
-// after one ends, so new uploads get unpacked too. A caller arriving drops the pass (and its open pack); the next idle restarts it.
+// The SD view cache filled ahead of callers: on the main with a card, only while nobody is online on any board (one small step a
+// loop turn: a pack looked at, or 16 KB of one copied; the inflate window only for a deflated piece and only above the fill floor).
+// A pass goes through every *ANSIVIEW door's areas, then deletes copies no pack matches; the next starts 30 minutes after one ends,
+// so new uploads get copied too. A caller arriving drops the pass (and a copy part way); the next idle restarts it.
 static void viewCacheTick() {
     static std::unique_ptr<axis::bbs::viewcache::Filler> fill;
     static uint32_t                                       nextMs = 60000;  // the first pass a minute after boot
     bool anyone = false;
     for (size_t i = 0; i < sessions.size() && !anyone; i++) anyone = sessionLine(i) != nullptr;
+    if (cluster)  // a caller on a follower counts too: the main serves its screens and files
+        for (auto& n : cluster->nodes()) anyone = anyone || !n.handle.empty();
     if (anyone || asFollower() || !storageHasSd() || !boardCfg) {
         fill.reset();
         return;
@@ -4357,10 +4360,16 @@ static void viewCacheTick() {
                 from = comma + 1;
             }
         }
-        fill.reset(new axis::bbs::viewcache::Filler(callerFiles(), std::move(areas)));
+        fill.reset(new axis::bbs::viewcache::Filler(
+            callerFiles(), std::move(areas),
+            [](uint32_t minFree, uint32_t minLargest) {
+                return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
+            },
+            [](uint64_t bytes) { return storageFreeBytes() >= bytes; }));
     }
     if (!fill->step()) {
-        if (fill->unpacked()) logEvent("view cache: " + String(fill->unpacked()) + " pieces unpacked to the card");
+        if (fill->copied() || fill->removed())
+            logEvent("view cache: " + String(fill->copied()) + " packs copied, " + String(fill->removed()) + " old copies removed");
         fill.reset();
         nextMs = now + 30u * 60u * 1000u;
     }
