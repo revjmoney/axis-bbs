@@ -10,6 +10,7 @@
 #include <map>
 
 #include "bbs/inflatelease.h"
+#include "bbs/viewcache.h"
 #include "bbs/theme.h"
 
 namespace axis::bbs {
@@ -53,7 +54,7 @@ bool AnsiViewer::inflateReady() const {
     return wsSize_ >= ZipReader::kWorkspace;
 }
 
-bool AnsiViewer::grabInflate() {
+bool AnsiViewer::grabInflate(uint32_t minFree, uint32_t minLargest) {
     if (inflateReady()) return true;  // a passed-in block, or the board's window already lent to us
     uint8_t *w, *s;
     if (!inflate::take(this, w, s)) return false;
@@ -61,11 +62,31 @@ bool AnsiViewer::grabInflate() {
     wsSize_ = inflate::kWindow;
     state_ = s;
     leased_ = true;
-    if (room_ && !room_()) {  // taken, and now the board is under its floor: give it straight back
+    if (room_ && !room_(minFree, minLargest)) {  // taken, and now the board is under its floor: give it straight back
         releaseInflate();
         return false;
     }
     return true;
+}
+
+size_t AnsiViewer::pull(uint8_t* out, size_t max) {
+    if (cached_) {
+        uint32_t left = cached_->size() - cachedAt_;
+        size_t   n = max < left ? max : (size_t)left;
+        if (n == 0) return 0;
+        if (!cached_->readAt(cachedAt_, out, n)) {
+            cachedBad_ = true;
+            return 0;
+        }
+        cachedAt_ += (uint32_t)n;
+        return n;
+    }
+    return stream_ ? stream_->read(out, max) : 0;
+}
+
+ZipReader::Result AnsiViewer::pulled() const {
+    if (cached_) return cachedBad_ ? ZipReader::Result::ReadError : ZipReader::Result::Ok;
+    return stream_ ? stream_->result() : ZipReader::Result::Ok;
 }
 
 void AnsiViewer::shortOnMemory() {
@@ -76,6 +97,9 @@ void AnsiViewer::shortOnMemory() {
 }
 
 void AnsiViewer::releaseInflate() {
+    cached_.reset();  // the piece's cached copy (no window) goes with it: whatever ends a piece calls this
+    cachedAt_ = 0;
+    cachedBad_ = false;
     stream_.reset();  // first: it points into the window
     if (leased_) {
         ws_ = state_ = nullptr;
@@ -197,19 +221,35 @@ void AnsiViewer::showPieces() {
 void AnsiViewer::showPiece(size_t i) {
     piece_ = i;
     const ZipEntry& e = zip_->entries()[pieces_[i]];
-    if (e.method == 8 && inflate::busy() && !inflateReady()) {  // another caller has the board's window: nothing waits
-        showPieces();
-        send(std::string("\x1b[22;4H") + AMBER + "Another caller is viewing a pack right now. Here is the file list." + HI);
-        return;
+    releaseInflate();  // (nothing of the last piece is left open)
+    bool busy = e.method == 8 && inflate::busy() && !inflateReady();  // another caller has the board's window
+    if (e.method == 8 && cache_) {  // the SD view cache: unpacked once (the window for a moment), then off the card
+        cached_ = viewcache::open(lib_, e);
+        if (!cached_ && !busy) {
+            if (!grabInflate(kUnpackFree, kUnpackLargest)) {
+                shortOnMemory();
+                return;
+            }
+            viewcache::unpack(lib_, *zip_, e, ws_, wsSize_, state_);
+            releaseInflate();
+            cached_ = viewcache::open(lib_, e);  // still none (a read-only store, a full card): it plays from the ZIP below
+        }
     }
-    if (e.method == 8 && !grabInflate()) {  // stored pieces need no window
-        shortOnMemory();
-        return;
+    if (!cached_) {
+        if (busy) {  // nothing waits
+            showPieces();
+            send(std::string("\x1b[22;4H") + AMBER + "Another caller is viewing a pack right now. Here is the file list." + HI);
+            return;
+        }
+        if (e.method == 8 && !grabInflate(kPlayFree, kPlayLargest)) {  // stored pieces need no window
+            shortOnMemory();
+            return;
+        }
+        stream_.reset(new ZipReader::Stream(*zip_, e, ws_, wsSize_, state_));
     }
     send(CLS);
-    stream_.reset(new ZipReader::Stream(*zip_, e, ws_, wsSize_, state_));
     chunk_.assign(4096, '\0');  // the start, to tell a movie from a still piece
-    chunk_.resize(stream_->read((uint8_t*)&chunk_[0], chunk_.size()));
+    chunk_.resize(pull((uint8_t*)&chunk_[0], chunk_.size()));
     chunkPos_ = 0;
     int moves = 0;  // absolute cursor moves and cursor-ups: an animation redraws in place
     for (size_t k = 0; k + 2 < chunk_.size(); k++)
@@ -229,7 +269,7 @@ void AnsiViewer::showPiece(size_t i) {
 
 void AnsiViewer::pump() {
     if (st_ != St::Playing) return;
-    if (leased_ && room_ && !room_()) {  // the board got busy while this piece played (or waits at "more"): it stops here
+    if (leased_ && room_ && !room_(kPlayFree, kPlayLargest)) {  // the board got busy while this piece played (or waits at "more"): it stops here
         shortOnMemory();
         return;
     }
@@ -248,7 +288,7 @@ void AnsiViewer::pump() {
         if (chunkPos_ >= chunk_.size()) {  // the next part out of the ZIP
             if (chunk_.capacity() > 1024) std::string().swap(chunk_);  // the 4 KB first read is sent: give it back
             chunk_.assign(512, '\0');
-            chunk_.resize(stream_->read((uint8_t*)&chunk_[0], chunk_.size()));
+            chunk_.resize(pull((uint8_t*)&chunk_[0], chunk_.size()));
             chunkPos_ = 0;
             if (chunk_.empty()) {
                 end = true;
@@ -270,7 +310,7 @@ void AnsiViewer::pump() {
         }
     }
     if (!out.empty()) send(out);
-    if (end) finishPiece(stream_->result());
+    if (end) finishPiece(pulled());
 }
 
 void AnsiViewer::finishPiece(ZipReader::Result res) {

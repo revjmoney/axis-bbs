@@ -39,6 +39,7 @@
 #include "platform/cyd/heapscope.h"
 #include "bbs/ansiviewer.h"
 #include "bbs/inflatelease.h"
+#include "bbs/viewcache.h"
 #include "bbs/script.h"
 #include "lord/game.h"
 #include "bbs/ansiterm.h"
@@ -1153,6 +1154,7 @@ static uint32_t unixNow() {
 static void makeAreaFolders() {
     if (!storageHasSd()) return;
     ::mkdir("/sd/files", 0777);
+    ::mkdir((std::string("/sd/files/") + axis::bbs::viewcache::kArea).c_str(), 0777);  // the ANSI viewer's unpacked pieces
     for (auto& a : boardCfg->areas) ::mkdir(("/sd/files/" + a.id).c_str(), 0777);
 }
 
@@ -2564,12 +2566,13 @@ static void startDoorInner() {
                                                nullptr, 0, *line));
         viewer->setAreas(va);
         if (!node->lite()) viewer->setClock([] { return (uint32_t)millis(); });  // ANSI movies play at modem speed (a lite caller: unpaced)
-        // The viewer limit (Rev, 2026-11-12): with its 44 KB window taken the board keeps the busy test's floors (60 KB free,
-        // 32 KB largest), or the piece is refused or stopped with a note. No cushion above them (Rev: "loosen the margin";
-        // with 8 KB more every piece was refused on a busy board).
-        viewer->setRoom([] {
-            return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= 61440u && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= 32768u;
+        // The viewer limit (Rev, 2026-11-12): with its 44 KB window taken the board keeps the floors the viewer asks for (the
+        // busy test's 60 KB and 32 KB while a piece plays from the window; a little less for a moment's unpack into the SD
+        // view cache), or the piece is refused or stopped with a note. No cushion above them (Rev: "loosen the margin").
+        viewer->setRoom([](uint32_t minFree, uint32_t minLargest) {
+            return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
         });
+        viewer->setCache(storageHasSd() || asFollower());  // the cache is on the main's card (a follower reaches it over the link)
         viewer->begin();
         line->flush();
         return;
@@ -4326,6 +4329,43 @@ static void serviceSession(int i) {
     }
 }
 
+// The SD view cache filled ahead of callers: on the main with a card, only while nobody is online (the board's inflate window
+// for a moment per piece, one piece a loop turn). A pass goes through every *ANSIVIEW door's areas; the next starts 30 minutes
+// after one ends, so new uploads get unpacked too. A caller arriving drops the pass (and its open pack); the next idle restarts it.
+static void viewCacheTick() {
+    static std::unique_ptr<axis::bbs::viewcache::Filler> fill;
+    static uint32_t                                       nextMs = 60000;  // the first pass a minute after boot
+    bool anyone = false;
+    for (size_t i = 0; i < sessions.size() && !anyone; i++) anyone = sessionLine(i) != nullptr;
+    if (anyone || asFollower() || !storageHasSd() || !boardCfg) {
+        fill.reset();
+        return;
+    }
+    uint32_t now = millis();
+    if (!fill) {
+        if ((int32_t)(now - nextMs) < 0) return;
+        std::vector<std::string> areas;
+        for (auto& d : boardCfg->doors) {
+            std::string exe = d.exe;
+            for (char& c : exe) c = (char)std::toupper((unsigned char)c);
+            if (exe != "*ANSIVIEW") continue;
+            for (size_t from = 0; from <= d.args.size();) {
+                size_t      comma = d.args.find(',', from);
+                std::string id = d.args.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
+                if (!id.empty() && std::find(areas.begin(), areas.end(), id) == areas.end()) areas.push_back(id);
+                if (comma == std::string::npos) break;
+                from = comma + 1;
+            }
+        }
+        fill.reset(new axis::bbs::viewcache::Filler(callerFiles(), std::move(areas)));
+    }
+    if (!fill->step()) {
+        if (fill->unpacked()) logEvent("view cache: " + String(fill->unpacked()) + " pieces unpacked to the card");
+        fill.reset();
+        nextMs = now + 30u * 60u * 1000u;
+    }
+}
+
 void loop() {
     static uint32_t lastLoop = millis();
     if (millis() - lastLoop > 2000 && millis() - shotDoneMs > 1000)  // (a bench screenshot stalls on purpose)
@@ -4440,6 +4480,7 @@ void loop() {
             lastMemLog = millis(), memLogged = true;
         }
     }
+    viewCacheTick();
     static uint32_t lastRoll = 0;  // the day counters roll at midnight on every board, screen or not (the WFC used to be the only one)
     if (millis() - lastRoll > 5000u) {
         lastRoll = millis();

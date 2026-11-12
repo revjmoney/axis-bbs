@@ -24,12 +24,18 @@ public:
     AnsiViewer(FileLibrary& lib, std::string areaId, std::string areaName, uint8_t* workspace, size_t workspaceSize,
                door::ByteStream& line);
     ~AnsiViewer();
-    void setZipState(uint8_t* state) { state_ = state; }
+    void setZipState(uint8_t* state) { state_ = state; }  // ZipReader::kStateBytes, when the workspace is only the window
     // the time, for playing ANSI movies at modem speed (without it they go as fast as the line takes)
     void setClock(std::function<uint32_t()> clock) { clock_ = std::move(clock); }
-    // whether the board has room for the borrowed window: asked right after it is taken and on every turn a piece
-    // plays, so a busy board refuses the piece (or stops it) with a note instead of going under the heap floor
-    void setRoom(std::function<bool()> room) { room_ = std::move(room); }  // ZipReader::kStateBytes, when the workspace is only the window
+    // Whether the board keeps at least minFree bytes free and a minLargest block with the borrowed window taken:
+    // asked right after it is taken, and on every turn a piece plays from it, so a busy board refuses the piece
+    // (or stops it) with a note instead of going under the heap floor.
+    void setRoom(std::function<bool(uint32_t minFree, uint32_t minLargest)> room) { room_ = std::move(room); }
+    static constexpr uint32_t kPlayFree = 61440, kPlayLargest = 32768;    // playing from the window: the busy-test floors
+    static constexpr uint32_t kUnpackFree = 49152, kUnpackLargest = 28672;  // a moment's unpack into the cache (Rev: a little looser)
+    // The SD view cache (bbs/viewcache.h): a deflated piece is unpacked there once and then played from the card
+    // with no window held. Off: pieces play straight from the ZIP as before.
+    void setCache(bool on) { cache_ = on; }
     // several file areas (the door's args "ansi,scene-acid,..."): a picker first; id and name each
     void setAreas(std::vector<std::pair<std::string, std::string>> areas) { areas_ = std::move(areas); }
     void begin();  // show the packs (or the areas, when there are several)
@@ -54,7 +60,9 @@ private:
     uint32_t now() const { return clock_ ? clock_() : 0; }
     bool key(char c);
     bool inflateReady() const;  // a passed-in block, or our own window plus inflater state
-    bool grabInflate();         // borrow the board's window; false when another caller has it or the heap is short
+    bool grabInflate(uint32_t minFree, uint32_t minLargest);  // borrow the board's window; false when another caller has it or no room
+    size_t pull(uint8_t* out, size_t max);  // the next bytes of the piece playing: from the cached copy or the ZIP
+    ZipReader::Result pulled() const;       // how that went, once pull gives 0
     void releaseInflate();      // give it back (safe to call any time)
     bool number(char c, int& n);  // line input of a number; true on Enter with n set (0 = empty)
     bool back();                  // Esc or Q on a list: up a level; false when that leaves the viewer
@@ -88,7 +96,11 @@ private:
     int                          lines_ = 0;
     uint32_t                     baud_ = 9600, lastPump_ = 0;
     std::function<uint32_t()>    clock_;
-    std::function<bool()>        room_;
+    std::function<bool(uint32_t, uint32_t)> room_;
+    bool                         cache_ = false;
+    std::unique_ptr<RandomFile>  cached_;  // the piece playing, from the SD view cache (no window held)
+    uint32_t                     cachedAt_ = 0;
+    bool                         cachedBad_ = false;
     void shortOnMemory();  // the piece is dropped: back to the list, with the note
 };
 

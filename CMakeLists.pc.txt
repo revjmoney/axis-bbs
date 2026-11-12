@@ -27,6 +27,7 @@ add_library(axiscore STATIC
     src/bbs/email.cpp
     src/bbs/usersettings.cpp
     src/bbs/ansiviewer.cpp
+    src/bbs/viewcache.cpp
     src/bbs/inflatelease.cpp
     src/bbs/rotatelog.cpp
     src/bbs/dosshell.cpp
@@ -151,6 +152,7 @@ add_executable(axis_tests
     tests/test_lordfast.cpp
     tests/test_lordnative.cpp
     tests/test_ansiview.cpp
+    tests/test_viewcache.cpp
     tests/test_rotatelog.cpp
     tests/test_dosshell.cpp
     tests/test_script.cpp

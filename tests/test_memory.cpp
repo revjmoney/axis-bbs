@@ -427,7 +427,7 @@ TEST_CASE("viewer limit: no room refuses the piece; room lost mid-piece stops it
     AnsiViewer               v{lib, "ansi", "ANSI Packs", nullptr, 0, line};
     bool                     room = false;
     int                      asked = 0;
-    v.setRoom([&] {
+    v.setRoom([&](uint32_t, uint32_t) {
         asked++;
         return room;
     });
