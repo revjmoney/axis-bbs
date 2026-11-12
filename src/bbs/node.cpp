@@ -113,8 +113,36 @@ std::string uptime(uint32_t sec) {
 }
 }  // namespace
 
+Node::Node(int nodeNumber, std::function<SysInfo()> info, std::shared_ptr<const BbsConfig> cfg, FileLibrary* files)
+    : node_(nodeNumber), info_(std::move(info)), cfg_(cfg ? std::move(cfg) : std::make_shared<BbsConfig>()), files_(files) {}
 Node::Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg, FileLibrary* files)
-    : node_(nodeNumber), info_(std::move(info)), cfg_(std::move(cfg)), files_(files) {}
+    : Node(nodeNumber, std::move(info), std::make_shared<BbsConfig>(std::move(cfg)), files) {}
+
+BbsConfig& Node::cfgMut() {
+    if (!cfgOwn_) {
+        auto mine = std::make_shared<BbsConfig>(*cfg_);
+        retire();
+        cfg_ = std::move(mine);
+        cfgOwn_ = true;
+    }
+    return const_cast<BbsConfig&>(*cfg_);  // (made here, not const: only the pointer is)
+}
+
+void Node::closeFiles() {
+    browser_.reset();
+    myAreas_.clear();
+    myAreas_.shrink_to_fit();
+}
+
+void Node::closeMsgs() {
+    msgs_.reset();
+    myMsgAreas_.clear();
+    myMsgAreas_.shrink_to_fit();
+}
+
+void Node::retire() {
+    if (!retired_) retired_ = cfg_;  // the oldest: anything still reading started there
+}
 
 void Node::setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow) {
     users_ = users;
@@ -138,7 +166,7 @@ void Node::loggedIn() {
                          (nuvList_.size() == 1 ? " new user is" : " new users are") + " waiting on the vote: [\x01] votes." + theme::TEXT);  // \x01: the key, filled in when shown (O/2 menus vote with N)
     if (callersAdd_) {
         const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
-        callersAdd_(handle_ + "|" + std::to_string(node_) + "|" + info_().timeText + "|" + (u ? u->location : cfg_.location));
+        callersAdd_(handle_ + "|" + std::to_string(node_) + "|" + info_().timeText + "|" + (u ? u->location : cfg_->location));
     }
     out_ += "\r\n\r\n   ";
     out_ += theme::TEXT;
@@ -192,10 +220,10 @@ void Node::showPending() {
     out_ += theme::window("PENDING", {{"handle", handle_},
                                       {"status", "waiting for the sysop"},
                                       {"answers", u ? std::to_string(u->answers.size()) + " questions answered" : ""},
-                                      {"votes", cfg_.nuvYes > 0 && u ? std::to_string(nuvYes(*u)) + " yes, " + std::to_string(nuvNo(*u)) + " no (" +
-                                                                         std::to_string(cfg_.nuvYes) + " yes gets you in)"
+                                      {"votes", cfg_->nuvYes > 0 && u ? std::to_string(nuvYes(*u)) + " yes, " + std::to_string(nuvNo(*u)) + " no (" +
+                                                                         std::to_string(cfg_->nuvYes) + " yes gets you in)"
                                                                    : "the sysop decides"},
-                                      {"next", cfg_.nuvYes > 0 ? "call back later: the callers vote on you" : "call back later: the sysop reads every one"}});
+                                      {"next", cfg_->nuvYes > 0 ? "call back later: the callers vote on you" : "call back later: the sysop reads every one"}});
     out_ += "\r\n   " + std::string(theme::TEXT) +
             "Until you're validated you can't reach the files or the doors.\r\n   Lamers, narcs and leeches need not wait.\r\n";
     pendingMenu();
@@ -209,8 +237,8 @@ void Node::pendingMenu() {
 void Node::begin(uint32_t nowMs) {
     MciScope mciScope(*this);
     lastInput_ = nowMs;
-    theme::use(theme::lookFrom(cfg_.theme));  // one look for the whole board: the setting decides
-    if (cfg_.loginSplash && !lite()) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
+    theme::use(theme::lookFrom(cfg_->theme));  // one look for the whole board: the setting decides
+    if (cfg_->loginSplash && !lite()) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
         state_ = State::Splash;  // (nothing yet: poll() starts it after the hold, unless the link report says lite by then)
         splashHold_ = true;
         splashHoldFrom_ = nowMs;
@@ -222,8 +250,8 @@ void Node::begin(uint32_t nowMs) {
 void Node::beginLocal(uint32_t nowMs) {
     MciScope mciScope(*this);
     lastInput_ = nowMs;
-    theme::use(theme::lookFrom(cfg_.theme));
-    handle_ = cfg_.sysopHandle.empty() ? "Sysop" : cfg_.sysopHandle;
+    theme::use(theme::lookFrom(cfg_->theme));
+    handle_ = cfg_->sysopHandle.empty() ? "Sysop" : cfg_->sysopHandle;
     sysop_ = true;
     local_ = true;
     loggedIn();
@@ -232,8 +260,8 @@ void Node::beginLocal(uint32_t nowMs) {
 void Node::beginLocalQuiet(uint32_t nowMs) {  // (the bulletin, oneliners and menu art cost the main RAM it hasn't got)
     lastInput_ = nowMs;
     callStart_ = nowMs;
-    theme::use(theme::lookFrom(cfg_.theme));
-    handle_ = cfg_.sysopHandle.empty() ? "Sysop" : cfg_.sysopHandle;
+    theme::use(theme::lookFrom(cfg_->theme));
+    handle_ = cfg_->sysopHandle.empty() ? "Sysop" : cfg_->sysopHandle;
     sysop_ = true;
     local_ = true;
     state_ = State::Menu;
@@ -254,7 +282,7 @@ Node::MciScope::~MciScope() {
 }
 
 bool Node::lite() const {
-    return cfg_.liteBelowBps > 0 && link_.any && link_.radio() && link_.bps >= 0 && link_.bps <= cfg_.liteBelowBps;
+    return cfg_->liteBelowBps > 0 && link_.any && link_.radio() && link_.bps >= 0 && link_.bps <= cfg_->liteBelowBps;
 }
 
 namespace {
@@ -351,7 +379,7 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
         if (cmd.compare(0, 5, "DOOR:") != 0) return false;
         std::string id = c.cmd.substr(5);
         bool        found = false;
-        for (const DoorEntry& d : cfg_.doors) {
+        for (const DoorEntry& d : cfg_->doors) {
             std::string did = d.id;
             if (did.size() != id.size() || !std::equal(did.begin(), did.end(), id.begin(), [](char a, char b) { return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); }))
                 continue;
@@ -373,9 +401,9 @@ std::string Node::menuValue(const std::string& k) const {
     const User* u = users_ ? users_->byId(userId_) : nullptr;
     auto        num = [](long n) { return std::to_string(n); };
     if (k == "UH" || k == "ALIAS" || k == "HANDLE") return handle_;
-    if (k == "NAME") return u ? u->realName : cfg_.sysopRealName;
+    if (k == "NAME") return u ? u->realName : cfg_->sysopRealName;
     if (k == "LEVEL") return num(sysop_ ? kSysopSecurity : u ? u->security : 0);
-    if (k == "GL") return u ? u->location : cfg_.location;
+    if (k == "GL") return u ? u->location : cfg_->location;
     if (k == "CALLS") return u ? num((long)u->calls) : std::string("0");
     if (k == "TL") {
         int left = minutesLeft(lastInput_);
@@ -390,7 +418,7 @@ std::string Node::menuValue(const std::string& k) const {
         return t.size() >= 10 ? t.substr(5, 2) + "/" + t.substr(8, 2) + "/" + t.substr(2, 2) : t;
     }
     if (k == "NEWUSERS") return "YES";  // AXIS always takes applications (an optional new user password guards them)
-    if (k == "BN") return cfg_.bbsName;
+    if (k == "BN") return cfg_->bbsName;
     return "";  // |UN (a user note), |PV, areas and conferences: not on AXIS yet
 }
 
@@ -752,7 +780,7 @@ void Node::pumpPoster() {
     seqResume();
 }
 
-bool Node::o2() const { return theme::lookFrom(cfg_.theme) != theme::Look::Axis; }  // cyan and green share that layout
+bool Node::o2() const { return theme::lookFrom(cfg_->theme) != theme::Look::Axis; }  // cyan and green share that layout
 
 std::string Node::mci(const std::string& s) const {
     std::string r;
@@ -761,8 +789,8 @@ std::string Node::mci(const std::string& s) const {
             std::string code = s.substr(i + 1, 2), v;
             bool        known = true;
             if (code == "UN") v = handle_;
-            else if (code == "BN") v = cfg_.bbsName;
-            else if (code == "SN") v = cfg_.sysopHandle;
+            else if (code == "BN") v = cfg_->bbsName;
+            else if (code == "SN") v = cfg_->sysopHandle;
             else if (code == "NN") v = std::to_string(node_);
             else if (code == "DT" || code == "TM") v = info_().timeText;
             else if (code == "VN") v = kAxisVersion;
@@ -833,11 +861,11 @@ void Node::showMatrix() {
     if (!art.empty()) {
         out_ += mci(art);
     } else {
-        out_ += theme::titleBar(cfg_.bbsName.empty() ? "AXIS" : cfg_.bbsName);
+        out_ += theme::titleBar(cfg_->bbsName.empty() ? "AXIS" : cfg_->bbsName);
         SysInfo s = info_();
         out_ += std::string("\r\n    ") + theme::DGREY + "node " + theme::WHITE + std::to_string(node_) + theme::DGREY + "  \xfa  " + theme::TEXT +
-                kAxisSoftware + theme::DGREY + "  \xfa  " + theme::TEXT + cfg_.location + "\r\n    " + theme::DGREY + "dial " + theme::HOT +
-                (cfg_.publicHost.empty() ? s.host : cfg_.publicHost) + theme::DGREY + "  \xfa  " + theme::TEXT + s.timeText + "\r\n";
+                kAxisSoftware + theme::DGREY + "  \xfa  " + theme::TEXT + cfg_->location + "\r\n    " + theme::DGREY + "dial " + theme::HOT +
+                (cfg_->publicHost.empty() ? s.host : cfg_->publicHost) + theme::DGREY + "  \xfa  " + theme::TEXT + s.timeText + "\r\n";
     }
     for (int i = 0; i < kMatrixItems; i++) drawBarItem(i, i == bar_);
     char b[64];
@@ -937,9 +965,9 @@ void Node::showWelcome() {
         if (!out_.empty()) flushDirect();
         direct_(CLS, std::strlen(CLS));
         direct_(kLoginArt, sizeof kLoginArt - 1);
-        out_ += welcomeBoxes(node_, info_(), cfg_);
+        out_ += welcomeBoxes(node_, info_(), *cfg_);
     } else {
-        out_ += welcome(node_, info_(), cfg_);
+        out_ += welcome(node_, info_(), *cfg_);
     }
     prompt();
 }
@@ -969,9 +997,9 @@ void Node::prompt() {
 
 std::string Node::editedMenu() const {  // the sysop's menu items in a window
     std::vector<std::pair<std::string, std::string>> rows;
-    for (const MenuItem& m : cfg_.mainMenu) {
+    for (const MenuItem& m : cfg_->mainMenu) {
         if (m.cmd == "sysop" && !sysop_) continue;
-        if (!commandListed(cfg_, m.cmd)) continue;
+        if (!commandListed(*cfg_, m.cmd)) continue;
         rows.push_back({"[" + m.key + "]", m.name});
     }
     return theme::window("COMMANDS", rows);
@@ -995,20 +1023,46 @@ std::string Node::linkTiers() const {
     return s;
 }
 
-void Node::applyBoard(const BbsConfig& next) {
-    cfg_.modemLink = next.modemLink;
-    cfg_.liteBelowBps = next.liteBelowBps;
+void Node::applyBoard(std::shared_ptr<const BbsConfig> next) {
+    if (!next || next == cfg_) return;
+    const BbsConfig& c = *cfg_;
+    bool same = c.modemLink == next->modemLink && c.liteBelowBps == next->liteBelowBps && c.messagesOn == next->messagesOn &&
+                c.filesOn == next->filesOn && c.doorsOn == next->doorsOn && c.doors.size() == next->doors.size();
+    for (size_t i = 0; same && i < c.doors.size(); i++) {
+        const DoorEntry &a = c.doors[i], &b = next->doors[i];
+        same = a.id == b.id && a.name == b.name && a.exe == b.exe && a.args == b.args && a.drop == b.drop && a.enabled == b.enabled;
+    }
+    if (same) return;  // nothing this caller would see
+    {
+        BbsConfig mine = c;  // only these change for a caller already on: if the rest matches, share the new copy
+        mine.modemLink = next->modemLink;
+        mine.liteBelowBps = next->liteBelowBps;
+        mine.messagesOn = next->messagesOn;
+        mine.filesOn = next->filesOn;
+        mine.doorsOn = next->doorsOn;
+        mine.doors = next->doors;
+        if (formatConfig(mine) == formatConfig(*next)) {
+            retire();
+            cfg_ = std::move(next);
+            cfgOwn_ = false;
+            *liteNow_ = lite();
+            return;
+        }
+    }
+    BbsConfig& m = cfgMut();
+    m.modemLink = next->modemLink;
+    m.liteBelowBps = next->liteBelowBps;
     *liteNow_ = lite();
-    cfg_.messagesOn = next.messagesOn;
-    cfg_.filesOn = next.filesOn;
-    cfg_.doorsOn = next.doorsOn;
-    cfg_.doors = next.doors;
+    m.messagesOn = next->messagesOn;
+    m.filesOn = next->filesOn;
+    m.doorsOn = next->doorsOn;
+    m.doors = next->doors;
 }
 
 std::vector<DoorEntry> Node::doorChoices() const {
     std::vector<DoorEntry> v;
     std::vector<std::string> seen;  // a second *ANSIVIEW with the same areas is the same door
-    for (const DoorEntry& d : cfg_.doors) {
+    for (const DoorEntry& d : cfg_->doors) {
         if (!d.enabled || !doorRuns(d)) continue;  // a DOS .EXE has nothing to run it here
         std::string exe = d.exe;
         for (char& ch : exe) ch = (char)std::toupper((unsigned char)ch);
@@ -1050,7 +1104,7 @@ std::string Node::cleanScriptName(std::string name) const {
 
 ScriptProg::World Node::scriptWorld() const {
     SysInfo info = info_ ? info_() : SysInfo{};
-    return {handle_, cfg_.bbsName, std::to_string(node_), info.timeText};
+    return {handle_, cfg_->bbsName, std::to_string(node_), info.timeText};
 }
 
 bool Node::startScript(const std::string& raw, ScriptBack back) {
@@ -1181,7 +1235,7 @@ void Node::showMainMenu() {
             out_.reserve(out_.size() + m.size() + 256);
             out_ += m;
         } else {
-            if (!cfg_.mainMenu.empty()) {  // the sysop's edited menu
+            if (!cfg_->mainMenu.empty()) {  // the sysop's edited menu
                 out_ += theme::titleBar("Main Menu");
                 out_ += editedMenu();
                 rumorLine();
@@ -1194,9 +1248,9 @@ void Node::showMainMenu() {
             O2Item items[12];
             int    nItems = 0;
             for (const O2Item& it : all) {
-                if (it.key == 'M' && !cfg_.messagesOn) continue;
-                if (it.key == 'F' && !cfg_.filesOn) continue;
-                if (it.key == 'D' && !cfg_.doorsOn) continue;
+                if (it.key == 'M' && !cfg_->messagesOn) continue;
+                if (it.key == 'F' && !cfg_->filesOn) continue;
+                if (it.key == 'D' && !cfg_->doorsOn) continue;
                 items[nItems++] = it;
             }
             out_ += theme::titleBar("Main Menu");
@@ -1223,25 +1277,25 @@ void Node::showMainMenu() {
         prompt();
         return;
     }
-    if (!cfg_.mainMenu.empty()) {
+    if (!cfg_->mainMenu.empty()) {
         out_ += "\r\n" + theme::drip("MENU") + editedMenu();
         prompt();
         return;
     }
     out_ += "\r\n" + theme::drip("MENU");
     std::vector<std::pair<std::string, std::string>> rows;
-    if (cfg_.filesOn) rows.push_back({"[F]", "file areas: browse, info, download, upload"});
-    if (cfg_.messagesOn) rows.push_back({"[M]", "message areas: read, post, reply"});
-    if (cfg_.doorsOn) rows.push_back({"[D]", "doors"});
+    if (cfg_->filesOn) rows.push_back({"[F]", "file areas: browse, info, download, upload"});
+    if (cfg_->messagesOn) rows.push_back({"[M]", "message areas: read, post, reply"});
+    if (cfg_->doorsOn) rows.push_back({"[D]", "doors"});
     rows.push_back({"[T]", "teleconference with every node"});
     rows.push_back({"[W]", "who's online"});
     rows.push_back({"[P]", "page the sysop"});
     rows.push_back({"[U] [O]", "your account and tagline, oneliners"});
     rows.push_back({"[N]", "multinode: notes, broadcasts, split chat"});
     rows.push_back({"[L]", "last callers"});
-    if (cfg_.messagesOn) rows.push_back({"[E] [S]", "private email, scan for new messages"});
+    if (cfg_->messagesOn) rows.push_back({"[E] [S]", "private email, scan for new messages"});
     rows.push_back({"[R] [B] [K] [V]", "rumors, BBS list, top ten, voting booth"});
-    if (cfg_.nuvYes > 0) rows.push_back({"[A]", "applicants: new user voting"});
+    if (cfg_->nuvYes > 0) rows.push_back({"[A]", "applicants: new user voting"});
     rows.push_back({"[J]", "axis net: other Axis Micro boards"});
     rows.push_back({"[I] [C]", "system info, credits"});
     rows.push_back({"[G]", "goodbye"});
@@ -1269,11 +1323,11 @@ void Node::showMenu() {
     out_ += "\r\n\r\n";
     out_ += DIM;
     out_ += "   ";
-    if (cfg_.filesOn) out_ += theme::key("F", "iles   ");
-    if (cfg_.doorsOn) out_ += theme::key("D", "oors   ");
+    if (cfg_->filesOn) out_ += theme::key("F", "iles   ");
+    if (cfg_->doorsOn) out_ += theme::key("D", "oors   ");
     out_ += theme::key("I", "nfo   ") + theme::key("C", "redits   ") + theme::key("G", "oodbye");
     out_ += "\r\n   ";
-    if (cfg_.messagesOn) out_ += theme::key("M", "essages   ");
+    if (cfg_->messagesOn) out_ += theme::key("M", "essages   ");
     out_ += theme::key("T", "eleconference   ") + theme::key("W", "ho's online   ") + theme::key("P", "age sysop");
     out_ += "\r\n";
     prompt();
@@ -1352,8 +1406,8 @@ std::string builtinWfcArt() {
 WfcSnapshot Node::wfcSnapshot() {
     if (wfcSnap_) return wfcSnap_();
     WfcSnapshot s;  // no provider (a bare node): what this node itself knows
-    s.bbsName = cfg_.bbsName;
-    s.sysop = cfg_.sysopHandle;
+    s.bbsName = cfg_->bbsName;
+    s.sysop = cfg_->sysopHandle;
     s.nodes.push_back({node_, "", ""});
     return s;
 }
@@ -1793,14 +1847,14 @@ void Node::key(char c) {
                     if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
                 return true;
             };
-            wantSysop_ = !cfg_.sysopHash.empty() && same(h, cfg_.sysopHandle);
+            wantSysop_ = !cfg_->sysopHash.empty() && same(h, cfg_->sysopHandle);
             User* u = wantSysop_ ? nullptr : users_->find(h);
             if (wantSysop_ || u) {
                 if (u) {
                     userId_ = u->id;
                     handle_ = u->handle;
                 } else {
-                    handle_ = cfg_.sysopHandle;
+                    handle_ = cfg_->sysopHandle;
                 }
                 tries_ = 0;
                 state_ = State::Password;
@@ -1827,7 +1881,7 @@ void Node::key(char c) {
             std::string pw = line_;
             line_.clear();
             User* u = users_ ? users_->byId(userId_) : nullptr;
-            bool  ok = wantSysop_ ? checkPassword(cfg_.sysopSalt, cfg_.sysopHash, pw) : (u && checkPassword(u->salt, u->hash, pw));
+            bool  ok = wantSysop_ ? checkPassword(cfg_->sysopSalt, cfg_->sysopHash, pw) : (u && checkPassword(u->salt, u->hash, pw));
             if (!ok) {
                 if (++tries_ >= 3) {
                     out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + "Three strikes." + theme::TEXT + " Call back when you remember it.\r\n";
@@ -1852,7 +1906,7 @@ void Node::key(char c) {
             if (saveUsers_) saveUsers_();
             if (u->status == User::Status::Denied) {
                 out_ += "\r\n\r\n   " + std::string(theme::TEXT) + "Your application was " + theme::ORANGE + "denied" + theme::TEXT +
-                        (nuvNo(*u) > 0 && cfg_.nuvNo > 0 && nuvNo(*u) >= cfg_.nuvNo ? ". The new user vote turned you down." : ". This board isn't for you.") +
+                        (nuvNo(*u) > 0 && cfg_->nuvNo > 0 && nuvNo(*u) >= cfg_->nuvNo ? ". The new user vote turned you down." : ". This board isn't for you.") +
                         "\r\n";
                 state_ = State::Done;
             } else if (u->status == User::Status::Pending) {
@@ -1875,7 +1929,7 @@ void Node::key(char c) {
     }
     if (state_ == State::ApplyAsk) {
         char k = (char)(c | 0x20);
-        if (k == 'y' && !cfg_.nupHash.empty()) {  // an elite board: the new user password first
+        if (k == 'y' && !cfg_->nupHash.empty()) {  // an elite board: the new user password first
             out_ += "yes\r\n\r\n   " + theme::fade("New user password") + theme::ORANGE + ": " + theme::WHITE;
             state_ = State::NupAsk;
             tries_ = 0;
@@ -1883,7 +1937,8 @@ void Node::key(char c) {
         } else if (k == 'y') {
             out_ += "yes";
             state_ = State::Applying;
-            app_.reset(new NewUserApp(handle_, out_, cfg_, rng_));
+            appCfg_ = cfg_;  // (the application keeps a reference: this copy stays while it runs)
+            app_.reset(new NewUserApp(handle_, out_, *appCfg_, rng_));
             app_->begin();
         } else if (k == 'n') {
             out_ += "no\r\n";
@@ -1894,11 +1949,12 @@ void Node::key(char c) {
     }
     if (state_ == State::NupAsk) {
         if (c == '\r') {
-            bool ok = checkPassword(cfg_.nupSalt, cfg_.nupHash, line_);
+            bool ok = checkPassword(cfg_->nupSalt, cfg_->nupHash, line_);
             line_.clear();
             if (ok) {
                 state_ = State::Applying;
-                app_.reset(new NewUserApp(handle_, out_, cfg_, rng_));
+                appCfg_ = cfg_;  // (the application keeps a reference: this copy stays while it runs)
+                app_.reset(new NewUserApp(handle_, out_, *appCfg_, rng_));
                 app_->begin();
             } else if (++tries_ >= 3) {
                 failedLogin_ = true;
@@ -1931,6 +1987,7 @@ void Node::key(char c) {
                 out_ += "\r\n   " + std::string(theme::ORANGE) + "That handle was just taken. Call back with another.\r\n";
                 state_ = State::Done;
                 app_.reset();
+                appCfg_.reset();
                 return;
             }
             userId_ = users_->add(u).id;
@@ -1938,6 +1995,7 @@ void Node::key(char c) {
             bool warriorOk = true;
             if (ensureWarrior_) warriorOk = ensureWarrior_(u.handle);
             app_.reset();
+            appCfg_.reset();
             if (u.status == User::Status::Validated) {  // a machine owner or RotatoCAM Pro user: straight in
                 out_ += theme::CLS;
                 out_ += "\r\n   ";
@@ -1963,6 +2021,7 @@ void Node::key(char c) {
             showPending();
         } else {
             app_.reset();
+            appCfg_.reset();
             state_ = State::Login;
             out_ += "\r\n";
             prompt();
@@ -2022,7 +2081,7 @@ void Node::key(char c) {
         bool stay = browser_->key(c);
         if (stay && browser_->wantsTransfer()) state_ = State::Transfer;
         if (!stay) {
-            browser_.reset();
+            closeFiles();
             showMainMenu();
         }
         return;
@@ -2046,7 +2105,7 @@ void Node::key(char c) {
     }
     if (state_ == State::Messages) {
         if (msgs_ && msgs_->key(c)) return;
-        msgs_.reset();
+        closeMsgs();
         if (User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr)  // where they got to, kept with the account
             if (saveUsers_) saveUsers_();
         showMainMenu();
@@ -2079,7 +2138,7 @@ void Node::key(char c) {
         return;
     }
     if (state_ != State::Menu) return;
-    if (sysop_ && (local_ || cfg_.sysopTelnet) && slashKey(c)) return;
+    if (sysop_ && (local_ || cfg_->sysopTelnet) && slashKey(c)) return;
     bool fromMenus = false;
     if (menu_ && !builtin_) {
         MenuAction a = menu_->key(c, lastInput_);
@@ -2109,14 +2168,14 @@ void Node::key(char c) {
             case MenuAction::Logoff: c = 'g'; break;
             case MenuAction::Door: {
                 int pick = -1;
-                for (size_t i = 0; i < cfg_.doors.size(); i++)
-                    if (cfg_.doors[i].id == a.arg && cfg_.doors[i].enabled) pick = (int)i;
+                for (size_t i = 0; i < cfg_->doors.size(); i++)
+                    if (cfg_->doors[i].id == a.arg && cfg_->doors[i].enabled) pick = (int)i;
                 const User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
-                if (!cfg_.doorsOn || pick < 0 || (u && !u->permDoors)) {
-                    const char* why = !cfg_.doorsOn ? "Doors are off." : pick < 0 ? "That door is off." : "The doors are closed to your account.";
-                    if (pick < 0 && cfg_.doorsOn) {
+                if (!cfg_->doorsOn || pick < 0 || (u && !u->permDoors)) {
+                    const char* why = !cfg_->doorsOn ? "Doors are off." : pick < 0 ? "That door is off." : "The doors are closed to your account.";
+                    if (pick < 0 && cfg_->doorsOn) {
                         bool known = false;
-                        for (const DoorEntry& d : cfg_.doors)
+                        for (const DoorEntry& d : cfg_->doors)
                             if (d.id == a.arg) known = true;
                         if (!known) why = "Coming soon to AXIS.";
                     }
@@ -2167,11 +2226,11 @@ void Node::key(char c) {
             return;
         }
         c = to[hit - from];
-    } else if (!cfg_.mainMenu.empty() && c != '?' && c != '*') {  // the sysop's edited menu: its hotkeys only
+    } else if (!cfg_->mainMenu.empty() && c != '?' && c != '*') {  // the sysop's edited menu: its hotkeys only
         char run = 0;
-        for (const MenuItem& m : cfg_.mainMenu) {
+        for (const MenuItem& m : cfg_->mainMenu) {
             if (m.cmd == "sysop" && !sysop_) continue;
-            if (!commandListed(cfg_, m.cmd)) continue;
+            if (!commandListed(*cfg_, m.cmd)) continue;
             if (!m.key.empty() && (m.key[0] | 0x20) == (c | 0x20)) run = menuCommandKey(m.cmd);
         }
         if (!run) {
@@ -2181,7 +2240,7 @@ void Node::key(char c) {
         }
         c = run;
     }
-    if (const char* why = sectionClosed(cfg_, c)) {
+    if (const char* why = sectionClosed(*cfg_, c)) {
         out_ += std::string("\r\n\r\n   ") + AMBER + why + theme::TEXT;
         if (fromMenus && menu_) menu_->prompt();
         else showMenu();
@@ -2236,13 +2295,13 @@ void Node::key(char c) {
                 break;
             }
             state_ = State::Files;
-            myAreas_ = openTo(cfg_.areas);
+            myAreas_ = openTo(cfg_->areas);
             browser_.reset(new FileBrowser(myAreas_, *files_, out_));
             browser_->setDownloadGate([this](uint32_t size) -> std::string {
                 User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
                 if (!u) return "";
                 if (!mayDownload(*u)) return "Downloads open up once you've uploaded something: [U]pload first.";
-                return size ? ratioBlock(*u, size, cfg_.ratio, cfg_.freeKb) : std::string();
+                return size ? ratioBlock(*u, size, cfg_->ratio, cfg_->freeKb) : std::string();
             });
             browser_->setNewSince(prevCall_ ? prevCall_ : (unixNow_ && unixNow_() > 7 * 86400 ? unixNow_() - 7 * 86400 : 0));
             browser_->begin();
@@ -2258,7 +2317,7 @@ void Node::key(char c) {
                 break;
             }
             state_ = State::Messages;
-            myMsgAreas_ = openTo(cfg_.msgAreas);
+            myMsgAreas_ = openTo(cfg_->msgAreas);
             msgs_.reset(new MessageReader(myMsgAreas_, *msgStore_, out_, handle_, u ? u->lastRead : lastRead_,
                                           [this] { return info_().timeText; }));
             msgs_->setTagline(tagline());
@@ -2269,7 +2328,7 @@ void Node::key(char c) {
         case 'u': {
             User* u = users_ && userId_ ? users_->byId(userId_) : nullptr;  // a promoted sysop has a record too
             if (!u && sysop_ && sysopRun_) {  // the sysop account: the same screen, kept in the board settings
-                if (local_ || cfg_.sysopTelnet) {
+                if (local_ || cfg_->sysopTelnet) {
                     openSysopAccount();
                 } else {  // its changes are sysop settings, and those are closed over telnet
                     out_ += std::string("\r\n\r\n   ") + AMBER + "Sysop access over telnet is off: change your account at the board.";
@@ -2329,8 +2388,9 @@ void Node::key(char c) {
                 showMenu();
                 break;
             }
-            myMsgAreas_ = openTo(cfg_.msgAreas);
+            myMsgAreas_ = openTo(cfg_->msgAreas);
             if (MessageReader::countNew(myMsgAreas_, *msgStore_, u ? u->lastRead : lastRead_) == 0) {
+                closeMsgs();  // (no reader: the list goes again)
                 out_ += std::string("\r\n\r\n   ") + theme::TEXT + "No new messages anywhere.";
                 showMenu();
                 break;
@@ -2360,10 +2420,10 @@ void Node::key(char c) {
                                               handle = f->handle;
                                               return true;
                                           }
-                                          if (!cfg_.sysopHandle.empty() && name.size() == cfg_.sysopHandle.size()) {
+                                          if (!cfg_->sysopHandle.empty() && name.size() == cfg_->sysopHandle.size()) {
                                               bool same = true;
-                                              for (size_t i = 0; i < name.size(); i++) same = same && (name[i] | 0x20) == (cfg_.sysopHandle[i] | 0x20);
-                                              if (same) handle = cfg_.sysopHandle;
+                                              for (size_t i = 0; i < name.size(); i++) same = same && (name[i] | 0x20) == (cfg_->sysopHandle[i] | 0x20);
+                                              if (same) handle = cfg_->sysopHandle;
                                               return same;
                                           }
                                           return false;
@@ -2637,7 +2697,7 @@ void Node::showSystemInfo() {
     std::snprintf(nodeLine, sizeof nodeLine, "%d / %d", node_, s.nodesTotal);
     if (u) std::snprintf(xfer, sizeof xfer, "%u / %u KB", (unsigned)(u->uploads / 1024), (unsigned)(u->downloads / 1024));
     std::vector<std::pair<std::string, std::string>> rows = {
-        {"board", cfg_.bbsName},
+        {"board", cfg_->bbsName},
         {"node", nodeLine},
         {"address", s.ip + "  " + s.host},
         {"wifi", wifi},
@@ -2959,9 +3019,9 @@ void Node::votingKey(char c) {
 
 NuvRules Node::nuvRules() const {
     NuvRules r;
-    r.yes = cfg_.nuvYes;
-    r.no = cfg_.nuvNo;
-    r.level = cfg_.nuvLevel;
+    r.yes = cfg_->nuvYes;
+    r.no = cfg_->nuvNo;
+    r.level = cfg_->nuvLevel;
     return r;
 }
 
@@ -3275,8 +3335,8 @@ std::vector<FileArea> Node::openTo(const std::vector<FileArea>& all) const {
 }
 
 int Node::minutesLeft(uint32_t nowMs) const {
-    if (sysop_ || cfg_.dailyMinutes <= 0 || !callStart_) return -1;
-    int32_t left = (int32_t)((uint32_t)cfg_.dailyMinutes * 60000u - (nowMs - callStart_));
+    if (sysop_ || cfg_->dailyMinutes <= 0 || !callStart_) return -1;
+    int32_t left = (int32_t)((uint32_t)cfg_->dailyMinutes * 60000u - (nowMs - callStart_));
     return left > 0 ? left / 60000 : 0;
 }
 
@@ -3401,7 +3461,7 @@ void Node::userEditKey(char c) {
 std::string Node::tagline() const {
     const User* u = users_ && userId_ ? users_->byId(userId_) : nullptr;
     if (u) return u->tagline;
-    return sysop_ ? cfg_.sysopTagline : "";
+    return sysop_ ? cfg_->sysopTagline : "";
 }
 
 // [U] for the sysop account (the one set up on the board, not a promoted caller): the caller's
@@ -3410,19 +3470,19 @@ std::string Node::tagline() const {
 void Node::openSysopAccount() {
     sysopSelf_ = User{};
     sysopSelf_.handle = handle_;
-    sysopSelf_.realName = cfg_.sysopRealName;
-    sysopSelf_.location = cfg_.sysopLocation;
-    sysopSelf_.email = cfg_.sysopEmail;
-    sysopSelf_.tagline = cfg_.sysopTagline;
-    sysopSelf_.salt = cfg_.sysopSalt;
-    sysopSelf_.hash = cfg_.sysopHash;
+    sysopSelf_.realName = cfg_->sysopRealName;
+    sysopSelf_.location = cfg_->sysopLocation;
+    sysopSelf_.email = cfg_->sysopEmail;
+    sysopSelf_.tagline = cfg_->sysopTagline;
+    sysopSelf_.salt = cfg_->sysopSalt;
+    sysopSelf_.hash = cfg_->sysopHash;
     sysopSelf_.security = kSysopSecurity;
     sysopSelf_.status = User::Status::Validated;
     state_ = State::Settings;
     settings_.reset(new UserSettings(sysopSelf_, out_, [this] { saveSysopAccount(); }, rng_));
     settings_->setOnPassword([this](const std::string& pw) {
-        cfg_.sysopSalt = sysopSelf_.salt;
-        cfg_.sysopHash = sysopSelf_.hash;
+        cfgMut().sysopSalt = sysopSelf_.salt;
+        cfgMut().sysopHash = sysopSelf_.hash;
         if (sysopRun_) sysopRun_("@SYSOPPASS " + pw);
     });
     settings_->begin();
@@ -3430,16 +3490,16 @@ void Node::openSysopAccount() {
 
 void Node::saveSysopAccount() {
     struct F {
-        const char*  key;
-        std::string& cfg;
-        std::string& mine;
-    } fields[] = {{"sysop_real_name", cfg_.sysopRealName, sysopSelf_.realName},
-                  {"sysop_location", cfg_.sysopLocation, sysopSelf_.location},
-                  {"sysop_email", cfg_.sysopEmail, sysopSelf_.email},
-                  {"sysop_tagline", cfg_.sysopTagline, sysopSelf_.tagline}};
+        const char*              key;
+        std::string BbsConfig::* cfg;  // (a member, not a reference: the @SET below can hand this node a new copy)
+        std::string&             mine;
+    } fields[] = {{"sysop_real_name", &BbsConfig::sysopRealName, sysopSelf_.realName},
+                  {"sysop_location", &BbsConfig::sysopLocation, sysopSelf_.location},
+                  {"sysop_email", &BbsConfig::sysopEmail, sysopSelf_.email},
+                  {"sysop_tagline", &BbsConfig::sysopTagline, sysopSelf_.tagline}};
     for (F& f : fields) {
-        if (f.cfg == f.mine) continue;
-        f.cfg = f.mine;  // (the screen only takes printable characters: no second line can ride along)
+        if ((*cfg_).*f.cfg == f.mine) continue;
+        cfgMut().*f.cfg = f.mine;  // (the screen only takes printable characters: no second line can ride along)
         if (sysopRun_) sysopRun_(std::string("@SET ") + f.key + "=" + f.mine);
     }
 }
@@ -3493,6 +3553,7 @@ std::string Node::activityText() const {
 
 void Node::poll(uint32_t nowMs) {
     MciScope mciScope(*this);
+    retired_.reset();  // a settings copy swapped out last turn: nothing reads it now
     if (state_ == State::Poster) {  // one piece of the poster a turn, nothing else until it is out
         pumpPoster();
         return;
@@ -3504,17 +3565,17 @@ void Node::poll(uint32_t nowMs) {
         showMainMenu();
     }
     if (state_ == State::Files && browser_ && !browser_->tick(nowMs, lastInput_)) {
-        browser_.reset();
+        closeFiles();
         showMainMenu();
     }
     if (state_ == State::Messages && msgs_ && !msgs_->tick(nowMs, lastInput_)) {
-        msgs_.reset();
+        closeMsgs();
         if (users_ && !sysop_ && users_->byId(userId_) && saveUsers_) saveUsers_();
         showMainMenu();
     }
     drainSeq();  // (a login step that ended outside a key: a door, a timer)
-    if (callStart_ && !sysop_ && cfg_.dailyMinutes > 0 && state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer) {
-        uint32_t used = nowMs - callStart_, limit = (uint32_t)cfg_.dailyMinutes * 60000u;
+    if (callStart_ && !sysop_ && cfg_->dailyMinutes > 0 && state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer) {
+        uint32_t used = nowMs - callStart_, limit = (uint32_t)cfg_->dailyMinutes * 60000u;
         if (used >= limit) {
             out_ += std::string("\r\n\r\n   ") + AMBER + "Your time is up for this call. Call back soon." + theme::RESET + "\r\n";
             state_ = State::Done;
@@ -3564,7 +3625,7 @@ void Node::poll(uint32_t nowMs) {
     }
     // the WFC at the board (touchscreen, serial, the panel's console) waits for callers for ever; over telnet it idles out
     bool wfcHere = state_ == State::Wfc && local_;
-    if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && !wfcHere && nowMs - lastInput_ > (uint32_t)cfg_.idleMinutes * 60000u) {
+    if (state_ != State::Done && state_ != State::InDoor && state_ != State::Transfer && !wfcHere && nowMs - lastInput_ > (uint32_t)cfg_->idleMinutes * 60000u) {
         out_ += "\r\n\r\n   ";
         out_ += AMBER;
         out_ += "Logged off: idle too long.";
@@ -3611,11 +3672,11 @@ void Node::showAxisNet() {
         [this] {
             AxisCard me;
             SysInfo  s = info_();
-            me.name = cfg_.bbsName;
-            me.host = cfg_.publicHost.empty() ? (s.host.empty() ? s.ip : s.host) : cfg_.publicHost;
-            me.port = cfg_.telnetPort > 0 ? cfg_.telnetPort : 23;
-            me.location = cfg_.location;
-            me.sysop = cfg_.sysopHandle;
+            me.name = cfg_->bbsName;
+            me.host = cfg_->publicHost.empty() ? (s.host.empty() ? s.ip : s.host) : cfg_->publicHost;
+            me.port = cfg_->telnetPort > 0 ? cfg_->telnetPort : 23;
+            me.location = cfg_->location;
+            me.sysop = cfg_->sysopHandle;
             me.blurb = std::string(kAxisSoftware) + " " + kAxisVersion;
             int on = 0;
             for (const std::string& who : s.nodes)

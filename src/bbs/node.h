@@ -59,7 +59,9 @@ public:
     static constexpr size_t   kMaxHandle = 30;
 
     // files: the file areas' store (nullptr: the Files menu says the areas are offline)
-    Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {}, FileLibrary* files = nullptr);
+    // cfg: the board's settings, shared by every node (a change makes a new copy; a caller keeps the one they called into)
+    Node(int nodeNumber, std::function<SysInfo()> info, std::shared_ptr<const BbsConfig> cfg, FileLibrary* files = nullptr);
+    Node(int nodeNumber, std::function<SysInfo()> info, BbsConfig cfg = {}, FileLibrary* files = nullptr);  // (tests: a copy of its own)
     // accounts: without them anyone is let in by handle (the first builds, tests)
     void setAccounts(UserStore* users, std::function<void()> save, uint32_t (*rng)(), std::function<uint32_t()> unixNow);
     // true if this handle has a warrior after the call. Registration writes one. Null skips it.
@@ -159,11 +161,12 @@ public:
     const std::string& handle() const { return handle_; }
     // the door the caller picked ("" unless InDoor); the host runs it, then calls resumeAfterDoor
     std::string      doorRequested() const { return state_ == State::InDoor ? door().id : ""; }
-    const DoorEntry& door() const { return door_ < doorList_.size() ? doorList_[door_] : cfg_.doors[door_]; }
+    const DoorEntry& door() const { return door_ < doorList_.size() ? doorList_[door_] : cfg_->doors[door_]; }
     // the doors this caller can pick: enabled rows, and for the sysop each enabled LORD's setup program
     // (LORDCFG, drawn straight to the screen: drop "local")
     std::vector<DoorEntry> doorChoices() const;
-    void                   applyBoard(const BbsConfig& next);  // section switches and the door list, for a caller already on
+    // section switches and the door list, for a caller already on (the rest stays as they called in)
+    void                   applyBoard(std::shared_ptr<const BbsConfig> next);
     // The modem's newest report for this call (LFD3K-LINK, net/telnet.h): who is on the radio and how fast. Display only.
     void                   setLink(const net::LinkInfo& l);
     const net::LinkInfo&   link() const { return link_; }
@@ -227,7 +230,14 @@ private:
     std::map<std::string, int>                   lastRead_;  // without an account (tests, first builds)
     std::function<void(const std::string&)>      linersAdd_;
     std::function<SysInfo()>  info_;
-    BbsConfig                 cfg_;
+    std::shared_ptr<const BbsConfig> cfg_;      // shared with main and the other nodes until this node changes it
+    std::shared_ptr<const BbsConfig> retired_;  // the one swapped out, kept until the next poll (a caller may still hold a piece)
+    std::shared_ptr<const BbsConfig> appCfg_;   // the copy the new user application reads (it holds a reference)
+    bool                      cfgOwn_ = false;  // cfg_ is this node's own copy: written in place
+    BbsConfig&                cfgMut();         // a write: this node's own copy first
+    void                      retire();         // cfg_ is about to be replaced
+    void                      closeFiles();     // the file browser closes: its areas go too
+    void                      closeMsgs();      // the message reader closes: its areas go too
     State                     state_ = State::Login;
     std::function<void(const char*, size_t)> direct_;
     void spill();  // direct set and the output has reached kOutSpill: all of it goes out now, in order

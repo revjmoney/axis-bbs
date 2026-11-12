@@ -114,7 +114,15 @@ static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
 
 enum class Mode { Normal, SetupChoice, SetupTelnet, SetupTouch, WifiPick };
 
-static axis::bbs::BbsConfig cfg;
+// The board's settings: one copy that main and every Node share (about 4 KB). A change makes a new copy while a Node
+// still holds the current one, so a caller already on keeps the settings they called into, as before; pushBoardToCallers
+// hands them the switches. Read with boardCfg->, change with cfgEdit() or cfgSet().
+static std::shared_ptr<const axis::bbs::BbsConfig> boardCfg = std::make_shared<axis::bbs::BbsConfig>();
+static axis::bbs::BbsConfig& cfgEdit() {
+    if (boardCfg.use_count() > 1) boardCfg = std::make_shared<axis::bbs::BbsConfig>(*boardCfg);
+    return const_cast<axis::bbs::BbsConfig&>(*boardCfg);  // (every copy is made here or in cfgSet: not const underneath)
+}
+static void cfgSet(axis::bbs::BbsConfig c) { boardCfg = std::make_shared<axis::bbs::BbsConfig>(std::move(c)); }
 static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
@@ -399,7 +407,7 @@ static void listAddLocal(const std::string& n, const std::string& line) {
 // hands its news to the main, the main sends it to every board, and the board with the webhook posts.
 constexpr int kAnnounceKind = 21, kAnnounceAllKind = 22;
 static void announceOut(const std::string& line) {
-    if (!cluster) web::announce(String("**") + cfg.bbsName.c_str() + "** " + line.c_str());
+    if (!cluster) web::announce(String("**") + boardCfg->bbsName.c_str() + "** " + line.c_str());
     else if (asFollower()) cluster->send("", kAnnounceKind, 0, line);
     else cluster->send("", kAnnounceAllKind, 0, line);
 }
@@ -488,8 +496,8 @@ static bool posterPieceLocalAppend(const std::string& name, size_t offset, size_
     if (!storageHasSd() || !posterName(name) || offset >= kPosterCap) return false;
     if (want > kPosterChunk) want = kPosterChunk;
     if (want > kPosterCap - offset) want = kPosterCap - offset;
-    if (readThemeFileAppend(cfg.theme.c_str(), name, want, offset, out)) return true;
-    if (readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(cfg.theme), name, want, offset, out)) return true;
+    if (readThemeFileAppend(boardCfg->theme.c_str(), name, want, offset, out)) return true;
+    if (readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(boardCfg->theme), name, want, offset, out)) return true;
     return readThemeFileAppend("axis", name, want, offset, out);  // a look without its own poster shows the axis one
 }
 static std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened) {
@@ -523,7 +531,7 @@ static std::string themeArtLocal(const std::string& name) {
     }
     if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never read whole
     // The waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme.
-    const std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg) : cfg.theme;
+    const std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(*boardCfg) : boardCfg->theme;
     std::string s = readThemeFile(folder.c_str(), name);
     if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name);
     return s;
@@ -540,7 +548,7 @@ static bool themeArtPieceAppend(const std::string& name, size_t off, size_t want
     if (want > cap - off) want = cap - off;
     // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
     // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
-    std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg) : cfg.theme, file = name, look;
+    std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(*boardCfg) : boardCfg->theme, file = name, look;
     if (axis::bbs::theme::splitLookFile(name, look, file)) folder = look;
     if (readThemeFileAppend(folder.c_str(), file, want, off, out)) return true;
     return readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, out);
@@ -590,7 +598,7 @@ static std::string themeArt(const std::string& name) {
 static std::shared_ptr<const std::string> wfcAnsShared;
 static std::string                        wfcAnsKey;
 static std::shared_ptr<const std::string> wfcArtShared() {
-    const std::string folder = axis::bbs::wfcFolder(cfg);
+    const std::string folder = axis::bbs::wfcFolder(*boardCfg);
     std::string       key = folder;
     if (!asFollower()) {
         const char* dirs[2] = {folder.c_str(), axis::bbs::theme::legacyThemeFolder(folder)};
@@ -617,10 +625,10 @@ static std::map<std::string, std::string> menuCache;
 // switches the menus too. Null when the theme has none (or the name is a menu file): the menu set's own then.
 static FILE* openThemeScreen(const std::string& name) {
     const char* file = axis::bbs::theme::menuScreenFile(name);
-    if (!file || !storageHasSd() || cfg.theme.empty()) return nullptr;
-    FILE* f = fopen((std::string("/sd/themes/") + cfg.theme + "/" + file).c_str(), "rb");
+    if (!file || !storageHasSd() || boardCfg->theme.empty()) return nullptr;
+    FILE* f = fopen((std::string("/sd/themes/") + boardCfg->theme + "/" + file).c_str(), "rb");
     if (!f)
-        if (const char* old = axis::bbs::theme::legacyThemeFolder(cfg.theme)) f = fopen((std::string("/sd/themes/") + old + "/" + file).c_str(), "rb");
+        if (const char* old = axis::bbs::theme::legacyThemeFolder(boardCfg->theme)) f = fopen((std::string("/sd/themes/") + old + "/" + file).c_str(), "rb");
     return f;
 }
 // theme: a menu screen the theme draws comes from the theme (off for the main's "U" answer to a follower: theme
@@ -829,7 +837,7 @@ static std::vector<axis::cluster::PoolCard> poolCards() {
 static axis::cluster::PooledFileLibrary pooledFiles(poolCards);
 static axis::cluster::MirrorJob         mirrorJob(pooledFiles, [] {
     std::vector<std::string> v;
-    for (auto& a : cfg.areas)
+    for (auto& a : boardCfg->areas)
         if (a.mirror) v.push_back(a.id);
     return v;
 });
@@ -1050,7 +1058,7 @@ static String timeText() {
     return b;
 }
 
-static String dialName() { return String(cfg.boardName.c_str()) + ".local"; }
+static String dialName() { return String(boardCfg->boardName.c_str()) + ".local"; }
 
 static axis::bbs::SysInfo sysInfo() {
     axis::bbs::SysInfo s;
@@ -1172,7 +1180,7 @@ static uint32_t unixNow() {
 static void makeAreaFolders() {
     if (!storageHasSd()) return;
     ::mkdir("/sd/files", 0777);
-    for (auto& a : cfg.areas) ::mkdir(("/sd/files/" + a.id).c_str(), 0777);
+    for (auto& a : boardCfg->areas) ::mkdir(("/sd/files/" + a.id).c_str(), 0777);
 }
 
 // ------------------------------------------------------------------ screens (placeholder look)
@@ -1201,7 +1209,7 @@ static void title(const char* sub) {
     g.setTextDatum(textdatum_t::top_left);
     g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
     g.setTextSize(2);
-    String t = cfg.bbsName.c_str();
+    String t = boardCfg->bbsName.c_str();
     t.toUpperCase();
     g.drawString(t.c_str(), 8, 8);
     g.setTextSize(1);
@@ -1251,13 +1259,13 @@ static std::unique_ptr<axis::bbs::Node> localNode;
 // Section switches and the door list have to reach that copy or the menu stays stale.
 static void pushBoardToCallers() {
     auto one = [](axis::bbs::Node* n) {
-        if (n) n->applyBoard(cfg);
+        if (n) n->applyBoard(boardCfg);
     };
     one(node.get());
     one(localNode.get());
     for (size_t i = 0; i < sessions.size(); i++) one(sessions[i].node.get());
     for (size_t i = 0; i < sessions.size(); i++)  // modem_link off: calls already on stop taking link reports
-        if (WifiStream* l = sessionLine(i)) l->acceptLink(cfg.modemLink);
+        if (WifiStream* l = sessionLine(i)) l->acceptLink(boardCfg->modemLink);
 }
 static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~4 KB)
 static std::unique_ptr<AnsiScreen>          localScreen;
@@ -1343,7 +1351,7 @@ static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot
     } catch (const std::bad_alloc&) {
     }
     if (!t) return t;
-    std::string folder = axis::bbs::wfcFolder(cfg);
+    std::string folder = axis::bbs::wfcFolder(*boardCfg);
     if (!wfcArtLoaded || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
         std::string art = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
         wfcArt = std::move(art);  // empty: the theme has none, and the built-in art/wfccyd.ans is read from flash where it stands
@@ -1697,7 +1705,7 @@ static void drawScreen() {
         g.drawString(("telnet " + dialName()).c_str(), 8, 76);
         g.setTextSize(1);
         g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
-        g.drawString(("or telnet " + WiFi.localIP().toString() + " " + String(cfg.telnetPort)).c_str(), 8, 100);
+        g.drawString(("or telnet " + WiFi.localIP().toString() + " " + String(boardCfg->telnetPort)).c_str(), 8, 100);
         g.drawString("Setup PIN:", 8, 128);
         g.setTextSize(4);
         g.setTextColor(pc(pal::YELLOW), pc(pal::BLACK));
@@ -1734,20 +1742,20 @@ static uint32_t networkPendingMs = 0;
 static void applyNetworkNow() {
     modemSearchForget();  // MDNS.end() must never meet a search: one that is done is freed here
     MDNS.end();
-    if (MDNS.begin(cfg.boardName.c_str())) MDNS.addService("telnet", "tcp", cfg.telnetPort);
+    if (MDNS.begin(boardCfg->boardName.c_str())) MDNS.addService("telnet", "tcp", boardCfg->telnetPort);
     server.end();
-    server.begin(cfg.telnetPort);
+    server.begin(boardCfg->telnetPort);
     server.setNoDelay(true);
     panelServer.begin();
     panelServer.setNoDelay(true);
-    Serial.printf("axis: listening on %s:%d, byte heap %u, largest %u\n", dialName().c_str(), cfg.telnetPort,
+    Serial.printf("axis: listening on %s:%d, byte heap %u, largest %u\n", dialName().c_str(), boardCfg->telnetPort,
                   heap_caps_get_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
 // The clock zone at once; mDNS and the listeners now, or (an mDNS search for modems is running) once it has ended or
 // 3.5 s have passed: applyNetworkDue() in the loop. Callers and the panel keep running meanwhile.
 static void applyNetwork() {
-    setenv("TZ", axis::bbs::tzRule(cfg.timezone), 1);
+    setenv("TZ", axis::bbs::tzRule(boardCfg->timezone), 1);
     tzset();
     if (!modemSearchRunning()) {
         networkPending = false;
@@ -1901,7 +1909,7 @@ static bool passCaller(WiFiClient& incoming) {
     uint32_t ip = axis::cluster::pickFreeNode(cluster->nodes(), cluster->nodeNumber(), reserved);
     if (!ip) return false;
     WiFiClient out;
-    if (!out.connect(IPAddress(ip), (uint16_t)cfg.telnetPort, 1500)) return false;
+    if (!out.connect(IPAddress(ip), (uint16_t)boardCfg->telnetPort, 1500)) return false;
     out.setNoDelay(true);
     incoming.setNoDelay(true);
     std::unique_ptr<Passing> p(new Passing);
@@ -1977,11 +1985,11 @@ static bool axisSame(const std::string& a, const std::string& b) {
 
 static axis::bbs::AxisCard axisSelfCard() {
     axis::bbs::AxisCard me;
-    me.name = cfg.bbsName;
-    me.host = cfg.publicHost.empty() ? std::string(WiFi.localIP().toString().c_str()) : cfg.publicHost;
-    me.port = cfg.telnetPort > 0 ? cfg.telnetPort : 23;
-    me.location = cfg.location;
-    me.sysop = cfg.sysopHandle;
+    me.name = boardCfg->bbsName;
+    me.host = boardCfg->publicHost.empty() ? std::string(WiFi.localIP().toString().c_str()) : boardCfg->publicHost;
+    me.port = boardCfg->telnetPort > 0 ? boardCfg->telnetPort : 23;
+    me.location = boardCfg->location;
+    me.sysop = boardCfg->sysopHandle;
     me.blurb = std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion;
     int on = 0;
     for (size_t i = 0; i < sessions.size(); i++) on += sessionLine(i) ? 1 : 0;
@@ -2177,7 +2185,7 @@ static void answer(WiFiClient incoming) {
     }
     int free = -1;  // setup takes one caller; a set-up board as many as its sessions
     for (size_t i = 0; i < sessions.size() && free < 0; i++)
-        if (!sessionLine(i) && (i == 0 || (cfg.setupDone && mode == Mode::Normal))) free = (int)i;
+        if (!sessionLine(i) && (i == 0 || (boardCfg->setupDone && mode == Mode::Normal))) free = (int)i;
     if (free >= 0) {
         bindSession(free);
         answerIn(incoming, giveBack);
@@ -2203,8 +2211,8 @@ static int sessionNumber(int i) {  // the node number a session answers as
 // The waiting-for-caller screen's live values: every node in the cluster, the newest events, today's counters.
 static axis::bbs::WfcSnapshot wfcSnapshot() {
     axis::bbs::WfcSnapshot w;
-    w.bbsName = cfg.bbsName;
-    w.sysop = cfg.sysopHandle;
+    w.bbsName = boardCfg->bbsName;
+    w.sysop = boardCfg->sysopHandle;
     w.lastCaller = statsLastCaller();
     w.ip = WiFi.localIP().toString().c_str();
     std::string t = timeText().c_str();  // "YYYY-MM-DD HH:MM"
@@ -2240,15 +2248,15 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     if (panelConsoleNew) line.reset(new PanelStream());
     else line.reset(new WifiStream(incoming));
     line->tapNode = sessionNumber(curSession);
-    line->acceptLink(cfg.modemLink);  // the LFD3K-SM modem's link reports (LFD3K-LINK, telnet option 90)
+    line->acceptLink(boardCfg->modemLink);  // the LFD3K-SM modem's link reports (LFD3K-LINK, telnet option 90)
     callStartMs = millis();
     logEvent((panelConsoleNew ? String("sysop console from the panel") : "call from " + line->remoteIP().toString()) + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
              " KB, largest " + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024) + " KB)");
     line->start();
     if (!giveBack.empty()) line->inject(giveBack);
-    if (cfg.setupDone && mode == Mode::Normal) {
+    if (boardCfg->setupDone && mode == Mode::Normal) {
         countCall();
-        node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, cfg, &callerFiles()));
+        node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, boardCfg, &callerFiles()));
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
         node->setWarrior(writeWarrior);
@@ -2414,7 +2422,7 @@ static void abortDoor(axis::bbs::Node::DoorEnd how) {
 }
 
 static std::string areaName(const std::string& id) {
-    for (auto& a : cfg.areas)
+    for (auto& a : boardCfg->areas)
         if (a.id == id) return a.name;
     return id;
 }
@@ -2496,7 +2504,7 @@ static void lordPost(void* ctx, const char* from, const char* to, const char* bo
 }
 
 static std::string lordFolderId() {
-    for (auto& d : cfg.doors)
+    for (auto& d : boardCfg->doors)
         if (d.exe == "*LORD" && !d.id.empty()) return d.id;
     return "lord";
 }
@@ -2524,7 +2532,7 @@ static bool writeWarrior(const std::string& handle) {
 }
 
 static void startDoorInner() {
-    const axis::bbs::DoorEntry& d = node->door();
+    const axis::bbs::DoorEntry d = node->door();  // (a copy: new settings may arrive while it starts)
     sendApp(node->takeOutput());
     if (d.exe == "*LORD") {  // one game per caller. The EXE slot stays free.
         logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
@@ -2654,8 +2662,8 @@ static void callerInput(const std::string& app) {
         wizard->input(p, app.size());
         sendApp(wizard->takeOutput());
         if (wizard->finished()) {
-            cfg = wizard->result();
-            bool ok = configSave(cfg);
+            cfgSet(wizard->result());
+            bool ok = configSave(*boardCfg);
             if (!wizard->noip().host.empty())  // the No-IP login stays in this board's own storage
                 web::setNoip(String(wizard->noip().host.c_str()) + "|" + wizard->noip().user.c_str() + "|" + wizard->noip().pass.c_str());
             logEvent(String("setup ") + (ok ? "saved" : "SAVE FAILED") + " over telnet");
@@ -2663,7 +2671,7 @@ static void callerInput(const std::string& app) {
             snprintf(b, sizeof b,
                      "\r\n   \x1b[1;32mSettings saved.\x1b[0;37m Your BBS is open: call %s port %d.\r\n"
                      "   Log in as %s for the sysop menu (coming soon).\x1b[0m\r\n",
-                     dialName().c_str(), cfg.telnetPort, cfg.sysopHandle.c_str());
+                     dialName().c_str(), boardCfg->telnetPort, boardCfg->sysopHandle.c_str());
             sendApp(b);
             hangUp();
             mode = Mode::Normal;
@@ -2680,7 +2688,7 @@ static void callerInput(const std::string& app) {
         if (gate->passed()) {
             mode = Mode::SetupTelnet;  // the right PIN means the sysop chose telnet
             gate.reset();
-            wizard.reset(new axis::bbs::SetupWizard(cfg, hwRandom));
+            wizard.reset(new axis::bbs::SetupWizard(*boardCfg, hwRandom));
             wizard->begin();
             sendApp(wizard->takeOutput());
             screenDirty = true;
@@ -2737,7 +2745,7 @@ static void startCluster() {
             return;
         }
         if (l.kind == kAnnounceAllKind) {  // the board holding the webhook posts it
-            web::announce(String("**") + cfg.bbsName.c_str() + "** " + l.text.c_str());
+            web::announce(String("**") + boardCfg->bbsName.c_str() + "** " + l.text.c_str());
             return;
         }
         if (l.page) {
@@ -2768,7 +2776,7 @@ static void startCluster() {
                 sessionLine(i)->flush();
             }
     };
-    cluster->settings = [] { return axis::bbs::formatConfig(cfg); };
+    cluster->settings = [] { return axis::bbs::formatConfig(*boardCfg); };
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
         artCache.clear();  // the theme may have changed
         wfcAnsKey.clear();  // (and so may the waiting screen)
@@ -2779,16 +2787,16 @@ static void startCluster() {
             return;
         }
         Serial.printf("axis: settings from the main: %u bytes\n", (unsigned)ini.size());
-        axis::bbs::BbsConfig m = axis::bbs::mergeSettings(cfg, ini);
-        if (axis::bbs::formatConfig(m) == axis::bbs::formatConfig(cfg)) return;
-        bool wasSetUp = cfg.setupDone;
-        cfg = m;
+        axis::bbs::BbsConfig m = axis::bbs::mergeSettings(*boardCfg, ini);
+        if (axis::bbs::formatConfig(m) == axis::bbs::formatConfig(*boardCfg)) return;
+        bool wasSetUp = boardCfg->setupDone;
+        cfgSet(std::move(m));
         pushBoardToCallers();
-        bool ok = configSave(cfg);
+        bool ok = configSave(*boardCfg);
         logEvent(String("settings from the main") + (ok ? "" : " (SAVE FAILED)"));
         if (!wasSetUp) {  // a fresh (headless) node: ready for callers now
             mode = Mode::Normal;
-            sessions.resize((size_t)cfg.sessions);
+            sessions.resize((size_t)boardCfg->sessions);
         }
         screenDirty = true;
     };
@@ -3032,7 +3040,7 @@ static void startLocal() {
     }
     localTerm.reset(new axis::bbs::AnsiTerm());
     localScreen.reset(new AnsiScreen());
-    localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg,
+    localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, boardCfg,
                                         &callerFiles()));
     localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
     localNode->setWarrior(writeWarrior);
@@ -3228,7 +3236,7 @@ static std::string panelExtra(const std::string& in) {
     if (in == "CON NEW") {
         int free = -1;
         for (size_t i = 0; i < sessions.size() && free < 0; i++)
-            if (!sessionLine(i) && cfg.setupDone && mode == Mode::Normal) free = (int)i;
+            if (!sessionLine(i) && boardCfg->setupDone && mode == Mode::Normal) free = (int)i;
         if (free < 0) return "CON NO every node on this board is busy\n";
         if (curSession >= 0) unbindSession();
         panelConNode = sessionNumber(free), panelConJoined = false;  // (before its first screen goes out)
@@ -3271,7 +3279,7 @@ static void pumpPanel() {
             panelClient = c;
             char nonce[17];
             snprintf(nonce, sizeof nonce, "%08lx%08lx", (unsigned long)hwRandom(), (unsigned long)hwRandom());
-            panelSession.reset(new axis::bbs::PanelSession(cfg, users, nonce));
+            panelSession.reset(new axis::bbs::PanelSession(boardCfg, users, nonce));
             panelSession->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
             panelSession->extra = panelExtra;
             panelWall = false;
@@ -3393,7 +3401,7 @@ static void runCommand(const String& cmd, Print& out) {
             out.println("axis: only the main pools the cards (@CARDS there)");
     } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
         std::string areas;
-        for (auto& a : cfg.areas)
+        for (auto& a : boardCfg->areas)
             if (a.mirror) areas += (areas.empty() ? "" : " ") + a.id;
         out.printf("axis: mirrored areas: %s\n", areas.empty() ? "none (add |m to an areaN line)" : areas.c_str());
 #if AXIS_SD_POOL
@@ -3421,15 +3429,15 @@ static void runCommand(const String& cmd, Print& out) {
             logEvent(String("sysop: ") + arg + " more minutes for " + n->handle().c_str());
             out.printf("axis: node %d gets %d more minutes\n", num, (int)arg.toInt());
         } else if (cmd.startsWith("@FORCETC ")) {
-            n->nodeIn(axis::bbs::Node::kNodeForce, 0, cfg.sysopHandle, "");
+            n->nodeIn(axis::bbs::Node::kNodeForce, 0, boardCfg->sysopHandle, "");
             out.printf("axis: node %d sent to the teleconference\n", num);
         } else {
-            n->nodeIn(axis::bbs::Node::kNodeNote, 0, cfg.sysopHandle, arg.c_str());
+            n->nodeIn(axis::bbs::Node::kNodeNote, 0, boardCfg->sysopHandle, arg.c_str());
             out.printf("axis: note sent to node %d\n", num);
         }
     } else if (cmd.startsWith("@BCAST ")) {  // "@BCAST text": a broadcast to every caller on this board
         for (size_t i = 0; i < sessions.size(); i++)
-            if (sessionNode(i) && sessionLine(i)) sessionNode(i)->nodeIn(axis::bbs::Node::kNodeBroadcast, 0, cfg.sysopHandle, cmd.substring(7).c_str());
+            if (sessionNode(i) && sessionLine(i)) sessionNode(i)->nodeIn(axis::bbs::Node::kNodeBroadcast, 0, boardCfg->sysopHandle, cmd.substring(7).c_str());
         out.println("axis: broadcast sent");
     } else if (cmd == "@USERS") {  // one line per user: id|handle|status|security|calls|flags
         for (auto& u : users.all())
@@ -3480,7 +3488,7 @@ static void runCommand(const String& cmd, Print& out) {
             out.printf("axis: %s updated\n", u->handle.c_str());
         }
     } else if (cmd == "@SETTINGS") {  // axis.ini without any salt or hash line
-        std::string t = axis::bbs::formatConfig(cfg), line;
+        std::string t = axis::bbs::formatConfig(*boardCfg), line;
         for (char ch : t) {
             if (ch != '\n') {
                 line += ch;
@@ -3601,7 +3609,7 @@ static void runCommand(const String& cmd, Print& out) {
             out.printf("axis: %s deleted\n", h.c_str());
         }
     } else if (cmd == "@AREAS" || cmd == "@MSGAREAS") {  // "N|id|name|level|m" per area
-        auto& v = cmd == "@AREAS" ? cfg.areas : cfg.msgAreas;
+        auto& v = cmd == "@AREAS" ? boardCfg->areas : boardCfg->msgAreas;
         for (size_t i = 0; i < v.size(); i++)
             out.printf("%u|%s|%s|%d|%s\n", (unsigned)i + 1, v[i].id.c_str(), v[i].name.c_str(), v[i].minSecurity, v[i].mirror ? "m" : "");
     } else if (cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) {
@@ -3614,7 +3622,8 @@ static void runCommand(const String& cmd, Print& out) {
             if (bar < 0) break;
             from = bar + 1;
         }
-        auto& v = f[0] == "msgs" ? cfg.msgAreas : cfg.areas;
+        axis::bbs::BbsConfig& e = cfgEdit();
+        auto& v = f[0] == "msgs" ? e.msgAreas : e.areas;
         int   n = f.size() > 1 ? (int)f[1].toInt() : 0;
         bool  ok = n >= 1;
         if (ok && cmd.startsWith("@AREASET ") && f.size() >= 4) {
@@ -3628,7 +3637,7 @@ static void runCommand(const String& cmd, Print& out) {
         } else ok = false;
         if (!ok) out.println("axis: @AREASET files|N|id|name|level, @AREADEL msgs|N, @AREAUP files|N");
         else {
-            configSave(cfg);
+            configSave(*boardCfg);
             if (cluster) cluster->shareSettings();
             makeAreaFolders();
             logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a);
@@ -3693,14 +3702,14 @@ static void runCommand(const String& cmd, Print& out) {
         logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a + " (" + gone + ")");
         out.printf("axis: %d post%s\n", gone, gone == 1 ? "" : "s");
     } else if (cmd == "@MENU") {  // the main menu's items: N|key|name|command (empty: the built-in menu)
-        for (size_t i = 0; i < cfg.mainMenu.size(); i++)
-            out.printf("%u|%s|%s|%s\n", (unsigned)i + 1, cfg.mainMenu[i].key.c_str(), cfg.mainMenu[i].name.c_str(), cfg.mainMenu[i].cmd.c_str());
+        for (size_t i = 0; i < boardCfg->mainMenu.size(); i++)
+            out.printf("%u|%s|%s|%s\n", (unsigned)i + 1, boardCfg->mainMenu[i].key.c_str(), boardCfg->mainMenu[i].name.c_str(), boardCfg->mainMenu[i].cmd.c_str());
     } else if (cmd == "@MENUCMDS") {  // what a menu item can run
         for (auto& c : axis::bbs::menuCommands()) out.printf("%s|%c\n", c.first.c_str(), c.second);
     } else if (cmd.startsWith("@MENUSET ") || cmd.startsWith("@MENUDEL ") || cmd.startsWith("@MENUUP ") || cmd == "@MENURESET" || cmd == "@MENUSTART") {
         // "@MENUSET N|key|name|command" (N past the end adds), "@MENUDEL N", "@MENUUP N", "@MENURESET" (built-in again),
         // "@MENUSTART" (an editable copy of the built-in menu)
-        auto&  v = cfg.mainMenu;
+        auto&  v = cfgEdit().mainMenu;
         String a = cmd.indexOf(' ') > 0 ? cmd.substring(cmd.indexOf(' ') + 1) : String();
         int    n = (int)a.toInt();
         bool   ok = true;
@@ -3729,7 +3738,7 @@ static void runCommand(const String& cmd, Print& out) {
         }
         if (!ok) out.println("axis: @MENUSET N|key|name|command, @MENUDEL N, @MENUUP N, @MENURESET, @MENUSTART");
         else {
-            configSave(cfg);
+            configSave(*boardCfg);
             if (cluster) cluster->shareSettings();
             logEvent(String("sysop: ") + cmd.substring(1));
             out.println("axis: menu saved");
@@ -3790,7 +3799,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@WEB") {
         out.printf("axis: web: %s\n", web::status().c_str());
     } else if (cmd == "@WEBTEST") {
-        web::announce(String("**") + cfg.bbsName.c_str() + "** is online. Telnet in and feed the scene.");
+        web::announce(String("**") + boardCfg->bbsName.c_str() + "** is online. Telnet in and feed the scene.");
         out.println("axis: test announcement queued");
     } else if (cmd == "@LED") {  // status light (bench): blue LED on the ring, RGB on a CYD
         ledReport = true;
@@ -3845,17 +3854,18 @@ static void runCommand(const String& cmd, Print& out) {
         out.println("axis: no 8086 in this firmware");
     } else if (cmd.startsWith("@SET ") && cmd.indexOf('=') > 5) {  // "@SET location=Myrtle Beach, SC"
         String kv = cmd.substring(5);
-        cfg = axis::bbs::parseConfig(axis::bbs::formatConfig(cfg) + kv.c_str() + "\n");  // the later line wins
+        cfgSet(axis::bbs::parseConfig(axis::bbs::formatConfig(*boardCfg) + kv.c_str() + "\n"));  // the later line wins
         pushBoardToCallers();
-        bool ok = configSave(cfg);
+        bool ok = configSave(*boardCfg);
         logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
         if (cluster) cluster->shareSettings();
         screenDirty = true;
     } else if (cmd.startsWith("@NUP")) {  // "@NUP secret": the new user password asked before Apply; alone, anyone can apply
         String pw = cmd.length() > 5 ? cmd.substring(5) : String();
-        cfg.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
-        cfg.nupHash = pw.length() ? axis::bbs::hashPassword(cfg.nupSalt, pw.c_str()) : std::string();
-        bool ok = configSave(cfg);
+        axis::bbs::BbsConfig& e = cfgEdit();
+        e.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
+        e.nupHash = pw.length() ? axis::bbs::hashPassword(e.nupSalt, pw.c_str()) : std::string();
+        bool ok = configSave(*boardCfg);
         if (cluster) cluster->shareSettings();  // every board asks the same one
         logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
     } else if (cmd == "@HEADLESS" || cmd == "@HEADLESS on" || cmd == "@HEADLESS off") {
@@ -3943,9 +3953,10 @@ static void runCommand(const String& cmd, Print& out) {
         if (pw.length() < 4) {
             out.println("axis: @SYSOPPASS needs 4 or more characters");
         } else {
-            cfg.sysopSalt = axis::bbs::makeSalt(hwRandom);
-            cfg.sysopHash = axis::bbs::hashPassword(cfg.sysopSalt, pw.c_str());
-            bool ok = configSave(cfg);
+            axis::bbs::BbsConfig& e = cfgEdit();
+            e.sysopSalt = axis::bbs::makeSalt(hwRandom);
+            e.sysopHash = axis::bbs::hashPassword(e.sysopSalt, pw.c_str());
+            bool ok = configSave(*boardCfg);
             if (cluster) cluster->shareSettings();  // every board takes the same sysop login
             logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
         }
@@ -4014,12 +4025,12 @@ static void handleSerial() {
         }
         if ((c == 0x0A || c == 0x0D) && cmd.equalsIgnoreCase("WFC")) {
             cmd = "";
-            if (mode != Mode::Normal || !cfg.setupDone) {
-                Serial.println(cfg.setupDone ? "axis: WFC is not available right now (the board is not at its normal screen)"
+            if (mode != Mode::Normal || !boardCfg->setupDone) {
+                Serial.println(boardCfg->setupDone ? "axis: WFC is not available right now (the board is not at its normal screen)"
                                              : "axis: WFC is not available until setup is done");
                 continue;
             }
-            serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, cfg, &callerFiles()));
+            serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, boardCfg, &callerFiles()));
             serialWfc->setAccounts(&users, saveUsers, hwRandom, unixNow);
             serialWfc->setWarrior(writeWarrior);
             serialWfc->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
@@ -4076,11 +4087,11 @@ void setup() {
     storageInit();
     if (!configMount()) Serial.println("axis: internal flash filesystem failed to mount");
     web::begin();
-    cfg = configLoad();
-    sessions.resize(cfg.setupDone ? (size_t)cfg.sessions : 1);  // callers at once (setup takes one)
+    cfgSet(configLoad());
+    sessions.resize(boardCfg->setupDone ? (size_t)boardCfg->sessions : 1);  // callers at once (setup takes one)
     bool lordArgs = false;  // stock LORD tails gain NOEMS; a sysop's own arguments stay
-    for (auto& d : cfg.doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
-    if (lordArgs) configSave(cfg);
+    for (auto& d : cfgEdit().doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
+    if (lordArgs) configSave(*boardCfg);
     users.parse(flashRead("/users.dat"));
     linersLoad();
     callersLoad();
@@ -4103,19 +4114,19 @@ void setup() {
     }
     pendingSeen = users.pending();
     makeAreaFolders();
-    if (!cfg.setupDone) {
+    if (!boardCfg->setupDone) {
         if (boardIsHeadless()) {  // nothing to set up on the ring: the main's settings arrive over the link
             String mac = WiFi.macAddress();
             mac.replace(":", "");
-            cfg.boardName = ("axis-" + mac.substring(8)).c_str();
-            cfg.sessions = 3;  // no screen to draw: room for a third caller
+            cfgEdit().boardName = ("axis-" + mac.substring(8)).c_str();
+            cfgEdit().sessions = 3;  // no screen to draw: room for a third caller
             newSetupPin();     // (only used if a caller arrives before the settings do)
         } else {
             mode = Mode::SetupChoice;
             newSetupPin();
         }
     }
-    Serial.printf("axis: settings %s\n", cfg.setupDone ? "loaded" : "not set up yet, first-boot setup");
+    Serial.printf("axis: settings %s\n", boardCfg->setupDone ? "loaded" : "not set up yet, first-boot setup");
     if (!wifiJoinSaved()) {
         if (boardIsHeadless()) {
             startHotspot();
@@ -4180,7 +4191,7 @@ static void ledUpdate() {
 static uint32_t lastRadioMs = 0;
 static void takeLinkReport() {
     axis::net::LinkInfo li;
-    if (line && node && cfg.modemLink && line->takeLink(li)) {  // (at most one a second per line: TelnetStream::takeLink)
+    if (line && node && boardCfg->modemLink && line->takeLink(li)) {  // (at most one a second per line: TelnetStream::takeLink)
         bool first = !node->viaModem();
         node->setLink(li);
         // the WFC's |R? codes: this caller's link when it is the one shown, a new call, a new tier, or the shown one is a minute old
@@ -4312,7 +4323,7 @@ static void serviceSession(int i) {
             if (node->state() == axis::bbs::Node::State::Transfer && !job) {
                 sendApp(node->takeOutput());  // the transfer window, before the protocol starts
                 jobStartMs = jobDrawnMs = millis();
-                axis::bbs::UploadInfo info{cfg.bbsName, dialName().c_str(), cfg.location,
+                axis::bbs::UploadInfo info{boardCfg->bbsName, dialName().c_str(), boardCfg->location,
                                            std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion};
                 noteDoing(String(node->transfer().upload ? "upload " : "download ") + node->transfer().name.c_str() + " by " +
                           node->handle().c_str());
@@ -4373,7 +4384,7 @@ void loop() {
                 startCluster();
             } else {
                 picker.joinFailed();
-                if (afterPick == Mode::Normal || cfg.setupDone) wifiJoinSaved();  // never strand a working board
+                if (afterPick == Mode::Normal || boardCfg->setupDone) wifiJoinSaved();  // never strand a working board
             }
             screenDirty = true;
         }

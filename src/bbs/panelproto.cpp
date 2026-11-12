@@ -23,11 +23,14 @@ std::string passwordScheme(const std::string& hash) {
 }  // namespace
 
 PanelSession::PanelSession(const BbsConfig& cfg, const UserStore& users, std::string nonce)
-    : cfg_(cfg), users_(users), nonce_(std::move(nonce)) {}
+    : fixed_(&cfg), users_(users), nonce_(std::move(nonce)) {}
+PanelSession::PanelSession(const std::shared_ptr<const BbsConfig>& live, const UserStore& users, std::string nonce)
+    : live_(&live), users_(users), nonce_(std::move(nonce)) {}
 
 bool PanelSession::lookup(const std::string& handle, std::string& salt, std::string& hash, std::string& name) const {
-    if (!cfg_.sysopHash.empty() && same(handle, cfg_.sysopHandle)) {
-        salt = cfg_.sysopSalt, hash = cfg_.sysopHash, name = cfg_.sysopHandle;
+    const BbsConfig& c = cfg();
+    if (!c.sysopHash.empty() && same(handle, c.sysopHandle)) {
+        salt = c.sysopSalt, hash = c.sysopHash, name = c.sysopHandle;
         return true;
     }
     for (const User& u : users_.all())
