@@ -76,7 +76,41 @@ bool Filler::nextPack() {
     return false;
 }
 
+Filler::~Filler() { dropPiece(); }
+
+void Filler::dropPiece() {
+    stream_.reset();  // first: it points into the window
+    if (out_) out_->finish(false);
+    out_.reset();
+    if (leased_) inflate::give(this);
+    leased_ = false;
+}
+
 bool Filler::step() {
+    if (stream_) {  // the piece part way: the next stepBytes of it
+        uint8_t buf[512];
+        size_t  done = 0;
+        while (done < stepBytes_) {
+            size_t n = stream_->read(buf, sizeof buf);
+            if (n == 0) break;
+            crc_ = net::crc32Update(crc_, buf, n);
+            if (!out_->write(buf, n)) {
+                wrote_ = false;
+                break;
+            }
+            done += n;
+        }
+        if (wrote_ && done >= stepBytes_) return true;  // more next step
+        bool ok = wrote_ && stream_->result() == ZipReader::Result::Ok && ~crc_ == zip_->entries()[entry_].crc;
+        stream_.reset();
+        bool kept = out_->finish(ok) && ok;  // a bad copy is thrown away, never left for a viewer to play
+        out_.reset();
+        inflate::give(this);
+        leased_ = false;
+        entry_++;
+        if (kept) unpacked_++;
+        return true;
+    }
     if (!zip_) return nextPack();  // opening a pack is a step of its own
     const std::vector<ZipEntry>& es = zip_->entries();
     while (entry_ < es.size()) {
@@ -87,11 +121,18 @@ bool Filler::step() {
         }
         uint8_t *w = nullptr, *s = nullptr;
         if (!inflate::take(this, w, s)) return true;  // a caller's viewer or an upload check has it, or the heap is short: later
-        bool ok = unpack(lib_, *zip_, e, w, inflate::kWindow, s);
-        inflate::give(this);
-        entry_++;
-        if (ok) unpacked_++;
-        return true;
+        leased_ = true;
+        out_ = lib_.create(kArea, name(e));
+        if (!out_) {  // a read-only store or a full card: skip it
+            inflate::give(this);
+            leased_ = false;
+            entry_++;
+            return true;
+        }
+        stream_.reset(new ZipReader::Stream(*zip_, e, w, inflate::kWindow, s));
+        crc_ = 0xFFFFFFFFu;
+        wrote_ = true;
+        return true;  // its bytes start next step
     }
     zip_.reset();  // this pack is done
     file_.reset();

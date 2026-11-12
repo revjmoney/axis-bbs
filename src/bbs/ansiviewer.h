@@ -34,8 +34,14 @@ public:
     static constexpr uint32_t kPlayFree = 61440, kPlayLargest = 32768;    // playing from the window: the busy-test floors
     static constexpr uint32_t kUnpackFree = 49152, kUnpackLargest = 28672;  // a moment's unpack into the cache (Rev: a little looser)
     // The SD view cache (bbs/viewcache.h): a deflated piece is unpacked there once and then played from the card
-    // with no window held. Off: pieces play straight from the ZIP as before.
-    void setCache(bool on) { cache_ = on; }
+    // with no window held. Off: pieces play straight from the ZIP as before. A piece bigger than unpackMax is
+    // never unpacked while a caller waits (one in one go held the loop for seconds): until the board's idle
+    // filler has it in the cache, it plays from the ZIP.
+    static constexpr uint32_t kUnpackOnViewMax = 65536;
+    void setCache(bool on, uint32_t unpackMax = kUnpackOnViewMax) {
+        cache_ = on;
+        unpackMax_ = unpackMax;
+    }
     // several file areas (the door's args "ansi,scene-acid,..."): a picker first; id and name each
     void setAreas(std::vector<std::pair<std::string, std::string>> areas) { areas_ = std::move(areas); }
     void begin();  // show the packs (or the areas, when there are several)
@@ -98,6 +104,7 @@ private:
     std::function<uint32_t()>    clock_;
     std::function<bool(uint32_t, uint32_t)> room_;
     bool                         cache_ = false;
+    uint32_t                     unpackMax_ = kUnpackOnViewMax;
     std::unique_ptr<RandomFile>  cached_;  // the piece playing, from the SD view cache (no window held)
     uint32_t                     cachedAt_ = 0;
     bool                         cachedBad_ = false;

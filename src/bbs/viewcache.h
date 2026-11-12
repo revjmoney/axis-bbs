@@ -32,14 +32,21 @@ bool unpack(FileLibrary& lib, ZipReader& zip, const ZipEntry& e, uint8_t* ws, si
 // and deflated ones only: a stored piece needs no window.
 class Filler {
 public:
-    Filler(FileLibrary& lib, std::vector<std::string> areas) : lib_(lib), areas_(std::move(areas)) {}
-    // One piece unpacked (or one pack looked at). False once every pack of every area has been
-    // gone through; a new Filler starts a new pass.
+    static constexpr size_t kStepBytes = 16384;  // unpacked per step: a 1.7 MB movie in one go stalled the loop 7 s
+    Filler(FileLibrary& lib, std::vector<std::string> areas, size_t stepBytes = kStepBytes)
+        : lib_(lib), areas_(std::move(areas)), stepBytes_(stepBytes) {}
+    ~Filler();  // a piece part way is thrown away and the window given back
+    Filler(const Filler&) = delete;
+    Filler& operator=(const Filler&) = delete;
+    // Up to stepBytes of one piece unpacked (or one pack looked at). The board's inflate window is
+    // held from a piece's first step to its last. False once every pack of every area has been gone
+    // through; a new Filler starts a new pass.
     bool step();
     int  unpacked() const { return unpacked_; }  // pieces this pass added
 
 private:
     bool nextPack();  // opens the next pack; false when there are none left
+    void dropPiece();  // the piece part way: its copy thrown away, the window given back
     FileLibrary&                lib_;
     std::vector<std::string>    areas_;
     size_t                      area_ = 0;
@@ -50,6 +57,11 @@ private:
     std::unique_ptr<ZipReader>  zip_;
     size_t                      entry_ = 0;
     int                         unpacked_ = 0;
+    size_t                             stepBytes_;
+    std::unique_ptr<ZipReader::Stream> stream_;  // the piece being unpacked (declared after zip_: it goes first)
+    std::unique_ptr<WriteFile>         out_;
+    uint32_t                           crc_ = 0;
+    bool                               wrote_ = true, leased_ = false;
 };
 
 }  // namespace axis::bbs::viewcache

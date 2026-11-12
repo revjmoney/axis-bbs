@@ -225,7 +225,7 @@ void AnsiViewer::showPiece(size_t i) {
     bool busy = e.method == 8 && inflate::busy() && !inflateReady();  // another caller has the board's window
     if (e.method == 8 && cache_) {  // the SD view cache: unpacked once (the window for a moment), then off the card
         cached_ = viewcache::open(lib_, e);
-        if (!cached_ && !busy) {
+        if (!cached_ && !busy && e.usize <= unpackMax_) {
             if (!grabInflate(kUnpackFree, kUnpackLargest)) {
                 shortOnMemory();
                 return;

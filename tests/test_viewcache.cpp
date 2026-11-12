@@ -218,3 +218,47 @@ TEST_CASE("view cache: the filler unpacks every deflated piece once, skips store
     CHECK(again.unpacked() == 0);
     CHECK(s.creates == 1);
 }
+
+TEST_CASE("view cache: the filler unpacks a piece across steps, and dropping it part way keeps nothing and frees the window") {
+    REQUIRE_FALSE(inflate::busy());
+    Store s = store();
+    {
+        viewcache::Filler f(s, {"ansi"}, 512);  // REV-AXIS.ANS is 3703 bytes: several steps
+        int                steps = 0;
+        while (steps < 4) {
+            f.step();
+            steps++;
+        }
+        CHECK(inflate::busy());  // held from the piece's first step to its last
+        CHECK(s.areas[viewcache::kArea].empty());
+    }  // a caller came online: the pass is dropped mid-piece
+    CHECK_FALSE(inflate::busy());
+    CHECK(s.areas[viewcache::kArea].empty());
+    viewcache::Filler f(s, {"ansi"}, 512);
+    int steps = 0;
+    while (f.step() && steps < 100) steps++;
+    CHECK(steps > 6);
+    CHECK(f.unpacked() == 1);
+    CHECK(s.areas[viewcache::kArea].size() == 1);
+    CHECK_FALSE(inflate::busy());
+}
+
+TEST_CASE("view cache: a piece over the on-view limit is not unpacked while the caller waits; it plays from the ZIP") {
+    REQUIRE_FALSE(inflate::busy());
+    Store  s = store();
+    Viewer vw(s);
+    vw.v.setCache(true, 1000);  // REV-AXIS.ANS (3703 bytes) is over it
+    vw.v.setRoom([](uint32_t, uint32_t) { return true; });
+    vw.v.begin();
+    vw.run("1\r");
+    std::string out = vw.run("1\r");
+    CHECK(out.find("line 1") != std::string::npos);
+    CHECK(s.creates == 0);
+    CHECK(inflate::busy());  // from the ZIP: the window is held at "more"
+    out = vw.run("n");
+    CHECK(out.find("line 40") != std::string::npos);
+    CHECK_FALSE(inflate::busy());
+    vw.run("q");
+    vw.run("q");
+    vw.run("q");
+}
