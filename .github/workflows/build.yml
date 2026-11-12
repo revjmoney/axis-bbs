@@ -28,6 +28,8 @@ jobs:
           ./build/axis_tests --reporters=console
       - name: Menu art and lightbars
         run: python3 tools/art/check_menus.py
+      - name: Build options
+        run: python3 -I tools/test_buildopts.py
 
   firmware:
     runs-on: ubuntu-latest

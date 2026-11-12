@@ -1,0 +1,8 @@
+[
+  {"id": "everything", "label": "Everything", "about": "Rev's board: every feature on.", "off": []},
+  {"id": "no-doors", "label": "No doors", "about": "Everything minus LORD, scripts and the DOS prompt.", "off": ["lord", "scripts", "dosprompt"]},
+  {"id": "no-files", "label": "No file areas", "about": "Everything minus file areas, uploads, downloads and the ANSI viewer (the viewer needs file areas).", "off": ["files", "ansiview", "transfers"]},
+  {"id": "no-radio", "label": "No radio link", "about": "Everything minus the radio modem link.", "off": ["modemlink"]},
+  {"id": "just-bbs", "label": "Just the BBS", "about": "Messages and the core board only; every optional feature off.", "off": ["lord", "scripts", "dosprompt", "files", "ansiview", "transfers", "cluster", "modemlink", "web"]},
+  {"id": "no-sd", "label": "No SD card", "about": "For a board that runs alone without an SD card: every feature that needs the card is off.", "off": ["lord", "scripts", "files", "ansiview", "transfers"]}
+]

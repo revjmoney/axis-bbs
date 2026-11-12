@@ -1,0 +1,32 @@
+[
+  {
+    "off": [],
+    "release": "v1.0.0",
+    "fingerprint": "75f2a9d24a69"
+  },
+  {
+    "off": [
+      "lord",
+      "scripts",
+      "dosprompt"
+    ],
+    "release": "v1.0.0",
+    "fingerprint": "57bf8f563c8e"
+  },
+  {
+    "off": [
+      "files",
+      "ansiview",
+      "transfers"
+    ],
+    "release": "v1.2.3",
+    "fingerprint": "df14647a1ec2"
+  },
+  {
+    "off": [
+      "modemlink"
+    ],
+    "release": "v1.0.0",
+    "fingerprint": "6b4502934aa4"
+  }
+]
