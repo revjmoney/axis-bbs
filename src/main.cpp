@@ -4201,8 +4201,7 @@ static void startCluster() {
 #if AXIS_NETS
     cluster->settings = [] {  // plus "net_up=1" while Sysop Net runs here (an old follower keeps it as an unknown key)
         std::string s = axis::bbs::formatConfig(*boardCfg);
-        if (netHost && boardCfg->netSysop) s += "net_up=1
-";
+        if (netHost && boardCfg->netSysop) s += "net_up=1\n";
         return s;
     };
 #else
