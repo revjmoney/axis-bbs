@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")
 #include "bbs/script.h"
+#include "bbs/features.h"
+#if AXIS_SCRIPTS
 
 #include "bbs/station.h"
 #include "bbs/theme.h"
@@ -365,3 +367,5 @@ bool ScriptProg::step(int key, std::string& out) {
 }
 
 }  // namespace axis::bbs
+
+#endif  // AXIS_SCRIPTS

@@ -40,6 +40,7 @@
 #include "bbs/ansiviewer.h"
 #include "bbs/inflatelease.h"
 #include "bbs/viewcache.h"
+#include "bbs/features.h"
 #include "bbs/script.h"
 #include "lord/game.h"
 #include "bbs/ansiterm.h"
@@ -284,6 +285,8 @@ static void callersAddLocal(const std::string& line) {
 }
 static bool asFollower();
 static bool writeWarrior(const std::string& handle);
+// A node's warrior hook: none when LORD is left out of the build, so registration says nothing about a warrior.
+static bool (*const warriorHook)(const std::string&) = AXIS_LORD ? writeWarrior : nullptr;
 
 // The board's small shared lists (rumors, the BBS list): 50 lines each in internal flash on the main.
 static bool listName(const std::string& n) {
@@ -691,6 +694,7 @@ static bool menuExists(const std::string& name) {
     return has;
 }
 
+#if AXIS_SCRIPTS
 // /scripts/NAME.axs. 8000 bytes so a follower can carry the file in one 8 KB cluster frame.
 static std::string scriptRead(const std::string& path) {
     std::string s;
@@ -750,6 +754,9 @@ static void wireScripts(axis::bbs::Node* n) {
     if (!n) return;
     n->setScripts([](const std::string& name) { return scriptFile(name); }, [] { return scriptNames(); });
 }
+#else
+static void wireScripts(axis::bbs::Node*) {}  // scripts are left out of this build: no loader, nothing runs
+#endif
 
 // a menu's art from this board's own storage a piece at a time (false when it isn't here: the whole-file path)
 static bool menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) {
@@ -3674,7 +3681,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, nodeCfg(), &callerFiles()));
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
-        node->setWarrior(writeWarrior);
+        node->setWarrior(warriorHook);
         node->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
         node->setSysopRun(sysopRun);
         node->setWfcSnapshot(wfcSnapshot);
@@ -3926,6 +3933,7 @@ static std::string lordFolderId() {
 
 // Registration, and a later validation, write one warrior. A follower writes the main's file.
 static bool writeWarrior(const std::string& handle) {
+    if (!AXIS_LORD) return true;  // no LORD in this build: no warrior to write
     std::string id = lordFolderId();
     bool remote = !storageHasSd() && asFollower();
     std::unique_ptr<axis::door::HostFs> fs;
@@ -3949,7 +3957,7 @@ static bool writeWarrior(const std::string& handle) {
 static void startDoorInner() {
     const axis::bbs::DoorEntry d = node->door();  // (a copy: new settings may arrive while it starts)
     sendApp(node->takeOutput());
-    if (d.exe == "*LORD") {  // one game per caller. The EXE slot stays free.
+    if (AXIS_LORD && d.exe == "*LORD") {  // one game per caller. The EXE slot stays free.
         logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
         doorStartMs = millis();
         dropLord();
@@ -3981,6 +3989,11 @@ static void startDoorInner() {
         nativeLord->setMailbox(&box, lordPull, lordPost);
         nativeLord->begin();
         if (line) line->flush();
+        return;
+    }
+    if (axis::bbs::doorLeftOut(d.exe)) {  // a firmware door this build leaves out (never offered: a stale request)
+        logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str() + " (not in this firmware)");
+        abortDoor(axis::bbs::Node::DoorEnd::LoadError);
         return;
     }
     if (d.exe == "*DOSSHELL" || d.exe == "*SCRIPT") {
@@ -4316,6 +4329,7 @@ static void startCluster() {
             return "1" + menuFileLocal(req.substr(2), false);
         }  // a menu file or its art (/menus only: under 8 KB)
         if (req.rfind("E\x1f", 0) == 0) return std::string(menuExistsLocal(req.substr(2)) ? "1" : "0");  // does a menu screen exist: no read
+#if AXIS_SCRIPTS
         if (req.rfind("J\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
             std::string name = req.substr(2);
             if (name.empty()) {
@@ -4325,6 +4339,7 @@ static void startCluster() {
             }
             return std::string("1") + scriptFile(name);
         }
+#endif
         if (req.rfind("V\x1f", 0) == 0) return "1" + axis::bbs::followerCommand(req.substr(2), sysopRun);  // a follower's @ command (never a board-only one)
         if (req == "AN") {  // a follower asked the main to speak to the Axis Net
             axisProbeSoon = true;
@@ -4480,7 +4495,7 @@ static void startLocal() {
     localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, nodeCfg(),
                                         &callerFiles()));
     localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
-    localNode->setWarrior(writeWarrior);
+    localNode->setWarrior(warriorHook);
     localNode->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
     localNode->setSysopRun(sysopRun);
     localNode->setWfcSnapshot(wfcSnapshot);
@@ -5489,7 +5504,7 @@ static void handleSerial() {
             }
             serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, nodeCfg(), &callerFiles()));
             serialWfc->setAccounts(&users, saveUsers, hwRandom, unixNow);
-            serialWfc->setWarrior(writeWarrior);
+            serialWfc->setWarrior(warriorHook);
             serialWfc->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
             serialWfc->setSysopRun(sysopRun);
             serialWfc->setWfcSnapshot(wfcSnapshot);
@@ -5559,8 +5574,9 @@ void setup() {
     web::begin();
     cfgSet(configLoad());
     sessions.resize(boardCfg->setupDone ? (size_t)boardCfg->sessions : 1);  // callers at once (setup takes one)
-    bool lordArgs = false;  // stock LORD tails gain NOEMS; a sysop's own arguments stay
-    for (auto& d : cfgEdit().doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
+    bool lordArgs = false;  // stock LORD tails gain NOEMS; a sysop's own arguments stay (a build without LORD keeps every line)
+    if (AXIS_LORD)
+        for (auto& d : cfgEdit().doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
     if (lordArgs) configSave(*boardCfg);
     users.parse(flashRead("/users.dat"));
     linersLoad();

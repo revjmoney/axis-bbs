@@ -3,6 +3,8 @@
 // The rest of the realm: mail, the day log, forest scripts, the dragon, and live fights.
 // Prose stays in the installed door files. This file is the engine.
 #include "lord/game.h"
+#include "bbs/features.h"
+#if AXIS_LORD
 
 #include <algorithm>
 #include <cctype>
@@ -1589,3 +1591,5 @@ void NativeLord::realmKey(char k, int c) {
 
 }  // namespace lord
 }  // namespace axis
+
+#endif  // AXIS_LORD

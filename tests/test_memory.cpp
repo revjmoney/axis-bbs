@@ -20,6 +20,7 @@
 #include "bbs/inflatelease.h"
 #include "bbs/listtrim.h"
 #include "bbs/memlog.h"
+#include "bbs/features.h"
 #include "bbs/node.h"
 #include "bbs/password.h"
 #include "bbs/pipecodes.h"
@@ -603,6 +604,13 @@ TEST_CASE("onlySwitches: true for each switch field alone, false for any other f
     CHECK_FALSE(Node::onlySwitches(withMenu, menuChanged));
 }
 
+// the doors a node offers from these settings (a door the build leaves out is listed but never offered)
+static size_t runnable(const BbsConfig& c) {
+    size_t n = 0;
+    for (const auto& d : c.doors) n += axis::bbs::doorRuns(d) ? 1 : 0;
+    return n;
+}
+
 TEST_CASE("applyBoard: a node on the old copy adopts the new one; a node of its own patches the six fields") {
     BbsConfig c;
     c.bbsName = "Board One";
@@ -619,7 +627,7 @@ TEST_CASE("applyBoard: a node on the old copy adopts the new one; a node of its 
         n.poll(100);
         CHECK(next.use_count() == 2);  // the same pointer, not a copy
         CHECK(prev.use_count() == 1);
-        CHECK(n.doorChoices().size() == next->doors.size());
+        CHECK(n.doorChoices().size() == runnable(*next));
     }
     SUBCASE("more than switches changed: the node keeps its name and menu, takes the switches and doors") {
         Node      n(1, info, prev);
@@ -632,7 +640,7 @@ TEST_CASE("applyBoard: a node on the old copy adopts the new one; a node of its 
         n.applyBoard(next, prev, Node::onlySwitches(*prev, *next));
         n.poll(100);
         CHECK(next.use_count() == 1);  // not shared: the caller keeps the board they called into
-        CHECK(n.doorChoices().size() == next->doors.size());
+        CHECK(n.doorChoices().size() == runnable(*next));
         CHECK(n.editedMenu().find("Messages") != std::string::npos);
         CHECK(n.editedMenu().find("Files") == std::string::npos);
         n.setArt([](const std::string&) { return std::string("|BN"); });
@@ -648,7 +656,7 @@ TEST_CASE("applyBoard: a node on the old copy adopts the new one; a node of its 
         n.applyBoard(next, prev, true);
         n.poll(100);
         CHECK(next.use_count() == 1);
-        CHECK(n.doorChoices().size() == next->doors.size());
+        CHECK(n.doorChoices().size() == runnable(*next));
         CHECK(n.editedMenu().find("Messages") != std::string::npos);
     }
 }

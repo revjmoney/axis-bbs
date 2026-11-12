@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_SCRIPTS  // a build that leaves scripts out has nothing here to test
 #include "doctest.h"
 #include "bbs/config.h"
 #include "bbs/node.h"
@@ -99,7 +101,7 @@ TEST_CASE("the scripts door runs a card file and returns to the door list") {
     n.input((const uint8_t*)"d", 1, 1000);
     std::string doors = plain(n.takeOutput());
     CHECK(doors.find("Scripts") != std::string::npos);
-    n.input((const uint8_t*)"3", 1, 1000);  // 1 LORD, 2 ANSI Movies, 3 Scripts
+    n.input((const uint8_t*)(AXIS_LORD ? "3" : "2"), 1, 1000);  // 1 LORD, 2 ANSI Movies, 3 Scripts (one up without LORD)
     std::string list = plain(n.takeOutput());
     CHECK(n.state() == Node::State::Script);
     CHECK(list.find("hello") != std::string::npos);
@@ -156,3 +158,5 @@ TEST_CASE("a login sequence step can be a script") {
     CHECK(o.find("hi Rev") != std::string::npos);
     CHECK(n.state() == Node::State::Menu);
 }
+
+#endif  // AXIS_SCRIPTS

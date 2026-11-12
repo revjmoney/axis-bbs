@@ -1,4 +1,5 @@
 #include "bbs/sysopshell.h"
+#include "bbs/features.h"
 
 #include <map>
 #include <regex>
@@ -319,6 +320,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         Rig r;
         r.replies["@SETTINGS"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
         r.shell.beginAt(SysopSection::Settings);
+#if AXIS_DOSPROMPT
         r.type("b");  // page 1 ends with Files (b), Messages (c), Doors (d), Free downloads (e)
         CHECK(r.ranCmd("@SET files_on=0"));
         r.type("c");
@@ -329,6 +331,18 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         r.type("n");
         r.type("1");  // page 2: Telnet sysop access
         CHECK(r.ranCmd("@SET sysop_telnet=0"));
+#else
+        CHECK(plain(r.out).find("DOS prompt") == std::string::npos);  // left out of this build: no password to set
+        r.type("a");  // one row up: Files (a), Messages (b), Doors (c), Free downloads (d), Telnet sysop access (e)
+        CHECK(r.ranCmd("@SET files_on=0"));
+        r.type("b");
+        CHECK(r.ranCmd("@SET messages_on=1"));
+        r.type("d");
+        r.type("750\r");
+        CHECK(r.ranCmd("@SET free_kb=750"));
+        r.type("e");
+        CHECK(r.ranCmd("@SET sysop_telnet=0"));
+#endif
     }
     {  // the top layer has a Look entry
         Rig r;

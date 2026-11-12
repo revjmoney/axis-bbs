@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // Native LORD reads a synthetic 4.07 warrior file. Scene art comes from the door folder.
+#include "bbs/features.h"
+#if AXIS_LORD  // a build that leaves LORD out has nothing here to test
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -922,3 +924,5 @@ TEST_CASE("native lord plays a forest event from a script read a window at a tim
         CHECK(line.output().find("\r\r") == std::string::npos);  // the file's CR is not sent twice
     }
 }
+
+#endif  // AXIS_LORD

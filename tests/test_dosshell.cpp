@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_DOSPROMPT  // a build that leaves the DOS prompt out has nothing here to test
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -246,3 +248,5 @@ TEST_CASE("PKUNZIP -V (or LIST) shows what's inside an archive in the sandbox") 
     CHECK(out.find("ZIP") != std::string::npos);
     CHECK(r.run("list readme.txt\r").find("not an archive") != std::string::npos);
 }
+
+#endif  // AXIS_DOSPROMPT

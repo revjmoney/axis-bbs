@@ -373,9 +373,10 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
         },
         [this](const std::string& k) { return menuValue(k); }));
     menu_->setArtPieces(std::move(pieces));
-    menu_->cantRun = [this](const MenuCmd& c) {  // a DOOR: line whose door can't start here (a DOS .EXE): off the menu
+    menu_->cantRun = [this](const MenuCmd& c) {  // a DOOR: line whose door can't start here (a DOS .EXE), or a door or SCRIPT this build leaves out: off the menu
         std::string cmd = c.cmd;
         for (char& ch : cmd) ch = (char)std::toupper((unsigned char)ch);
+        if (!AXIS_SCRIPTS && (cmd == "SCRIPT" || cmd.compare(0, 7, "SCRIPT:") == 0)) return true;  // scripts are left out of this build
         if (cmd.compare(0, 5, "DOOR:") != 0) return false;
         std::string id = c.cmd.substr(5);
         bool        found = false;

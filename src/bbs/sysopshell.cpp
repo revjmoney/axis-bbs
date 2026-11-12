@@ -534,9 +534,11 @@ void SysopShell::settings(Layer& l) {
         l.items.push_back({"Cluster key", "(never shown; the same on every board)", [this] {
                                ask("Cluster key, 8+ (off: this board runs alone)", true, [this](const std::string& v) { did(run_("@CLUSTERKEY " + v)); });
                            }});
+#if AXIS_DOSPROMPT
     l.items.push_back({"DOS prompt password", "(never shown)", [this] {
                            ask("New DOS prompt password", true, [this](const std::string& v) { did(run_("@DOSPASS " + v)); });
                        }});
+#endif
     // the board-wide switches (a caller's own access is on the caller's page)
     std::string files = setting("files_on"), msgs = setting("messages_on"), doors = setting("doors_on"), tel = setting("sysop_telnet"), freekb = setting("free_kb");
     auto flip = [this](const std::string& key, bool on) { return [this, key, on] { did(run_("@SET " + key + "=" + (on ? "0" : "1"))); }; };
@@ -657,7 +659,7 @@ void SysopShell::sections(Layer& l) {
         else if (k == "doors_on") doors = v;
         else if (k.size() > 4 && k.rfind("door", 0) == 0 && k[4] >= '0' && k[4] <= '9') {
             auto f = split(v, '|');
-            if (f.size() < 3 || f[0].empty()) continue;
+            if (f.size() < 3 || f[0].empty() || doorLeftOut(f[2])) continue;  // (a door this build leaves out: not listed)
             bool on = true;
             if (f.size() > 5 && !f[5].empty()) on = f[5] != "0";
             else if (lordGameExe(f[2])) on = false;

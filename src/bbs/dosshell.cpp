@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/dosshell.h"
+#include "bbs/features.h"
+#if AXIS_DOSPROMPT
 
 #include <cctype>
 #include <cstdio>
@@ -499,3 +501,5 @@ void DosShell::copy(const std::string& from, const std::string& to) {
 }
 
 }  // namespace axis::bbs
+
+#endif  // AXIS_DOSPROMPT

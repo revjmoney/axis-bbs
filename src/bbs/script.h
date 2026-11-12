@@ -31,6 +31,8 @@
 #include <utility>
 #include <vector>
 
+#include "bbs/features.h"
+
 namespace axis::bbs {
 
 inline bool scriptNameOk(const std::string& name) {
@@ -40,6 +42,7 @@ inline bool scriptNameOk(const std::string& name) {
     return true;
 }
 
+#if AXIS_SCRIPTS
 class ScriptProg {
 public:
     struct World {
@@ -89,5 +92,25 @@ private:
     Wait                             wait_ = Wait::None;
     bool                             on_ = false, shown_ = false, skipMenu_ = false;
 };
+#else
+// Scripts are left out of this build (features.h): script.cpp compiles to nothing. Nothing loads, so a SCRIPT command or
+// login step finds no program, and the Scripts door is never offered.
+class ScriptProg {
+public:
+    struct World {
+        std::string handle, bbs, node, time;
+    };
+
+    bool               load(const std::string&, const World&) { return false; }
+    bool               offer(const std::vector<std::string>&) { return false; }
+    bool               running() const { return false; }
+    bool               waiting() const { return false; }
+    const std::string& picked() const { return picked_; }
+    bool               step(int, std::string&) { return false; }
+
+private:
+    std::string picked_;
+};
+#endif
 
 }  // namespace axis::bbs

@@ -2,9 +2,12 @@
 // Copyright (C) 2026 Rev. J. Money
 // BBS settings from the first-boot setup, stored as key=value lines (axis.ini).
 #pragma once
+#include <cctype>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "bbs/features.h"
 
 namespace axis::bbs {
 
@@ -15,7 +18,26 @@ struct DoorEntry {
 };
 // Only the doors built into the firmware ("*LORD", "*ANSIVIEW", "*SCRIPT") can start: the DOS runtime
 // for an .EXE is not in this firmware (dropped 2026-11-06), so those rows stay out of every door list.
-inline bool doorRuns(const DoorEntry& d) { return !d.exe.empty() && d.exe[0] == '*'; }
+// A build can leave LORD, the scripts or the DOS prompt out (features.h): their rows are then kept but never offered.
+inline bool doorBuiltIn(const std::string& exe) {
+    if (exe.empty() || exe[0] != '*') return false;
+    auto is = [&exe](const char* name) {
+        size_t i = 0;
+        for (; name[i]; i++)
+            if (i >= exe.size() || (char)std::toupper((unsigned char)exe[i]) != name[i]) return false;
+        return i == exe.size();
+    };
+    if (!AXIS_LORD && is("*LORD")) return false;
+    if (!AXIS_SCRIPTS && is("*SCRIPT")) return false;
+    if (!AXIS_DOSPROMPT && is("*DOSSHELL")) return false;
+    return true;
+}
+inline bool doorRuns(const DoorEntry& d) { return doorBuiltIn(d.exe); }
+// A firmware door ('*') that this build leaves out: its row stays in the settings and out of every list.
+inline bool doorLeftOut(const std::string& exe) {
+    if (AXIS_LORD && AXIS_SCRIPTS && AXIS_DOSPROMPT) return false;  // every door is in (and the full build keeps no check)
+    return !exe.empty() && exe[0] == '*' && !doorBuiltIn(exe);
+}
 
 // LORD.EXE, any mix of case. LORD Fast is FAST.EXE and is not this.
 inline bool lordGameExe(const std::string& exe) {
