@@ -107,6 +107,39 @@ static void noteDoing(const String& what) {
 }
 static const char* doingNow() { return doingMagic_ == kDoingMagic ? doing_ : ""; }  // the same text noteDoing keeps
 static axis::bbs::HeapWindow heapWin;  // lowest heap since boot or the last @HEAPWIN
+#if AXIS_HEAP_TRACE
+// Bench build only (env cyd-trace): what is live, and who took it, each time the heap reaches a new low.
+#include "esp_heap_trace.h"
+#include "esp_rom_sys.h"
+static heap_trace_record_t traceRecs_[250];
+static uint32_t            traceDumpFree_ = UINT32_MAX;
+static int                 traceDumps_ = 0;
+static void heapTraceRestart() {
+    heap_trace_stop();
+    heap_trace_start(HEAP_TRACE_LEAKS);
+    traceDumpFree_ = UINT32_MAX;
+    traceDumps_ = 0;
+}
+static void heapTraceLow(uint32_t freeB, uint32_t largest) {
+    if (freeB >= 64000 || freeB + 3072 > traceDumpFree_ || traceDumps_ >= 8) return;
+    traceDumpFree_ = freeB;
+    traceDumps_++;
+    size_t n = heap_trace_get_count();
+    uint32_t total = 0;
+    heap_trace_record_t r;
+    for (size_t i = 0; i < n; i++)
+        if (heap_trace_get(i, &r) == ESP_OK && r.address) total += r.size;
+    esp_rom_printf("@HT low free=%u largest=%u live=%u bytes=%u doing=%s\n", (unsigned)freeB, (unsigned)largest, (unsigned)n,
+                   (unsigned)total, doingNow());
+    for (size_t i = 0; i < n; i++) {
+        if (heap_trace_get(i, &r) != ESP_OK || !r.address || r.size < 256) continue;
+        esp_rom_printf("@HT %u", (unsigned)r.size);
+        for (int d = 0; d < CONFIG_HEAP_TRACING_STACK_DEPTH; d++) esp_rom_printf(" %p", r.alloced_by[d]);
+        esp_rom_printf("\n");
+    }
+    esp_rom_printf("@HT end\n");
+}
+#endif
 static size_t                artMax = 0;  // largest art string read from the SD (theme or menu file)
 
 static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
@@ -3488,6 +3521,9 @@ static void runCommand(const String& cmd, Print& out) {
         }
     } else if (cmd == "@HEAPWIN") {  // restart the lowest-heap window (the numbers on @STATUS: wmin wlarge wdoing)
         heapWin.reset();
+#if AXIS_HEAP_TRACE
+        heapTraceRestart();
+#endif
         out.println("@HEAPWIN reset");
     } else if (cmd == "@STATUS") {  // one line for the panel
         int on = 0;
@@ -4017,6 +4053,9 @@ static void allocFailed(size_t size, uint32_t caps, const char* fn) {
 }
 
 void setup() {
+#if AXIS_HEAP_TRACE
+    heap_trace_init_standalone(traceRecs_, sizeof traceRecs_ / sizeof traceRecs_[0]);
+#endif
     heapScopeHook([](const std::string& l) { logEvent(String(l.c_str())); });
     boardDiag_.resetCode = (int)esp_reset_reason();
     heap_caps_register_failed_alloc_callback(allocFailed);
@@ -4287,6 +4326,9 @@ void loop() {
         logEvent("loop stalled " + String(millis() - lastLoop) + " ms");
     lastLoop = millis();
     heapWin.sample((uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT), (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), doingNow());
+#if AXIS_HEAP_TRACE
+    heapTraceLow((uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT), (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif
     heapScopeFlush();  // a line the web task (core 0) held
     web::tick();       // the web task exists only while a DNS check or a Discord line waits
     handleSerial();
