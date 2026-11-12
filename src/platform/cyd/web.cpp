@@ -219,6 +219,7 @@ void tick() {
     uint32_t now = millis();
     if ((int32_t)(now - nextTick_) < 0) return;
     nextTick_ = now + 1000;
+    if (checkPending_) lastDdns_ = now;  // (a held check, e.g. during a door: the 10 minutes count from when it really runs)
     bool dns = domain_.length() || noipHost_.length();  // (the settings change only on this core)
     if (main_ && !door_ && !checkPending_ && (dns || discord_.length()) && WiFi.status() == WL_CONNECTED &&
         axis::bbs::webCheckDue(now, first_, ddnsDue_, lastDdns_)) {
