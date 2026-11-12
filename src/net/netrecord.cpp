@@ -12,7 +12,7 @@ namespace {
 std::string clean(const std::string& s) {
     std::string o;
     o.reserve(s.size());
-    for (char c : s) o.push_back(c == '\n' || c == '\r' || c == '\x1f' ? ' ' : c);
+    for (char c : s) o.push_back((unsigned char)c < 0x20 || c == 0x7f ? ' ' : c);  // no control bytes reach a sysop's terminal
     return o;
 }
 }  // namespace

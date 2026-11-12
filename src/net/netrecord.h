@@ -19,7 +19,7 @@ public:
     // yyyymm gives the month ("nodate" with the clock unset); now gives unix time (0 if null).
     NetRecord(std::function<bool(const std::string& path, const std::string& line)> append, std::function<std::string()> yyyymm,
               std::function<uint32_t()> now = nullptr);
-    // who and what lose newlines and 0x1F; a signed line that would push the record past
+    // who and what lose control bytes (newlines, 0x1F, ESC); a signed line that would push the record past
     // kNetRecordMaxLine is left out. False if the append failed.
     bool note(const std::string& who, const std::string& what, const std::string& signedLine);
     uint32_t failures() const { return failures_; }

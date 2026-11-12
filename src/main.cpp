@@ -2679,6 +2679,13 @@ static void netStatus(NetHost& h, Print& out) {
     if (h.record && h.record->failures()) out.printf("record writes failed %u\n", (unsigned)h.record->failures());
 }
 
+// A card field from another board, safe for a terminal: control bytes become '?'.
+static std::string netSafe(std::string s) {
+    for (char& c : s)
+        if ((unsigned char)c < 0x20 || c == 0x7f) c = '?';
+    return s;
+}
+
 static void netPeers(NetHost& h, Print& out) {
     const axis::net::NetState& st = h.core->state();
     std::string                t = "\n" + h.core->saveCursors();
@@ -2692,8 +2699,8 @@ static void netPeers(NetHost& h, Print& out) {
             seen = netAgo(last);
         }
         const char* flags = c.board == h.core->board() ? "this board" : st.banned(c.board) ? "banned" : netHas(h.blocks, c.board) ? "blocked" : "";
-        out.printf("%s | %s | %s | %s:%d | %s | %s | %s\n", netCardName(&c).c_str(), c.board.c_str(), c.mac.c_str(), c.host.c_str(), c.port,
-                   link.c_str(), seen.c_str(), flags);
+        out.printf("%s | %s | %s\n  %s:%d | %s | %s | %s\n", netSafe(netCardName(&c).c_str()).c_str(), c.board.c_str(), netSafe(c.mac).c_str(),
+                   netSafe(c.host).c_str(), c.port, link.c_str(), seen.c_str(), flags);
     });
 }
 
@@ -5043,7 +5050,9 @@ static void handleSerial() {
             continue;
         }
         if (c != '\n' && c != '\r') {
+#if AXIS_NETS
             cmd.reserve(168);  // one buffer, never moved: what is typed (a key) is wiped from it below, not left in a freed copy
+#endif
             if (cmd.length() < 160) cmd += c;
             continue;
         }
@@ -5052,7 +5061,9 @@ static void handleSerial() {
         else
 #endif
             runCommand(cmd, Serial);
+#if AXIS_NETS
         if (cmd.length()) std::memset((void*)cmd.c_str(), 0, cmd.length());
+#endif
         cmd = "";
     }
     if (serialWfc) {
