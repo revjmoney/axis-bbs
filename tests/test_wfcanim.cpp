@@ -5,6 +5,8 @@
 #include <string.h>
 
 #include <set>
+#include <cstdlib>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -103,7 +105,7 @@ TEST_CASE("every transition starts and ends on the still screen, shows in betwee
         CAPTURE(WfcAnim::fxName(fx));
         WfcAnim a;
         REQUIRE(a.load(t));
-        int parts = fx >= WfcAnim::kContentFx ? a.runs() : a.parts();
+        int parts = fx == WfcAnim::Drain ? 1 : fx >= WfcAnim::kContentFx ? a.runs() : a.parts();
         for (int p = 0; p < parts; p++) {
             CAPTURE(p);
             REQUIRE(a.force(fx, 1000, p));
@@ -183,6 +185,55 @@ TEST_CASE("only the bands that move are drawn again, and once more after they st
     a.calm(300);  // stopped: the same bands once more, so they are put back
     CHECK(a.bandsDue(300) == m);
     CHECK(a.bandsDue(350) == 0);
+}
+
+TEST_CASE("the stick figure walks up to a letter and turns it upside down, and it is drawn upside down") {
+    AnsiTerm t = wfcScreen();
+    WfcAnim  a;
+    REQUIRE(a.load(t));
+    const std::vector<uint8_t> still = stillFrame(t);
+    a.step(10);
+    CHECK(a.walker().on);
+    a.calm(10);
+    REQUIRE(a.walkerDo(WfcAnim::Vanna, 20));
+    int cell = a.walker().cell;
+    REQUIRE(cell >= 0);
+    uint32_t now = 20;
+    while (now < 60000 && !a.flipped()) a.step(now += 50);
+    REQUIRE(a.flipped() == 1);
+    for (int i = 0; i < 12; i++) a.step(now += 50);  // the flip is done
+    std::vector<uint8_t> f = frame(a, now);
+    auto px = [](const std::vector<uint8_t>& b, int X, int y) { return (X & 1) ? b[y * 160 + X / 2] & 15 : b[y * 160 + X / 2] >> 4; };
+    const WfcAnim::Rect& j = a.jiggle().r;
+    int cx = (cell % 45) * 7, cy = (cell / 45) * 10;
+    bool jiggled = j.x0 < cx + 7 && cx < j.x1 + 3 && j.y0 < cy + 10 && cy < j.y1 + 3;
+    if (!jiggled)
+        for (int ly = 0; ly < 10; ly++)
+            for (int lx = 0; lx < 7; lx++) CHECK(px(f, cx + lx + 2, cy + ly) == px(still, cx + lx + 2, cy + 9 - ly));
+    CHECK(f != still);  // the figure is on the screen too
+    while (now < 200000 && a.flipped()) a.step(now += 50);
+    CHECK(a.flipped() == 0);  // they all turn back sooner or later
+}
+
+TEST_CASE("the drain is somewhere new every time") {
+    AnsiTerm t = wfcScreen();
+    WfcAnim  a;
+    REQUIRE(a.load(t));
+    std::set<std::pair<int, int>> spots;
+    int lastX = -1000, lastY = -1000;
+    for (int i = 0; i < 20; i++) {
+        REQUIRE(a.force(WfcAnim::Drain, 1000u + (uint32_t)i));
+        int x, y;
+        WfcAnim::drainSpot(a.act(0).seed, x, y);
+        CHECK(std::abs(x - lastX) + std::abs(y - lastY) >= 80);
+        CHECK(x >= 16);
+        CHECK(x < WfcAnim::kGridW - 16);
+        CHECK(y >= 16);
+        CHECK(y < WfcAnim::kGridH - 16);
+        spots.insert({x, y});
+        lastX = x, lastY = y;
+    }
+    CHECK(spots.size() == 20);
 }
 
 TEST_CASE("effects have names for the bench command") {

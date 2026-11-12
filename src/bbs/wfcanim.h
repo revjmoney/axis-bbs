@@ -21,8 +21,9 @@ public:
     static constexpr int kCols = 45, kRows = 24, kCw = 7, kCh = 10, kLeft = 2;
     static constexpr int kGridW = kCols * kCw, kGridH = kRows * kCh;  // 315 x 240
     static constexpr int kBands = 6, kBandH = 40, kOutW = 320;
-    // the transitions: 0..12 take a part of the screen away and bring it back, 13 and 14 work on border lines
-    enum Fx : uint8_t { Dissolve, Explode, Blocks, Sine, Flap, Type, Drip, Glitch, Rain, Warp, Crt, Blinds, Pixelate, Melt, Bots, kFxCount };
+    // the transitions: 0..12 take a part of the screen away and bring it back, 13 and 14 work on border lines, and Drain
+    // takes the whole screen: it breaks into dust that swirls down a drain (the middle or a random spot) and back out
+    enum Fx : uint8_t { Dissolve, Explode, Blocks, Sine, Flap, Type, Drip, Glitch, Rain, Warp, Crt, Blinds, Pixelate, Melt, Bots, Drain, kFxCount };
     static constexpr int kContentFx = Melt;
     // the one thing that is always moving
     enum Wig : uint8_t { Wiggle, Jostle, Shimmy, Bob, Tilt, kWigCount };
@@ -43,7 +44,18 @@ public:
         uint16_t dur = 0;
         uint32_t seed = 0;
     };
-    static constexpr int kActs = 6, kParts = 12, kRuns = 16;
+    static constexpr int kActs = 6, kParts = 12, kRuns = 16, kFlips = 3;
+    // the little stick figure who lives on the screen: walks about, hangs out in empty spaces, plays hacky sack, and walks up
+    // to letters to show them off like a game show hostess, flipping them upside down (they flip back later)
+    enum Doing : uint8_t { Walk, Hang, Hacky, Vanna };
+    struct Walker {
+        bool     on = false, face = true, flipped = false;  // face: looking right
+        uint8_t  doing = Hang, then = Hang;                  // then: what it does once the walk ends
+        int16_t  x0 = 0, y0 = 0, x1 = 0, y1 = 0;            // feet: the figure's left column, the row under its feet
+        int16_t  cell = -1;                                  // the letter it is showing
+        uint32_t start = 0;
+        uint16_t dur = 0;
+    };
 
     bool load(const AnsiTerm& t);  // the screen to animate (again after it changed); false: no room, stay still
     void unload();
@@ -67,6 +79,10 @@ public:
     const Act&  act(int i) const { return acts_[i]; }
     const Act&  jiggle() const { return jig_; }
     bool        busyAt(uint32_t now) const;  // any transition showing
+    bool        walkerDo(int doing, uint32_t now);  // bench: Hang, Hacky or Vanna next (it walks there first)
+    const Walker& walker() const { return walker_; }
+    int         flipped() const;  // letters upside down now
+    static void drainSpot(uint32_t seed, int& x, int& y);  // where a drain with this seed swirls (somewhere new each time)
 
 private:
     struct Cell {
@@ -91,6 +107,14 @@ private:
     uint8_t fxPixel(const Act& a, int gx, int gy, int t, const uint8_t (*lut)[5]) const;
     uint8_t wigPixel(int gx, int gy, uint32_t now, const uint8_t (*lut)[5]) const;
     void    sprites(uint8_t* fb, int band, const Act& a, int t, const uint8_t (*lut)[5]) const;
+    void    drawWalker(uint8_t* fb, int band, uint32_t now, const uint8_t (*lut)[5]) const;
+    void    walkerAt(uint32_t now, int& x, int& y) const;
+    Rect    walkerArea(uint32_t now) const;
+    void    walkTo(uint32_t now, int x, int y, int then, int cell);
+    void    nextWalker(uint32_t now, int want);
+    void    flipCell(int cell, uint32_t now);
+    int     flipK(int cell) const;  // 1024 upright .. -1024 upside down, between: turning over
+    bool    draining(uint32_t now) const;
 
     std::unique_ptr<Cell[]> cells_;  // 45x24, row by row
     Rect                    parts_[kParts];
@@ -105,6 +129,14 @@ private:
     uint8_t                 orbitStep_ = 0, lastMask_ = 0;
     int8_t                  forced_ = -1;  // the act @WFCFX started (hold times it)
     uint16_t                bag_ = 0;  // content effects used this round (each one once before any again)
+    Walker                  walker_;
+    int16_t                 lastDrainX_ = -1000, lastDrainY_ = -1000;
+    struct Flip {
+        int16_t  cell = -1;
+        bool     up = false;  // turning (or turned) upside down; false: turning back, then gone
+        uint32_t at = 0, until = 0;
+    } flips_[kFlips];
+    mutable uint32_t drawNow_ = 0;  // the time of the band being drawn (letters part way through a flip)
 };
 
 }  // namespace axis::bbs

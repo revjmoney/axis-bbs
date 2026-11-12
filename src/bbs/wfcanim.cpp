@@ -24,14 +24,26 @@ const int8_t kSin[64] = {0,    12,   25,   37,   49,   60,   71,   81,   90,   9
                          -127, -126, -125, -122, -117, -112, -106, -98,  -90,  -81,  -71,  -60,  -49,  -37,  -25,  -12};
 
 const char* const kFxNames[WfcAnim::kFxCount] = {"dissolve", "explode", "blocks", "sine",  "flap",   "type",     "drip", "glitch",
-                                                 "rain",     "warp",    "crt",    "blinds", "pixelate", "melt", "bots"};
+                                                 "rain",     "warp",    "crt",    "blinds", "pixelate", "melt", "bots", "drain"};
 const char* const kWigNames[WfcAnim::kWigCount] = {"wiggle", "jostle", "shimmy", "bob", "tilt"};
-const uint16_t    kDur[WfcAnim::kFxCount] = {2400, 4200, 2800, 3200, 2600, 3600, 3000, 1800, 3000, 3000, 2200, 2000, 2200, 5000, 6000};
+const uint16_t    kDur[WfcAnim::kFxCount] = {2400, 4200, 2800, 3200, 2600, 3600, 3000, 1800, 3000, 3000, 2200, 2000, 2200, 5000, 6000, 8000};
 
 // a little bot, 7x10 (bit 6 is the left column): the body, its eyes, and two leg poses
 const uint8_t kBot[10] = {0x08, 0x3E, 0x2A, 0x3E, 0x1C, 0x7F, 0x3E, 0x3E, 0x22, 0x41};
 const uint8_t kBotEyes[10] = {0, 0, 0x14, 0, 0, 0, 0, 0, 0, 0};
 const uint8_t kBotStep[2] = {0x14, 0x22};  // rows 8 and 9 in the other pose
+
+// the stick figure, 7x12, facing right ('#' lit): standing, two walking steps, a kick, showing a letter, ta-da
+const char* const kPose[6][12] = {
+    {"..###..", "..###..", "...#...", ".#####.", "#..#..#", "...#...", "...#...", "..#.#..", "..#.#..", ".#...#.", ".#...#.", "......."},
+    {"..###..", "..###..", "...#...", "..###..", ".#.#.#.", "...#...", "...#...", "..#.#..", ".#...#.", "#.....#", "#.....#", "......."},
+    {"..###..", "..###..", "...#...", "..###..", "..###..", "...#...", "...#...", "...#...", "...##..", "...#.#.", "..##...", "......."},
+    {"..###..", "..###..", "...#...", "#######", "...#...", "...#...", "...#...", "...###.", "...#..#", "...#...", "..#....", "..#...."},
+    {"..###..", "..###..", "...#...", "..#####", ".#.#..#", "..##...", "...#...", "..#.#..", "..#.#..", ".#...#.", ".#...#.", "......."},
+    {"#.###.#", "#.###.#", ".#.#.#.", "..###..", "...#...", "...#...", "...#...", "..#.#..", "..#.#..", ".#...#.", ".#...#.", "......."},
+};
+enum Pose { Stand, Step1, Step2, Kick, Show, TaDa };
+const int kFlipMs = 400;
 
 uint32_t mix(uint32_t v) {
     v ^= v >> 16;
@@ -221,6 +233,8 @@ void WfcAnim::unload() {
     cells_.reset();
     for (auto& a : acts_) a.on = false;
     jig_.on = false;
+    walker_.on = false;
+    for (auto& f : flips_) f.cell = -1;
     begun_ = held_ = false;
     forced_ = -1;
     lastMask_ = 0;
@@ -248,6 +262,15 @@ void WfcAnim::start(int fx, const Rect& r, uint32_t when) {
     for (auto& a : acts_) {
         if (a.on) continue;
         a.fx = (uint8_t)fx, a.r = r, a.start = when, a.dur = kDur[fx], a.seed = rnd(), a.on = true;
+        if (fx == Drain) {  // a new spot every time: anywhere, but well away from the last one
+            int x, y;
+            for (int tries = 0; tries < 16; tries++) {
+                drainSpot(a.seed, x, y);
+                if ((x > lastDrainX_ ? x - lastDrainX_ : lastDrainX_ - x) + (y > lastDrainY_ ? y - lastDrainY_ : lastDrainY_ - y) >= 80) break;
+                a.seed = rnd();
+            }
+            lastDrainX_ = (int16_t)x, lastDrainY_ = (int16_t)y;
+        }
         return;
     }
 }
@@ -256,6 +279,8 @@ void WfcAnim::startSome(uint32_t now) {
     int live = 0;
     for (auto& a : acts_) live += a.on;
     nextStart_ = now + 1200 + rnd() % 4800;
+    for (auto& a : acts_)
+        if (a.on && a.fx == Drain) return;  // nothing else while the screen is down the drain
     if (live >= 2) {
         nextStart_ = now + 700;
         return;
@@ -267,6 +292,13 @@ void WfcAnim::startSome(uint32_t now) {
         bag_ |= (uint16_t)(1u << f);
         return f;
     };
+    if (live == 0 && rnd() % 14 == 0) {  // the whole screen down the drain, now and then
+        Rect all;
+        all.x1 = kGridW, all.y1 = kGridH;
+        start(Drain, all, now);
+        nextStart_ = now + kDur[Drain] + 6000u;
+        return;
+    }
     uint32_t pick = rnd() % 10;
     if (pick == 0 && live == 0 && nParts_ >= 2) {  // a cascade: every part goes, each its own way, one after another
         int n = mini(nParts_, kActs);
@@ -355,6 +387,163 @@ void WfcAnim::step(uint32_t now) {
         nextStart_ = now + 1500;
     }
     if (!still_ && (int32_t)(now - nextStart_) >= 0) startSome(now);
+    // the figure: on to the next thing when this one is done; a letter it shows flips over part way through
+    if (!walker_.on) nextWalker(now, -1);
+    else if ((int32_t)(now - walker_.start) >= (int32_t)walker_.dur) nextWalker(now, -1);
+    if (walker_.on && walker_.doing == Vanna && !walker_.flipped && (int32_t)(now - walker_.start) >= 900) {
+        flipCell(walker_.cell, now);
+        walker_.flipped = true;
+    }
+    for (auto& f : flips_) {
+        if (f.cell < 0) continue;
+        if (f.up && (int32_t)(now - f.until) >= 0) f.up = false, f.at = now;  // back the right way up on its own
+        else if (!f.up && (int32_t)(now - f.at) >= kFlipMs) f.cell = -1;
+    }
+}
+
+// ---- the stick figure
+
+void WfcAnim::walkerAt(uint32_t now, int& x, int& y) const {
+    x = walker_.x1, y = walker_.y1;
+    if (walker_.doing != Walk || !walker_.dur) return;
+    int u = clampi((int)(now - walker_.start) * 1024 / walker_.dur, 0, 1024);
+    x = walker_.x0 + (walker_.x1 - walker_.x0) * u / 1024, y = walker_.y0 + (walker_.y1 - walker_.y0) * u / 1024;
+}
+
+WfcAnim::Rect WfcAnim::walkerArea(uint32_t now) const {
+    Rect r;
+    if (!walker_.on) return r;
+    int x, y;
+    walkerAt(now, x, y);
+    r.x0 = (int16_t)(x - 2), r.x1 = (int16_t)(x + 10), r.y0 = (int16_t)(y - 30), r.y1 = (int16_t)(y + 1);  // (the ball goes up)
+    return grow(r, 0, 0, 0);
+}
+
+void WfcAnim::walkTo(uint32_t now, int x, int y, int then, int cell) {
+    int fx, fy;
+    if (walker_.on) walkerAt(now, fx, fy);
+    else fx = x, fy = y;
+    walker_.on = true, walker_.doing = Walk, walker_.then = (uint8_t)then, walker_.cell = (int16_t)cell, walker_.flipped = false;
+    walker_.x0 = (int16_t)fx, walker_.y0 = (int16_t)fy, walker_.x1 = (int16_t)x, walker_.y1 = (int16_t)y;
+    walker_.face = x >= fx;
+    int dist = (x > fx ? x - fx : fx - x) + (y > fy ? y - fy : fy - y);
+    walker_.start = now, walker_.dur = (uint16_t)mini(30000, maxi(200, dist * 1000 / 30));  // about 30 px a second
+}
+
+void WfcAnim::nextWalker(uint32_t now, int want) {
+    if (walker_.on && walker_.doing == Walk && want < 0) {  // arrived: now the thing it came for
+        walker_.doing = walker_.then, walker_.start = now, walker_.x0 = walker_.x1, walker_.y0 = walker_.y1;
+        walker_.dur = (uint16_t)(walker_.doing == Hacky ? 5000 + rnd() % 4000 : walker_.doing == Vanna ? 3200 : 2500 + rnd() % 3500);
+        if (walker_.doing == Vanna && walker_.cell >= 0) walker_.face = (walker_.cell % kCols) * kCw >= walker_.x1;
+        else if (walker_.doing == Hang) walker_.face = rnd() & 1;
+        return;
+    }
+    int what = want >= 0 ? want : (int)(rnd() % 100) < 40 ? Vanna : (int)(rnd() % 100) < 65 ? Hacky : Hang;
+    if (what == Vanna) {  // a letter: one already upside down (to put it back) or a new one
+        int cell = -1;
+        for (auto& f : flips_)
+            if (f.cell >= 0 && f.up && (rnd() & 1)) cell = f.cell;
+        for (int tries = 0; cell < 0 && tries < 60; tries++) {
+            int     i = (int)(rnd() % (kCols * kRows));
+            uint8_t ch = cells_[i].ch;
+            if (kind(i / kCols, i % kCols) == Art && ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))) cell = i;
+        }
+        if (cell >= 0) {
+            int cx = (cell % kCols) * kCw, y = (cell / kCols + 1) * kCh;
+            int x = cx >= kCw + 1 ? cx - kCw - 1 : cx + kCw + 1;  // beside it (on its left when there is room)
+            walkTo(now, x, y, Vanna, cell);
+            return;
+        }
+        what = Hacky;
+    }
+    for (int tries = 0; tries < 80; tries++) {  // an empty spot: a blank cell with blanks above it and on either side
+        int i = (int)(rnd() % (kCols * kRows)), r = i / kCols, c = i % kCols;
+        if (r < 2 || c < 1 || c > kCols - 2) continue;
+        if (kind(r, c) != Blank || kind(r - 1, c) != Blank || kind(r, c - 1) != Blank || kind(r, c + 1) != Blank || kind(r - 2, c) != Blank)
+            continue;
+        walkTo(now, c * kCw, (r + 1) * kCh, what, -1);
+        return;
+    }
+    walkTo(now, (int)(rnd() % (kGridW - 8)), (int)(2 + rnd() % (kRows - 2)) * kCh, Hang, -1);  // nowhere empty: anywhere
+}
+
+bool WfcAnim::walkerDo(int doing, uint32_t now) {
+    if (!cells_ || doing < Hang || doing > Vanna) return false;
+    begun_ = true;
+    nextWalker(now, doing);
+    return true;
+}
+
+void WfcAnim::flipCell(int cell, uint32_t now) {
+    if (cell < 0) return;
+    for (auto& f : flips_)
+        if (f.cell == cell) {  // upside down already: back again (or over again if it was on its way back)
+            f.up = !f.up, f.at = now, f.until = now + 30000 + rnd() % 30000;
+            return;
+        }
+    for (auto& f : flips_)
+        if (f.cell < 0) {
+            f.cell = (int16_t)cell, f.up = true, f.at = now, f.until = now + 30000 + rnd() % 30000;
+            return;
+        }
+}
+
+int WfcAnim::flipped() const {
+    int n = 0;
+    for (auto& f : flips_) n += f.cell >= 0 && f.up;
+    return n;
+}
+
+int WfcAnim::flipK(int cell) const {
+    for (auto& f : flips_)
+        if (f.cell == cell) {
+            int p = clampi((int)(drawNow_ - f.at) * 1024 / kFlipMs, 0, 1024);
+            return f.up ? 1024 - 2 * p : -1024 + 2 * p;
+        }
+    return 1024;
+}
+
+void WfcAnim::drainSpot(uint32_t seed, int& x, int& y) {
+    x = 16 + (int)((seed >> 4) % (uint32_t)(kGridW - 32)), y = 16 + (int)((seed >> 14) % (uint32_t)(kGridH - 32));
+}
+
+bool WfcAnim::draining(uint32_t now) const {
+    for (auto& a : acts_)
+        if (a.fx == Drain && started(a, now)) return true;
+    return false;
+}
+
+void WfcAnim::drawWalker(uint8_t* fb, int band, uint32_t now, const uint8_t (*lut)[5]) const {
+    if (!walker_.on || draining(now)) return;
+    int x, y;
+    walkerAt(now, x, y);
+    const int y0 = band * kBandH;
+    if (y + 1 <= y0 || y - 30 >= y0 + kBandH) return;
+    auto put = [&](int gx, int gy, uint8_t v) {
+        int X = gx + kLeft + ox_, yy = gy - y0;
+        if (gx < 0 || gx >= kGridW || gy < 0 || gy >= kGridH || yy < 0 || yy >= kBandH || X < 0 || X >= kOutW) return;
+        uint8_t* p = fb + yy * (kOutW / 2) + (X >> 1);
+        *p = (X & 1) ? (uint8_t)((*p & 0xF0) | v) : (uint8_t)((*p & 0x0F) | (v << 4));
+    };
+    int t = (int)(now - walker_.start), pose = Stand, bx = -1, by = 0;
+    switch (walker_.doing) {
+        case Walk: pose = (t / 160) % 2 ? Step1 : Step2; break;
+        case Hang: pose = (t / 1700) % 3 == 2 ? TaDa : Stand; break;  // a stretch now and then
+        case Hacky: {  // the footbag goes up off the foot and comes down again
+            int u = t % 900;
+            pose = (u < 140 || u > 820) ? Kick : Stand;
+            int h = 4 * 14 * u * (900 - u) / (900 * 900);
+            bx = x + (walker_.face ? 5 : 0), by = y - 4 - h;
+            break;
+        }
+        case Vanna: pose = t < 1500 ? Show : (t / 450) % 2 ? TaDa : Show; break;  // shows it, it turns over, ta-da
+    }
+    uint8_t white = lut[0x0F][4];
+    for (int r = 0; r < 12; r++)
+        for (int c = 0; c < 7; c++)
+            if (kPose[pose][r][c] == '#') put(x + (walker_.face ? c : 6 - c), y - 12 + r, r < 2 ? lut[0x0E][4] : white);
+    if (bx >= 0)
+        for (int i = 0; i < 4; i++) put(bx + (i & 1), by + i / 2, lut[0x0C][4]);
 }
 
 bool WfcAnim::busyAt(uint32_t now) const {
@@ -371,6 +560,9 @@ uint8_t WfcAnim::bandsDue(uint32_t now) {
     for (auto& a : acts_)
         if (started(a, now)) m |= bandsOf(area(a));
     if (jig_.on) m |= bandsOf(wigArea());
+    m |= bandsOf(walkerArea(now));
+    for (auto& f : flips_)  // a letter turning over
+        if (f.cell >= 0 && (int32_t)(now - f.at) < kFlipMs + 100) m |= bandsOf(cellRect(f.cell / kCols, 0, f.cell / kCols + 1, 1));
     uint8_t due = (uint8_t)(m | lastMask_);  // and what moved last time, so it is put back
     lastMask_ = m;
     if (ox_ != drawnOx_) due = (1u << kBands) - 1, drawnOx_ = ox_;
@@ -381,7 +573,9 @@ bool WfcAnim::force(int fx, uint32_t now, int part) {
     if (!cells_ || fx < 0 || fx >= kFxCount) return false;
     for (auto& a : acts_) a.on = false;
     Rect r;
-    if (fx >= kContentFx) {
+    if (fx == Drain) {
+        r.x1 = kGridW, r.y1 = kGridH;
+    } else if (fx >= kContentFx) {
         if (!nRuns_) return false;
         r = runs_[part >= 0 && part < nRuns_ ? part : (int)(rnd() % nRuns_)];
     } else if (nParts_) {
@@ -424,8 +618,16 @@ bool WfcAnim::lit(int gx, int gy) const {
 
 uint8_t WfcAnim::base(int gx, int gy, const uint8_t (*lut)[5]) const {
     if (gx < 0 || gx >= kGridW || gy < 0 || gy >= kGridH) return lut[0][0];
-    const Cell& c = cells_[(gy / kCh) * kCols + gx / kCw];
-    return lut[c.attr][glyph(c.ch, gx % kCw, gy % kCh) ? 4 : 0];
+    int         i = (gy / kCh) * kCols + gx / kCw, ly = gy % kCh;
+    const Cell& c = cells_[i];
+    if (flips_[0].cell == i || flips_[1].cell == i || flips_[2].cell == i) {  // a letter turning over: rows mirrored about the middle
+        int k = flipK(i), s = ly * 2 - 9;
+        if (k > -48 && k < 48) return lut[c.attr][0];
+        int src = s * 1024 / k;
+        if (src < -9 || src > 9) return lut[c.attr][0];
+        ly = (src + 9) / 2;
+    }
+    return lut[c.attr][glyph(c.ch, gx % kCw, ly) ? 4 : 0];
 }
 
 uint8_t WfcAnim::bgAt(int gx, int gy, const uint8_t (*lut)[5]) const {
@@ -556,6 +758,7 @@ uint8_t WfcAnim::fxPixel(const Act& a, int gx, int gy, int t, const uint8_t (*lu
         }
         case Explode:
         case Warp:  // the cells fly (sprites() draws them): where they were is empty
+        case Drain:
             return inside ? bgAt(gx, gy, lut) : base(gx, gy, lut);
         case Crt: {  // switched off like an old set: squashed to a bright line, the line to a dot, and back on
             int p = tri(t, D), my = (r.y0 + r.y1) / 2, mx = (r.x0 + r.x1) / 2;
@@ -671,6 +874,42 @@ void WfcAnim::sprites(uint8_t* fb, int band, const Act& a, int t, const uint8_t 
                 if (glyph(c.ch, lx, ly)) put(px + lx, py + ly, fg);
     };
     int wc = maxi(1, (r.x1 - r.x0) / kCw);
+    if (a.fx == Drain) {  // every lit pixel is a grain of dust: nearest first, they spiral faster and faster into the drain
+        int dx0, dy0;
+        drainSpot(a.seed, dx0, dy0);
+        const int  spin = (a.seed & 2) ? 1 : -1;  // clockwise or the other way
+        const int  len = D * 30 / 100;
+        for (int cr = r.y0 / kCh; cr < r.y1 / kCh; cr++)
+            for (int cc = r.x0 / kCw; cc < r.x1 / kCw; cc++) {
+                const Cell& c = cells_[cr * kCols + cc];
+                if (kind(cr, cc) == Blank) continue;
+                uint8_t fg = lut[c.attr][4], dim = lut[(c.attr & 8) ? c.attr & 0xF7 : (c.attr & 0xF0) | 0x08][4];
+                for (int ly = 0; ly < kCh; ly++)
+                    for (int lx = 0; lx < kCw; lx++) {
+                        if (!glyph(c.ch, lx, ly)) continue;
+                        int      hx = cc * kCw + lx, hy = cr * kCh + ly, ddx = hx - dx0, ddy = hy - dy0;
+                        int      dist = (ddx < 0 ? -ddx : ddx) + (ddy < 0 ? -ddy : ddy);
+                        uint32_t hh = mix((uint32_t)(hy * kGridW + hx) ^ a.seed);
+                        int      d = dist * (D * 22 / 100) / 560 + (int)(hh % 300u);
+                        int      u = t < D / 2 ? (t - d) * 1024 / len : (D - t - d) * 1024 / len;
+                        if (u <= 0) {
+                            put(hx, hy, fg);
+                            continue;
+                        }
+                        if (u >= 1024) continue;  // down the drain
+                        int e = u * u / 1024, k = 1024 - e, ang = (spin * e * 3 * 64 / 1024 + (int)(hh >> 28)) & 63;
+                        int sn = kSin[ang], cs = kSin[(ang + 16) & 63];
+                        int px = dx0 + (ddx * cs - ddy * sn) / 127 * k / 1024, py = dy0 + (ddx * sn + ddy * cs) / 127 * k / 1024;
+                        put(px, py, e > 600 ? dim : fg);
+                    }
+            }
+        if (t > D * 15 / 100 && t < D * 85 / 100)  // the drain itself, turning
+            for (int i = 0; i < 12; i++) {
+                int ang = (i * 16 + t / 30) & 63, rr = 1 + i % 4;
+                put(dx0 + kSin[(ang + 16) & 63] * rr / 127, dy0 + kSin[ang] * rr / 127, lut[i & 1 ? 0x08 : 0x07][4]);
+            }
+        return;
+    }
     if (a.fx == Explode) {  // the cells break off left to right, fly about, and home again
         Rect box = area(a);
         for (int cr = r.y0 / kCh; cr < r.y1 / kCh; cr++)
@@ -720,18 +959,22 @@ void WfcAnim::sprites(uint8_t* fb, int band, const Act& a, int t, const uint8_t 
 void WfcAnim::renderBand(uint8_t* fb, int band, uint32_t now, const uint8_t (*lut)[5]) const {
     if (!cells_ || band < 0 || band >= kBands) return;
     now = at(now);
+    drawNow_ = now;
     const Act* list[kActs];
     Rect       areas[kActs];
     int        n = 0;
     const int  y0 = band * kBandH, y1 = y0 + kBandH;
+    const Act* drain = nullptr;  // the whole screen is dust: every cell drawn empty, the grains on top
     for (auto& a : acts_)
         if (started(a, now)) {
             Rect ar = area(a);
+            if (a.fx == Drain) drain = &a;
             // an explosion's flight area only needs its sprites (drawn after): outside the part it is the still screen
-            if (ar.y0 < y1 && ar.y1 > y0) list[n] = &a, areas[n++] = a.fx == Explode ? a.r : ar;
+            else if (ar.y0 < y1 && ar.y1 > y0) list[n] = &a, areas[n++] = a.fx == Explode ? a.r : ar;
         }
     Rect       wa = wigArea();
-    const bool wig = jig_.on && wa.y0 < y1 && wa.y1 > y0;
+    const bool wig = jig_.on && !drain && wa.y0 < y1 && wa.y1 > y0;
+    const bool anyFlip = flips_[0].cell >= 0 || flips_[1].cell >= 0 || flips_[2].cell >= 0;
     const uint8_t black = lut[0][0];
     const int     shift = kLeft + ox_;  // panel x of grid x 0
     for (int y = 0; y < kBandH; y++) {
@@ -752,6 +995,10 @@ void WfcAnim::renderBand(uint8_t* fb, int band, uint32_t now, const uint8_t (*lu
             const int gx0 = cc * kCw;
             bool      slow = false;
             for (int k = 0; k < ns && !slow; k++) slow = gx0 < sx1[k] && gx0 + kCw > sx0[k];
+            if (anyFlip && !slow && !drain) {
+                int i = cr * kCols + cc;
+                slow = flips_[0].cell == i || flips_[1].cell == i || flips_[2].cell == i;
+            }
             if (!slow) {
                 const Cell& c = line[cc];
                 uint8_t     fg = lut[c.attr][4], bg = lut[c.attr][0];
@@ -759,7 +1006,7 @@ void WfcAnim::renderBand(uint8_t* fb, int band, uint32_t now, const uint8_t (*lu
                 bool        join = c.ch >= 0xB0 && c.ch <= 0xDF;
                 if (fy < 0) fy = join ? 0 : -1;
                 if (fy > 7) fy = join ? 7 : -1;
-                uint8_t bits = fy < 0 ? 0 : ibm_font8x8[c.ch * 8 + fy];
+                uint8_t bits = fy < 0 || drain ? 0 : ibm_font8x8[c.ch * 8 + fy];
                 for (int k = 0; k < kCw; k++) {
                     int X = gx0 + k + shift;
                     if (X >= 0 && X < kOutW) put(X, (bits & (0x80 >> k)) ? fg : bg);
@@ -782,6 +1029,8 @@ void WfcAnim::renderBand(uint8_t* fb, int band, uint32_t now, const uint8_t (*lu
     for (int i = 0; i < n; i++)
         if (list[i]->fx == Explode || list[i]->fx == Warp)
             sprites(fb, band, *list[i], clampi((int)(now - list[i]->start), 0, list[i]->dur), lut);
+    if (drain) sprites(fb, band, *drain, clampi((int)(now - drain->start), 0, drain->dur), lut);
+    drawWalker(fb, band, now, lut);
 }
 
 }  // namespace axis::bbs
