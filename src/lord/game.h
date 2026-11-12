@@ -6,6 +6,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "door/bytestream.h"
 #include "door/hostfs.h"
@@ -16,6 +17,9 @@ namespace lord {
 class NativeLord {
 public:
     NativeLord(door::HostFs& fs, door::ByteStream& line, std::string alias, door::LockTable* locks, int owner);
+    ~NativeLord();  // closes a script still open (a caller who hung up mid-event)
+    NativeLord(const NativeLord&) = delete;
+    NativeLord& operator=(const NativeLord&) = delete;
     void setRng(uint32_t (*rng)()) { rng_ = rng; }
     // Pull returns a message number, or 0. Only bodies with a backtick line are pulled.
     // Post writes one BBS email (from, to, body). Both may be null in a test.
@@ -130,6 +134,8 @@ private:
     bool        nextRaw(std::string& raw);
     bool        scriptLine(size_t pos, std::string& line, size_t& next);  // the line at file offset pos ('\n' and on left off)
     void        scriptClose();
+    bool        scriptFill(size_t pos);
+    bool        scriptOpen(const std::string& path);
     std::string expand(const std::string& s);
     bool        ladyGet(const std::string& name, int& out);
     void        ladySet(const std::string& name, int v);
@@ -164,8 +170,14 @@ private:
     void              (*mailPost_)(void*, const char*, const char*, const char*) = nullptr;
     // The running .LDY script, read from its file a window at a time (EVENTS.LDY is 18 KB: held whole, it sat on top
     // of an ANSI viewer's 44 KB window at the busy test's lowest point). Positions (ladyPos_ and the rest) are file offsets.
-    std::string       scriptPath_;  // the file as found ("" = no script running)
+    struct ScriptMark {  // "@#name" (a section) or "@label name": at is the offset of the line after it
+        std::string name;
+        size_t      at;
+        bool        section;
+    };
+    int               scriptH_ = -1;  // open while a script runs (one pass at load found the marks)
     size_t            scriptSize_ = 0;
+    std::vector<ScriptMark> scriptMarks_;
     std::string       scriptWin_;   // bytes [scriptBase_, scriptBase_ + scriptWin_.size()) of the file
     size_t            scriptBase_ = 0;
     std::string       compose_;

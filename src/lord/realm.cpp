@@ -808,44 +808,68 @@ std::string NativeLord::expand(const std::string& s) {
     return o;
 }
 
-static constexpr size_t kScriptWindow = 1024;  // a script line is far shorter (one longer is cut at the window)
+// 2 KB: one read over the cluster link (a follower's door files are the main's) and far below the 18 KB EVENTS.LDY.
+static constexpr size_t kScriptWindow = 2048;
+
+NativeLord::~NativeLord() { scriptClose(); }
+
+bool NativeLord::scriptFill(size_t pos) {  // the window from pos; false on a read error (the window is then empty)
+    scriptWin_.clear();
+    if (scriptH_ < 0 || pos >= scriptSize_) return false;
+    size_t want = std::min(kScriptWindow, scriptSize_ - pos);
+    scriptWin_.assign(want, '\0');
+    int n = fs_.seek(scriptH_, (int64_t)pos, 0) == (int64_t)pos ? fs_.read(scriptH_, &scriptWin_[0], (int)want) : -1;
+    if (n <= 0) {
+        scriptWin_.clear();
+        return false;
+    }
+    scriptWin_.resize((size_t)n);
+    scriptBase_ = pos;
+    return true;
+}
 
 bool NativeLord::scriptLine(size_t pos, std::string& line, size_t& next) {
-    if (scriptPath_.empty() || pos >= scriptSize_) return false;
-    for (int pass = 0; pass < 2; pass++) {
-        if (pos >= scriptBase_ && pos < scriptBase_ + scriptWin_.size()) {
-            size_t off = pos - scriptBase_;
-            size_t e = scriptWin_.find('\n', off);
-            bool   last = scriptBase_ + scriptWin_.size() >= scriptSize_;
-            if (e != std::string::npos || last || pass == 1) {
-                size_t end = e == std::string::npos ? scriptWin_.size() : e;
-                line.assign(scriptWin_, off, end - off);
-                next = scriptBase_ + (e == std::string::npos ? scriptWin_.size() : e + 1);
-                return true;
-            }
-        }
-        int h = fs_.open(scriptPath_, 0, false, false);  // the window from pos (opened per read: no handle is left open)
-        if (h < 0) return false;
-        size_t want = std::min(kScriptWindow, scriptSize_ - pos);
-        scriptWin_.assign(want, '\0');
-        int n = fs_.seek(h, (int64_t)pos, 0) == (int64_t)pos ? fs_.read(h, &scriptWin_[0], (int)want) : -1;
-        fs_.close(h);
-        if (n <= 0) {
-            scriptWin_.clear();
-            return false;
-        }
-        scriptWin_.resize((size_t)n);
-        scriptBase_ = pos;
+    if (scriptH_ < 0 || pos >= scriptSize_) return false;
+    if (!(pos >= scriptBase_ && pos < scriptBase_ + scriptWin_.size()) && !scriptFill(pos)) return false;
+    size_t off = pos - scriptBase_;
+    size_t e = scriptWin_.find('\n', off);
+    if (e != std::string::npos) {
+        line.assign(scriptWin_, off, e - off);
+        next = scriptBase_ + e + 1;
+        return true;
     }
-    return false;
+    if (scriptBase_ + scriptWin_.size() < scriptSize_ && off > 0) {  // the line runs past the window: read on from its start
+        if (!scriptFill(pos)) return false;
+        off = 0;
+        e = scriptWin_.find('\n');
+        if (e != std::string::npos) {
+            line.assign(scriptWin_, 0, e);
+            next = scriptBase_ + e + 1;
+            return true;
+        }
+    }
+    line.assign(scriptWin_, off, std::string::npos);  // the last line, or one longer than the window: cut there
+    next = scriptBase_ + scriptWin_.size();
+    while (next < scriptSize_) {  // a cut line: the rest of it is skipped, never run as lines of its own
+        if (!scriptFill(next)) return false;
+        e = scriptWin_.find('\n');
+        if (e != std::string::npos) {
+            next = scriptBase_ + e + 1;
+            break;
+        }
+        next = scriptBase_ + scriptWin_.size();
+    }
+    return true;
 }
 
 void NativeLord::scriptClose() {
-    scriptPath_.clear();
+    if (scriptH_ >= 0) fs_.close(scriptH_);
+    scriptH_ = -1;
     scriptSize_ = 0;
     scriptBase_ = 0;
     scriptWin_.clear();
     scriptWin_.shrink_to_fit();
+    std::vector<ScriptMark>().swap(scriptMarks_);
 }
 
 bool NativeLord::nextRaw(std::string& raw) {
@@ -856,22 +880,34 @@ bool NativeLord::nextRaw(std::string& raw) {
     return true;
 }
 
+bool NativeLord::scriptOpen(const std::string& path) {  // same gates as readFile(path, 24000), then one pass for the marks
+    door::FileInfo fi;
+    if (!fs_.stat(path, fi) || fi.size == 0 || fi.size > 24000) return false;
+    scriptH_ = fs_.open(path, 0, false, false);
+    if (scriptH_ < 0) return false;
+    scriptSize_ = (size_t)fi.size;
+    std::string ln;
+    size_t      pos = 0, next = 0;
+    while (scriptLine(pos, ln, next)) {
+        std::string t = trimC(ln);
+        if (t.size() >= 2 && t[0] == '@' && t[1] == '#') scriptMarks_.push_back({trimC(t.substr(2)), next, true});
+        else if (wordOf(t) == "label") scriptMarks_.push_back({trimC(restOf(t)), next, false});
+        pos = next;
+    }
+    if (pos < scriptSize_) {  // a read failed part way: no script, as when the whole read failed before
+        scriptClose();
+        return false;
+    }
+    return true;
+}
+
 bool NativeLord::loadScript(const char* file) {
     scriptClose();
-    door::FileInfo fi;
-    std::string    path = file;
-    bool           ok = fs_.stat(path, fi) && fi.size > 0 && fi.size <= 24000;
+    bool ok = scriptOpen(file);
     if (!ok) {
         std::string alt = file;
         for (char& c : alt) c = (char)std::tolower((unsigned char)c);
-        if (alt != file && fs_.stat(alt, fi) && fi.size > 0 && fi.size <= 24000) {
-            path = alt;
-            ok = true;
-        }
-    }
-    if (ok) {
-        scriptPath_ = path;
-        scriptSize_ = (size_t)fi.size;
+        ok = alt != file && scriptOpen(alt);
     }
     ladyFile_ = ok ? file : "";
     ladyPos_ = 0;
@@ -881,35 +917,14 @@ bool NativeLord::loadScript(const char* file) {
 }
 
 bool NativeLord::ladyGoto(const std::string& name) {
-    std::string ln;
-    size_t      next = 0;
-    if (name.empty()) {
-        ladyPos_ = 0;
-        size_t pos = 0;
-        while (scriptLine(pos, ln, next)) {
-            std::string t = trimC(ln);
-            pos = next;
-            if (t.size() >= 2 && t[0] == '@' && t[1] == '#') {
-                ladyPos_ = pos;
-                return true;
-            }
+    for (const ScriptMark& m : scriptMarks_)
+        if (m.section && (name.empty() || ieq(m.name, name))) {
+            ladyPos_ = m.at;
+            return true;
         }
-        ladyPos_ = 0;
-        return true;
-    }
-    size_t pos = 0;
-    while (scriptLine(pos, ln, next)) {
-        std::string t = trimC(ln);
-        if (t.size() >= 2 && t[0] == '@' && t[1] == '#') {
-            std::string nm = trimC(t.substr(2));
-            if (ieq(nm, name)) {
-                ladyPos_ = next;
-                return true;
-            }
-        }
-        pos = next;
-    }
-    return false;
+    if (!name.empty()) return false;
+    ladyPos_ = 0;  // no section at all: from the top
+    return true;
 }
 
 void NativeLord::ladyEnd() {
@@ -976,18 +991,12 @@ void NativeLord::execLine(const std::string& t) {
         return;
     }
     if (w == "goto") {
-        size_t pos = 0;
         std::string want = trimC(rest);
-        std::string ln;
-        size_t      next = 0;
-        while (scriptLine(pos, ln, next)) {
-            std::string line = trimC(ln);
-            if (wordOf(line) == "label" && ieq(trimC(restOf(line)), want)) {
-                ladyPos_ = next;
+        for (const ScriptMark& m : scriptMarks_)
+            if (!m.section && ieq(m.name, want)) {
+                ladyPos_ = m.at;
                 return;
             }
-            pos = next;
-        }
         return;
     }
     if (w == "runsub") {
@@ -1234,16 +1243,10 @@ bool NativeLord::playForestEvent() {
     if (!loadScript("EVENTS.LDY")) return false;
     std::string names[16];
     int n = 0;
-    size_t      pos = 0, next = 0;
-    std::string ln;
-    while (n < 16 && scriptLine(pos, ln, next)) {
-        std::string t = trimC(ln);
-        pos = next;
-        if (t.size() >= 2 && t[0] == '@' && t[1] == '#') {
-            std::string nm = trimC(t.substr(2));
-            if (g16(180) != 1 && ieq(nm, "HORSE")) continue;
-            names[n++] = nm;
-        }
+    for (const ScriptMark& m : scriptMarks_) {
+        if (n >= 16) break;
+        if (!m.section || (g16(180) != 1 && ieq(m.name, "HORSE"))) continue;
+        names[n++] = m.name;
     }
     if (n < 1) {
         scriptClose();
