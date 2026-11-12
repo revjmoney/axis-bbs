@@ -231,6 +231,7 @@ void AnsiViewer::pump() {
     bool        end = false;
     while (out.size() < budget) {
         if (chunkPos_ >= chunk_.size()) {  // the next part out of the ZIP
+            if (chunk_.capacity() > 1024) std::string().swap(chunk_);  // the 4 KB first read is sent: give it back
             chunk_.assign(512, '\0');
             chunk_.resize(stream_->read((uint8_t*)&chunk_[0], chunk_.size()));
             chunkPos_ = 0;
