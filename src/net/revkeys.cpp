@@ -7,6 +7,9 @@
 namespace axis::net {
 
 namespace {
+// WHERE REV'S TWO PUBLIC KEYS GO: the two all-zero strings in g_real below, slot 0 then slot 1,
+// each 64 lowercase hex characters (the "pub" line printed by axis_netkey). A key lands here
+// only after Rev pastes it himself. Never put a seed in this file, and never invent a key.
 const std::string g_real[2] = {std::string(64, '0'), std::string(64, '0')};
 std::string g_builtin[2] = {g_real[0], g_real[1]};
 std::string g_keys[2] = {g_builtin[0], g_builtin[1]};

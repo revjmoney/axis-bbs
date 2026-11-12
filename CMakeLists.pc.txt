@@ -189,6 +189,12 @@ endif()
 add_executable(doorhost tools/doorhost/main.cpp)
 target_link_libraries(doorhost PRIVATE axiscore)
 
+add_executable(axis_netkey tools/net/netkey.cpp)
+target_link_libraries(axis_netkey PRIVATE axiscore)
+if(WIN32)
+  target_link_libraries(axis_netkey PRIVATE bcrypt)
+endif()
+
 target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data")
 
 add_executable(xfertest tools/xfertest/main.cpp)

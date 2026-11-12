@@ -453,10 +453,21 @@ def install_card(port, mac):
             say("  Script copy did not match.")
 
 
+def net_first_peer_set():
+    """True if local/net_first_peer.txt holds a host:port[@board] line. The value is never shown."""
+    try:
+        with open(os.path.join(ROOT, "local", "net_first_peer.txt"), "r", encoding="utf-8") as f:
+            return bool(f.readline().strip())
+    except OSError:
+        return False
+
+
 def setup_notes(port):
     say("")
     say("First-boot setup is the touch screen, or telnet with the PIN the screen shows.")
     say("This script does not type a sysop password and does not rewrite users.")
+    if net_first_peer_set():
+        say("net_first_peer: set (hidden)")
     if ask("Read the boot lines on this port for 8 seconds? [y/N]: ").lower() != "y":
         return
     try:
