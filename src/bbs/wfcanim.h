@@ -43,7 +43,7 @@ public:
         uint16_t dur = 0;
         uint32_t seed = 0;
     };
-    static constexpr int kActs = 6, kParts = 10, kRuns = 16;
+    static constexpr int kActs = 6, kParts = 12, kRuns = 16;
 
     bool load(const AnsiTerm& t);  // the screen to animate (again after it changed); false: no room, stay still
     void unload();

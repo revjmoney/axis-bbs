@@ -90,7 +90,7 @@ TEST_CASE("the panel WFC animation: the still screen is drawn the same as before
     WfcAnim  a;
     REQUIRE(a.load(t));
     CHECK(frame(a, 5000) == stillFrame(t));  // nothing started yet: exactly the still screen
-    CHECK(a.parts() >= 2);                   // the logo and the text find themselves
+    CHECK(a.parts() >= 4);                   // the logo and the boxes find themselves (tall groups cut in bands)
     CHECK(a.runs() >= 1);                    // and the box lines
     a.unload();
     CHECK_FALSE(a.loaded());

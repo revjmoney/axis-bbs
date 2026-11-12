@@ -1258,7 +1258,7 @@ static bool                               wfcOnPanel = false;  // the panel show
 // and stands still (that copy given back) while a caller is on, when memory runs short, or when it is turned off.
 static axis::bbs::WfcAnim wfcAnim;
 static const char*        wfcAnimWhy = "";  // why it stands still ("" = it may move)
-static uint32_t           wfcAnimFrameMs = 0, wfcAnimFrameUs = 0, wfcAnimTryMs = 0, wfcAnimSlowUs = 0;
+static uint32_t           wfcAnimFrameMs = 0, wfcAnimFrameUs = 0, wfcAnimTryMs = 0, wfcAnimSlowUs = 0, wfcAnimDrawUs = 0, wfcAnimBands = 0;
 static std::string                        wfcArt, wfcArtFolder;  // the theme's art while the WFC is up, and the skin folder it came from
 static bool                               wfcArtLoaded = false;  // wfcArt is current (empty: the theme has none, the built-in art is drawn from flash)
 static const int                          kWfcLeft = 2;        // 45 cells of 7 pixels: 2 spare pixels on the left, 3 on the right
@@ -1471,15 +1471,24 @@ static void wfcAnimTick() {
     }
     if (now - wfcAnimFrameMs < 66u) return;
     wfcAnimFrameMs = now;
+    static uint8_t pending = 0;  // bands still owed from the last frame (two at most each loop turn, so the loop keeps going)
     wfcAnim.step(now);
-    uint8_t      due = wfcAnim.bandsDue(now);
+    pending |= wfcAnim.bandsDue(now);
     LGFX_Sprite* band = screenBand();
-    if (!due || !band) return;
+    if (!pending || !band) return;
+    uint8_t due = 0;
+    for (int b = 0, k = 0; b < axis::bbs::WfcAnim::kBands && k < 2; b++)
+        if (pending & (1u << b)) due |= (uint8_t)(1u << b), k++;
+    pending &= (uint8_t)~due;
     uint32_t t0 = micros();
+    wfcAnimDrawUs = wfcAnimBands = 0;
     tft.startWrite();
     for (int b = 0; b < axis::bbs::WfcAnim::kBands; b++) {
         if (!(due & (1u << b))) continue;
+        uint32_t d0 = micros();
         AnsiScreen::renderAnimBand(*band, wfcAnim, b, now);
+        wfcAnimDrawUs += micros() - d0;
+        wfcAnimBands++;
         band->pushSprite(0, b * axis::bbs::WfcAnim::kBandH);
         tft.waitDMA();
     }
@@ -5351,9 +5360,9 @@ static void runCommand(const String& cmd, Print& out) {
                 wfcAnim.hold(hold);
             }
         }
-        out.printf("axis: wfcfx %s parts=%d runs=%d still=%d ox=%d held=%d frame_us=%u slowest_us=%u",
+        out.printf("axis: wfcfx %s parts=%d runs=%d still=%d ox=%d held=%d frame_us=%u draw_us=%u bands=%u slowest_us=%u",
                    wfcAnim.loaded() ? "moving" : *wfcAnimWhy ? wfcAnimWhy : "still", wfcAnim.parts(), wfcAnim.runs(), (int)wfcAnim.still(),
-                   wfcAnim.ox(), (int)wfcAnim.held(), (unsigned)wfcAnimFrameUs, (unsigned)wfcAnimSlowUs);
+                   wfcAnim.ox(), (int)wfcAnim.held(), (unsigned)wfcAnimFrameUs, (unsigned)wfcAnimDrawUs, (unsigned)wfcAnimBands, (unsigned)wfcAnimSlowUs);
         for (int i = 0; i < axis::bbs::WfcAnim::kActs; i++) {
             const auto& a = wfcAnim.act(i);
             if (a.on) out.printf(" %s@%d/%u", axis::bbs::WfcAnim::fxName(a.fx), (int)(now - a.start), (unsigned)a.dur);

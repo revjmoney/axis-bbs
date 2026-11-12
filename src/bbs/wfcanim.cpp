@@ -4,7 +4,7 @@
 // Rev's own, GPLv3) moved from a 1-bit OLED word to coloured 7x10 text cells: each one takes its part away and brings it
 // back as it was, so at its start and its end the part is exactly the still screen.
 #ifdef ARDUINO
-#pragma GCC optimize("Os")  // size first (frames are measured with @WFCFX: frame_us)
+#pragma GCC optimize("O2")  // drawn per pixel: speed (frames measured with @WFCFX: frame_us)
 #endif
 #include "bbs/wfcanim.h"
 
@@ -161,20 +161,28 @@ bool WfcAnim::load(const AnsiTerm& t) {
                         if ((!dr && !dc) || (dr && (dc < -1 || dc > 1)) || rr < 0 || rr >= kRows || cc < 0 || cc >= kCols) continue;
                         int k = rr * kCols + cc;
                         if (seen[k] || kind(rr, cc) != Art) continue;
+                        bool wall = false;  // a gap is bridged over blanks only, never over a border line
+                        for (int x = mini(c, cc) + 1; x < maxi(c, cc) && !wall; x++) wall = kind(rr, x) == Line;
+                        if (wall) continue;
                         seen[k] = 1;
                         work[tail++] = (uint16_t)k;
                     }
             }
             if (n < 3 || c1 - c0 < 1) continue;
-            int slot = nParts_ < kParts ? nParts_++ : -1;
-            if (slot < 0) {  // full: the smallest goes, if this one is bigger
-                slot = 0;
-                for (int k = 1; k < kParts; k++)
-                    if (area[k] < area[slot]) slot = k;
-                if (area[slot] >= n) continue;
+            // a tall group (a logo and the boxes under it can join up) is cut into bands of at most 5 rows, each a part
+            int rows = r1 - r0 + 1, pieces = (rows + 4) / 5;
+            for (int p = 0; p < pieces; p++) {
+                int pr0 = r0 + rows * p / pieces, pr1 = r0 + rows * (p + 1) / pieces, pn = n * (pr1 - pr0) / rows;
+                int slot = nParts_ < kParts ? nParts_++ : -1;
+                if (slot < 0) {  // full: the smallest goes, if this one is bigger
+                    slot = 0;
+                    for (int k = 1; k < kParts; k++)
+                        if (area[k] < area[slot]) slot = k;
+                    if (area[slot] >= pn) continue;
+                }
+                parts_[slot] = cellRect(pr0, c0, pr1, c1 + 1);
+                area[slot] = pn;
             }
-            parts_[slot] = cellRect(r0, c0, r1 + 1, c1 + 1);
-            area[slot] = n;
         }
     }
     // border runs: three or more line cells in a row or a column, the longest kRuns
@@ -719,29 +727,56 @@ void WfcAnim::renderBand(uint8_t* fb, int band, uint32_t now, const uint8_t (*lu
     for (auto& a : acts_)
         if (started(a, now)) {
             Rect ar = area(a);
-            if (ar.y0 < y1 && ar.y1 > y0) list[n] = &a, areas[n++] = ar;
+            // an explosion's flight area only needs its sprites (drawn after): outside the part it is the still screen
+            if (ar.y0 < y1 && ar.y1 > y0) list[n] = &a, areas[n++] = a.fx == Explode ? a.r : ar;
         }
     Rect       wa = wigArea();
     const bool wig = jig_.on && wa.y0 < y1 && wa.y1 > y0;
     const uint8_t black = lut[0][0];
+    const int     shift = kLeft + ox_;  // panel x of grid x 0
     for (int y = 0; y < kBandH; y++) {
-        int      gy = y0 + y;
-        uint8_t* row = fb + y * (kOutW / 2);
-        for (int X = 0; X < kOutW; X += 2) {
-            uint8_t v[2];
-            for (int k = 0; k < 2; k++) {
-                int gx = X + k - kLeft - ox_;
-                if (gx < 0 || gx >= kGridW) {
-                    v[k] = black;
-                    continue;
+        const int gy = y0 + y, cr = gy / kCh, ly = gy % kCh;
+        uint8_t*  row = fb + y * (kOutW / 2);
+        memset(row, (uint8_t)(black << 4 | black), kOutW / 2);
+        auto put = [row](int X, uint8_t v) {
+            uint8_t* q = row + (X >> 1);
+            *q = (X & 1) ? (uint8_t)((*q & 0xF0) | v) : (uint8_t)((*q & 0x0F) | (v << 4));
+        };
+        // what moves on this pixel row: their x spans (anything else is drawn a glyph row at a time)
+        int sx0[kActs + 1], sx1[kActs + 1], ns = 0;
+        for (int i = 0; i < n; i++)
+            if (gy >= areas[i].y0 && gy < areas[i].y1) sx0[ns] = areas[i].x0, sx1[ns++] = areas[i].x1;
+        if (wig && gy >= wa.y0 && gy < wa.y1) sx0[ns] = wa.x0, sx1[ns++] = wa.x1;
+        const Cell* line = &cells_[cr * kCols];
+        for (int cc = 0; cc < kCols; cc++) {
+            const int gx0 = cc * kCw;
+            bool      slow = false;
+            for (int k = 0; k < ns && !slow; k++) slow = gx0 < sx1[k] && gx0 + kCw > sx0[k];
+            if (!slow) {
+                const Cell& c = line[cc];
+                uint8_t     fg = lut[c.attr][4], bg = lut[c.attr][0];
+                int         fy = ly - 1;
+                bool        join = c.ch >= 0xB0 && c.ch <= 0xDF;
+                if (fy < 0) fy = join ? 0 : -1;
+                if (fy > 7) fy = join ? 7 : -1;
+                uint8_t bits = fy < 0 ? 0 : ibm_font8x8[c.ch * 8 + fy];
+                for (int k = 0; k < kCw; k++) {
+                    int X = gx0 + k + shift;
+                    if (X >= 0 && X < kOutW) put(X, (bits & (0x80 >> k)) ? fg : bg);
                 }
+                continue;
+            }
+            for (int k = 0; k < kCw; k++) {
+                int gx = gx0 + k, X = gx + shift;
+                if (X < 0 || X >= kOutW) continue;
                 int i = 0;
                 while (i < n && !areas[i].has(gx, gy)) i++;
-                if (i < n) v[k] = fxPixel(*list[i], gx, gy, clampi((int)(now - list[i]->start), 0, list[i]->dur), lut);
-                else if (wig && wa.has(gx, gy)) v[k] = wigPixel(gx, gy, now, lut);
-                else v[k] = base(gx, gy, lut);
+                uint8_t v;
+                if (i < n) v = fxPixel(*list[i], gx, gy, clampi((int)(now - list[i]->start), 0, list[i]->dur), lut);
+                else if (wig && wa.has(gx, gy)) v = wigPixel(gx, gy, now, lut);
+                else v = base(gx, gy, lut);
+                put(X, v);
             }
-            row[X >> 1] = (uint8_t)(v[0] << 4 | v[1]);
         }
     }
     for (int i = 0; i < n; i++)
