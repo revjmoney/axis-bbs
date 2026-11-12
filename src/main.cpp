@@ -419,13 +419,13 @@ static struct ArtCache {
         return nullptr;
     }
     void put(const std::string& name, const std::string& art) {
-        if (art.size() > kArtCacheCap) return;  // (too big to keep: asked again each time)
-        for (size_t i = 0; i < v.size(); i++)
+        for (size_t i = 0; i < v.size(); i++)  // the old entry goes first: a bigger version that is too big to keep must not leave the stale one
             if (v[i].first == name) {
                 bytes -= v[i].second.size();
                 v.erase(v.begin() + i);
                 break;
             }
+        if (art.size() > kArtCacheCap) return;  // (too big to keep: asked again each time)
         while (!v.empty() && bytes + art.size() > kArtCacheCap) {
             bytes -= v.front().second.size();
             v.erase(v.begin());
