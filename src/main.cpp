@@ -1176,27 +1176,49 @@ static void makeAreaFolders() {
 }
 
 // ------------------------------------------------------------------ screens (placeholder look)
-static void title(const char* sub) {
-    scr.fillScreen(pal::BLACK);
-    scr.setTextDatum(textdatum_t::top_left);
-    scr.setTextColor(pal::ORANGE, pal::BLACK);
-    scr.setTextSize(2);
-    String t = cfg.bbsName.c_str();
-    t.toUpperCase();
-    scr.drawString(t.c_str(), 8, 8);
-    scr.setTextSize(1);
-    scr.setTextColor(pal::ORANGE, pal::BLACK);
-    scr.drawString(sub, 8, 30);
+// Each screen draws into screenGfx() (the full copy, or the panel itself when there was no room for it) in pc() colours. The
+// WFC draws through the band instead; the full copy goes when the WFC is back (drawScreen), never while a screen is drawing.
+static uint32_t pc(uint8_t p) { return screenColor(p); }
+
+// Cells written straight into a 4-bit buffer (BigText, AnsiScreen): into the full copy, or with none, through the band 40 pixel
+// rows at a time straight to the panel. f(dst, y0) draws with its row 0 at y0 in dst.
+template <typename F>
+static void renderRows(int height, F f) {
+    if (LGFX_Sprite* s = screenSprite()) return f(*s, 0);
+    LGFX_Sprite* b = screenBand();
+    if (!b) return;
+    for (int top = 0; top < height; top += 40) {
+        b->fillScreen(pal::BLACK);
+        f(*b, -top);
+        b->pushSprite(0, top);
+        tft.waitDMA();  // the next band is drawn into the same buffer
+    }
 }
 
-static void bigButton(int y, const char* label, uint16_t color) {
-    scr.fillRoundRect(16, y, 288, 52, 8, color);
-    scr.setTextColor(pal::WHITE, color);
-    scr.setTextSize(2);
-    scr.setTextDatum(textdatum_t::middle_center);
-    scr.drawString(label, 160, y + 26);
-    scr.setTextDatum(textdatum_t::top_left);
-    scr.setTextSize(1);
+static void title(const char* sub) {
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
+    g.setTextDatum(textdatum_t::top_left);
+    g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+    g.setTextSize(2);
+    String t = cfg.bbsName.c_str();
+    t.toUpperCase();
+    g.drawString(t.c_str(), 8, 8);
+    g.setTextSize(1);
+    g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+    g.drawString(sub, 8, 30);
+}
+
+static void bigButton(int y, const char* label, uint8_t colour) {
+    auto&    g = screenGfx();
+    uint32_t color = pc(colour);
+    g.fillRoundRect(16, y, 288, 52, 8, color);
+    g.setTextColor(pc(pal::WHITE), color);
+    g.setTextSize(2);
+    g.setTextDatum(textdatum_t::middle_center);
+    g.drawString(label, 160, y + 26);
+    g.setTextDatum(textdatum_t::top_left);
+    g.setTextSize(1);
 }
 
 // The waiting-for-caller screen on the board's own screen: the WFC skin's WFCCYD.ANS (or the built-in art/wfccyd.ans) in 45x24
@@ -1208,6 +1230,7 @@ static std::vector<axis::bbs::WfcHotspot> wfcSpots;            // where the keys
 static axis::bbs::WfcSnapshot             wfcShown;            // the values on the screen
 static uint32_t                           wfcDrawnMs = 0, wfcSoonUntil = 0;  // last expanded; a "coming soon" line until then
 static bool                               wfcStale = true;     // draw it at the next turn (another screen was up, a key was tapped)
+static bool                               wfcOnPanel = false;  // the panel shows the WFC (@SHOT draws it again band by band)
 static std::string                        wfcArt, wfcArtFolder;  // the theme's art while the WFC is up, and the skin folder it came from
 static bool                               wfcArtLoaded = false;  // wfcArt is current (empty: the theme has none, the built-in art is drawn from flash)
 static const int                          kWfcLeft = 2;        // 45 cells of 7 pixels: 2 spare pixels on the left, 3 on the right
@@ -1260,23 +1283,24 @@ static void endLocal() {
     screenDirty = true;
 }
 static void drawLocal() {
-    scr.fillScreen(pal::BLACK);
-    scr.setFont(&fonts::Font2);
-    auto button = [](int x, int y, int w, int h, const char* label, bool lit) {
-        uint16_t fill = lit ? pal::ORANGE : pal::DIM;
-        scr.fillRoundRect(x, y, w, h, 5, fill);
-        scr.drawRoundRect(x, y, w, h, 5, lit ? pal::WHITE : pal::ORANGE);
-        scr.setTextColor(lit ? pal::BLACK : pal::WHITE, fill);
-        scr.setTextDatum(textdatum_t::middle_center);
-        scr.drawString(label, x + w / 2, y + h / 2);
-        scr.setTextDatum(textdatum_t::top_left);
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
+    g.setFont(&fonts::Font2);
+    auto button = [&g](int x, int y, int w, int h, const char* label, bool lit) {
+        uint32_t fill = lit ? pc(pal::ORANGE) : pc(pal::DIM);
+        g.fillRoundRect(x, y, w, h, 5, fill);
+        g.drawRoundRect(x, y, w, h, 5, lit ? pc(pal::WHITE) : pc(pal::ORANGE));
+        g.setTextColor(lit ? pc(pal::BLACK) : pc(pal::WHITE), fill);
+        g.setTextDatum(textdatum_t::middle_center);
+        g.drawString(label, x + w / 2, y + h / 2);
+        g.setTextDatum(textdatum_t::top_left);
     };
     if (localKeys) {  // typing: what's typed on top, the keys below
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString("LOCAL: type, then OK", 8, 4);
-        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
-        scr.setTextColor(pal::WHITE, pal::BLACK);
-        scr.drawString((localKb.shown() + "_").c_str(), 10, 35);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString("LOCAL: type, then OK", 8, 4);
+        g.drawRect(4, 28, 312, 30, pc(pal::ORANGE));
+        g.setTextColor(pc(pal::WHITE), pc(pal::BLACK));
+        g.drawString((localKb.shown() + "_").c_str(), 10, 35);
         for (auto& k : localKb.keys()) button(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
     } else {
         for (int r = 0; r < localTerm->rows(); r++)
@@ -1291,9 +1315,13 @@ static void drawLocal() {
                 if (lastCol >= localPan + 40) localPan = 40;
                 else if (lastCol < localPan) localPan = 0;
             }
-            localScreen->renderZoom(scr, localTerm->rows(), localPan);  // 200 pixels, 40 columns
+            renderRows(localTerm->rows() * 8, [](LGFX_Sprite& d, int y0) {
+                localScreen->renderZoom(d, localTerm->rows(), localPan, y0);  // 200 pixels, 40 columns
+            });
         } else {
-            localScreen->renderSharp(scr, localTerm->rows());  // 200 pixels of the BBS, all 80 columns, crisp
+            renderRows(localTerm->rows() * 8, [](LGFX_Sprite& d, int y0) {
+                localScreen->renderSharp(d, localTerm->rows(), y0);  // 200 pixels of the BBS, all 80 columns, crisp
+            });
         }
         button(4, 206, 58, 30, "KEYS", false);
         button(66, 206, 58, 30, "ENTER", false);
@@ -1301,33 +1329,20 @@ static void drawLocal() {
         button(190, 206, 58, 30, localPan ? "<<" : ">>", false);
         button(256, 206, 60, 30, "EXIT", true);
     }
-    scr.setFont(&fonts::Font0);
+    g.setFont(&fonts::Font0);
     localTerm->clean();
 }
 
-// The WFC on the board: false when it is unchanged (nothing to push). The art is expanded into a heap terminal that goes again
-// once the screen copy has it, so the loop's stack only holds the snapshot.
-static bool drawWfc() {
-    HeapScope scope("drawWfc");
-    uint32_t now = millis();
-    bool     soon = wfcSoonUntil && (int32_t)(now - wfcSoonUntil) < 0;
-    if (wfcSoonUntil && !soon) wfcSoonUntil = 0, wfcStale = true;  // the "coming soon" line goes
-    if (!wfcStale && now - wfcDrawnMs < 5000) return false;
-    wfcDrawnMs = now;
-    axis::bbs::WfcSnapshot s = wfcSnapshot();
-    if (!wfcStale && s == wfcShown) return false;
+// The WFC's terminal: the art expanded with these values (and the "coming soon" line), on the heap; nullptr when short of memory.
+// Nothing on the screen changes here (drawWfc and @SHOT both build it): spots, if asked, gets where the keys landed.
+static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot& s, bool soon,
+                                                    std::vector<axis::bbs::WfcHotspot>* spots = nullptr) {
     std::unique_ptr<axis::bbs::AnsiTerm> t;
     try {  // (the cells are a vector: a failed allocation throws std::bad_alloc)
         t.reset(new axis::bbs::AnsiTerm(45, 24));
     } catch (const std::bad_alloc&) {
     }
-    if (!t) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
-        scr.fillScreen(pal::BLACK);
-        scr.setFont(&fonts::Font0);
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString("low memory: the waiting screen will be back", 8, 116);
-        return true;
-    }
+    if (!t) return t;
     std::string folder = axis::bbs::wfcFolder(cfg);
     if (!wfcArtLoaded || folder != wfcArtFolder) {  // read once while the WFC is up (and again when the skin changes)
         std::string art = axis::bbs::cleanWfcArt(themeArt("WFCCYD.ANS"));
@@ -1339,17 +1354,56 @@ static bool drawWfc() {
         else wfcArtLoaded = false;
     }
     const char* wfcBuiltin = kWfcCydAns;
-    wfcSpots = axis::bbs::drawWfc(wfcArt.empty() ? std::string_view(wfcBuiltin, sizeof kWfcCydAns - 1) : std::string_view(wfcArt), s, *t);
+    auto        at = axis::bbs::drawWfc(wfcArt.empty() ? std::string_view(wfcBuiltin, sizeof kWfcCydAns - 1) : std::string_view(wfcArt), s, *t);
+    if (spots) *spots = std::move(at);
     if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
-    AnsiScreen::renderCells(scr, *t);
+    return t;
+}
+
+static bool wfcSoon() { return wfcSoonUntil && (int32_t)(millis() - wfcSoonUntil) < 0; }
+
+// The WFC on the board: false when it is unchanged. The terminal is drawn through the band (320x40, 4 rows of cells) straight
+// to the panel, top to bottom, and goes again, so the loop's stack only holds the snapshot.
+static bool drawWfc() {
+    HeapScope scope("drawWfc");
+    uint32_t now = millis();
+    bool     soon = wfcSoon();
+    if (wfcSoonUntil && !soon) wfcSoonUntil = 0, wfcStale = true;  // the "coming soon" line goes
+    if (!wfcStale && now - wfcDrawnMs < 5000) return false;
+    wfcDrawnMs = now;
+    axis::bbs::WfcSnapshot s = wfcSnapshot();
+    if (!wfcStale && s == wfcShown) return false;
+    std::vector<axis::bbs::WfcHotspot> spots;
+    std::unique_ptr<axis::bbs::AnsiTerm> t;
+    if (screenBandsInit()) t = wfcTerm(s, soon, &spots);  // (the band is made at boot: this only tries again if that failed)
+    LGFX_Sprite* band = screenBand();
+    if (!t || !band) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
+        auto& g = screenGfx();
+        g.fillScreen(pc(pal::BLACK));
+        g.setFont(&fonts::Font0);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString("low memory: the waiting screen will be back", 8, 116);
+        wfcOnPanel = false;
+        return true;
+    }
+    tft.startWrite();  // (one bus hold for the six bands)
+    for (int row = 0; row < 24; row += 4) {
+        AnsiScreen::renderCellsBand(*band, *t, row, 4);
+        band->pushSprite(0, row * 10);
+        tft.waitDMA();  // the next band is drawn into the same buffer
+    }
+    tft.endWrite();
+    wfcSpots = std::move(spots);
     wfcShown = std::move(s);
     wfcStale = false;
+    wfcOnPanel = true;
     return true;
 }
 
 // A node's details (tap its line on the WFC): who, where, how long, and a KICK for the sysop.
 static void drawNodeDetail(int i) {
-    scr.fillScreen(pal::BLACK);
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
     axis::bbs::Node* n = sessionNode((size_t)i);
     WifiStream*      l = sessionLine((size_t)i);
     int num = cluster && (size_t)i < cluster->numbers().size() ? cluster->numbers()[(size_t)i] : i + 1;
@@ -1381,33 +1435,34 @@ static void drawNodeDetail(int i) {
             row(8, "up/down", String(u->uploads / 1024) + " KB / " + String(u->downloads / 1024) + " KB");
         }
     }
-    t.render(scr, 0, 13);
-    scr.setFont(&fonts::Font2);
-    scr.setTextDatum(textdatum_t::middle_center);
-    scr.fillRoundRect(8, 204, 100, 30, 6, pal::DIM);
-    scr.drawRoundRect(8, 204, 100, 30, 6, pal::ORANGE);
-    scr.setTextColor(pal::WHITE, pal::DIM);
-    scr.drawString("BACK", 58, 219);
+    renderRows(13 * 16, [&t](LGFX_Sprite& d, int y0) { t.render(d, y0, 13); });
+    g.setFont(&fonts::Font2);
+    g.setTextDatum(textdatum_t::middle_center);
+    g.fillRoundRect(8, 204, 100, 30, 6, pc(pal::DIM));
+    g.drawRoundRect(8, 204, 100, 30, 6, pc(pal::ORANGE));
+    g.setTextColor(pc(pal::WHITE), pc(pal::DIM));
+    g.drawString("BACK", 58, 219);
     if (n && l) {
-        scr.fillRoundRect(212, 204, 100, 30, 6, pal::ORANGE);
-        scr.drawRoundRect(212, 204, 100, 30, 6, pal::WHITE);
-        scr.setTextColor(pal::BLACK, pal::ORANGE);
-        scr.drawString("KICK", 262, 219);
+        g.fillRoundRect(212, 204, 100, 30, 6, pc(pal::ORANGE));
+        g.drawRoundRect(212, 204, 100, 30, 6, pc(pal::WHITE));
+        g.setTextColor(pc(pal::BLACK), pc(pal::ORANGE));
+        g.drawString("KICK", 262, 219);
     }
-    scr.setTextDatum(textdatum_t::top_left);
-    scr.setFont(&fonts::Font0);
+    g.setTextDatum(textdatum_t::top_left);
+    g.setFont(&fonts::Font0);
 }
 
 // The sysop menu on the board's own screen (a key tapped on the WFC): the one SysopShell in 40 columns of 8x16 letters, a tap
 // on a row picks it, KEYS / ENTER / BACK / EXIT under it, and the touch keyboard for its questions.
 static void touchButton(int x, int y, int w, int h, const char* label, bool lit) {
-    uint16_t fill = lit ? pal::ORANGE : pal::DIM;
-    scr.fillRoundRect(x, y, w, h, 5, fill);
-    scr.drawRoundRect(x, y, w, h, 5, lit ? pal::WHITE : pal::ORANGE);
-    scr.setTextColor(lit ? pal::BLACK : pal::WHITE, fill);
-    scr.setTextDatum(textdatum_t::middle_center);
-    scr.drawString(label, x + w / 2, y + h / 2);
-    scr.setTextDatum(textdatum_t::top_left);
+    auto&    g = screenGfx();
+    uint32_t fill = lit ? pc(pal::ORANGE) : pc(pal::DIM);
+    g.fillRoundRect(x, y, w, h, 5, fill);
+    g.drawRoundRect(x, y, w, h, 5, lit ? pc(pal::WHITE) : pc(pal::ORANGE));
+    g.setTextColor(lit ? pc(pal::BLACK) : pc(pal::WHITE), fill);
+    g.setTextDatum(textdatum_t::middle_center);
+    g.drawString(label, x + w / 2, y + h / 2);
+    g.setTextDatum(textdatum_t::top_left);
 }
 static void closeShell() {
     boardShell.reset();
@@ -1489,14 +1544,15 @@ static void shellTap(int x, int y) {
     }
 }
 static void drawShell() {
-    scr.fillScreen(pal::BLACK);
-    scr.setFont(&fonts::Font2);
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
+    g.setFont(&fonts::Font2);
     if (shellKeys) {
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString(localKb.title().c_str(), 8, 4);
-        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
-        scr.setTextColor(pal::WHITE, pal::BLACK);
-        scr.drawString((localKb.shown() + "_").c_str(), 10, 35);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString(localKb.title().c_str(), 8, 4);
+        g.drawRect(4, 28, 312, 30, pc(pal::ORANGE));
+        g.setTextColor(pc(pal::WHITE), pc(pal::BLACK));
+        g.drawString((localKb.shown() + "_").c_str(), 10, 35);
         for (auto& k : localKb.keys()) touchButton(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
     } else {
         bigText.clear(0x07);
@@ -1505,19 +1561,18 @@ static void drawShell() {
                 const auto& cell = shellTerm->cell(r, c);
                 bigText.cells[r][c] = {cell.ch, cell.attr};
             }
-        bigText.render(scr, 0, kShellRows);
+        renderRows(kShellRows * 16, [](LGFX_Sprite& d, int y0) { bigText.render(d, y0, kShellRows); });
         bool yn = boardShell->yesNo();
         touchButton(4, 210, 74, 28, yn ? "YES" : "KEYS", yn);
         touchButton(82, 210, 74, 28, yn ? "NO" : "ENTER", false);
         touchButton(160, 210, 76, 28, "BACK", false);
         touchButton(242, 210, 74, 28, "EXIT", true);
     }
-    scr.setFont(&fonts::Font0);
+    g.setFont(&fonts::Font0);
 }
 
 // The sysop panel while a caller downloads or uploads: a drippy window with a live progress bar.
 static void drawTransfer() {
-    if (!screenReady()) return;
     static BigText t;
     const auto&    r = job->request();
     uint32_t       done = job->bytes(), size = job->size(), secs = (millis() - jobStartMs) / 1000;
@@ -1550,64 +1605,71 @@ static void drawTransfer() {
     int fill = size ? (int)((uint64_t)done * 38 / size) : (int)(secs % 38);
     t.fill(11, 1, 38, 0xB0, G);
     t.fill(11, 1, fill, 0xDB, O);
-    t.render(scr, 0, 15);
-    screenPush();
+    renderRows(240, [](LGFX_Sprite& d, int y0) { t.render(d, y0, 15); });
+    screenPushIfSprite();
 }
 
 // The WiFi picker: networks in range, or the on-screen keyboard. Rev's scheme: orange, grey, white.
 static void drawPicker() {
-    scr.fillScreen(pal::BLACK);
-    scr.setFont(&fonts::Font2);
-    scr.setTextDatum(textdatum_t::top_left);
-    auto button = [](int x, int y, int w, int h, const char* label, bool lit) {
-        uint16_t fill = lit ? pal::ORANGE : pal::DIM;
-        scr.fillRoundRect(x, y, w, h, 5, fill);
-        scr.drawRoundRect(x, y, w, h, 5, lit ? pal::WHITE : pal::ORANGE);
-        scr.setTextColor(lit ? pal::BLACK : pal::WHITE, fill);
-        scr.setTextDatum(textdatum_t::middle_center);
-        scr.drawString(label, x + w / 2, y + h / 2);
-        scr.setTextDatum(textdatum_t::top_left);
+    auto& g = screenGfx();
+    g.fillScreen(pc(pal::BLACK));
+    g.setFont(&fonts::Font2);
+    g.setTextDatum(textdatum_t::top_left);
+    auto button = [&g](int x, int y, int w, int h, const char* label, bool lit) {
+        uint32_t fill = lit ? pc(pal::ORANGE) : pc(pal::DIM);
+        g.fillRoundRect(x, y, w, h, 5, fill);
+        g.drawRoundRect(x, y, w, h, 5, lit ? pc(pal::WHITE) : pc(pal::ORANGE));
+        g.setTextColor(lit ? pc(pal::BLACK) : pc(pal::WHITE), fill);
+        g.setTextDatum(textdatum_t::middle_center);
+        g.drawString(label, x + w / 2, y + h / 2);
+        g.setTextDatum(textdatum_t::top_left);
     };
     if (picker.screen() == axis::bbs::WifiPicker::Screen::List) {
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString("W I F I", 8, 4);
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString("tap your network", 90, 4);
-        scr.drawString(picker.message().substr(0, 40).c_str(), 8, 20);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString("W I F I", 8, 4);
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString("tap your network", 90, 4);
+        g.drawString(picker.message().substr(0, 40).c_str(), 8, 20);
         auto rows = picker.rows();
         for (size_t i = 0; i < rows.size(); i++) {
             int y = axis::bbs::WifiPicker::kRowTop + (int)i * axis::bbs::WifiPicker::kRowH;
-            scr.drawRect(4, y, 312, axis::bbs::WifiPicker::kRowH - 3, pal::DARKGREY);
-            scr.setTextColor(pal::WHITE, pal::BLACK);
-            scr.drawString(rows[i].c_str(), 10, y + 6);
+            g.drawRect(4, y, 312, axis::bbs::WifiPicker::kRowH - 3, pc(pal::DARKGREY));
+            g.setTextColor(pc(pal::WHITE), pc(pal::BLACK));
+            g.drawString(rows[i].c_str(), 10, y + 6);
         }
-        if (rows.empty()) scr.drawString("no networks found: RESCAN", 10, 60);
+        if (rows.empty()) g.drawString("no networks found: RESCAN", 10, 60);
         for (auto& b : picker.buttons()) button(b.x, b.y, b.w, b.h, b.label.c_str(), false);
     } else {
         auto& kb = picker.keyboard();
-        scr.setTextColor(pal::ORANGE, pal::BLACK);
-        scr.drawString(kb.title().substr(0, 26).c_str(), 70, 4);
-        scr.drawRect(4, 28, 312, 30, pal::ORANGE);
-        scr.setTextColor(pal::WHITE, pal::BLACK);
-        scr.drawString((kb.shown() + "_").c_str(), 10, 35);
+        g.setTextColor(pc(pal::ORANGE), pc(pal::BLACK));
+        g.drawString(kb.title().substr(0, 26).c_str(), 70, 4);
+        g.drawRect(4, 28, 312, 30, pc(pal::ORANGE));
+        g.setTextColor(pc(pal::WHITE), pc(pal::BLACK));
+        g.drawString((kb.shown() + "_").c_str(), 10, 35);
         for (auto& k : kb.keys()) button(k.x, k.y, k.w, k.h, k.label.c_str(), k.lit);
     }
-    scr.setFont(&fonts::Font0);
+    g.setFont(&fonts::Font0);
 }
 
 static void drawScreen() {
-    if (!screenReady()) {  // a door is running
-        wfcStale = true;
-        if (wfcArtLoaded) std::string().swap(wfcArt), wfcArtLoaded = false;
+    if (!boardHasPanel()) {  // headless: no panel, no copies, nothing to draw
+        screenDirty = false;
         return;
     }
+    static bool fullAsked = false;  // this stay away from the WFC asked for the full copy (no room: straight to the panel until the WFC)
     if (mode != Mode::Normal || job || localNode || boardShell || detailSession >= 0) {  // the WFC is drawn afresh when it is back
         wfcStale = true;
+        wfcOnPanel = false;
         if (wfcArtLoaded) std::string().swap(wfcArt), wfcArtLoaded = false;  // and its art read again then (the skin may change meanwhile)
+        if (!fullAsked) fullAsked = true, screenFull();
+    } else {  // every way back to the WFC comes through here: the full copy goes before the WFC is drawn
+        screenFullRelease();
+        fullAsked = false;
     }
+    auto& g = screenGfx();  // (nothing below releases the full copy)
     if (mode == Mode::WifiPick) {
         drawPicker();
-        screenPush();
+        screenPushIfSprite();
         screenDirty = false;
         return;
     }
@@ -1618,36 +1680,36 @@ static void drawScreen() {
     }
     if (mode == Mode::SetupChoice) {
         title("first-boot setup");
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString(("WiFi: " + String(wifiSsid()) + "   " + WiFi.localIP().toString()).c_str(), 8, 50);
-        scr.drawString("How do you want to set up your BBS?", 8, 70);
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString(("WiFi: " + String(wifiSsid()) + "   " + WiFi.localIP().toString()).c_str(), 8, 50);
+        g.drawString("How do you want to set up your BBS?", 8, 70);
         bigButton(92, "ON THIS SCREEN", pal::DIM);
         bigButton(156, "OVER TELNET", pal::BLUE);
-        scr.setTextColor(pal::DARKGREY, pal::BLACK);
-        scr.drawString("tap a button", 8, 222);
+        g.setTextColor(pc(pal::DARKGREY), pc(pal::BLACK));
+        g.drawString("tap a button", 8, 222);
     } else if (mode == Mode::SetupTelnet) {
         title("first-boot setup");
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString("From a computer on this network:", 8, 56);
-        scr.setTextSize(2);
-        scr.setTextColor(pal::LIGHTCYAN, pal::BLACK);
-        scr.drawString(("telnet " + dialName()).c_str(), 8, 76);
-        scr.setTextSize(1);
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString(("or telnet " + WiFi.localIP().toString() + " " + String(cfg.telnetPort)).c_str(), 8, 100);
-        scr.drawString("Setup PIN:", 8, 128);
-        scr.setTextSize(4);
-        scr.setTextColor(pal::YELLOW, pal::BLACK);
-        scr.drawString(setupPin.c_str(), 8, 144);
-        scr.setTextSize(1);
-        scr.setTextColor(wizard ? pal::LIGHTGREEN : pal::DARKGREY, pal::BLACK);
-        scr.drawString(wizard ? "setup in progress over telnet..."
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString("From a computer on this network:", 8, 56);
+        g.setTextSize(2);
+        g.setTextColor(pc(pal::LIGHTCYAN), pc(pal::BLACK));
+        g.drawString(("telnet " + dialName()).c_str(), 8, 76);
+        g.setTextSize(1);
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString(("or telnet " + WiFi.localIP().toString() + " " + String(cfg.telnetPort)).c_str(), 8, 100);
+        g.drawString("Setup PIN:", 8, 128);
+        g.setTextSize(4);
+        g.setTextColor(pc(pal::YELLOW), pc(pal::BLACK));
+        g.drawString(setupPin.c_str(), 8, 144);
+        g.setTextSize(1);
+        g.setTextColor(wizard ? pc(pal::LIGHTGREEN) : pc(pal::DARKGREY), pc(pal::BLACK));
+        g.drawString(wizard ? "setup in progress over telnet..."
                               : gate ? "caller connected, waiting for the PIN" : "waiting for the sysop to call",
                        8, 200);
     } else if (mode == Mode::SetupTouch) {
         title("first-boot setup");
-        scr.setTextColor(pal::LIGHTGREY, pal::BLACK);
-        scr.drawString("On-screen setup is coming in the next build.", 8, 70);
+        g.setTextColor(pc(pal::LIGHTGREY), pc(pal::BLACK));
+        g.drawString("On-screen setup is coming in the next build.", 8, 70);
         bigButton(156, "BACK", pal::DIM);
     } else if (localNode) {
         drawLocal();
@@ -1655,11 +1717,11 @@ static void drawScreen() {
         drawShell();
     } else if (detailSession >= 0) {
         drawNodeDetail(detailSession);
-    } else if (!drawWfc()) {  // the WFC: nothing changed, nothing to push
+    } else if (!drawWfc()) {  // the WFC: nothing changed (drawn, it went straight to the panel band by band)
         screenDirty = false;
         return;
     }
-    screenPush();
+    screenPushIfSprite();
     screenDirty = false;
 }
 
@@ -3005,7 +3067,7 @@ static void startLocal() {
 }
 
 static void handleTap(int x, int y) {
-    if (!screenReady()) return;  // a door has the screen's memory
+    if (!boardHasPanel()) return;  // headless: no screen to tap (and nothing drawn to say where)
     if (mode == Mode::WifiPick) {
         picker.tap(x, y);
         screenDirty = true;
@@ -3736,10 +3798,15 @@ static void runCommand(const String& cmd, Print& out) {
         out.println("@LOG END");
     } else if (cmd == "@SHOT") {
         shotDoneMs = millis();
+        std::unique_ptr<axis::bbs::AnsiTerm> wfc;  // the WFC on the panel: its terminal again, dumped band by band
+        if (wfcOnPanel && !screenSprite()) wfc = wfcTerm(wfcShown, wfcSoon());
         screenShot([] {  // the cluster keeps its heartbeat while the screen streams out
             if (cluster) cluster->tick(millis());
-        });
+        }, wfc.get());
         shotDoneMs = millis();  // (the loop's stall check comes next: this one was on purpose)
+    } else if (cmd == "@SPRITEFAIL") {  // bench: the next screen away from the WFC finds no room for the full copy
+        screenFailNext();
+        out.println("axis: the next full screen copy fails");
     } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
         SD.end();
         storageInit();
@@ -4001,11 +4068,10 @@ void setup() {
     Serial.begin(115200);
     delay(200);
     const char* panel = boardInit(1, 40000000);
-    if (!screenInit()) Serial.println("axis: no memory for the screen copy");
+    if (boardHasPanel() && !screenBandsInit()) Serial.println("axis: no memory for the screen band");  // (headless: none)
     Serial.printf("\naxis: Axis Micro BBS Firmware %s booting, panel %s, heap %u\n", axis::bbs::kAxisVersion, panel,
                   ESP.getFreeHeap());
-    title("starting...");
-    screenPush();
+    if (boardHasPanel()) title("starting...");  // straight to the panel: the full copy is only made for a screen other than the WFC
     storageInit();
     if (!configMount()) Serial.println("axis: internal flash filesystem failed to mount");
     web::begin();

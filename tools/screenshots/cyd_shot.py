@@ -34,6 +34,9 @@ def main():
         line = s.readline().decode('latin1').strip()
         if line.startswith('@SHOT END'):
             break
+        if line.startswith('@SHOT NONE'):  # drawn straight to the panel (no room for the copy), or a headless board
+            s.close()
+            sys.exit('no screenshot: the board has no copy of this screen')
         if line.startswith('@SHOT '):
             w, h = map(int, line.split()[1:3])
             rows = []

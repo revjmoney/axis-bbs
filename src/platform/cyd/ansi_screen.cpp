@@ -82,20 +82,22 @@ void AnsiScreen::renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int
     renderGrid(dst, rows, [art](int r, int c) { return AnsiCell{art[r][c][0], art[r][c][1]}; });
 }
 
-void AnsiScreen::renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t) {
+namespace {
+// terminal rows firstRow.. into fb from its top, in 7x10 cells: each pixel samples the 8x16 glyph at 2x2 points (a quarter and
+// three quarters across the pixel); how many of the 4 are lit picks the blend. 45 cells are 315 pixels: 2 black columns on the
+// left, 3 on the right. Rows past the terminal's end are black. (renderCells and renderCellsBand both draw here.)
+void cellRows(uint8_t* fb, const axis::bbs::AnsiTerm& t, int firstRow, int rows) {
     if (!ready) build();
-    uint8_t* fb = (uint8_t*)dst.getBuffer();
-    if (!fb) return;
-    // each 7x10 pixel samples the 8x16 glyph at 2x2 points (a quarter and three quarters across the pixel); how many of the 4 are
-    // lit picks the blend. 45 cells are 315 pixels: 2 black columns on the left, 3 on the right.
     static const uint8_t kCol[7][2] = {{0, 0}, {1, 2}, {2, 3}, {3, 4}, {4, 5}, {6, 6}, {7, 7}};
     static const uint8_t kRow[10][2] = {{0, 1}, {2, 2}, {3, 4}, {5, 6}, {6, 7}, {8, 9}, {10, 10}, {11, 12}, {13, 14}, {14, 15}};
     const int kLeft = 2;
-    int cols = t.cols() < 45 ? t.cols() : 45, rows = t.rows() < 24 ? t.rows() : 24;
-    for (int r = 0; r < rows; r++)
+    int cols = t.cols() < 45 ? t.cols() : 45, last = t.rows() < 24 ? t.rows() : 24;
+    for (int i = 0; i < rows; i++) {
+        int r = firstRow + i;
         for (int y = 0; y < 10; y++) {
-            uint8_t* out = fb + (r * 10 + y) * 160;
+            uint8_t* out = fb + (i * 10 + y) * 160;
             memset(out, 0, 160);
+            if (r < 0 || r >= last) continue;
             int px = kLeft;
             for (int c = 0; c < cols; c++) {
                 const auto&    cell = t.cell(r, c);
@@ -108,6 +110,19 @@ void AnsiScreen::renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t) {
                 }
             }
         }
+    }
+}
+}  // namespace
+
+void AnsiScreen::renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t) {
+    uint8_t* fb = (uint8_t*)dst.getBuffer();
+    if (fb) cellRows(fb, t, 0, t.rows() < 24 ? t.rows() : 24);
+}
+
+void AnsiScreen::renderCellsBand(LGFX_Sprite& band, const axis::bbs::AnsiTerm& t, int firstRow, int rows) {
+    uint8_t* fb = (uint8_t*)band.getBuffer();
+    if (rows > band.height() / 10) rows = band.height() / 10;
+    if (fb) cellRows(fb, t, firstRow, rows);
 }
 
 void BigText::clear(uint8_t attr) {
@@ -126,14 +141,15 @@ void BigText::fill(int row, int col, int len, uint8_t ch, uint8_t attr) {
         if (row >= 0 && row < kRows && col + i >= 0 && col + i < kCols) cells[row][col + i] = {ch, attr};
 }
 
-void AnsiScreen::renderZoom(LGFX_Sprite& dst, int rows, int firstCol) const {
+void AnsiScreen::renderZoom(LGFX_Sprite& dst, int rows, int firstCol, int y0) const {
     if (!ready) build();
     uint8_t* fb = (uint8_t*)dst.getBuffer();
     if (!fb) return;
     for (int r = 0; r < rows && r < kRows; r++)
         for (int y = 0; y < 8; y++) {
-            int py = r * 8 + y;
-            if (py >= 240) return;
+            int py = y0 + r * 8 + y;
+            if (py < 0) continue;
+            if (py >= dst.height()) return;
             uint8_t* out = fb + py * 160;
             for (int c = 0; c < 40; c++, out += 4) {
                 int            col = firstCol + c;
@@ -146,14 +162,15 @@ void AnsiScreen::renderZoom(LGFX_Sprite& dst, int rows, int firstCol) const {
         }
 }
 
-void AnsiScreen::renderSharp(LGFX_Sprite& dst, int rows) const {
+void AnsiScreen::renderSharp(LGFX_Sprite& dst, int rows, int y0) const {
     if (!ready) build();
     uint8_t* fb = (uint8_t*)dst.getBuffer();
     if (!fb) return;
     for (int r = 0; r < rows && r < kRows; r++)
         for (int y = 0; y < 8; y++) {
-            int py = r * 8 + y;
-            if (py >= 240) return;
+            int py = y0 + r * 8 + y;
+            if (py < 0) continue;
+            if (py >= dst.height()) return;
             uint8_t* out = fb + py * 160;
             for (int c = 0; c < kCols; c++, out += 2) {
                 const AnsiCell& cell = cells[r][c];
@@ -174,7 +191,7 @@ void BigText::render(LGFX_Sprite& dst, int y0, int rows) const {
     for (int r = 0; r < rows && r < kRows; r++)
         for (int y = 0; y < 16; y++) {
             int py = y0 + r * 16 + y;
-            if (py < 0 || py >= 240) continue;
+            if (py < 0 || py >= dst.height()) continue;
             uint8_t* out = fb + py * 160;
             for (int c = 0; c < kCols; c++, out += 4) {
                 uint8_t        bits = vga_font8x16[cells[r][c].ch * 16 + y];

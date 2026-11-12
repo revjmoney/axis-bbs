@@ -25,14 +25,17 @@ public:
     void text(int row, int col, const char* s, uint8_t attr);  // clipped at the right edge
     void fill(int row, int col, int len, uint8_t ch, uint8_t attr);
     void render(LGFX_Sprite& dst, int rows = kRows) const;      // top `rows` rows, onto the 4-bit sprite
-    // easy to read: 40 columns from firstCol in full 8x8 cells (each pixel row merges two font rows)
-    void renderZoom(LGFX_Sprite& dst, int rows, int firstCol) const;
+    // easy to read: 40 columns from firstCol in full 8x8 cells (each pixel row merges two font rows); y0: where row 0 lands
+    // in dst (negative for a band further down the screen), clipped to dst
+    void renderZoom(LGFX_Sprite& dst, int rows, int firstCol, int y0 = 0) const;
     // all 80 columns in 4x8 cells, crisp: each pixel is lit if 2 or more of its 4 font pixels are (no blending)
-    void renderSharp(LGFX_Sprite& dst, int rows) const;
+    void renderSharp(LGFX_Sprite& dst, int rows, int y0 = 0) const;
     // art straight from flash (rows x 80 x {ch, attr}): no copy in RAM
     static void renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int rows);
     // a whole terminal in 7x10 cells (the 8x16 font sampled 2x2 a pixel, blended): 45x24 is 315x240, centred
     static void renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t);
+    // the same, `rows` terminal rows from firstRow into a band (7x10 cells, so a 40 pixel band is 4 rows)
+    static void renderCellsBand(LGFX_Sprite& band, const axis::bbs::AnsiTerm& t, int firstRow, int rows);
 };
 
 // A 40-column grid of full-size 8x16 cells, for text that has to be easy to read (15 rows fill
@@ -44,5 +47,5 @@ public:
     void clear(uint8_t attr = 0x07);
     void text(int row, int col, const char* s, uint8_t attr);
     void fill(int row, int col, int len, uint8_t ch, uint8_t attr);
-    void render(LGFX_Sprite& dst, int y0, int rows) const;
+    void render(LGFX_Sprite& dst, int y0, int rows) const;  // y0: where row 0 lands in dst (may be negative), clipped to dst
 };
