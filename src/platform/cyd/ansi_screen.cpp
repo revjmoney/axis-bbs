@@ -9,6 +9,7 @@
 #include "platform/cyd/screen.h"
 
 #include "../../../third_party/vga_font/font8x16.h"  // IBM VGA 8x16 by VileR, CC BY-SA 4.0
+#include "../../../third_party/ibm_font8x8/font8x8.h"  // IBM PC BIOS 8x8 by VileR, CC BY-SA 4.0 (the WFC cells only; const, in flash)
 
 namespace {
 const uint8_t kCga[16][3] = {{0, 0, 0},     {0, 0, 170},    {0, 170, 0},    {0, 170, 170},
@@ -83,13 +84,12 @@ void AnsiScreen::renderArt(LGFX_Sprite& dst, const uint8_t (*art)[kCols][2], int
 }
 
 namespace {
-// terminal rows firstRow.. into fb from its top, in 7x10 cells: each pixel samples the 8x16 glyph at 2x2 points (a quarter and
-// three quarters across the pixel); how many of the 4 are lit picks the blend. 45 cells are 315 pixels: 2 black columns on the
-// left, 3 on the right. Rows past the terminal's end are black. (renderCells and renderCellsBand both draw here.)
+// terminal rows firstRow.. into fb from its top, in 7x10 cells drawn from the 8x8 IBM font: columns are font bits 7..1, rows are a
+// blank line, the 8 font rows, a blank line; glyphs 0xB0..0xDF (shades, box drawing) repeat their first and last font row instead
+// so lines and blocks join between cells. Lit = foreground, unlit = background, no blending. 45 cells are 315 pixels: 2 black
+// columns on the left, 3 on the right. Rows past the terminal's end are black. (renderCells and renderCellsBand both draw here.)
 void cellRows(uint8_t* fb, const axis::bbs::AnsiTerm& t, int firstRow, int rows) {
     if (!ready) build();
-    static const uint8_t kCol[7][2] = {{0, 0}, {1, 2}, {2, 3}, {3, 4}, {4, 5}, {6, 6}, {7, 7}};
-    static const uint8_t kRow[10][2] = {{0, 1}, {2, 2}, {3, 4}, {5, 6}, {6, 7}, {8, 9}, {10, 10}, {11, 12}, {13, 14}, {14, 15}};
     const int kLeft = 2;
     int cols = t.cols() < 45 ? t.cols() : 45, last = t.rows() < 24 ? t.rows() : 24;
     for (int i = 0; i < rows; i++) {
@@ -101,11 +101,14 @@ void cellRows(uint8_t* fb, const axis::bbs::AnsiTerm& t, int firstRow, int rows)
             int px = kLeft;
             for (int c = 0; c < cols; c++) {
                 const auto&    cell = t.cell(r, c);
-                uint8_t        a = vga_font8x16[cell.ch * 16 + kRow[y][0]], b = vga_font8x16[cell.ch * 16 + kRow[y][1]];
                 const uint8_t* l = lut[cell.attr];
+                bool           join = cell.ch >= 0xB0 && cell.ch <= 0xDF;
+                int            gy = y - 1;  // the font row for this line; outside 0..7 is the blank pad (or the joined edge row)
+                if (gy < 0) gy = join ? 0 : -1;
+                if (gy > 7) gy = join ? 7 : -1;
+                uint8_t bits = gy < 0 ? 0 : ibm_font8x8[cell.ch * 8 + gy];
                 for (int x = 0; x < 7; x++, px++) {
-                    uint8_t m0 = 0x80 >> kCol[x][0], m1 = 0x80 >> kCol[x][1];
-                    uint8_t v = l[!!(a & m0) + !!(a & m1) + !!(b & m0) + !!(b & m1)];
+                    uint8_t v = l[(bits & (0x80 >> x)) ? 4 : 0];
                     out[px >> 1] |= (px & 1) ? v : (uint8_t)(v << 4);
                 }
             }
