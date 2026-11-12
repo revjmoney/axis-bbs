@@ -192,9 +192,8 @@ void AnsiViewer::showPiece(size_t i) {
         return;
     }
     if (e.method == 8 && !grabInflate()) {  // stored pieces need no window
-        send(std::string("\r\n\r\n   ") + AMBER +
-             "The board is short on memory for another movie right now. Try again in a minute.\r\n" + DIM);
-        showPieces();
+        showPieces();  // then the note, so the list's CLS does not wipe it (80 columns: from column 1)
+        send(std::string("\x1b[22;1H") + AMBER + "The board is short on memory for another movie right now. Try again in a minute." + HI);
         return;
     }
     send(CLS);

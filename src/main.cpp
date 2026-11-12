@@ -3965,16 +3965,26 @@ static void serviceSession(int i) {
         }
     }
     if (job) {  // this caller's download or upload
-        if (job->needsWorkspace() && axis::bbs::inflate::busy() && (!line || !line->carrier())) {  // hung up while waiting
-            hangUp();
-            return;
-        }
-        if (job->needsWorkspace() && !axis::bbs::inflate::busy()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait for it)
-            uint8_t *w = nullptr, *st = nullptr;
-            drawTransfer();
-            if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
-            job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
-            noteZipHeap();
+        if (job->needsWorkspace()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait up to 60 s)
+            bool busy = axis::bbs::inflate::busy();
+            if (busy && (!line || !line->carrier())) {  // hung up while waiting
+                hangUp();
+                return;
+            }
+            if (busy && !job->waiting) {
+                job->waiting = true;
+                job->waitSince = millis();
+                sendApp("\r\n  Checking your upload, waiting for the ZIP checker...\r\n");
+            }
+            bool late = busy && millis() - job->waitSince >= 60000u;
+            if (!busy || late) {
+                uint8_t *w = nullptr, *st = nullptr;  // late: today's short-memory path (no window)
+                drawTransfer();
+                if (late) logEvent("upload: ZIP window busy");
+                else if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
+                job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
+                noteZipHeap();
+            }
         }
         bool running = job->step(millis());
         if (line) line->flush();

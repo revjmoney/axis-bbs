@@ -31,6 +31,8 @@ public:
     // given back when the job is destroyed)
     bool needsWorkspace() const { return wantWorkspace_; }
     void beginProcessing(uint8_t* workspace, size_t size, uint8_t* zipState = nullptr);  // zipState: see UploadProcessor
+    bool     waiting = false;  // the host: this ZIP check is waiting for the window, since waitSince (ms)
+    uint32_t waitSince = 0;
     bool processing() const { return proc_ != nullptr; }
     double processProgress() const { return proc_ ? proc_->progress() : 0; }
     bool               ok() const { return ok_; }
