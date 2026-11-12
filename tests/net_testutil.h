@@ -123,10 +123,36 @@ public:
     explicit FlakyStore(axis::bbs::MessageStore& inner) : inner_(inner) {}
     bool failReads = false;
     std::vector<axis::bbs::Message> headers(const std::string& a) override { return inner_.headers(a); }
+    void scanHeaders(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& each) override {
+        inner_.scanHeaders(a, each);
+    }
     bool read(const std::string& a, int num, axis::bbs::Message& out) override {
         if (failReads) return false;
         return inner_.read(a, num, out);
     }
+    int post(const std::string& a, const axis::bbs::Message& m) override { return inner_.post(a, m); }
+    int drop(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& gone) override {
+        return inner_.drop(a, gone);
+    }
+
+private:
+    axis::bbs::MessageStore& inner_;
+};
+
+// A store for checking the net never builds a header list for its own walks: headers() counts each call
+// (a test then checks the count stays 0); scanHeaders, read, post and drop pass through.
+class NoHeadersStore : public axis::bbs::MessageStore {
+public:
+    explicit NoHeadersStore(axis::bbs::MessageStore& inner) : inner_(inner) {}
+    int headerCalls = 0;
+    std::vector<axis::bbs::Message> headers(const std::string& a) override {
+        headerCalls++;
+        return inner_.headers(a);
+    }
+    void scanHeaders(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& each) override {
+        inner_.scanHeaders(a, each);
+    }
+    bool read(const std::string& a, int num, axis::bbs::Message& out) override { return inner_.read(a, num, out); }
     int post(const std::string& a, const axis::bbs::Message& m) override { return inner_.post(a, m); }
     int drop(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& gone) override {
         return inner_.drop(a, gone);
@@ -153,6 +179,16 @@ public:
             out.push_back(m);
         }
         return out;
+    }
+    // Like the file store: every message of the area, one at a time, in header form.
+    void scanHeaders(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& each) override {
+        for (const auto& full : areas_[a]) {
+            axis::bbs::Message m = full;
+            m.body.clear();
+            std::string id = netPostId(m.net);
+            m.net = id.empty() ? std::string() : std::string("P\x1F") + id;
+            if (!each(m)) return;
+        }
     }
     bool read(const std::string& a, int num, axis::bbs::Message& out) override {
         for (const auto& m : areas_[a])

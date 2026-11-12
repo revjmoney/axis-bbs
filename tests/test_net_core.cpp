@@ -413,3 +413,70 @@ TEST_CASE("netDateUnix reads what the old sscanf parse read") {
     uint32_t t = kNow - kNow % 60;
     CHECK(netDateUnix(netDateText(t)) == t);
 }
+
+TEST_CASE("net walks stream the headers and never build a header list") {
+    RevKeys rk;
+    TempDir dir;
+    axis::bbs::FileMessageStore files(dir.p.string());
+    NoHeadersStore store(files);
+    MemOutLog log;
+    KeyPair k = keyOf(0x90);
+    uint32_t now = kNow;
+    NetCore core(store, k, [&] { return now; }, log);
+    REQUIRE(core.setOwnCard(makeCard(k, "Streamer")));
+    CHECK_FALSE(core.hasNetPosts());
+    Message m;
+    m.from = "Sysop";
+    m.subject = "s";
+    m.body = "b";
+    std::vector<std::string> ids;
+    for (int i = 0; i < 6; i++) ids.push_back(core.originate(i % 2 ? "sn_bugs" : "sn_support", m));
+    for (const auto& id : ids) REQUIRE(!id.empty());
+    CHECK(core.hasNetPosts());
+    // A kill drops the post from its area by a header scan.
+    REQUIRE(core.takeNotice(makeNotice(rev0(), 0, "kill", ids[3], 1), ""));
+    int left = 0;
+    files.scanHeaders("sn_bugs", [&](const Message& h) {
+        CHECK(netPostId(h.net) != ids[3]);
+        left++;
+        return true;
+    });
+    CHECK(left == 2);
+    // Retention by count, then by age.
+    core.setRetention(2, kNetKeepDays);
+    core.trim(now);
+    int support = 0;
+    files.scanHeaders("sn_support", [&](const Message&) { return ++support > 0; });
+    CHECK(support == 2);
+    now += 100 * kDay;
+    core.trim(now);
+    CHECK_FALSE(core.hasNetPosts());
+    CHECK(store.headerCalls == 0);
+}
+
+TEST_CASE("the file store's header scan sees every post and stops when asked") {
+    TempDir dir;
+    axis::bbs::FileMessageStore files(dir.p.string());
+    Message m;
+    m.from = "a";
+    m.subject = "s";
+    m.net = std::string("P\x1F") + "0123456789abcdef-1\x1F" + std::string(3000, 'x');
+    m.body = std::string(5000, 'y');
+    for (int i = 0; i < 205; i++) REQUIRE(files.post("sn_support", m) == i + 1);
+    int seen = 0;
+    files.scanHeaders("sn_support", [&](const Message& h) {
+        seen++;
+        CHECK(h.body.empty());
+        CHECK(netPostId(h.net) == "0123456789abcdef-1");
+        CHECK(h.net.size() < 64);  // only the start of the net line
+        return true;
+    });
+    CHECK(seen == 205);  // more than headers() gives
+    int stopped = 0;
+    files.scanHeaders("sn_support", [&](const Message&) { return ++stopped < 3; });
+    CHECK(stopped == 3);
+    Message back;
+    REQUIRE(files.read("sn_support", 205, back));
+    CHECK(back.net == m.net);
+    CHECK(back.body == m.body);
+}

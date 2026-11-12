@@ -983,6 +983,9 @@ struct NoNetMsgs : axis::bbs::MessageStore {
     int drop(const std::string& area, const std::function<bool(const axis::bbs::Message&)>& gone) override {
         return localMsgs->drop(area, gone);
     }
+    void scanHeaders(const std::string& area, const std::function<bool(const axis::bbs::Message&)>& each) override {
+        localMsgs->scanHeaders(area, each);
+    }
 };
 static NoNetMsgs noNetMsgs;
 #endif

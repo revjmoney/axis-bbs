@@ -10,7 +10,8 @@
 namespace axis::bbs {
 
 namespace {
-constexpr char kSep = '\x1f', kSub = '\x1e';
+constexpr char   kSep = '\x1f', kSub = '\x1e';
+constexpr size_t kHeadLine = 256;  // what a headers-only scan keeps of a line
 
 std::string oneLine(std::string s) {
     for (char& c : s)
@@ -30,10 +31,13 @@ void scan(const std::string& path, bool bodies, F visit) {
         if (!m.body.empty() && m.body.back() == '\n') m.body.pop_back();
         return visit(m);
     };
+    // Headers only: a line is kept to its first kHeadLine characters (a header, the start of the net line, or enough
+    // of a body line to tell a record mark), so a long net line or body line is never held whole.
+    const size_t cap = bodies ? (size_t)-1 : kHeadLine;
     for (int c;;) {
         c = std::fgetc(in);
         if (c != EOF && c != '\n') {
-            if (c != '\r') line += (char)c;
+            if (c != '\r' && line.size() < cap) line += (char)c;
             continue;
         }
         if (c == EOF && line.empty()) {  // the file's last newline: nothing more
@@ -74,27 +78,47 @@ void scan(const std::string& path, bool bodies, F visit) {
     }
     std::fclose(in);
 }
-std::string record(int num, const Message& m) {  // one post as it's stored
-    std::string rec = "\x01MSG\nnum=" + std::to_string(num) + "\nfrom=" + oneLine(m.from) + "\nto=" + oneLine(m.to) +
-                      "\nsubj=" + oneLine(m.subject) + "\ndate=" + oneLine(m.date) + "\n";
+// One post as it's stored, written a piece at a time through a small buffer: the net line and the body are never
+// copied into one record string. False if a write failed.
+bool writeRecord(std::FILE* f, int num, const Message& m) {
+    char   buf[256];
+    size_t n = 0;
+    bool   ok = true;
+    auto   flush = [&]() {
+        if (n && std::fwrite(buf, 1, n, f) != n) ok = false;
+        n = 0;
+    };
+    auto put = [&](char c) {
+        if (n == sizeof buf) flush();
+        buf[n++] = c;
+    };
+    auto text = [&](const std::string& s) {
+        for (char c : s) put(c);
+    };
+    text("\x01MSG\nnum=" + std::to_string(num) + "\nfrom=" + oneLine(m.from) + "\nto=" + oneLine(m.to) + "\nsubj=" +
+         oneLine(m.subject) + "\ndate=" + oneLine(m.date) + "\n");
     if (!m.net.empty()) {  // written whole: it holds 0x1F separators and may run past 72 characters
-        rec += "net=";
+        text("net=");
         for (char c : m.net)
-            if (c != '\n' && c != '\r') rec += c;
-        rec += "\n";
+            if (c != '\n' && c != '\r') put(c);
+        put('\n');
     }
-    rec += "\n";
-    std::string line;
-    for (size_t i = 0; i <= m.body.size(); i++) {  // body lines; one that starts like a record mark is escaped
-        if (i == m.body.size() || m.body[i] == '\n') {
-            if (!line.empty() && line[0] == '\x01') line = " " + line;
-            rec += line + "\n";
-            line.clear();
-        } else if (m.body[i] != '\r') {
-            line += m.body[i];
+    put('\n');
+    bool start = true;  // at the start of a body line: one that starts like a record mark is escaped
+    for (char c : m.body) {
+        if (c == '\r') continue;
+        if (c == '\n') {
+            put('\n');
+            start = true;
+            continue;
         }
+        if (start && c == '\x01') put(' ');
+        start = false;
+        put(c);
     }
-    return rec;
+    put('\n');
+    flush();
+    return ok;
 }
 std::vector<std::string> split(const std::string& s, char sep, size_t n) {  // the last field whole
     std::vector<std::string> v;
@@ -148,10 +172,7 @@ int FileMessageStore::drop(const std::string& area, const std::function<bool(con
             return true;
         }
         if (!out) out = std::fopen(tmp.c_str(), "wb");
-        if (out) {
-            std::string r = record(m.num, m);
-            std::fwrite(r.data(), 1, r.size(), out);
-        }
+        if (out) writeRecord(out, m.num, m);
         kept++;
         return true;
     });
@@ -173,10 +194,13 @@ int FileMessageStore::post(const std::string& area, const Message& m) {
     });
     std::FILE* out = std::fopen(path(area).c_str(), "ab");
     if (!out) return 0;
-    std::string rec = record(last + 1, m);
-    bool ok = std::fwrite(rec.data(), 1, rec.size(), out) == rec.size();
-    std::fclose(out);
+    bool ok = writeRecord(out, last + 1, m);
+    ok = std::fclose(out) == 0 && ok;
     return ok ? last + 1 : 0;
+}
+
+void FileMessageStore::scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) {
+    scan(path(area), false, [&](const Message& m) { return each(m); });
 }
 
 std::string serveMessages(MessageStore& st, const std::string& req) {

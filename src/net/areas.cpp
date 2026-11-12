@@ -470,19 +470,19 @@ void NetCore::loadCursors(const std::string& text) {
 }
 
 void NetCore::dropPost(const std::string& id) {
-    for (const NetArea& a : sysopNetAreas()) {  // look in each area's newest headers
-        std::vector<Message> h = store_.headers(a.id);
+    for (const NetArea& a : sysopNetAreas()) {  // each area's headers, one at a time, up to the first hit
         int num = 0;
-        for (const Message& m : h)
-            if (netPostId(m.net) == id) num = m.num;
-        h.clear();
-        h.shrink_to_fit();
+        store_.scanHeaders(a.id, [&](const Message& m) {
+            if (netPostId(m.net) != id) return true;
+            num = m.num;
+            return false;
+        });
         if (num) {
             store_.drop(a.id, [&](const Message& m) { return m.num == num && netPostId(m.net) == id; });
             return;
         }
     }
-    // Older than the newest headers: the next trim drops it.
+    // Not found (a store whose scan sees only the newest headers): the next trim drops it.
 }
 
 void NetCore::trimArea(const std::string& area, uint32_t nowDay, bool clock) {
@@ -498,32 +498,17 @@ void NetCore::trimArea(const std::string& area, uint32_t nowDay, bool clock) {
         if (d > nowDay + 1) return true;
         return nowDay > d && nowDay - d > keepDays_;
     };
-    std::vector<Message> h = store_.headers(area);
-    if (h.size() < MessageStore::kMaxHeaders) {  // the whole area is here: decide from the headers
-        std::set<int> drop;
-        size_t excess = h.size() > keepPosts_ ? h.size() - keepPosts_ : 0;
-        for (size_t i = 0; i < h.size(); i++)
-            if (i < excess || gone(h[i])) drop.insert(h[i].num);
-        h.clear();
-        h.shrink_to_fit();
-        if (!drop.empty()) store_.drop(area, [&](const Message& m) { return drop.count(m.num) > 0; });
-        return;
-    }
-    h.clear();
-    h.shrink_to_fit();
-    // Possibly more than the headers show: stream it. Killed and old first, counting what stays.
-    // FileMessageStore::drop writes a temp copy of the area even when nothing goes, so a full area
-    // costs one SD rewrite per trim; trim runs at most once a day.
-    size_t kept = 0;
-    store_.drop(area, [&](const Message& m) {
-        if (gone(m)) return true;
-        kept++;
-        return false;
+    // A count pass over the headers, one at a time, then one rewrite only if something goes: the killed and
+    // old posts, and the oldest of the rest past keepPosts. (gone reads only the header fields, so both passes agree.)
+    size_t total = 0, going = 0;
+    store_.scanHeaders(area, [&](const Message& m) {
+        total++;
+        if (gone(m)) going++;
+        return true;
     });
-    if (kept > keepPosts_) {
-        size_t excess = kept - keepPosts_, n = 0;
-        store_.drop(area, [&](const Message&) { return n++ < excess; });
-    }
+    size_t kept = total - going, excess = kept > keepPosts_ ? kept - keepPosts_ : 0, n = 0;
+    if (!going && !excess) return;
+    store_.drop(area, [&](const Message& m) { return gone(m) || n++ < excess; });
 }
 
 void NetCore::trim(uint32_t nowUnix) {
@@ -577,10 +562,10 @@ bool NetCore::historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& lin
 }
 
 bool NetCore::hasNetPosts() const {
+    bool found = false;
     for (const NetArea& a : sysopNetAreas()) {
-        std::vector<Message> h = store_.headers(a.id);
-        for (const Message& m : h)
-            if (!netPostId(m.net).empty()) return true;
+        store_.scanHeaders(a.id, [&](const Message& m) { return !(found = !netPostId(m.net).empty()); });
+        if (found) return true;
     }
     return false;
 }
