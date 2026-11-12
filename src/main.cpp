@@ -404,7 +404,36 @@ static void announceOut(const std::string& line) {
     else cluster->send("", kAnnounceAllKind, 0, line);
 }
 
-static std::map<std::string, std::string> artCache;
+// The follower's theme art, at most kArtCacheCap bytes in all: a hit moves the entry to the back, the front (least recently used) goes first.
+constexpr size_t kArtCacheCap = 16384;
+static struct ArtCache {
+    std::vector<std::pair<std::string, std::string>> v;
+    size_t                                           bytes = 0;
+    void clear() { v.clear(), v.shrink_to_fit(), bytes = 0; }
+    const std::string* find(const std::string& name) {
+        for (size_t i = 0; i < v.size(); i++)
+            if (v[i].first == name) {
+                if (i + 1 < v.size()) std::rotate(v.begin() + i, v.begin() + i + 1, v.end());
+                return &v.back().second;
+            }
+        return nullptr;
+    }
+    void put(const std::string& name, const std::string& art) {
+        if (art.size() > kArtCacheCap) return;  // (too big to keep: asked again each time)
+        for (size_t i = 0; i < v.size(); i++)
+            if (v[i].first == name) {
+                bytes -= v[i].second.size();
+                v.erase(v.begin() + i);
+                break;
+            }
+        while (!v.empty() && bytes + art.size() > kArtCacheCap) {
+            bytes -= v.front().second.size();
+            v.erase(v.begin());
+        }
+        v.emplace_back(name, art);
+        bytes += art.size();
+    }
+} artCache;
 constexpr size_t kThemeArtCap = 12288;
 constexpr size_t kPosterCap = 49152;  // SAYLOR.ANS is 37 KB, SAYLORLG.ANS is 45 KB. Not cached.
 constexpr size_t kPosterChunk = 7000;  // a cluster frame is 8 KB, so a follower pulls the poster in pieces
@@ -546,13 +575,40 @@ static std::string themeArt(const std::string& name) {
     if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never fetched whole
     bool poster = posterName(name) || name.find(':') != std::string::npos;  // (a preview is seen once: never cached either)
     if (!poster) {
-        auto it = artCache.find(name);
-        if (it != artCache.end()) return it->second;
+        if (const std::string* hit = artCache.find(name)) return *hit;
     }
     bool        answered = false;
     std::string art = themeArtRemote(name, &answered);
-    if (!poster && answered) artCache[name] = art;  // (the poster is one login screen, then it can go; a failed ask is asked again)
+    if (!poster && answered) artCache.put(name, art);  // (the poster is one login screen, then it can go; a failed ask is asked again)
     return art;
+}
+// The cleaned WFC.ANS every WFC screen (telnet, serial, local) draws: read once, shared, and read again only when something may have
+// changed. wfcAnsKey says what it was read from: the WFC folder plus (here on a board with the card) the file's size and time in the
+// folder and its legacy folder, so a new WFC.ANS from any writer (the sysop's @PUT, the web, a theme install) is seen on the next draw,
+// as when it was read every time. On a follower the key is the folder and the settings arrival clears it (with artCache). A follower
+// that got no art does not keep the key, so it asks again as before. Null (no art): the built-in screen.
+static std::shared_ptr<const std::string> wfcAnsShared;
+static std::string                        wfcAnsKey;
+static std::shared_ptr<const std::string> wfcArtShared() {
+    const std::string folder = axis::bbs::wfcFolder(cfg);
+    std::string       key = folder;
+    if (!asFollower()) {
+        const char* dirs[2] = {folder.c_str(), axis::bbs::theme::legacyThemeFolder(folder)};
+        for (const char* d : dirs) {
+            struct stat st;
+            key += '|';
+            if (d && d[0] && storageHasSd() && stat((std::string("/sd/themes/") + d + "/WFC.ANS").c_str(), &st) == 0)
+                key += std::to_string((unsigned long)st.st_size) + "." + std::to_string((unsigned long)st.st_mtime);
+        }
+    } else {
+        key += "|F";
+    }
+    if (key == wfcAnsKey) return wfcAnsShared;
+    std::string art = axis::bbs::cleanWfcArt(themeArt("WFC.ANS"));
+    wfcAnsShared = art.empty() ? nullptr : std::make_shared<const std::string>(std::move(art));
+    if (wfcAnsShared || !asFollower()) wfcAnsKey = key;
+    else wfcAnsKey.clear();
+    return wfcAnsShared;
 }
 // ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): this board's own /menus first (its SD card or flash),
 // then the main's over the cluster. Only the small .MNU files are cached; art is fetched each time it shows.
@@ -2160,6 +2216,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         });
         node->setMessages(&callerMessages());
         node->setArt([](const std::string& name) { return themeArt(name); });
+        node->setWfcArt(wfcArtShared);
         node->setPoster(posterPiece);
         node->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
         node->setExists(menuExists);
@@ -2640,6 +2697,7 @@ static void startCluster() {
     cluster->settings = [] { return axis::bbs::formatConfig(cfg); };
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
         artCache.clear();  // the theme may have changed
+        wfcAnsKey.clear();  // (and so may the waiting screen)
         existsCache.clear();
         mainKnowsExists = false;  // (this may be another main: an older one answers every unknown letter "0")
         if (storageHasSd()) {  // the SD board keeps the BBS's settings: a stand-in main's older copy must not replace them
@@ -2909,6 +2967,7 @@ static void startLocal() {
     localNode->setWfcSnapshot(wfcSnapshot);
     localNode->setMessages(&callerMessages());
     localNode->setArt([](const std::string& name) { return themeArt(name); });  // the theme's screens, like a caller gets
+    localNode->setWfcArt(wfcArtShared);
     localNode->setPoster(posterPiece);
     localNode->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
     localNode->setExists(menuExists);
@@ -3889,6 +3948,7 @@ static void handleSerial() {
             serialWfc->setWfcSnapshot(wfcSnapshot);
             serialWfc->setMessages(&callerMessages());
             serialWfc->setArt([](const std::string& name) { return themeArt(name); });
+            serialWfc->setWfcArt(wfcArtShared);
             serialWfc->setPoster(posterPiece);
             serialWfc->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
             serialWfc->setExists(menuExists);

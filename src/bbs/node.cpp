@@ -1360,18 +1360,52 @@ WfcSnapshot Node::wfcSnapshot() {
 
 void Node::wfcDraw(const WfcSnapshot& s, bool clear) {
     wfcLast_ = s;
-    std::string art = art_ ? cleanWfcArt(art_("WFC.ANS")) : "";
-    if (art.empty()) art = builtinWfcArt();
-    if (clear) {
-        out_ += CLS;
-    } else {  // a refresh: home and overwrite, so the screen does not flash; clear each line's tail first
-        out_ += std::string(RST) + "\x1b[H";
-        for (size_t i = art.find("\r\n"); i != std::string::npos; i = art.find("\r\n", i + 5)) art.insert(i, "\x1b[K");
+    // the cleaned WFC.ANS: shared and read once (setWfcArt), or read through setArt each time; null or empty is the built-in one
+    std::shared_ptr<const std::string> shared = wfcArt_ ? wfcArt_() : nullptr;
+    std::string                        own;
+    if (!wfcArt_ && art_) own = cleanWfcArt(art_("WFC.ANS"));
+    if (shared && shared->empty()) shared = nullptr;
+    if (!shared && own.empty()) own = builtinWfcArt();
+    const std::string* art = shared ? shared.get() : &own;
+    // a refresh: home and overwrite, so the screen does not flash; ESC[K goes before each CR LF (clear each line's tail first)
+    bool refresh = !clear;
+    if (refresh && art->find("|CR") != std::string::npos) {  // (|CR writes a CR LF of its own that got the ESC[K too: only a copy matches)
+        if (art != &own) own = *art;
+        for (size_t i = own.find("\r\n"); i != std::string::npos; i = own.find("\r\n", i + 5)) own.insert(i, "\x1b[K");
+        art = &own;
+        refresh = false;
     }
-    expandArt(art, AcsUser{}, wfcValues(s), [this](const char* d, size_t n) {
-            out_.append(d, n);
+    if (clear) out_ += CLS;
+    else out_ += std::string(RST) + "\x1b[H";
+    bool heldCr = false;  // a CR at the end of a piece, waiting to see whether an LF follows
+    expandArt(*art, AcsUser{}, wfcValues(s), [this, refresh, &heldCr](const char* d, size_t n) {
+            if (!refresh) {
+                out_.append(d, n);
+                spill();
+                return;
+            }
+            if (heldCr) {
+                heldCr = false;
+                if (n && d[0] == '\n') out_ += "\x1b[K";
+                out_ += '\r';
+            }
+            size_t from = 0;
+            for (size_t i = 0; i < n; i++) {
+                if (d[i] != '\r') continue;
+                if (i + 1 == n) {  // the piece ends on it
+                    out_.append(d + from, i - from);
+                    from = n;
+                    heldCr = true;
+                } else if (d[i + 1] == '\n') {
+                    out_.append(d + from, i - from);
+                    out_ += "\x1b[K";
+                    from = i;
+                }
+            }
+            out_.append(d + from, n - from);
             spill();
         });
+    if (heldCr) out_ += '\r';
     out_ += RST;
     if (!clear) out_ += "\x1b[J";  // whatever was below (a coming soon line)
 }

@@ -72,6 +72,8 @@ public:
     // snapshot, redrawn every 5 s when it changed. Keys: S U # B F L open the sysop shell at that section (Esc comes back here),
     // E A ! are coming soon, Space goes to the main menu as this sysop, Q leaves (State::Done).
     void setWfcSnapshot(std::function<WfcSnapshot()> snap) { wfcSnap_ = std::move(snap); }
+    // The cleaned WFC.ANS, read once by the owner and shared (null: the built-in art). When set, wfcDraw uses it instead of setArt.
+    void setWfcArt(std::function<std::shared_ptr<const std::string>()> art) { wfcArt_ = std::move(art); }
     void openWfc(uint32_t nowMs);
     void tapRow(int) {}
     // /scripts/name.axs. An empty name lists the folder. False when that file is not on the card.
@@ -231,6 +233,7 @@ private:
     void spill();  // direct set and the output has reached kOutSpill: all of it goes out now, in order
     void flushDirect();  // out_ to direct_, emptied even if the write throws (capacity kept)
     std::function<std::string(const std::string&)> art_;
+    std::function<std::shared_ptr<const std::string>()> wfcArt_;
     PosterPiece                                    posterPiece_;
     std::string                                    posterFile_, posterCarry_;  // the poster streaming out, and a cut line
     size_t                                         posterOff_ = 0;
