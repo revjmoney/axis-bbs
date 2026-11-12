@@ -5334,13 +5334,15 @@ static void runCommand(const String& cmd, Print& out) {
         shotDoneMs = millis();  // (the loop's stall check comes next: this one was on purpose)
     } else if (cmd == "@WFCFX" || cmd.startsWith("@WFCFX ")) {  // bench: the panel WFC's animation (wfc_anim)
         // @WFCFX: what it is doing. @WFCFX <effect> [part] [hold=<ms>]: start one now (held that far in), @WFCFX run: let a
-        // held one go, @WFCFX calm: a still spell now
+        // held one go, @WFCFX calm: a still spell now, @WFCFX hang|hacky|vanna: what the stick figure does next
         String arg = cmd.substring(6);
         arg.trim();
         arg.toLowerCase();
         uint32_t now = millis();
         if (arg == "run") wfcAnim.hold(-1);
         else if (arg == "calm") wfcAnim.calm(now);
+        else if (arg == "hang" || arg == "hacky" || arg == "vanna")  // the stick figure: what it does next (it walks there first)
+            wfcAnim.walkerDo(arg == "hang" ? axis::bbs::WfcAnim::Hang : arg == "hacky" ? axis::bbs::WfcAnim::Hacky : axis::bbs::WfcAnim::Vanna, now);
         else if (arg.length()) {
             int    sp = arg.indexOf(' ');
             String name = sp < 0 ? arg : arg.substring(0, sp), rest = sp < 0 ? String() : arg.substring(sp + 1);
@@ -5368,6 +5370,8 @@ static void runCommand(const String& cmd, Print& out) {
             if (a.on) out.printf(" %s@%d/%u", axis::bbs::WfcAnim::fxName(a.fx), (int)(now - a.start), (unsigned)a.dur);
         }
         if (wfcAnim.jiggle().on) out.printf(" jiggle=%s", axis::bbs::WfcAnim::wigName(wfcAnim.jiggle().fx));
+        static const char* const kDoing[] = {"walking", "hanging out", "hacky sack", "showing a letter"};
+        if (wfcAnim.walker().on) out.printf(" figure=%s flipped=%d", kDoing[wfcAnim.walker().doing & 3], wfcAnim.flipped());
         out.println();
     } else if (cmd == "@SPRITEFAIL") {  // bench: the next screen away from the WFC finds no room for the full copy
         screenFailNext();
