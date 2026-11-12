@@ -451,7 +451,7 @@ TEST_CASE("viewer limit: no room refuses the piece; room lost mid-piece stops it
     CHECK_FALSE(inflate::busy());
 
     room = true;
-    out = run("1\r");  // room now: it plays, and stops at "more" (40 lines) holding the window
+    out = run("1\r");  // room now: it plays, and stops at "more" (a 23-line page of 40) holding the window
     CHECK(out.find("line 1") != std::string::npos);
     CHECK(out.find(note) == std::string::npos);
     CHECK(inflate::busy());
