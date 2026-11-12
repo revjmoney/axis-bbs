@@ -15,9 +15,14 @@
 //   H <post>* HEND             (only if the peer sent WANT)
 //   E <index> <record>*        (answered by ACK <index> or NAK <index> <reason>)
 //   DONE
+// Before the first E post of an origin board in a session, the sender puts that board's card on an
+// S line of its own (if it holds it), so the receiver has the card to check the post with. Only card
+// records may come as S lines after SEND. A NAK reason is one word (kNak* in areas.h): "nocard" and
+// "store" are transient and stop the sender for the session without moving its cursor.
 // BYE <reason> ends the session at any point.
 #include "net/session.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace axis::net {
@@ -53,15 +58,6 @@ void verbOf(const std::string& l, std::string& verb, std::string& rest) {
     } else {
         verb = l.substr(0, sp);
         rest = l.substr(sp + 1);
-    }
-}
-
-const char* tookName(NetCore::Took t) {
-    switch (t) {
-        case NetCore::Took::Rejected: return "Rejected";
-        case NetCore::Took::Banned: return "Banned";
-        case NetCore::Took::Limited: return "Limited";
-        default: return "bad";
     }
 }
 
@@ -109,6 +105,7 @@ void NetSession::fail(const char* why, const char* bye) {
     std::vector<std::string>().swap(snap_);
     std::deque<std::pair<uint32_t, std::string>>().swap(fetched_);
     std::deque<std::pair<uint32_t, bool>>().swap(inFlight_);
+    std::vector<std::string>().swap(cardsSent_);
     hist_ = HistoryCursor();
     peerCard_ = NetCard();
 }
@@ -249,7 +246,7 @@ void NetSession::syncLine(std::string& l) {
     if (verb == "ACK" || verb == "NAK") {
         std::string idx = rest, reason;
         if (verb == "NAK") verbOf(rest, idx, reason);
-        return ack(idx, verb == "NAK");
+        return ack(idx, verb == "NAK", reason);
     }
     if (verb == "E") {
         std::string idx, rec;
@@ -258,7 +255,8 @@ void NetSession::syncLine(std::string& l) {
         return takeEntry(idx, rec);
     }
     if (verb == "S") {
-        if (peerSend_) return fail("bad line", "bad");
+        // After SEND only a card, sent ahead of its board's posts.
+        if (peerSend_ && (rest.empty() || rest[0] != (char)NetKind::Card)) return fail("bad line", "bad");
         return takeState(rest);
     }
     if (verb == "H") {
@@ -290,13 +288,36 @@ void NetSession::syncLine(std::string& l) {
     fail("bad line", "bad");
 }
 
-void NetSession::ack(const std::string& idx, bool nak) {
+void NetSession::ack(const std::string& idx, bool nak, const std::string& reason) {
     uint32_t i;
     // Answers come strictly in order: anything else could move the cursor past unsent entries.
     if (!parseNum(idx, i) || inFlight_.empty() || inFlight_.front().first != i) return fail("bad line", "bad");
-    core_.acked(peer_, i);
     inFlight_.pop_front();
     if (nak) naks_++;
+    if (held_) return;  // an earlier transient NAK holds the cursor: later answers must not move it past
+    if (nak && netNakTransient(reason)) {
+        // The peer may take it later (its card arrives, its store recovers): nothing more goes this
+        // session and the cursor stays on it, unless it has held it too many sessions in a row.
+        held_ = true;
+        std::deque<std::pair<uint32_t, std::string>>().swap(fetched_);
+        core_.nakedTransient(peer_, i);
+        return;
+    }
+    core_.acked(peer_, i);
+}
+
+// Before an origin's first post this session: its card on an S line, so the receiver can check the
+// post. Not for this board or the peer (the handshake gave those), nor a card already sent.
+void NetSession::cardAhead(const std::string& postLine) {
+    std::string origin = netPostId(postLine).substr(0, 16);
+    if (origin.size() != 16 || origin == me_.board || origin == peer_) return;
+    if (std::find(cardsSent_.begin(), cardsSent_.end(), origin) != cardsSent_.end()) return;
+    const NetCard* c = core_.state().card(origin);
+    if (!c) return;
+    std::string l = encode(*c);
+    if (!fits(l)) return;
+    if (cardsSent_.size() < kSyncCardsAhead) cardsSent_.push_back(origin);
+    send("S " + l);
 }
 
 void NetSession::takeEntry(const std::string& idx, const std::string& rec) {
@@ -304,27 +325,24 @@ void NetSession::takeEntry(const std::string& idx, const std::string& rec) {
     if (!parseNum(idx, i)) return fail("bad line", "bad");
     const char* reason = nullptr;  // null: ACK
     if (rec.empty()) {
-        reason = "bad";
+        reason = kNakBad;
     } else if (rec[0] == (char)NetKind::Post) {
         NetPost p;
         if (!decode(rec, p)) {
-            reason = "bad";
-        } else {
-            NetCore::Took t = core_.take(std::move(p), peer_);
-            if (t == NetCore::Took::Stored) postsTaken_++;
-            else if (t != NetCore::Took::Duplicate) reason = tookName(t);
+            reason = kNakBad;
+        } else if (core_.take(std::move(p), peer_, false, &reason) == NetCore::Took::Stored) {
+            postsTaken_++;
         }
     } else if (rec[0] == (char)NetKind::Card) {
         NetCard c;
-        if (!decode(rec, c)) reason = "bad";
-        else if (!verifyCard(c)) reason = "Rejected";
+        if (!decode(rec, c) || !verifyCard(c)) reason = kNakBad;
         else core_.takeCard(c, peer_);  // an older card than ours is still handled
     } else if (rec[0] == (char)NetKind::Notice) {
         NetNotice nn;
-        if (!decode(rec, nn)) reason = "bad";
+        if (!decode(rec, nn)) reason = kNakBad;
         else core_.takeNotice(nn, peer_);  // a stale notice is still handled
     } else {
-        reason = "bad";
+        reason = kNakBad;
     }
     if (reason) {
         naksSent_++;
@@ -437,8 +455,8 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
     // 3. Outbound log entries. Nothing new is fetched after DONE (the next session takes them), so
     // a peer that has both DONEs is never left with lines it will not answer.
     if (sentDone_) return;
-    bool nothingPending = false;
-    if (fetched_.empty() && inFlight_.empty()) {
+    bool nothingPending = held_;  // held by a transient NAK: nothing more this session
+    if (!held_ && fetched_.empty() && inFlight_.empty()) {
         // The cursor only moves on acks, so fetching with lines in flight would fetch them again.
         auto got = core_.pendingFor(peer_, kSyncInFlight);
         nothingPending = got.empty();
@@ -457,6 +475,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         auto e = std::move(front);
         fetched_.pop_front();
         bool post = e.second[0] == (char)NetKind::Post;
+        if (post) cardAhead(e.second);
         send("E " + std::to_string(e.first) + " " + e.second);
         inFlight_.emplace_back(e.first, post);
         if (post) postsSent_++;

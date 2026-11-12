@@ -37,6 +37,7 @@ constexpr uint32_t kSyncHistoryDays = 30;             // what a new board asks f
 constexpr size_t kSyncOutHigh = 2048;                 // no new data lines while this much is unsent
 constexpr size_t kSyncOutMax = 16 * 1024;             // more unsent than this: the peer is not reading
 constexpr uint32_t kSyncHistoryMax = 800;             // H lines taken per session (4 areas x 200)
+constexpr size_t kSyncCardsAhead = 64;                // origins whose card went ahead of their posts, remembered
 
 class NetSession {
 public:
@@ -75,7 +76,8 @@ private:
     void takeEntry(const std::string& idx, const std::string& rec);
     void takeState(const std::string& rec);
     void takeHistory(const std::string& rec);
-    void ack(const std::string& idx, bool nak);
+    void ack(const std::string& idx, bool nak, const std::string& reason);
+    void cardAhead(const std::string& postLine);
     void sendHello();
     void send(const std::string& l);
     void fail(const char* why, const char* bye);
@@ -109,6 +111,8 @@ private:
     HistoryCursor hist_;
     std::deque<std::pair<uint32_t, std::string>> fetched_;
     std::deque<std::pair<uint32_t, bool>> inFlight_;  // log index, is a post
+    std::vector<std::string> cardsSent_;               // origins whose card went ahead of their first post
+    bool held_ = false;                                // a transient NAK came: nothing more this session
     bool sentDone_ = false;
 
     // Sync progress, the peer.

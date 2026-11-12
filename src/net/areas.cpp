@@ -213,38 +213,46 @@ int NetCore::storePost(NetPost& p, std::string& line) {
     return num;
 }
 
-NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history) {
+bool netNakTransient(const std::string& word) { return word == kNakNoCard || word == kNakStore; }
+
+NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history, const char** nak) {
     syncLimits();  // the host may have loaded the state directly
-    auto res = [&](Took t, const char* why) {  // every result goes to the net record
+    // Every result goes to the net record; a refusal also gives its NAK word.
+    auto res = [&](Took t, const char* why, const char* word) {
+        if (nak) *nak = word;
         if (onEvent_) onEvent_(fromPeer, std::string("post ") + why + " " + p.id, std::string());
         return t;
     };
+    if (nak) *nak = nullptr;
     // 1. decode limits: the record must be representable and signed, and (with a clock) in date
-    if (p.sig.empty() || p.body.size() > kNetMaxBody || encode(p).empty()) return res(Took::Rejected, "rejected bad");
+    if (p.sig.empty() || p.body.size() > kNetMaxBody || encode(p).empty()) return res(Took::Rejected, "rejected bad", kNakBad);
     if (clockSet()) {
         uint64_t now = now_(), date = p.date;
-        if (date + (uint64_t)keepDays_ * 86400 < now || date > now + 86400) return res(Took::Rejected, "rejected date");
+        if (date + (uint64_t)keepDays_ * 86400 < now || date > now + 86400) return res(Took::Rejected, "rejected date", kNakDate);
     }
     // 2. banned board
-    if (state_.banned(p.board)) return res(Took::Banned, "banned");
-    if (blockedHere(p.board)) return res(Took::Rejected, "rejected blocked here");
+    if (state_.banned(p.board)) return res(Took::Banned, "banned", kNakBanned);
+    if (blockedHere(p.board)) return res(Took::Rejected, "rejected blocked here", kNakRejected);
     // 3. a known card, and the post signed by its key
     const NetCard* c = state_.card(p.board);
-    if (!c || !verifyPost(p, c->pub)) return res(Took::Rejected, "rejected signature");
+    // No card is transient (the peer sends it, or it comes later): the sender keeps the post for another session.
+    if (!c) return res(Took::Rejected, "rejected signature", kNakNoCard);
+    if (!verifyPost(p, c->pub)) return res(Took::Rejected, "rejected signature", kNakSig);
     // 4. a Sysop Net area, and Rev's board only for the revOnly ones
     const NetArea* area = sysopNetArea(p.area);
-    if (!area || (area->revOnly && !isRevBoard(p.board))) return res(Took::Rejected, "rejected area");
+    if (!area) return res(Took::Rejected, "rejected area", kNakBad);
+    if (area->revOnly && !isRevBoard(p.board)) return res(Took::Rejected, "rejected area", kNakRevOnly);
     // 5. killed
-    if (state_.killed(p.id)) return res(Took::Rejected, "rejected killed");
+    if (state_.killed(p.id)) return res(Took::Rejected, "rejected killed", kNakKilled);
     // 6. dedupe (it is marked seen only once stored, below). A history post below the seen window
     // (more than 64 seqs under its origin's highest) is not known from the window alone: it is a
     // duplicate only if its area already holds it. Only history gets this look, so a peer cannot make
     // every E line cost an area scan.
     if (seen_.has(p.id) && !(history && seen_.belowWindow(p.id) && !stored(p.area, p.id)))
-        return res(Took::Duplicate, "duplicate");
+        return res(Took::Duplicate, "duplicate", nullptr);
     // 7. ingress, counting the body size (history pulls are capped by the session instead)
     uint32_t today = day();
-    if (!history && !ingress_.allow(p.board, p.body.size(), today)) return res(Took::Limited, "limited");
+    if (!history && !ingress_.allow(p.board, p.body.size(), today)) return res(Took::Limited, "limited", kNakLimited);
 
     std::string cameWith = p.path;
     if (!fromPeer.empty()) p.path = appendHop(p.path, fromPeer);
@@ -254,9 +262,9 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
         line = encode(p);
     }
     cameWith.clear();
-    if (line.empty()) return res(Took::Rejected, "rejected path");
+    if (line.empty()) return res(Took::Rejected, "rejected path", kNakBad);
     int num = storePost(p, line);  // the body is moved out here
-    if (!num) return res(Took::Rejected, "rejected store");
+    if (!num) return res(Took::Rejected, "rejected store", kNakStore);
     seen_.add(p.id, today);
     if (onEvent_) onEvent_(fromPeer, "post stored " + p.id + " " + p.area, line);
     log("P " + p.area + " " + std::to_string(num) + " " + p.id + " " + excludeList({fromPeer, p.path, p.board}));
@@ -437,6 +445,23 @@ void NetCore::acked(const std::string& peer, uint32_t index) {
     auto it = links_.find(peer);
     if (it == links_.end() || !log_.ok() || index >= log_.next()) return;
     if (index + 1 > it->second.cursor) it->second.cursor = index + 1;
+    if (it->second.nakAt <= index) {  // past the entry that held it: those strikes are over
+        it->second.nakAt = 0xFFFFFFFFu;
+        it->second.nakStrikes = 0;
+    }
+}
+
+bool NetCore::nakedTransient(const std::string& peer, uint32_t index) {
+    auto it = links_.find(peer);
+    if (it == links_.end()) return false;
+    Link& l = it->second;
+    if (l.nakAt != index) {
+        l.nakAt = index;
+        l.nakStrikes = 0;
+    }
+    if (++l.nakStrikes < kNetNakStrikes) return false;
+    acked(peer, index);  // held it three sessions in a row: it cannot go to this peer
+    return true;
 }
 
 std::string NetCore::saveCursors() const {

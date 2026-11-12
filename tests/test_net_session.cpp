@@ -440,3 +440,137 @@ TEST_CASE("history is merged across areas by date, so an origin's posts in later
     CHECK(bugs[0] == early);
     CHECK(b.ids().size() == 70);
 }
+
+namespace {
+// The E lines in out, as (index, record).
+std::vector<std::pair<std::string, std::string>> eLines(const std::string& out) {
+    std::vector<std::pair<std::string, std::string>> v;
+    for (const auto& l : lines(out))
+        if (l.compare(0, 2, "E ") == 0) {
+            size_t sp = l.find(' ', 2);
+            v.emplace_back(l.substr(2, sp - 2), l.substr(sp + 1));
+        }
+    return v;
+}
+}  // namespace
+
+TEST_CASE("a transient NAK holds the cursor and stops the session's sending; permanent ones move it") {
+    RevKeys rk;
+    Node a(0xC2);
+    RawDialer r(0xC3);
+    a.core.addLinkPeer(r.card.board, false);
+    for (int i = 0; i < 6; i++) REQUIRE(!a.post("sn_support", "n" + std::to_string(i)).empty());
+    for (int round = 1; round <= (int)kNetNakStrikes; round++) {
+        NetSession s(a.core, a.card, a.key, nonce(4), false, "");
+        r.handshake(s);
+        RawDialer::say(s, "SEQ 0");
+        RawDialer::say(s, "SEND");
+        s.tick(0, true);
+        s.tick(10, true);
+        auto sent = eLines(s.takeOut());
+        size_t k = 0;
+        if (round == 1) {
+            REQUIRE(sent.size() == 6);
+            RawDialer::say(s, "NAK " + sent[k++].first + " " + kNakSig);  // permanent: passed over
+        } else {
+            REQUIRE(sent.size() == 5);  // the held one and everything after it, again
+        }
+        CHECK(decodePost(sent[k].second).id == a.board + "-2");
+        RawDialer::say(s, "NAK " + sent[k++].first + " " + kNakNoCard);
+        for (; k < sent.size(); k++) RawDialer::say(s, "ACK " + sent[k].first);  // these must not move the cursor
+        REQUIRE_FALSE(s.failed());
+        CHECK(s.naks() == (round == 1 ? 2u : 1u));
+        s.tick(20, true);
+        std::string more = s.takeOut();
+        CHECK(eLines(more).empty());  // nothing more this session
+        CHECK(countPrefix(more, "DONE") == 1);
+        RawDialer::say(s, "DONE");
+        CHECK(s.done());
+        auto next = a.pendingPosts(r.card.board);
+        if (round < (int)kNetNakStrikes) {
+            REQUIRE(next.size() == 5);
+            CHECK(decodePost(next[0]).id == a.board + "-2");
+        } else {  // held three sessions in a row: it cannot go to this peer, the cursor moves on
+            REQUIRE(next.size() == 4);
+            CHECK(decodePost(next[0]).id == a.board + "-3");
+        }
+    }
+    CHECK(netNakTransient(kNakStore));
+    CHECK_FALSE(netNakTransient(kNakLimited));
+    CHECK_FALSE(netNakTransient("Limited"));  // an older board's word: permanent
+}
+
+TEST_CASE("a refused post gets its NAK word: nocard and store are transient") {
+    RevKeys rk;
+    Node a(0xC4), b(0xC5);
+    NetPost p = decodePost(a.post());
+    const char* why = nullptr;
+    CHECK(b.core.take(p, a.board, false, &why) == Took::Rejected);
+    CHECK(std::string(why) == kNakNoCard);
+    b.knows(a);
+    NetPost forged = p;
+    forged.subject = "changed";
+    CHECK(b.core.take(forged, a.board, false, &why) == Took::Rejected);
+    CHECK(std::string(why) == kNakSig);
+    CHECK(b.core.take(makePost(a.key, 9, kNow, "sn_announce"), a.board, false, &why) == Took::Rejected);
+    CHECK(std::string(why) == kNakRevOnly);
+    CHECK(b.core.take(p, a.board, false, &why) == Took::Stored);
+    CHECK(why == nullptr);
+    CHECK(b.core.take(p, a.board, false, &why) == Took::Duplicate);
+    CHECK(why == nullptr);
+}
+
+TEST_CASE("an origin's card goes ahead of its first post, and a receiver takes it after SEND") {
+    RevKeys rk;
+    Node x(0xC6), a(0xC7), b(0xC8);
+    a.knows(x);
+    a.core.addLinkPeer(b.board, true);
+    NetPost p1 = decodePost(x.post("sn_support", "one")), p2 = decodePost(x.post("sn_support", "two"));
+    REQUIRE(a.core.take(p1, x.board) == Took::Stored);
+    REQUIRE(a.core.take(p2, x.board) == Took::Stored);
+    REQUIRE(!a.post("sn_support", "a's own").empty());
+    // Over a real session to B, which does not know X: without the card ahead, X's posts would be NAKed nocard.
+    REQUIRE(!b.post("sn_bugs", "b's own").empty());  // B is not empty: no history pull
+    b.core.addLinkPeer(a.board, true);               // a link peer at the same seq gets no snapshot
+    REQUIRE(b.core.state().card(x.board) == nullptr);
+    NetSession da(a.core, a.card, a.key, nonce(1), true, b.board);
+    NetSession db(b.core, b.card, b.key, nonce(2), false, "");
+    uint32_t ms = 0;
+    std::string allA;
+    for (int i = 0; i < 2000 && !(settled(da) && settled(db)); i++) {
+        std::string o = da.takeOut();
+        allA += o;
+        db.feed(o.data(), o.size());
+        std::string y = db.takeOut();
+        da.feed(y.data(), y.size());
+        da.tick(ms, true);
+        db.tick(ms, true);
+        ms += 10;
+    }
+    CHECK_MESSAGE(da.done(), da.why());
+    CHECK_MESSAGE(db.done(), db.why());
+    CHECK(b.core.state().card(x.board) != nullptr);
+    CHECK(db.postsTaken() == 3);
+    CHECK(db.naksSent() == 0);
+    // The card went once, on an S line before X's first post.
+    std::string card = "S " + encode(x.card);
+    size_t at = allA.find(card);
+    CHECK(countPrefix(allA, card) == 1);
+    REQUIRE(at != std::string::npos);
+    CHECK(at < allA.find(p1.id));
+}
+
+TEST_CASE("after SEND an S line may carry only a card") {
+    RevKeys rk;
+    Node a(0xCA);
+    RawDialer r(0xCB);
+    NetSession s(a.core, a.card, a.key, nonce(7), false, "");
+    r.handshake(s);
+    RawDialer::say(s, "SEQ 0");
+    RawDialer::say(s, "SEND");
+    RawDialer::say(s, "S " + encode(makeCard(keyOf(0xCC), "Late")));
+    CHECK_FALSE(s.failed());
+    CHECK(a.core.state().card(boardOf(keyOf(0xCC))) != nullptr);
+    RawDialer::say(s, "S " + encode(makeNotice(rev0(), 0, "ban", "0123456789abcdef", 3)));
+    CHECK(s.failed());
+}

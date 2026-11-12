@@ -48,6 +48,22 @@ constexpr size_t kNetPendingBytes = 12 * 1024;  // pendingFor stops once its lin
 constexpr uint32_t kNetClockSet = 1700000000;   // below this the board's clock is not set
 constexpr uint8_t kNetReadStrikes = 3;          // pendingFor calls stuck on an unreadable post before it is gone
 constexpr size_t kNetHistoryPerArea = 200;      // posts per area a new board's history pull gets at most
+constexpr uint8_t kNetNakStrikes = 3;           // sessions in a row a transient NAK may hold an entry
+
+// The words a receiver puts after NAK <index>. Permanent ones move the sender's cursor past the entry;
+// transient ones (nocard, store) do not: the sender sends nothing more that session and tries the
+// entry again next time. Any other word (an older board's) counts as permanent.
+constexpr const char* kNakBad = "bad";          // not a valid record, a bad path, not a Sysop Net area
+constexpr const char* kNakDate = "date";        // dated outside the keep window (with a clock)
+constexpr const char* kNakBanned = "banned";    // its board is banned
+constexpr const char* kNakRejected = "rejected";  // refused by this board's own block list
+constexpr const char* kNakSig = "sig";          // the signature does not match the card held here
+constexpr const char* kNakRevOnly = "revonly";  // a Rev-only area, and not from Rev's board
+constexpr const char* kNakKilled = "killed";    // killed by Rev
+constexpr const char* kNakLimited = "limited";  // over the origin's daily ingress limit
+constexpr const char* kNakNoCard = "nocard";    // transient: the origin's card is not held here
+constexpr const char* kNakStore = "store";      // transient: the message base did not take it
+bool netNakTransient(const std::string& word);
 
 // Where a history walk is: the posts to send, merged across every Sysop Net area oldest first, as
 // (area index << 28 | message number), and how many went. Only these numbers are kept (at most
@@ -86,7 +102,8 @@ public:
     // more than keepDays ago or more than a day ahead is Rejected.
     // history: a post from a new board's history pull; it skips the ingress limit (the session
     // caps how many it takes), every other check still runs.
-    Took take(NetPost p, const std::string& fromPeer, bool history = false);
+    // nak, if given, gets the NAK word for a refusal (kNak*), or nullptr when Stored or Duplicate.
+    Took take(NetPost p, const std::string& fromPeer, bool history = false, const char** nak = nullptr);
     // A card or notice from a peer. True if it changed the state (then it is logged to pass on).
     bool takeCard(const NetCard& c, const std::string& fromPeer);
     bool takeNotice(const NetNotice& n, const std::string& fromPeer);
@@ -115,6 +132,10 @@ public:
     std::vector<std::pair<uint32_t, std::string>> pendingFor(const std::string& peer, size_t max);
     // The peer has the entry at index: its cursor moves past it (acks come in order).
     void acked(const std::string& peer, uint32_t index);
+    // The peer answered the entry at index with a transient NAK: the cursor stays, unless that entry
+    // has now held it kNetNakStrikes sessions in a row (the sender cannot fix it, say it lacks the
+    // origin's card too), then it moves past. True if the cursor moved.
+    bool nakedTransient(const std::string& peer, uint32_t index);
     // "<peer> <index> <last sync unix> <out|in>" per line. On load the pool field is optional:
     // without it a peer goes to the outbound pool while it has room, else the inbound one.
     std::string saveCursors() const;
@@ -165,6 +186,8 @@ private:
         uint32_t lastSync = 0;
         uint32_t stuckAt = 0xFFFFFFFFu;  // the entry whose post could not be read last time
         uint8_t strikes = 0;             // calls in a row stuck on it
+        uint32_t nakAt = 0xFFFFFFFFu;    // the entry the peer last answered with a transient NAK
+        uint8_t nakStrikes = 0;          // sessions in a row it did
         bool outbound = false;           // which pool it is in
     };
     size_t poolSize(bool outbound) const;
