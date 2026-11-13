@@ -45,6 +45,24 @@ def issue(number, login="caller", created="2026-11-13T11:00:00Z", pr=False):
     return d
 
 
+OPEN = {"number": 10, "state": "open", "labels": [{"name": "build-request"}]}
+READY = {"user": {"login": "github-actions[bot]"},
+         "body": "Your AXIS Micro BBS build is ready.\nhttps://revjmoney.github.io/axis-bbs/install.html?build=abc"}
+
+
+def fake_api(issues=(), live=None, comments=()):
+    """The GitHub API as build_request.main calls it, by path."""
+    def api(path):
+        if path.startswith("/repos/revjmoney/axis-bbs/issues?"):
+            return list(issues)
+        if path == "/repos/revjmoney/axis-bbs/issues/10":
+            return live if live is not None else OPEN
+        if path == "/repos/revjmoney/axis-bbs/issues/10/comments?per_page=100":
+            return list(comments)
+        raise AssertionError(path)
+    return api
+
+
 def event(text, number=10, login="caller", created="2026-11-13T11:59:00Z"):
     return {"issue": {"number": number, "body": text, "user": {"login": login}, "created_at": created}}
 
@@ -124,6 +142,10 @@ class FormTest(unittest.TestCase):
         self.assertEqual(board["attributes"]["options"], [CYD, BARE])
         self.assertTrue(board["validations"]["required"])
 
+    def test_the_cap_is_described_as_the_code_counts_it(self):
+        self.assertIn("%d build requests a day" % build_request.DAILY_CAP, " ".join(self.text.split()))
+        self.assertNotIn("new builds", self.text)
+
     def test_no_free_text_fields(self):
         self.assertEqual({e["type"] for e in self.form["body"]}, {"markdown", "checkboxes", "dropdown"})
         self.assertNotIn("—", self.text)
@@ -154,21 +176,38 @@ class RateTest(unittest.TestCase):
             return [issue(9)]
         got = build_request.fetch_requests(api, "revjmoney/axis-bbs", "some user", now=NOW)
         self.assertEqual(got, [issue(9)])
+        self.assertEqual(seen[0].count("?"), 1)
         self.assertEqual(len(seen), 1)
         self.assertTrue(seen[0].startswith("/repos/revjmoney/axis-bbs/issues?"), seen[0])
         for part in ("creator=some+user", "labels=build-request", "state=all", "since=2026-11-12T12%3A00%3A00Z"):
             self.assertIn(part, seen[0])
 
 
+    def test_an_api_error_object_fails_closed(self):
+        for answer in ({"message": "API rate limit exceeded"}, None, "x"):
+            with self.subTest(answer=answer), self.assertRaises(ValueError):
+                build_request.fetch_requests(lambda path: answer, "revjmoney/axis-bbs", "caller", now=NOW)
+        with self.assertRaises(ValueError):
+            build_request.live_issue(fake_api(live=["not", "an", "issue"]), "revjmoney/axis-bbs", 10)
+        with self.assertRaises(ValueError):
+            build_request.live_issue(lambda path: {"message": "Not Found"}, "revjmoney/axis-bbs", 10)
+        self.assertEqual(build_request.live_issue(fake_api(comments=[READY]), "revjmoney/axis-bbs", 10),
+                         (OPEN, [READY]))
+
+
 class DecideTest(unittest.TestCase):
-    def decide(self, text, builds=(), requests=None, index=INDEX, **kw):
+    def decide(self, text, builds=(), requests=None, index=INDEX, live=None, comments=(), **kw):
         calls = []
 
         def fetch(user):
             self.assertEqual(user, "caller")
             calls.append(1)
             return requests if requests is not None else []
-        got = build_request.decide(event(text, **kw), index, list(builds), fetch, now=NOW,
+
+        def current(number):
+            self.assertEqual(number, kw.get("number", 10))
+            return (live if live is not None else OPEN), list(comments)
+        got = build_request.decide(event(text, **kw), index, list(builds), fetch, current, now=NOW,
                                    features=FEATURES, presets=PRESETS)
         got["_api_calls"] = len(calls)
         return got
@@ -181,6 +220,25 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(got["target"], "cyd")
         self.assertEqual(got["fingerprint"], buildopts.fingerprint({"lord", "cluster"}, "v0.60"))
         self.assertRegex(got["fingerprint"], r"^[0-9a-f]{12}$")
+
+    def test_an_edit_after_a_successful_build_does_not_build_again(self):
+        got = self.decide(body(off={"lord", "web"}), comments=[{"user": {"login": "caller"}, "body": "thanks"}, READY])
+        self.assertEqual(got["status"], "done")
+        self.assertEqual(got["fingerprint"], "")
+        self.assertEqual(got["_api_calls"], 0)
+
+    def test_a_link_posted_by_someone_else_is_not_an_answer(self):
+        fake = {"user": {"login": "caller"}, "body": READY["body"]}
+        self.assertEqual(self.decide(body(off={"lord"}), comments=[fake])["status"], "build")
+
+    def test_a_closed_or_unlabelled_issue_is_skipped(self):
+        # A queued run after the close, and a reopened issue the bot took the label off.
+        for live in ({"state": "closed", "labels": [{"name": "build-request"}]},
+                     {"state": "open", "labels": []}, {"state": "open", "labels": [{"name": "bug"}]}):
+            with self.subTest(live=live):
+                got = self.decide(body(off={"lord"}), live=live)
+                self.assertEqual(got["status"], "skip")
+                self.assertEqual(got["_api_calls"], 0)
 
     def test_a_dependency_break_is_refused_with_its_reason(self):
         got = self.decide(body(off={"files"}))
@@ -257,7 +315,7 @@ class CheckCliTest(unittest.TestCase):
         builds = self.path("builds.txt", "")
         with contextlib.redirect_stdout(io.StringIO()):
             rc = build_request.main(["check", "--event", ev, "--index", idx, "--builds", builds, "--out", out,
-                                     "--repo", "revjmoney/axis-bbs"], api=lambda path: [], now=NOW)
+                                     "--repo", "revjmoney/axis-bbs"], api=fake_api(), now=NOW)
         self.assertEqual(rc, 0)
         with open(out, encoding="utf-8") as fh:
             lines = dict(line.split("=", 1) for line in fh.read().splitlines())
@@ -265,13 +323,39 @@ class CheckCliTest(unittest.TestCase):
         self.assertEqual(lines["off"], "dosprompt,lord")
         self.assertEqual(lines["fingerprint"], buildopts.fingerprint({"lord", "dosprompt"}, "v0.60"))
 
+    def run_check(self, api):
+        out = self.path("out.txt", "")
+        ev = self.path("event.json", event(body(off={"lord"})))
+        idx = self.path("index.json", INDEX)
+        builds = self.path("builds.txt", "")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            rc = build_request.main(["check", "--event", ev, "--index", idx, "--builds", builds, "--out", out,
+                                     "--repo", "revjmoney/axis-bbs"], api=api, now=NOW)
+        with open(out, encoding="utf-8") as fh:
+            return rc, fh.read()
+
+    def test_an_api_error_object_stops_the_check(self):
+        def api(path):
+            if "/issues?" in path:
+                return {"message": "API rate limit exceeded"}
+            return fake_api()(path)
+        rc, text = self.run_check(api)
+        self.assertEqual(rc, 1)
+        self.assertEqual(text, "")
+
+    def test_an_answered_issue_is_done_through_the_cli(self):
+        rc, text = self.run_check(fake_api(comments=[READY]))
+        self.assertEqual(rc, 0)
+        self.assertIn("status=done", text)
+
     def test_a_missing_index_file_is_a_refusal(self):
         out = self.path("out.txt", "")
         ev = self.path("event.json", event(body(off={"lord"})))
         builds = self.path("builds.txt", "")
         with contextlib.redirect_stdout(io.StringIO()):
             rc = build_request.main(["check", "--event", ev, "--index", os.path.join(self.tmp, "none.json"),
-                                     "--builds", builds, "--out", out, "--repo", "a/b"], api=lambda p: [], now=NOW)
+                                     "--builds", builds, "--out", out, "--repo", "revjmoney/axis-bbs"],
+                                    api=fake_api(), now=NOW)
         self.assertEqual(rc, 0)
         with open(out, encoding="utf-8") as fh:
             self.assertIn("status=refused", fh.read())
@@ -393,6 +477,17 @@ class AnswerTest(unittest.TestCase):
         self.assertFalse(close)
         self.assertIn("ansiview needs files", text)
 
+    def test_an_answered_issue_closes_without_a_link(self):
+        text, close = self.answer(status="done", build_result="skipped", publish_result="skipped")
+        self.assertTrue(close)
+        self.assertNotIn("install.html", text)
+
+    def test_every_closing_answer_marks_the_issue_answered(self):
+        for kw in (dict(), dict(status="exists"), dict(status="preset", reason="that is the No radio link preset")):
+            text, close = self.answer(**kw)
+            self.assertTrue(close)
+            self.assertIn(build_request.ANSWERED, text)
+
     def test_a_failed_build_or_parse_stays_open_with_the_run(self):
         for kw in (dict(build_result="failure", publish_result="skipped"), dict(publish_result="failure"),
                    dict(parse_result="failure", status="")):
@@ -440,12 +535,12 @@ class WorkflowTest(unittest.TestCase):
         for needle in ("build-request", "'open'", "opened", "github.event.changes.body"):
             self.assertIn(needle, gate)
 
-    def test_only_a_changed_request_cancels_a_running_build(self):
+    def test_a_changed_request_queues_behind_a_running_build(self):
         group = self.doc["concurrency"]["group"]
         self.assertIn("github.event.issue.number", group)
         self.assertIn("github.event.changes.body", group)
         self.assertIn("github.run_id", group)
-        self.assertTrue(self.doc["concurrency"]["cancel-in-progress"])
+        self.assertIs(self.doc["concurrency"]["cancel-in-progress"], False)
 
     def test_permissions_per_job(self):
         self.assertEqual(self.doc["permissions"], {"contents": "read"})
@@ -474,6 +569,11 @@ class WorkflowTest(unittest.TestCase):
                 self.assertIn(ref, ("", "gh-pages", "refs/tags/${{ needs.parse.outputs.release }}"), (jid, ref))
         self.assertIn("needs.parse.outputs.release", str(self.jobs["build"]["steps"]))
 
+    def test_issue_runs_only_restore_the_platformio_cache(self):
+        uses = re.findall(r"uses:\s*(\S+)", self.text)
+        self.assertIn("actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25", uses)
+        self.assertFalse([u for u in uses if u.startswith("actions/cache@") or u.startswith("actions/cache/save@")])
+
     def test_the_jobs_do_their_parts(self):
         parse = str(self.jobs["parse"]["steps"])
         self.assertIn("tools/build_request.py check", parse)
@@ -496,8 +596,10 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(set(ans["needs"]), {"parse", "build", "publish"})
         self.assertIn("!cancelled()", ans["if"])
         a = str(ans["steps"])
-        for needle in ("build_request.py answer", "gh issue comment", "--body-file", "gh issue close"):
+        for needle in ("build_request.py answer", "gh issue comment", "--body-file", "gh issue close",
+                       "--remove-label build-request"):
             self.assertIn(needle, a)
+        self.assertIn("'skip'", ans["if"])
 
 
 if __name__ == "__main__":

@@ -13,7 +13,8 @@ body:
         Every feature is in the build unless you tick it below. A robot builds it for the latest
         release, comments here with a link that opens the web installer set to your build, and
         closes the issue. A combination that was built before answers at once. Each GitHub user
-        can ask for 3 new builds a day.
+        can make 3 build requests a day (every request counts, built or not), and each issue
+        gets one answer: for another combination, open a new request.
 
         Only the boxes and the board below are read. Anything else typed into the issue stops the
         build; to change your request, edit the issue and use the boxes.

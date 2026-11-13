@@ -12,8 +12,10 @@ not make is refused, and a refusal never quotes the body.
 
 check writes GitHub step outputs (status = build, exists, preset or refused; reason, off,
 target, release, fingerprint). An existing builds/<fingerprint>/ is answered with its link at
-once; otherwise a user may ask for at most 3 builds a day, counted from their issues with the
-build-request label opened in the last 24 hours (the issues API, GITHUB_TOKEN).
+once; otherwise a user may make at most 3 build requests a day, counted from their issues with
+the build-request label opened in the last 24 hours (the issues API, GITHUB_TOKEN). The issue is
+read again through the API first: a closed or unlabelled issue is skipped, and an issue the bot
+has already answered with a link gets no second build (status skip or done).
 Standard library only; runs on Windows and Linux.
 """
 import argparse
@@ -39,6 +41,8 @@ OFF_HEADING = "Leave these features out"
 BOARD_HEADING = "Board"
 TARGETS = {"cyd": "CYD (the board with the screen)", "esp32": "Bare ESP32 (no screen, headless)"}
 DAILY_CAP = 3
+BOT = "github-actions[bot]"
+ANSWERED = "install.html"  # every closing answer links the installer; one answer per issue
 FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STAMP = "%Y-%m-%dT%H:%M:%SZ"
@@ -141,7 +145,23 @@ def fetch_requests(api, repo, user, now=None):
     query = urllib.parse.urlencode({"creator": user, "labels": LABEL, "state": "all",
                                     "since": since, "per_page": 100})
     got = api("/repos/%s/issues?%s" % (repo, query))
-    return got if isinstance(got, list) else []
+    if not isinstance(got, list):
+        raise ValueError("the issues API did not answer with a list")
+    return got
+
+
+def live_issue(api, repo, number):
+    """(issue, comments) as they are now, through api(path). Fails closed on an odd answer."""
+    issue = api("/repos/%s/issues/%d" % (repo, number))
+    comments = api("/repos/%s/issues/%d/comments?per_page=100" % (repo, number))
+    if not isinstance(issue, dict) or not isinstance(comments, list):
+        raise ValueError("the issues API did not answer with an issue and its comments")
+    return issue, comments
+
+
+def _answered(comments):
+    return any(isinstance(c, dict) and (c.get("user") or {}).get("login") == BOT
+               and ANSWERED in str(c.get("body", "")) for c in comments)
 
 
 def github_api(token, base=None):
@@ -167,13 +187,23 @@ def _release(index):
     return None
 
 
-def decide(event, index, builds, fetch, now=None, features=None, presets=None):
-    """What to do with one issue event. fetch(user) returns the user's recent requests.
+def decide(event, index, builds, fetch, current, now=None, features=None, presets=None):
+    """What to do with one issue event. fetch(user) returns the user's recent requests;
+    current(number) returns (issue, comments) as they are now.
     Every value returned is safe to write to a step output and a comment."""
     if features is None or presets is None:
         features, presets = buildopts.load(ROOT)
     issue = event.get("issue") or {}
     out = {"status": "refused", "reason": "", "off": "", "target": "", "release": "", "fingerprint": ""}
+    live, comments = current(issue.get("number") or 0)
+    labels = [str((label or {}).get("name", "")) for label in live.get("labels") or []]
+    if live.get("state") != "open" or LABEL not in labels:
+        out["status"] = "skip"
+        return out
+    if _answered(comments):
+        out["status"] = "done"
+        out["reason"] = "this issue already has its answer; open a new Build request for another combination"
+        return out
     try:
         off, target = parse(issue.get("body"), features)
         off = buildopts.resolve(off, features)
@@ -202,7 +232,7 @@ def decide(event, index, builds, fetch, now=None, features=None, presets=None):
     if not any(r.get("number") == number for r in reqs):
         reqs.append({"number": number, "user": {"login": user}})
     if not rate_ok(user, reqs):
-        out["reason"] = ("at most %d new builds per GitHub user a day; this is request %d in the last "
+        out["reason"] = ("at most %d build requests per GitHub user a day; this is request %d in the last "
                          "24 hours. Edit this issue tomorrow to try again" % (DAILY_CAP, len(reqs)))
         return out
     out["status"] = "build"
@@ -301,6 +331,9 @@ def answer(parse_result, status, reason, fingerprint, target, release, off, buil
               "Rev will take a look; you can also edit the issue to try again." % run_url)
     if parse_result != "success":
         return failed, False
+    if status == "done":
+        return ("This issue already has its AXIS Micro BBS answer above. For another combination, "
+                "open a new Build request."), True
     if status == "refused":
         return ("This AXIS Micro BBS build request was not built: %s.\n\n"
                 "Edit the issue (tick or untick the form's boxes) to try again." % reason), False
@@ -381,7 +414,8 @@ def main(argv=None, api=None, now=None):
             if api is None:
                 api = github_api(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or "")
             got = decide(event, _read_json(args.index), builds,
-                         lambda user: fetch_requests(api, args.repo, user, now=now), now=now)
+                         lambda user: fetch_requests(api, args.repo, user, now=now),
+                         lambda number: live_issue(api, args.repo, number), now=now)
             _write_outputs(args.out, got)
             print("status %s, fingerprint %s, release %s, off %s" % (
                 got["status"], got["fingerprint"] or "none", got["release"] or "none", got["off"] or "none"))
