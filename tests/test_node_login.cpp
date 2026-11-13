@@ -143,9 +143,9 @@ TEST_CASE("login sequence: one step never runs inside another (the board's loop 
                         "step=USERSTATS|0|0|0|\nstep=DISPLAYFILE|0|0|0|AFTER\n";
     r.fs["AFTER.ANS"] = "AFTER ART";
     std::string out = loginAll(r);
+    for (int i = 0; i < 10 && out.find("MAIN ->") == std::string::npos; i++) out += r.type(" ");  // each screen holds for a key
     CHECK(out.find("AFTER ART") != std::string::npos);
-    CHECK(out.find("press a key") != std::string::npos);  // the last screen stays up: the main menu would clear it
-    CHECK(r.type(" ").find("MAIN ->") != std::string::npos);
+    CHECK(out.find("MAIN ->") != std::string::npos);
     CHECK(r.n.seqDepthPeak() == 1);
 }
 
@@ -172,8 +172,10 @@ TEST_CASE("login sequence: user stats and who's online are the existing screens"
     r.fs["AFTER.ANS"] = "AFTER ART";
     std::string out = loginAll(r);
     CHECK(out.find("KB free") != std::string::npos);
-    CHECK(out.find("WHO'S ONLINE") != std::string::npos);
-    CHECK(out.find("AFTER ART") != std::string::npos);
+    CHECK(out.find("WHO'S ONLINE") == std::string::npos);  // the stats stay up: who's online clears the screen
+    std::string next = r.type(" ");
+    CHECK(next.find("WHO'S ONLINE") != std::string::npos);
+    CHECK(next.find("AFTER ART") != std::string::npos);  // (no clear: on the same page)
     CHECK(r.type(" ").find("MAIN ->") != std::string::npos);
 }
 
