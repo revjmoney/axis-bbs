@@ -398,9 +398,15 @@ async function openDevice(port, job) {
   };
   const loader = new esp.ESPLoader({ transport, baudrate: FLASH_BAUD, romBaudrate: CONSOLE_BAUD, terminal, debugLogging: false });
   log.line("Connecting to the boot loader (hold BOOT if it does not answer) ...");
-  const desc = await loader.main("default_reset");
-  const chip = loader.chip.CHIP_NAME;
-  const mac = await loader.chip.readMac(loader);
+  let desc, chip, mac;
+  try {
+    desc = await loader.main("default_reset");
+    chip = loader.chip.CHIP_NAME;
+    mac = await loader.chip.readMac(loader);
+  } catch (e) {
+    try { await transport.disconnect(); } catch (e2) { /* never opened */ }
+    throw e;
+  }
   return {
     chip, mac, desc,
     read: (addr, len) => loader.readFlash(addr, len),
@@ -466,22 +472,32 @@ async function talk(port, line, expect, ms) {
 }
 
 // A pretend board for checking the page without hardware (?sim=update|first|wrongchip|multimode|fail, localhost only).
-function simDevice(scenario, job) {
+// update: the board already holds the picked image; first: blank; wrongchip: the other chip;
+// multimode: a V4 with the multimode layout and an empty modem slot; fail: the write stops halfway;
+// noconnect: the boot loader never answers.
+async function simDevice(scenario, job) {
   const radio = job === "radio";
   const chip = scenario === "wrongchip" ? (radio ? "ESP32" : "ESP32-S3") : radio ? "ESP32-S3" : "ESP32";
-  let ctx = { table: null, app: null, appOffset: 0x10000, multimode: null };
   const blank = (n) => new Uint8Array(n).fill(0xff);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   log.line("SIMULATED board (" + scenario + "): nothing real is written.", "note");
+  await wait(300);
+  if (scenario === "noconnect") throw new Error("Failed to connect with the device (simulated)");
+  const flash = new Map(); // offset: bytes already on the pretend board
+  if (scenario === "update" || (scenario === "multimode" && radio)) {
+    const env = scenario === "multimode" ? "heltec_v4" : state.radioModel === "v3" ? "heltec_v3_single" : "heltec_v4_single";
+    const t = radio ? await radioTarget(env) : await boardTarget();
+    flash.set(0x8000, await tableOf(t.manifest, t.base, []));
+    if (scenario === "update") {
+      const app = t.manifest.images.find((i) => i.role === "app");
+      flash.set(app.offset, await getBytes(t.base + app.file));
+    }
+  }
   return {
-    chip, mac: radio ? "88:56:a6:00:00:01" : "8c:94:df:00:00:01", desc: chip + " (simulated)", sim: true,
-    prime(c) { ctx = Object.assign(ctx, c); },
+    chip, mac: radio ? "88:56:a6:00:00:01" : "8c:94:df:00:00:01", desc: chip + " (simulated)",
     async read(addr, len) {
       await wait(150);
-      if (scenario === "update" && addr === 0x8000 && ctx.table) return ctx.table.slice(0, len);
-      if (scenario === "update" && addr === ctx.appOffset && ctx.app) return ctx.app.slice(0, len);
-      if (scenario === "multimode" && addr === 0x8000 && ctx.multimode) return ctx.multimode.slice(0, len);
-      return blank(len);
+      return flash.has(addr) ? flash.get(addr).slice(0, len) : blank(len);
     },
     async write(files, onProgress) {
       for (let i = 0; i < files.length; i++) {
@@ -573,20 +589,15 @@ async function flashJob(job, port) {
   $("flash-title").textContent = "FLASHING: " + (job === "radio" ? name + ", Heltec " + state.radioModel.toUpperCase() : name + ", " + buildLabel());
   setBar(0);
   $("stage").textContent = "connecting";
-  const dev = await openDevice(port, job);
-  let wrote = false;
+  let dev = null, wrote = false, written = false;
   try {
+    dev = await openDevice(port, job);
     log.line("Chip: " + dev.desc + ", MAC " + dev.mac);
     log.line("Reading the partition table at 0x8000 ...");
-    let devTable = await dev.read(0x8000, 0xc00);
+    const devTable = await dev.read(0x8000, 0xc00);
 
     let t;
     if (job === "radio") {
-      if (dev.sim && SIM === "multimode") {
-        const mm = await radioTarget("heltec_v4");
-        dev.prime({ multimode: await tableOf(mm.manifest, mm.base, []) });
-        devTable = await dev.read(0x8000, 0xc00);
-      }
       const env = L.radioEnv(state.radioModel, devTable);
       log.line("Radio image: " + env + (env === "heltec_v4" ? " (this V4 has the multimode layout: the modem slot only)" : ""));
       t = await radioTarget(env);
@@ -603,8 +614,6 @@ async function flashJob(job, port) {
       images = await fetchImages(m, t.base);
       target.partTable = await tableOf(m, t.base, images);
       const app = images.find((i) => i.role === "app");
-      if (dev.prime) dev.prime({ table: target.partTable, app: app.data, appOffset: app.offset });
-      if (dev.sim && SIM === "update") devTable = device.partTable = await dev.read(0x8000, 0xc00);
       device.appHeader = await dev.read(app.offset, 0x100);
       const hdr = L.parseAppHeader(device.appHeader);
       log.line("At " + L.hexOffset(app.offset) + ": " + (hdr ? hdr.project + " " + hdr.version : "no program"));
@@ -630,8 +639,9 @@ async function flashJob(job, port) {
       }
       log.line("Confirmed: replacing everything on this board.", "note");
     }
-    const appImg = plan.regions.find((r) => r.role === "app") || images.find((i) => i.role === "app");
-    L.guardRegions(plan, L.parseTable(devTable), appImg.offset);
+    const appOffset = m.images.find((i) => i.role === "app").offset;
+    if (m.app_partition && m.app_partition.offset !== appOffset) throw new Error("the manifest's app offset and app partition disagree");
+    L.guardRegions(plan, L.parseTable(devTable), appOffset);
     const files = plan.regions.map((r) => images.find((i) => i.role === r.role && i.offset === r.offset));
     const total = files.reduce((n, f) => n + f.data.length, 0);
     const before = [];
@@ -652,6 +662,7 @@ async function flashJob(job, port) {
       if (tenth !== lastTenth && tenth > 0) { lastTenth = tenth; log.line("Wrote " + kb(done) + " of " + kb(total) + " (" + Math.floor(pct) + "%)"); }
     });
     setBar(100, total, total);
+    written = true;
     log.line("Resetting the " + (job === "radio" ? "radio" : "board") + " ...");
     await dev.reset();
     if (job === "board" && state.board === "esp32") {
@@ -672,14 +683,19 @@ async function flashJob(job, port) {
     return true;
   } catch (e) {
     log.line("STOPPED: " + e.message, "err");
-    log.line(wrote
-      ? "The write did not finish, so the board may not start. Unplug it, plug it back in and press INSTALL again."
-      : "Nothing was written. Unplug the board, plug it back in and press INSTALL again.", "err");
+    if (written) {
+      log.line("The firmware was written and checked; only the step after it failed. Unplug the board and plug it back in to start it." +
+        (job === "board" && state.board === "esp32" ? " Then set headless in a serial terminal at 115200 baud: @HEADLESS on" : ""), "err");
+    } else {
+      log.line(wrote
+        ? "The write did not finish, so the board may not start. Unplug it, plug it back in and press INSTALL again."
+        : "Nothing was written. Unplug the board, plug it back in and press INSTALL again.", "err");
+    }
     $("stage").textContent = "STOPPED";
     return false;
   } finally {
     state.busy = false;
-    await dev.close();
+    if (dev) await dev.close();
   }
 }
 

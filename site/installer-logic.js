@@ -221,13 +221,14 @@
     var hdr = parseAppHeader(device.appHeader);
     if (same && hdr && hdr.project === target.project) {
       return { kind: "update", code: "update", regions: [copyImage(app)],
-        reason: "This board already runs " + name + " (" + (hdr.version || "unknown version") + ") with the same partition layout: only the firmware is written. Users, messages and settings stay." };
+        reason: "This board already runs " + name + " (" + (hdr.version || "unknown version") + ") with the same partition layout: only the firmware is written. " +
+        (target.kind === "radio" ? "Its settings stay." : "Users, messages and settings stay.") };
     }
 
     var why;
     if (!have) why = "This board has no partition table (it is blank or new).";
     else if (!same) why = "This board has a different partition layout" + (hdr ? " and runs " + hdr.project : "") + ".";
-    else why = "This board runs " + (hdr ? hdr.project : "something that is not " + name) + ", not " + name + ".";
+    else why = hdr ? "This board runs " + hdr.project + ", not " + name + "." : "This board has the same partition layout but no " + name + " program in it.";
     var regions = [];
     var imgs = target.images.slice().sort(function (a, b) { return a.offset - b.offset; });
     for (i = 0; i < imgs.length; i++) {
