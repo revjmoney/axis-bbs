@@ -101,7 +101,10 @@ class ParseTest(unittest.TestCase):
 
 class FormTest(unittest.TestCase):
     def setUp(self):
-        import yaml
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
         with open(os.path.join(ROOT, ".github", "ISSUE_TEMPLATE", "build-request.yml"), encoding="utf-8") as fh:
             self.text = fh.read()
         self.form = yaml.safe_load(self.text)
@@ -409,7 +412,10 @@ class AnswerTest(unittest.TestCase):
 
 class WorkflowTest(unittest.TestCase):
     def setUp(self):
-        import yaml
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
         with open(os.path.join(ROOT, ".github", "workflows", "custom-build.yml"), encoding="utf-8") as fh:
             self.text = fh.read()
         self.doc = yaml.safe_load(self.text)
@@ -433,6 +439,13 @@ class WorkflowTest(unittest.TestCase):
         gate = self.jobs["parse"]["if"]
         for needle in ("build-request", "'open'", "opened", "github.event.changes.body"):
             self.assertIn(needle, gate)
+
+    def test_only_a_changed_request_cancels_a_running_build(self):
+        group = self.doc["concurrency"]["group"]
+        self.assertIn("github.event.issue.number", group)
+        self.assertIn("github.event.changes.body", group)
+        self.assertIn("github.run_id", group)
+        self.assertTrue(self.doc["concurrency"]["cancel-in-progress"])
 
     def test_permissions_per_job(self):
         self.assertEqual(self.doc["permissions"], {"contents": "read"})
