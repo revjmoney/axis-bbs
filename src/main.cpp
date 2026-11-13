@@ -1469,11 +1469,18 @@ static void wfcAnimTick() {
         wfcAnimTryMs = now;
         return;
     }
-    if (now - wfcAnimFrameMs < 66u) return;
-    wfcAnimFrameMs = now;
-    static uint8_t pending = 0;  // bands still owed from the last frame (two at most each loop turn, so the loop keeps going)
-    wfcAnim.step(now);
-    pending |= wfcAnim.bandsDue(now);
+    // a frame is drawn two bands a loop turn (so the loop keeps going), every band of it at the same moment (no tearing
+    // between bands): the next frame starts once all of this one is out
+    static uint8_t  pending = 0;
+    static uint32_t frameAt = 0;
+    if (!pending) {
+        if (now - wfcAnimFrameMs < 66u) return;  // about 15 frames a second
+        wfcAnimFrameMs = now;
+        wfcAnim.step(now);
+        pending = wfcAnim.bandsDue(now);
+        frameAt = now;
+    }
+    now = frameAt;
     LGFX_Sprite* band = screenBand();
     if (!pending || !band) return;
     uint8_t due = 0;

@@ -131,6 +131,7 @@ private:
     uint16_t                bag_ = 0;  // content effects used this round (each one once before any again)
     Walker                  walker_;
     int16_t                 lastDrainX_ = -1000, lastDrainY_ = -1000;
+    uint32_t                lastDrainMs_ = 0;  // a drain at most every 15 minutes
     struct Flip {
         int16_t  cell = -1;
         bool     up = false;  // turning (or turned) upside down; false: turning back, then gone

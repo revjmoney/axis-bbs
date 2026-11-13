@@ -154,7 +154,7 @@ TEST_CASE("the schedule: one thing always jiggles, parts take turns, the screen 
     uint32_t      lastBusy = 0, longestRest = 0;
     int           maxLive = 0;
     bool          stillSeen = false;
-    for (uint32_t now = 10; now < 60u * 60u * 1000u; now += 50) {
+    for (uint32_t now = 10; now < 3u * 60u * 60u * 1000u; now += 50) {  // three hours (the drain is rare)
         a.step(now);
         REQUIRE(a.jiggle().on);
         int live = 0;

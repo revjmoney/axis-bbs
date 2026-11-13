@@ -292,7 +292,8 @@ void WfcAnim::startSome(uint32_t now) {
         bag_ |= (uint16_t)(1u << f);
         return f;
     };
-    if (live == 0 && rnd() % 14 == 0) {  // the whole screen down the drain, now and then
+    if (live == 0 && rnd() % 60 == 0 && (!lastDrainMs_ || (int32_t)(now - lastDrainMs_) > 15 * 60000)) {  // the whole screen down the drain, rarely
+        lastDrainMs_ = now;
         Rect all;
         all.x1 = kGridW, all.y1 = kGridH;
         start(Drain, all, now);
@@ -514,7 +515,7 @@ bool WfcAnim::draining(uint32_t now) const {
 }
 
 void WfcAnim::drawWalker(uint8_t* fb, int band, uint32_t now, const uint8_t (*lut)[5]) const {
-    if (!walker_.on || draining(now)) return;
+    if (!walker_.on) return;  // (on top of everything, the drain too)
     int x, y;
     walkerAt(now, x, y);
     const int y0 = band * kBandH;
