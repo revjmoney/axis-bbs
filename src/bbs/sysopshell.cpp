@@ -140,7 +140,13 @@ void SysopShell::refresh() {
 void SysopShell::enter(SysopSection s) {
     switch (s) {
         case SysopSection::Users: push("USERS", [this](Layer& x) { users(x); }); break;
-        case SysopSection::FileAreas: push("FILE AREAS", [this](Layer& x) { areas(x, false); }); break;
+        case SysopSection::FileAreas:
+#if AXIS_FILES
+            push("FILE AREAS", [this](Layer& x) { areas(x, false); });
+#else
+            pushText("FILE AREAS", "The file areas are not in this firmware.");
+#endif
+            break;
         case SysopSection::MsgBases: push("MSG BASES", [this](Layer& x) { areas(x, true); }); break;
         case SysopSection::Settings: push("SETTINGS", [this](Layer& x) { settings(x); }); break;
         case SysopSection::Menus: push("MENUS", [this](Layer& x) { menus(x); }); break;
@@ -161,7 +167,7 @@ void SysopShell::beginAt(SysopSection s) {
 void SysopShell::begin() {
     push("SYSOP", [this](Layer& l) {
         l.items = {{"Users", "", [this] { enter(SysopSection::Users); }},
-                   {"File areas", "", [this] { enter(SysopSection::FileAreas); }},
+                   {"File areas", "", [this] { enter(SysopSection::FileAreas); }},  // (without them: "not in this firmware")
                    {"Message bases", "", [this] { enter(SysopSection::MsgBases); }},
                    {"Settings", "", [this] { enter(SysopSection::Settings); }},
                    {"Menus", "", [this] { enter(SysopSection::Menus); }},
@@ -542,7 +548,9 @@ void SysopShell::settings(Layer& l) {
     // the board-wide switches (a caller's own access is on the caller's page)
     std::string files = setting("files_on"), msgs = setting("messages_on"), doors = setting("doors_on"), tel = setting("sysop_telnet"), freekb = setting("free_kb");
     auto flip = [this](const std::string& key, bool on) { return [this, key, on] { did(run_("@SET " + key + "=" + (on ? "0" : "1"))); }; };
+#if AXIS_FILES  // (a build without the file areas keeps files_on as saved and never shows it)
     l.items.push_back({"Files", files == "0" ? "off" : "on", flip("files_on", files != "0")});
+#endif
     l.items.push_back({"Messages", msgs == "0" ? "off" : "on", flip("messages_on", msgs != "0")});
     l.items.push_back({"Doors", doors == "0" ? "off" : "on", flip("doors_on", doors != "0")});
     l.items.push_back({"Free downloads (KB)", freekb, [this] {
@@ -672,7 +680,9 @@ void SysopShell::sections(Layer& l) {
         return [this, key, on] { did(run_("@SET " + key + "=" + (on ? "0" : "1"))); };
     };
     l.items.push_back({"Messages", messages == "0" ? "off" : "on", flip("messages_on", messages != "0")});
+#if AXIS_FILES
     l.items.push_back({"Files", files == "0" ? "off" : "on", flip("files_on", files != "0")});
+#endif
     l.items.push_back({"Doors", doors == "0" ? "off" : "on", flip("doors_on", doors != "0")});
     for (const DoorRow& d : doorRows)
         l.items.push_back({d.name, d.on ? "on" : "off", [this, d] {

@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/inflatelease.h"
+#include "bbs/features.h"
+#if AXIS_ANSIVIEW || AXIS_TRANSFERS
 
 #include <cstdlib>
 
@@ -43,3 +45,5 @@ void give(const void* owner) {
 bool busy() { return owner_ != nullptr; }
 
 }  // namespace axis::bbs::inflate
+
+#endif  // AXIS_ANSIVIEW || AXIS_TRANSFERS

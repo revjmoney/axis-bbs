@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_FILES || AXIS_DOSPROMPT  // a build that leaves the file areas and the DOS prompt out has nothing here to test
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -209,3 +211,5 @@ TEST_CASE("a pack's directory is read in a few reads, not two per file (a follow
     CHECK(r2.open() == false);
     CHECK(r2.entries().empty());
 }
+
+#endif  // AXIS_FILES || AXIS_DOSPROMPT

@@ -337,6 +337,7 @@ TEST_CASE("prelogon: a chosen screen that reads empty goes to the login screen w
 }
 
 // ---- the board's one ZIP window
+#if AXIS_ANSIVIEW || AXIS_TRANSFERS  // (nothing borrows it in a build without the viewer and transfers)
 
 TEST_CASE("inflate lease refuses a second owner and frees on give") {
     REQUIRE_FALSE(inflate::busy());
@@ -360,7 +361,9 @@ TEST_CASE("inflate lease refuses a second owner and frees on give") {
     inflate::give(&viewer);
     CHECK_FALSE(inflate::busy());
 }
+#endif
 
+#if AXIS_ANSIVIEW
 namespace {
 struct PackLibrary : FileLibrary {
     std::map<std::string, std::string> files;
@@ -465,6 +468,7 @@ TEST_CASE("viewer limit: no room refuses the piece; room lost mid-piece stops it
     run("q");
     run("q");
 }
+#endif  // AXIS_ANSIVIEW
 
 // ---- lists: append, then trim lazily
 

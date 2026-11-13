@@ -58,11 +58,11 @@ TEST_CASE("features: the doors offered are the ones built in") {
     axis::bbs::Node      n(1, [] { return axis::bbs::SysInfo{}; }, c);
     CHECK(offers(n, "*LORD") == (AXIS_LORD == 1));
     CHECK(offers(n, "*SCRIPT") == (AXIS_SCRIPTS == 1));
-    CHECK(offers(n, "*ANSIVIEW"));
+    CHECK(offers(n, "*ANSIVIEW") == (AXIS_ANSIVIEW == 1));
     CHECK(axis::bbs::doorBuiltIn("*LORD") == (AXIS_LORD == 1));
     CHECK(axis::bbs::doorBuiltIn("*lord") == (AXIS_LORD == 1));
     CHECK(axis::bbs::doorBuiltIn("*SCRIPT") == (AXIS_SCRIPTS == 1));
-    CHECK(axis::bbs::doorBuiltIn("*ANSIVIEW"));
+    CHECK(axis::bbs::doorBuiltIn("*ANSIVIEW") == (AXIS_ANSIVIEW == 1));
     CHECK_FALSE(axis::bbs::doorBuiltIn("LORD.EXE"));
 }
 
@@ -101,5 +101,128 @@ TEST_CASE("features: a menu file line for a door or script this build leaves out
     std::string out = n.takeOutput();
     CHECK((out.find("Red Dragon") != std::string::npos) == (AXIS_LORD == 1));
     CHECK((out.find("Hello Script") != std::string::npos) == (AXIS_SCRIPTS == 1));
-    CHECK(out.find("ANSI Pack Viewer") != std::string::npos);
+    CHECK((out.find("ANSI Pack Viewer") != std::string::npos) == (AXIS_ANSIVIEW == 1));
 }
+
+// ---- file areas, transfers and the ANSI viewer (Task 4): left out of the build, they are never offered,
+// and the saved settings lines (files_on, the viewer's door row) are kept exactly as written.
+#include <regex>
+
+#include "bbs/filebrowser.h"
+#include "cluster/remotefiles.h"
+
+namespace {
+std::string noColor(const std::string& s) { return std::regex_replace(s, std::regex("\x1b\[[0-9;]*[A-Za-z]"), ""); }
+
+void typeIn(axis::bbs::Node& n, const std::string& s) { n.input((const uint8_t*)s.data(), s.size(), 1000); }
+
+struct TwoFiles : axis::bbs::FileLibrary {
+    std::vector<axis::bbs::FileEntry> list(const std::string&) override {
+        return {{"README.TXT", 12, "What it is"}, {"AXIS.ZIP", 900, "The firmware"}};
+    }
+    bool read(const std::string&, const std::string& name, std::string& out, size_t) override {
+        if (name != "README.TXT") return false;
+        out = "Axis Micro BBS\n";
+        return true;
+    }
+};
+}  // namespace
+
+TEST_CASE("features: the main menu offers the file areas only when they are built in") {
+    TwoFiles             lib;
+    axis::bbs::BbsConfig c;
+    c.areas = {{"axis", "Axis Micro BBS Firmware"}};
+    axis::bbs::Node n(1, [] { return axis::bbs::SysInfo{}; }, c, &lib);
+    n.begin(0);
+    typeIn(n, "Rev\r");
+    std::string menu = noColor(n.takeOutput());
+    CHECK((menu.find("[F]") != std::string::npos) == (AXIS_FILES == 1));
+    CHECK((menu.find("file areas") != std::string::npos) == (AXIS_FILES == 1));
+    typeIn(n, "f");
+    std::string out = noColor(n.takeOutput());
+#if AXIS_FILES
+    CHECK(n.state() == axis::bbs::Node::State::Files);
+#else
+    CHECK(n.state() == axis::bbs::Node::State::Menu);
+    CHECK(out.find("not in this firmware") != std::string::npos);
+#endif
+    CHECK(axis::bbs::filesOffered(c) == (AXIS_FILES == 1));
+}
+
+TEST_CASE("features: a menu file's file commands are not shown when the file areas are left out") {
+    axis::bbs::BbsConfig c;
+    c.loginSplash = false;
+    std::map<std::string, std::string> fs = {
+        {"MAIN.MNU", "cmd=F|LISTFILES|*|0|\ncmd=O|ONELINER|*|0|\nbar=5,10,96,7,F, (F) File Listing\nbar=5,11,96,7,O, (O) Oneliners\n"}};
+    axis::bbs::Node n(1, [] { return axis::bbs::SysInfo{}; }, c);
+    n.setMenus([&fs](const std::string& f) { return fs.count(f) ? fs[f] : std::string(); });
+    n.begin(0);
+    typeIn(n, "Rev\r");
+    if (n.state() == axis::bbs::Node::State::SeqPause) typeIn(n, " ");
+    std::string out = n.takeOutput();
+    CHECK((out.find("File Listing") != std::string::npos) == (AXIS_FILES == 1));
+    CHECK(out.find("Oneliners") != std::string::npos);
+}
+
+TEST_CASE("features: the saved files_on line and the viewer's door row round trip, built in or not") {
+    const char* ini = "files_on=1\n"
+                      "door1=ansiview|ANSI Pack Viewer|*ANSIVIEW|ansi|none|1\n";
+    std::string out = axis::bbs::formatConfig(axis::bbs::parseConfig(ini));
+    CHECK(out.find("files_on=1\n") != std::string::npos);
+    CHECK(out.find("door1=ansiview|ANSI Pack Viewer|*ANSIVIEW|ansi|none|1\n") != std::string::npos);
+}
+
+TEST_CASE("features: the ANSI viewer door is offered only when it is built in") {
+    axis::bbs::BbsConfig c = axis::bbs::parseConfig(kSavedDoors);
+    axis::bbs::Node      n(1, [] { return axis::bbs::SysInfo{}; }, c);
+    bool viewerIn = false;
+    for (const auto& d : n.doorChoices())
+        if (d.exe == "*ANSIVIEW") viewerIn = true;
+    CHECK(viewerIn == (AXIS_ANSIVIEW == 1));
+    CHECK(axis::bbs::doorBuiltIn("*ANSIVIEW") == (AXIS_ANSIVIEW == 1));
+    CHECK(axis::bbs::doorBuiltIn("*ansiview") == (AXIS_ANSIVIEW == 1));
+    CHECK(axis::bbs::doorBuiltIn("*PACKS") == (AXIS_ANSIVIEW == 1));  // any other '*' door is the viewer
+    CHECK(axis::bbs::doorLeftOut("*ANSIVIEW") == (AXIS_ANSIVIEW == 0));
+}
+
+#if AXIS_FILES
+TEST_CASE("features: the file list offers downloads and uploads only when transfers are built in") {
+    TwoFiles                              lib;
+    std::vector<axis::bbs::FileArea>      areas = {{"axis", "Axis Micro BBS Firmware"}};
+    std::string                           out;
+    axis::bbs::FileBrowser                b(areas, lib, out);
+    b.setLightbars(false);
+    b.begin();
+    b.key('1');
+    b.key('\r');
+    std::string list = noColor(out);
+    CHECK((list.find("ownload") != std::string::npos) == (AXIS_TRANSFERS == 1));
+    CHECK((list.find("pload") != std::string::npos) == (AXIS_TRANSFERS == 1));
+    out.clear();
+    b.key('d');
+    CHECK((noColor(out).find("File name") != std::string::npos) == (AXIS_TRANSFERS == 1));
+    if (AXIS_TRANSFERS) b.key('\r');  // (an empty name: back to the list)
+    out.clear();
+    b.key('u');
+    CHECK((noColor(out).find("Describe it") != std::string::npos) == (AXIS_TRANSFERS == 1));
+    CHECK_FALSE(b.wantsTransfer());
+}
+#endif
+
+#if AXIS_FILES
+TEST_CASE("features: a follower whose main has no file areas gets nothing, not a crash") {
+    // a main without the file areas in its firmware answers every file request "0"
+    axis::cluster::RemoteFileLibrary remote([](const std::string&, std::string& reply) {
+        reply = "0";
+        return true;
+    });
+    CHECK(remote.list("axis").empty());
+    std::string body;
+    CHECK_FALSE(remote.read("axis", "README.TXT", body, 1024));
+    CHECK(remote.open("axis", "README.TXT") == nullptr);
+    CHECK(remote.create("axis", "NEW.ZIP") == nullptr);
+    CHECK_FALSE(remote.describe("axis", "NEW.ZIP", "about"));
+    CHECK_FALSE(remote.remove("axis", "NEW.ZIP"));
+    CHECK_FALSE(remote.rename("axis", "A.ZIP", "B.ZIP"));
+}
+#endif

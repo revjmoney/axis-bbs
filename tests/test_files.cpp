@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_FILES  // a build that leaves the file areas out has nothing here to test
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -162,7 +164,7 @@ TEST_CASE("viewing a binary file explains downloads") {
     type(n, "f1\r");
     n.takeOutput();
     type(n, "vAXISFLSH.ZIP\r");
-    CHECK(plain(n.takeOutput()).find("ownload") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find(AXIS_TRANSFERS ? "ownload" : "[I]nfo shows what is in it") != std::string::npos);
 }
 
 TEST_CASE("Q leaves the list and Enter leaves the areas") {
@@ -185,6 +187,7 @@ TEST_CASE("files without a library say the areas are offline") {
     CHECK(n.state() == Node::State::Menu);
 }
 
+#if AXIS_TRANSFERS  // (downloads and uploads)
 TEST_CASE("D asks for a file and a protocol, then shows the download window and requests it") {
     FakeLibrary lib = library();
     Node        n = inFiles(lib);
@@ -243,6 +246,7 @@ TEST_CASE("a download of a missing file is refused before any protocol starts") 
     CHECK(n.state() == Node::State::Files);
     CHECK(n.takeOutput().find("No file by that name") != std::string::npos);
 }
+#endif  // AXIS_TRANSFERS
 
 namespace {
 FakeLibrary withZip() {
@@ -317,6 +321,7 @@ TEST_CASE("a node says where its caller is, for the sysop's activity screen") {
     CHECK(n.activityText() == "files: area list");
     type(n, "2\r");
     CHECK(n.activityText() == "files: Text Files");
+    if (!AXIS_TRANSFERS) return;  // (no downloads in this firmware)
     type(n, "d");
     type(n, "LIST1.TXT\r");
     type(n, "z");
@@ -398,6 +403,7 @@ TEST_CASE("file areas are a classic list: title bar, columns, and the highlight'
     CHECK(plain(out).find("Text Files") != std::string::npos);
 }
 
+#if AXIS_TRANSFERS
 TEST_CASE("file lightbar: Enter on a binary starts that file's download, and Q goes back") {
     FakeLibrary lib = library();
     BbsConfig   cfg = twoAreas();
@@ -413,6 +419,21 @@ TEST_CASE("file lightbar: Enter on a binary starts that file's download, and Q g
     CHECK(b.transfer().name == "AXISFLSH.ZIP");
     CHECK(b.transfer().area == "axis");
 }
+#else
+TEST_CASE("file lightbar without transfers: Enter on a binary shows what is known about it, no protocol") {
+    FakeLibrary lib = library();
+    BbsConfig   cfg = twoAreas();
+    std::string out;
+    FileBrowser b(cfg.areas, lib, out);
+    b.begin();
+    b.key('\r');  // Axis area
+    out.clear();
+    b.key('\r');  // AXISFLSH.ZIP
+    CHECK(plain(out).find("[Z]MODEM") == std::string::npos);
+    CHECK(plain(out).find("AXISFLSH.ZIP") != std::string::npos);
+    CHECK_FALSE(b.wantsTransfer());
+}
+#endif
 
 TEST_CASE("file lightbar: moving past the page shows the next files, and an empty area's Enter does nothing") {
     FakeLibrary lib = library();
@@ -476,3 +497,5 @@ TEST_CASE("G-code is text: a caller can view it") {
     for (const char* n : {"PAWN4X.NC", "revj.gc", "PART.NGC", "x.gcode", "y.TAP", "z.cnc", "README.TXT"}) CHECK(axis::bbs::isTextFile(n));
     for (const char* n : {"GAME.ZIP", "LORD.EXE", "MODEL.STL", "NOEXT"}) CHECK_FALSE(axis::bbs::isTextFile(n));
 }
+
+#endif  // AXIS_FILES

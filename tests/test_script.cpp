@@ -101,7 +101,8 @@ TEST_CASE("the scripts door runs a card file and returns to the door list") {
     n.input((const uint8_t*)"d", 1, 1000);
     std::string doors = plain(n.takeOutput());
     CHECK(doors.find("Scripts") != std::string::npos);
-    n.input((const uint8_t*)(AXIS_LORD ? "3" : "2"), 1, 1000);  // 1 LORD, 2 ANSI Movies, 3 Scripts (one up without LORD)
+    const char pick = (char)('1' + AXIS_LORD + AXIS_ANSIVIEW);  // 1 LORD, 2 ANSI Movies, 3 Scripts (one up for each left out)
+    n.input((const uint8_t*)&pick, 1, 1000);
     std::string list = plain(n.takeOutput());
     CHECK(n.state() == Node::State::Script);
     CHECK(list.find("hello") != std::string::npos);

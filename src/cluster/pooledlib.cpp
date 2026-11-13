@@ -3,6 +3,8 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #if AXIS_SD_POOL  // pool and mirror: a build option (the disc changer is the default)
 #include "cluster/pooledlib.h"
+#include "bbs/features.h"
+#if AXIS_FILES
 
 #include <cctype>
 
@@ -178,4 +180,5 @@ bool PooledFileLibrary::rename(const std::string& areaId, const std::string& fro
 
 }  // namespace axis::cluster
 
-#endif
+#endif  // AXIS_FILES
+#endif  // AXIS_SD_POOL

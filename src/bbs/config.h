@@ -18,7 +18,8 @@ struct DoorEntry {
 };
 // Only the doors built into the firmware ("*LORD", "*ANSIVIEW", "*SCRIPT") can start: the DOS runtime
 // for an .EXE is not in this firmware (dropped 2026-11-06), so those rows stay out of every door list.
-// A build can leave LORD, the scripts or the DOS prompt out (features.h): their rows are then kept but never offered.
+// A build can leave LORD, the scripts, the DOS prompt or the ANSI viewer out (features.h): their rows are then kept but never
+// offered. Every '*' door that is not one of the others is the viewer ("*ANSIVIEW").
 inline bool doorBuiltIn(const std::string& exe) {
     if (exe.empty() || exe[0] != '*') return false;
     auto is = [&exe](const char* name) {
@@ -30,12 +31,13 @@ inline bool doorBuiltIn(const std::string& exe) {
     if (!AXIS_LORD && is("*LORD")) return false;
     if (!AXIS_SCRIPTS && is("*SCRIPT")) return false;
     if (!AXIS_DOSPROMPT && is("*DOSSHELL")) return false;
+    if (!AXIS_ANSIVIEW) return is("*LORD") || is("*SCRIPT") || is("*DOSSHELL");  // any other '*' door is the viewer
     return true;
 }
 inline bool doorRuns(const DoorEntry& d) { return doorBuiltIn(d.exe); }
 // A firmware door ('*') that this build leaves out: its row stays in the settings and out of every list.
 inline bool doorLeftOut(const std::string& exe) {
-    if (AXIS_LORD && AXIS_SCRIPTS && AXIS_DOSPROMPT) return false;  // every door is in (and the full build keeps no check)
+    if (AXIS_LORD && AXIS_SCRIPTS && AXIS_DOSPROMPT && AXIS_ANSIVIEW) return false;  // every door is in (and the full build keeps no check)
     return !exe.empty() && exe[0] == '*' && !doorBuiltIn(exe);
 }
 
@@ -116,6 +118,10 @@ struct BbsConfig {
     std::vector<MenuItem> mainMenu;
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save
 };
+
+// The file areas: switched on in the settings ("files_on") and built into this firmware (features.h). A build without
+// them keeps the saved files_on line as written and never offers them.
+inline bool filesOffered(const BbsConfig& c) { return AXIS_FILES && c.filesOn; }
 
 BbsConfig   parseConfig(const std::string& ini);
 std::string formatConfig(const BbsConfig& c);

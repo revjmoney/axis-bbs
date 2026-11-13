@@ -141,10 +141,11 @@ TEST_CASE("D lists the configured doors") {
     std::string out = plain(n.takeOutput());
     CHECK((out.find("Legend of the Red Dragon") != std::string::npos) == (AXIS_LORD == 1));
     CHECK(out.find("[1]") != std::string::npos);
-    CHECK(out.find("ANSI Movies") != std::string::npos);
+    CHECK((out.find("ANSI Movies") != std::string::npos) == (AXIS_ANSIVIEW == 1));
     CHECK(n.state() == Node::State::Doors);
 }
 
+#if AXIS_ANSIVIEW
 TEST_CASE("the movie door is its own row and a copied viewer is listed once") {
     axis::bbs::BbsConfig c;
     c.doors = {{"lord", "Legend of the Red Dragon", "*LORD", "", "none"},
@@ -160,6 +161,7 @@ TEST_CASE("the movie door is its own row and a copied viewer is listed once") {
     CHECK(doors[lord + 1].name == "ANSI Packs");
     CHECK(doors[lord + 1].id == "ansiview");
 }
+#endif
 
 #if AXIS_LORD
 TEST_CASE("choosing LORD requests the door") {
@@ -538,7 +540,7 @@ TEST_CASE("section switches hide messages, files and doors for every caller") {
     type(n, "s");
     CHECK(plain(n.takeOutput()).find("Messages are off.") != std::string::npos);
     type(n, "f");
-    CHECK(plain(n.takeOutput()).find("Files are off.") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find(AXIS_FILES ? "Files are off." : "The file areas are not in this firmware.") != std::string::npos);
     type(n, "d");
     CHECK(plain(n.takeOutput()).find("Doors are off.") != std::string::npos);
     CHECK(n.state() == Node::State::Menu);

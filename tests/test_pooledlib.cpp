@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_FILES  // a build that leaves the file areas out has nothing here to test
 #include <map>
 #include <memory>
 #include <string>
@@ -382,3 +384,5 @@ TEST_CASE("mirror: with no other card that has room, nothing is copied and nothi
     CHECK(m.job.failed() == 0);
     CHECK_FALSE(m.job.state().empty());
 }
+
+#endif  // AXIS_FILES

@@ -35,7 +35,7 @@ std::string uptime(uint32_t sec);
 
 bool commandListed(const BbsConfig& c, const std::string& cmd) {
     if (cmd == "messages" || cmd == "email" || cmd == "scan") return c.messagesOn;
-    if (cmd == "files") return c.filesOn;
+    if (cmd == "files") return filesOffered(c);
     if (cmd == "doors") return c.doorsOn;
     return true;
 }
@@ -43,6 +43,7 @@ bool commandListed(const BbsConfig& c, const std::string& cmd) {
 const char* sectionClosed(const BbsConfig& c, char cmd) {
     char k = (char)(cmd | 0x20);
     if ((k == 'm' || k == 's' || k == 'e') && !c.messagesOn) return "Messages are off.";
+    if (k == 'f' && !AXIS_FILES) return "The file areas are not in this firmware.";
     if (k == 'f' && !c.filesOn) return "Files are off.";
     if (k == 'd' && !c.doorsOn) return "Doors are off.";
     return nullptr;
@@ -377,6 +378,7 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
         std::string cmd = c.cmd;
         for (char& ch : cmd) ch = (char)std::toupper((unsigned char)ch);
         if (!AXIS_SCRIPTS && (cmd == "SCRIPT" || cmd.compare(0, 7, "SCRIPT:") == 0)) return true;  // scripts are left out of this build
+        if (!AXIS_FILES && v3Command(cmd) == 'f') return true;                                       // and so are the file areas
         if (cmd.compare(0, 5, "DOOR:") != 0) return false;
         std::string id = c.cmd.substr(5);
         bool        found = false;
@@ -1257,7 +1259,7 @@ void Node::showMainMenu() {
             int    nItems = 0;
             for (const O2Item& it : all) {
                 if (it.key == 'M' && !cfg_->messagesOn) continue;
-                if (it.key == 'F' && !cfg_->filesOn) continue;
+                if (it.key == 'F' && !filesOffered(*cfg_)) continue;
                 if (it.key == 'D' && !cfg_->doorsOn) continue;
                 items[nItems++] = it;
             }
@@ -1292,7 +1294,11 @@ void Node::showMainMenu() {
     }
     out_ += "\r\n" + theme::drip("MENU");
     std::vector<std::pair<std::string, std::string>> rows;
-    if (cfg_->filesOn) rows.push_back({"[F]", "file areas: browse, info, download, upload"});
+#if AXIS_TRANSFERS
+    if (filesOffered(*cfg_)) rows.push_back({"[F]", "file areas: browse, info, download, upload"});
+#else
+    if (filesOffered(*cfg_)) rows.push_back({"[F]", "file areas: browse, info"});
+#endif
     if (cfg_->messagesOn) rows.push_back({"[M]", "message areas: read, post, reply"});
     if (cfg_->doorsOn) rows.push_back({"[D]", "doors"});
     rows.push_back({"[T]", "teleconference with every node"});
@@ -1331,7 +1337,7 @@ void Node::showMenu() {
     out_ += "\r\n\r\n";
     out_ += DIM;
     out_ += "   ";
-    if (cfg_->filesOn) out_ += theme::key("F", "iles   ");
+    if (filesOffered(*cfg_)) out_ += theme::key("F", "iles   ");
     if (cfg_->doorsOn) out_ += theme::key("D", "oors   ");
     out_ += theme::key("I", "nfo   ") + theme::key("C", "redits   ") + theme::key("G", "oodbye");
     out_ += "\r\n   ";
@@ -1367,7 +1373,10 @@ bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
         case 'u': section = SysopSection::Users; return true;
         case '#': section = SysopSection::Menus; return true;
         case 'b': section = SysopSection::MsgBases; return true;
-        case 'f': section = SysopSection::FileAreas; return true;
+        case 'f':
+            if (!AXIS_FILES) return false;  // (the file areas are not in this firmware)
+            section = SysopSection::FileAreas;
+            return true;
         case 'l': section = SysopSection::System; return true;  // logs: the event log is under System (Look is on the top menu)
         case 'e':
         case 'a':
@@ -2307,12 +2316,13 @@ void Node::key(char c) {
             state_ = State::Files;
             myAreas_ = openTo(cfg_->areas);
             browser_.reset(new FileBrowser(myAreas_, *files_, out_));
-            browser_->setDownloadGate([this](uint32_t size) -> std::string {
-                User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
-                if (!u) return "";
-                if (!mayDownload(*u)) return "Downloads open up once you've uploaded something: [U]pload first.";
-                return size ? ratioBlock(*u, size, cfg_->ratio, cfg_->freeKb) : std::string();
-            });
+            if (AXIS_TRANSFERS)  // (without downloads nothing is gated: viewing a text file is free)
+                browser_->setDownloadGate([this](uint32_t size) -> std::string {
+                    User* u = users_ && !sysop_ ? users_->byId(userId_) : nullptr;
+                    if (!u) return "";
+                    if (!mayDownload(*u)) return "Downloads open up once you've uploaded something: [U]pload first.";
+                    return size ? ratioBlock(*u, size, cfg_->ratio, cfg_->freeKb) : std::string();
+                });
             browser_->setNewSince(prevCall_ ? prevCall_ : (unixNow_ && unixNow_() > 7 * 86400 ? unixNow_() - 7 * 86400 : 0));
             browser_->begin();
             break;

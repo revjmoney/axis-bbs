@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/transferjob.h"
+#include "bbs/features.h"
+#if AXIS_TRANSFERS
 
 #include <cctype>
 #include <cstdio>
@@ -200,3 +202,5 @@ bool TransferJob::step(uint32_t now) {
 }
 
 }  // namespace axis::bbs
+
+#endif  // AXIS_TRANSFERS

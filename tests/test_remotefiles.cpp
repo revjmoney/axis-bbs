@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_FILES  // a build that leaves the file areas out has nothing here to test
 #include <map>
 #include <memory>
 #include <string>
@@ -219,3 +221,5 @@ TEST_CASE("small reads on a follower come out of one link-sized piece: one round
     CHECK(std::string((const char*)back, 4) == want.substr(100, 4));
     CHECK_FALSE(f->readAt(10000, tail, 4));
 }
+
+#endif  // AXIS_FILES

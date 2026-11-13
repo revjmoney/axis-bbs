@@ -194,7 +194,9 @@ static std::unique_ptr<WifiStream>              line;  // the caller, when one i
 static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
 static axis::bbs::RotatingLog                   eventFile("/littlefs/events.log", "/littlefs/events.old", 8192);  // 16 KB at most
 static bool                                     eventFileReady = false;  // after LittleFS is mounted
+#if AXIS_FILES
 static SdFileLibrary                            sdFiles;  // the file areas on the SD card, for callers
+#endif
 static axis::bbs::UserStore                     users;    // callers' accounts, internal flash /users.dat
 static axis::bbs::WifiPicker                    picker;   // the touch WiFi picker (no saved network, or @WIFIPICK)
 static Esp32ClusterNet                          clusterNet;  // the boards on this LAN acting as one BBS
@@ -239,7 +241,9 @@ static void ledCydAttach() {
 }
 
 static axis::bbs::UserSync                      userSync;     // which users still need to go over the link
+#if AXIS_FILES
 static std::map<int, std::unique_ptr<axis::cluster::FileServer>> fileServers;  // main: one per follower
+#endif
 static std::map<int, std::unique_ptr<axis::cluster::DoorFsServer>> doorServers;
 static bool servedRequest = false;  // the main answered a follower this loop turn
 static uint32_t shotDoneMs = 0;      // the last @SHOT (it stalls the loop ~13 s on purpose)
@@ -797,6 +801,10 @@ static void sharedListAdd(const std::string& n, const std::string& line) {
     }
 }
 static uint32_t lastServedMs = 0;  // main: a follower's door files
+#if AXIS_SD_POOL && !AXIS_FILES
+#error "AXIS_SD_POOL needs the file areas (AXIS_FILES)"
+#endif
+#if AXIS_FILES  // the file areas (features.h): without them a follower has no file menu and the main answers "0"
 static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string& req, std::string& reply) {
     return cluster && cluster->request(req, reply);
 });
@@ -806,6 +814,7 @@ static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string
 // A follower with a card answers the main's requests for it (cardServer).
 static std::map<std::string, std::unique_ptr<axis::cluster::RemoteFileLibrary>> cardFiles;  // main: one per card board
 static std::unique_ptr<axis::cluster::FileServer> cardServer;  // follower with a card: the main's requests
+#endif
 static std::string cardLabel(const std::string& id) {  // "node 2" (its lowest node), or its id when it is gone
     int low = 0;
     if (cluster)
@@ -813,6 +822,7 @@ static std::string cardLabel(const std::string& id) {  // "node 2" (its lowest n
             if (n.id == id && (!low || n.number < low)) low = n.number;
     return low ? "node " + std::to_string(low) : "board " + id;
 }
+#if AXIS_FILES
 static std::vector<axis::cluster::PoolCard> poolCards() {
     std::vector<axis::cluster::PoolCard> v;
     if (storageHasSd()) v.push_back({"local", "this board", &sdFiles, storageFreeBytes(), true});
@@ -838,6 +848,7 @@ static axis::cluster::MirrorJob         mirrorJob(pooledFiles, [] {
     return v;
 });
 #endif
+#endif  // AXIS_FILES
 static Mode                                     afterPick = Mode::Normal;
 static size_t                                   pendingSeen = 0;
 // the door the caller is in, if any (the screen copy is freed meanwhile)
@@ -1183,6 +1194,7 @@ static axis::bbs::MessageStore& callerMessages() {
 
 // A follower (card or not) sees the main's library, which is every card pooled; the main pools its
 // own card with its card followers'; a board on its own has just its card.
+#if AXIS_FILES
 static axis::bbs::FileLibrary& callerFiles() {
     if (asFollower()) return remoteFiles;
 #if AXIS_SD_POOL
@@ -1190,6 +1202,10 @@ static axis::bbs::FileLibrary& callerFiles() {
 #endif
     return sdFiles;
 }
+static axis::bbs::FileLibrary* callerLib() { return &callerFiles(); }  // a new Node's file areas
+#else
+static axis::bbs::FileLibrary* callerLib() { return nullptr; }  // the file areas are not in this firmware
+#endif
 
 static uint32_t unixNow() {
     time_t t = time(nullptr);
@@ -1198,7 +1214,7 @@ static uint32_t unixNow() {
 
 // File areas: one folder each under /files on the SD card (none without a card).
 static void makeAreaFolders() {
-    if (!storageHasSd()) return;
+    if (!AXIS_FILES || !storageHasSd()) return;  // (a build without the file areas makes none)
     ::mkdir("/sd/files", 0777);
     ::mkdir((std::string("/sd/files/") + axis::bbs::viewcache::kArea).c_str(), 0777);  // the ANSI viewer's unpacked pieces
     for (auto& a : boardCfg->areas) ::mkdir(("/sd/files/" + a.id).c_str(), 0777);
@@ -3678,7 +3694,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     if (!giveBack.empty()) line->inject(giveBack);
     if (boardCfg->setupDone && mode == Mode::Normal) {
         countCall();
-        node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, nodeCfg(), &callerFiles()));
+        node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, nodeCfg(), callerLib()));
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
         node->setWarrior(warriorHook);
@@ -4003,6 +4019,7 @@ static void startDoorInner() {
         return;
     }
     doorStartMs = millis();
+#if AXIS_ANSIVIEW
     if (!d.exe.empty() && d.exe[0] == '*') {  // one viewer per caller. It borrows the board's inflate window only while a deflated piece plays.
         logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
         std::vector<std::pair<std::string, std::string>> va;  // "ansi,scene-acid,...": several areas, a picker first
@@ -4028,6 +4045,7 @@ static void startDoorInner() {
         line->flush();
         return;
     }
+#endif
     // An .EXE needs the 8086 runtime. That runtime is dosemu/ in the repo, and it is not linked here.
     logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str() + " (no DOS runtime)");
     abortDoor(axis::bbs::Node::DoorEnd::LoadError);
@@ -4388,6 +4406,7 @@ static void startCluster() {
                     doorLocks));
             return ds->handle(req);
         }
+#if AXIS_FILES
         auto& srv = fileServers[nodeNum];
 #if AXIS_SD_POOL
         if (!srv) srv.reset(new axis::cluster::FileServer(pooledFiles));  // (just this card when it is the only one)
@@ -4395,18 +4414,29 @@ static void startCluster() {
         if (!srv) srv.reset(new axis::cluster::FileServer(sdFiles));
 #endif
         return srv->handle(req);
+#else
+        return std::string("0");  // a file request: the file areas are not in this firmware (the follower lists nothing)
+#endif
     };
     cluster->onMainRequest = [](const std::string& req) {  // a follower with a card: the main asks for its files
         servedRequest = true;
+#if AXIS_FILES
         if (!storageHasSd()) return std::string("0");
         if (!cardServer) cardServer.reset(new axis::cluster::FileServer(sdFiles));
         std::string reply = cardServer->handle(req);
         if (!req.empty() && (req[0] == 'F' || req[0] == 'X')) cluster->setFreeBytes(storageFreeBytes(true));  // the main picks cards by room
         return reply;
+#else
+        return std::string("0");  // the file areas are not in this firmware
+#endif
     };
+#if AXIS_FILES
     cluster->onMainGone = [] { cardServer.reset(); };  // its half-done uploads and mirror copies are thrown away
+#endif
     cluster->onNodeGone = [](int nodeNum) {  // its unfinished uploads go, its door's files close, its locks free
+#if AXIS_FILES
         fileServers.erase(nodeNum);
+#endif
         auto it = doorServers.find(nodeNum);
         if (it != doorServers.end()) {
             it->second->drop();
@@ -4493,7 +4523,7 @@ static void startLocal() {
     localTerm.reset(new axis::bbs::AnsiTerm());
     localScreen.reset(new AnsiScreen());
     localNode.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, nodeCfg(),
-                                        &callerFiles()));
+                                        callerLib()));
     localNode->setAccounts(&users, saveUsers, hwRandom, unixNow);
     localNode->setWarrior(warriorHook);
     localNode->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
@@ -4858,6 +4888,13 @@ static void runCommand(const String& cmd, Print& out) {
                               IPAddress(c.ip).toString().c_str(), (unsigned)(c.freeBytes >> 20), c.alive ? "up" : "DOWN");
         else if (cluster)
             out.println("axis: only the main pools the cards (@CARDS there)");
+#if !AXIS_FILES
+    } else if (cmd == "@MIRROR" || cmd == "@AREAS" || cmd.startsWith("@FILES ") || cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") ||
+               cmd.startsWith("@FDEL ") || cmd.startsWith("@FMV ") ||
+               ((cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) &&
+                !cmd.substring(cmd.indexOf(' ') + 1).startsWith("msgs|"))) {
+        out.println("axis: the file areas are not in this firmware");
+#endif
     } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
         std::string areas;
         for (auto& a : boardCfg->areas)
@@ -5105,6 +5142,7 @@ static void runCommand(const String& cmd, Print& out) {
             logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a);
             out.println("axis: areas saved");
         }
+#if AXIS_FILES
     } else if (cmd.startsWith("@FILES ")) {  // "@FILES area": name|size|description per file
         for (auto& e : callerFiles().list(cmd.substring(7).c_str())) out.printf("%s|%u|%s\n", e.name.c_str(), (unsigned)e.size, e.desc.c_str());
     } else if (cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") || cmd.startsWith("@FDEL ") || cmd.startsWith("@FMV ")) {
@@ -5136,6 +5174,7 @@ static void runCommand(const String& cmd, Print& out) {
         }
         logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + area.c_str() + " " + name.c_str() + (ok ? "" : " (failed)"));
         out.println(ok ? "axis: done" : "axis: that didn't work");
+#endif
     } else if (cmd.startsWith("@POSTS ")) {  // "@POSTS area": num|from|subject|date per post (the newest 200)
         for (auto& m : callerMessages().headers(cmd.substring(7).c_str()))
             out.printf("%d|%s|%s|%s\n", m.num, m.from.c_str(), m.subject.c_str(), m.date.c_str());
@@ -5502,7 +5541,7 @@ static void handleSerial() {
                                              : "axis: WFC is not available until setup is done");
                 continue;
             }
-            serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, nodeCfg(), &callerFiles()));
+            serialWfc.reset(new axis::bbs::Node(cluster && !cluster->numbers().empty() ? cluster->numbers()[0] : 1, sysInfo, nodeCfg(), callerLib()));
             serialWfc->setAccounts(&users, saveUsers, hwRandom, unixNow);
             serialWfc->setWarrior(warriorHook);
             serialWfc->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
@@ -5806,6 +5845,7 @@ static void serviceSession(int i) {
                 startDoor();
                 return;
             }
+#if AXIS_TRANSFERS
             if (node->state() == axis::bbs::Node::State::Transfer && !job) {
                 sendApp(node->takeOutput());  // the transfer window, before the protocol starts
                 jobStartMs = jobDrawnMs = millis();
@@ -5816,6 +5856,7 @@ static void serviceSession(int i) {
                 job.reset(new axis::bbs::TransferJob(callerFiles(), node->transfer(), *line, info));
                 return;
             }
+#endif
             sendApp(node->takeOutput());
             if (node->wantsHangup()) hangUp();
         }
@@ -5828,6 +5869,7 @@ static void serviceSession(int i) {
 // A pass goes through every *ANSIVIEW door's areas, then deletes copies no pack matches; the next starts 30 minutes after one ends,
 // so new uploads get copied too. A caller arriving drops the pass (and a copy part way); the next idle restarts it.
 static void viewCacheTick() {
+#if AXIS_ANSIVIEW  // (a build without the viewer has no cache to fill)
     static std::unique_ptr<axis::bbs::viewcache::Filler> fill;
     static uint32_t nextMs = 300000;  // the first pass five minutes after boot (after the boot DNS check, which needs TLS room)
     uint32_t        now = millis();
@@ -5881,6 +5923,7 @@ static void viewCacheTick() {
         nextMs = now + 10u * 60u * 1000u;
         logEvent("view cache: short of memory, the pass waits 10 minutes");
     }
+#endif
 }
 
 void loop() {

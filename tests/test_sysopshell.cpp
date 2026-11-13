@@ -175,6 +175,7 @@ TEST_CASE("deleting asks first, and N keeps the user") {
     CHECK(r.ranCmd("@UDEL Kid"));
 }
 
+#if AXIS_FILES
 TEST_CASE("file areas: rename one and it keeps its id and level") {
     Rig r;
     r.shell.begin();
@@ -184,6 +185,16 @@ TEST_CASE("file areas: rename one and it keeps its id and level") {
     r.type("Toolpaths\r");
     CHECK(r.ranCmd("@AREASET files|2|gcode|Toolpaths|20"));
 }
+#else
+TEST_CASE("file areas: a build without them says so and asks the board nothing") {
+    Rig r;
+    r.shell.begin();
+    r.ran.clear();
+    r.type("2");  // File areas
+    CHECK(plain(r.out).find("The file areas are not in this firmware.") != std::string::npos);
+    CHECK(r.ran.empty());
+}
+#endif
 
 TEST_CASE("settings come in groups and salts or hashes never appear") {
     Rig r;
@@ -226,13 +237,14 @@ TEST_CASE("sections switch messages off and turn original LORD back on") {
     r.shell.begin();
     r.type("7");  // Sections, after System
     std::string o = plain(r.out);
+    CHECK((o.find("Files") != std::string::npos) == (AXIS_FILES == 1));  // (a build without the file areas: no switch)
     CHECK(o.find("Messages") != std::string::npos);
     CHECK(o.find("Legend of the Red Dragon") != std::string::npos);
     CHECK(o.find("LORD Fast") != std::string::npos);
     CHECK(o.find("off") != std::string::npos);
     r.type("1");
     CHECK(r.ranCmd("@SET messages_on=0"));
-    r.type("4");
+    r.type(AXIS_FILES ? "4" : "3");  // (Messages, Files, Doors, then the doors)
     CHECK(r.ranCmd("@SET door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys|1"));
 }
 
@@ -320,29 +332,30 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         Rig r;
         r.replies["@SETTINGS"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
         r.shell.beginAt(SysopSection::Settings);
-#if AXIS_DOSPROMPT
-        r.type("b");  // page 1 ends with Files (b), Messages (c), Doors (d), Free downloads (e)
-        CHECK(r.ranCmd("@SET files_on=0"));
-        r.type("c");
+        // Row 10 (a) is the DOS prompt password, when the build has it. Then Files (when the build has the file areas),
+        // Messages, Doors, Free downloads, Telnet sysop access. A page holds 1 to 9 and a to e; N turns it. In the full
+        // build: Files b, Messages c, Doors d, Free downloads e, and Telnet sysop access 1 on page 2.
+        if (!AXIS_DOSPROMPT) CHECK(plain(r.out).find("DOS prompt") == std::string::npos);  // left out: no password to set
+        int  row = 10 + AXIS_DOSPROMPT;
+        auto pick = [&r](int at) {
+            if (at > 14) {
+                r.type("n");
+                at -= 14;
+            }
+            r.type(std::string(1, "123456789abcde"[at - 1]));
+        };
+        if (AXIS_FILES) {
+            pick(row++);
+            CHECK(r.ranCmd("@SET files_on=0"));
+        }
+        pick(row++);
         CHECK(r.ranCmd("@SET messages_on=1"));
-        r.type("e");
+        row++;  // (Doors)
+        pick(row++);
         r.type("750\r");
         CHECK(r.ranCmd("@SET free_kb=750"));
-        r.type("n");
-        r.type("1");  // page 2: Telnet sysop access
+        pick(row);
         CHECK(r.ranCmd("@SET sysop_telnet=0"));
-#else
-        CHECK(plain(r.out).find("DOS prompt") == std::string::npos);  // left out of this build: no password to set
-        r.type("a");  // one row up: Files (a), Messages (b), Doors (c), Free downloads (d), Telnet sysop access (e)
-        CHECK(r.ranCmd("@SET files_on=0"));
-        r.type("b");
-        CHECK(r.ranCmd("@SET messages_on=1"));
-        r.type("d");
-        r.type("750\r");
-        CHECK(r.ranCmd("@SET free_kb=750"));
-        r.type("e");
-        CHECK(r.ranCmd("@SET sysop_telnet=0"));
-#endif
     }
     {  // the top layer has a Look entry
         Rig r;

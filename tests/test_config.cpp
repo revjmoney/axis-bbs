@@ -81,7 +81,8 @@ TEST_CASE("config has the native LORD as the default door, and no DOS doors") {
     CHECK(c.doors[1].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
     CHECK(c.doors[2].exe == "*SCRIPT");    // programs from /scripts on the card
     for (const auto& d : c.doors)  // (a door the build leaves out stays listed, and does not run)
-        CHECK(axis::bbs::doorRuns(d) == ((d.exe != "*LORD" || AXIS_LORD) && (d.exe != "*SCRIPT" || AXIS_SCRIPTS)));
+        CHECK(axis::bbs::doorRuns(d) == ((d.exe != "*LORD" || AXIS_LORD) && (d.exe != "*SCRIPT" || AXIS_SCRIPTS) &&
+                                         (d.exe != "*ANSIVIEW" || AXIS_ANSIVIEW)));
 }
 
 TEST_CASE("stock LORD arguments gain NOEMS; custom tails and other doors stay") {

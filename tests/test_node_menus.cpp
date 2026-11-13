@@ -141,7 +141,7 @@ TEST_CASE("prompts picked from the menu files start on a cleared screen, not on 
     }
 }
 
-#if AXIS_LORD  // (the rows below assume the LORD line stays on the menu)
+#if AXIS_LORD && AXIS_ANSIVIEW  // (the rows below assume the LORD and viewer lines stay on the menu)
 TEST_CASE("a door that can't start here (a DOS .EXE) is left off a menu file, and the lines below move up") {
     BbsConfig c;
     c.doors = {{"lord", "LORD", "*LORD", "", "none"}, {"blackjack", "BBS Black Jack", "BLKJK.EXE", "BJ.CFG", "doorsys"},

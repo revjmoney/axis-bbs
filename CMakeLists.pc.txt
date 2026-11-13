@@ -234,4 +234,7 @@ if(AXIS_OFF)
   separate_arguments(AXIS_OFF_FLAGS)
   target_compile_options(axiscore PUBLIC ${AXIS_OFF_FLAGS})
   target_compile_definitions(axis_tests PRIVATE AXIS_TEST_SWITCHED=1)
+  if(AXIS_OFF_FLAGS MATCHES "AXIS_TRANSFERS=0")  # the XMODEM/ZMODEM test tool has nothing to link
+    set_target_properties(xfertest PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  endif()
 endif()

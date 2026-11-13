@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_ANSIVIEW  // a build that leaves the ANSI viewer out has nothing here to test
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -249,3 +251,5 @@ TEST_CASE("the pack and piece lists are lightbars: Enter on the bar opens it, Es
     CHECK(r.run("").find("AXISTEST.ZIP") != std::string::npos);  // back on the pack list
     CHECK(r.running);
 }
+
+#endif  // AXIS_ANSIVIEW

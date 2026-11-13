@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_TRANSFERS  // a build that leaves transfers out has nothing here to test
 #include <deque>
 #include <string>
 #include <vector>
@@ -278,3 +280,5 @@ TEST_CASE("xmodem falls back to checksum when the sender ignores C") {
     CHECK(seen.find('C') != std::string::npos);
     CHECK(seen.find('\x15') != std::string::npos);  // NAK: checksum mode
 }
+
+#endif  // AXIS_TRANSFERS

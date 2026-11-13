@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include "net/xmodem.h"
+#include "bbs/features.h"
+#if AXIS_TRANSFERS
 
 #include "net/crc.h"
 
@@ -200,3 +202,5 @@ bool XmodemReceiver::step(uint32_t now) {
 }
 
 }  // namespace axis::net
+
+#endif  // AXIS_TRANSFERS

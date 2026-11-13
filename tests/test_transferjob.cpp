@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_TRANSFERS  // a build that leaves transfers out has nothing here to test
 #include <deque>
 #include <map>
 #include <string>
@@ -319,3 +321,5 @@ TEST_CASE("a damaged zip upload is rejected and not listed") {
     CHECK(lib.files["ansi/FILES.BBS"].find("BROKEN") == std::string::npos);
     CHECK(job.note().find("damaged") != std::string::npos);
 }
+
+#endif  // AXIS_TRANSFERS

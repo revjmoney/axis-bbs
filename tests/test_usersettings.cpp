@@ -5,6 +5,7 @@
 #include <string>
 
 #include "doctest.h"
+#include "bbs/features.h"
 #include "bbs/msgbase.h"
 #include "bbs/node.h"
 #include "bbs/password.h"
@@ -142,6 +143,7 @@ TEST_CASE("the tagline signs the caller's posts") {
     std::filesystem::remove_all(d);
 }
 
+#if AXIS_FILES
 TEST_CASE("areas above a caller's security level don't show up for them, but do for the sysop") {
     BbsConfig c;
     c.areas = {{"axis", "Axis Firmware"}, {"zero", "Zero Day", 150}};
@@ -154,6 +156,7 @@ TEST_CASE("areas above a caller's security level don't show up for them, but do 
     r.type("q");  // leave the area lightbar (Enter would open the highlighted area)
     CHECK(r.type("f").find("Zero Day") != std::string::npos);
 }
+#endif
 
 TEST_CASE("each login goes on the last callers list, and [L] shows the newest first") {
     std::vector<std::string> calls = {"Old Timer|2|2026-11-03 21:10|Conway, SC"};

@@ -4,6 +4,7 @@
 #include <string>
 
 #include "doctest.h"
+#include "bbs/features.h"
 #include "bbs/node.h"
 #include "bbs/password.h"
 #include "bbs/users.h"
@@ -259,6 +260,7 @@ struct PermRig {
 };
 }  // namespace
 
+#if AXIS_TRANSFERS
 TEST_CASE("a new caller browses the files but can't download until they upload something") {
     PermRig     r;
     std::string out = r.type("f1\r");
@@ -289,6 +291,19 @@ TEST_CASE("the sysop can let a caller download without uploading first") {
     r.type("z");
     CHECK(r.node.state() == Node::State::Transfer);
 }
+#elif AXIS_FILES
+TEST_CASE("without transfers a new caller views text files freely, and D asks for nothing") {
+    PermRig     r;
+    std::string out = r.type("f1\r");
+    CHECK(out.find("AXISFLSH.ZIP") != std::string::npos);
+    out = r.type("d");
+    CHECK(out.find("File name") == std::string::npos);
+    out = r.type("v");
+    out += r.type("README.TXT\r");
+    CHECK(out.find("hello") != std::string::npos);  // nothing to earn by uploading: viewing is not gated
+    CHECK(r.node.state() == Node::State::Files);
+}
+#endif
 
 TEST_CASE("a caller without file or door permission is told so at the menu") {
     PermRig r([](User& u) {
@@ -296,13 +311,14 @@ TEST_CASE("a caller without file or door permission is told so at the menu") {
         u.permDoors = false;
     });
     std::string out = r.type("f");
-    CHECK(out.find("file areas are closed") != std::string::npos);
+    CHECK(out.find(AXIS_FILES ? "file areas are closed" : "not in this firmware") != std::string::npos);
     CHECK(r.node.state() == Node::State::Menu);
     out = r.type("d");
     CHECK(out.find("doors are closed") != std::string::npos);
     CHECK(r.node.state() == Node::State::Menu);
 }
 
+#if AXIS_TRANSFERS
 TEST_CASE("a finished transfer counts toward the caller's uploads and downloads") {
     PermRig r([](User& u) { u.freeDownloads = true; });
     r.type("f1\r");
@@ -313,6 +329,7 @@ TEST_CASE("a finished transfer counts toward the caller's uploads and downloads"
     r.node.transferDone(true, 1000, 100, "", 2000);
     CHECK(r.users.find("Spindle Kid")->downloads == 1000);
 }
+#endif
 
 TEST_CASE("a user the sysop promoted (security 255) logs in with sysop access") {
     PermRig r([](User& u) { u.security = 255; });

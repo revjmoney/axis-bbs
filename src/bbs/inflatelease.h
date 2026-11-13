@@ -7,14 +7,23 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "bbs/features.h"
+
 namespace axis::bbs::inflate {
 
 constexpr size_t kWindow = 32768;
 
+#if AXIS_ANSIVIEW || AXIS_TRANSFERS
 // The window and state for owner: true when lent (again, to the owner holding it). False when another
 // owner holds them (busy() is then true) or the heap is short (nothing is kept).
 bool take(const void* owner, uint8_t*& window, uint8_t*& state);
 void give(const void* owner);  // frees both; a give by anyone but the owner does nothing
 bool busy();                   // lent right now
+#else
+// Neither the ANSI viewer nor transfers are in this build (features.h): nothing ever borrows the window.
+inline bool take(const void*, uint8_t*&, uint8_t*&) { return false; }
+inline void give(const void*) {}
+inline bool busy() { return false; }
+#endif
 
 }  // namespace axis::bbs::inflate
