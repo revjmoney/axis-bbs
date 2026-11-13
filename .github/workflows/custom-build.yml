@@ -137,7 +137,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      issues: write  # comment, remove the label and close
+      issues: write  # comment, swap the label and close
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -162,7 +162,8 @@ jobs:
           cat body.md
           gh issue comment "$NUMBER" --body-file body.md
           if [ "$state" = close ]; then
-            # Without the label a reopened issue stops at the gate (authors cannot add it back).
-            gh issue edit "$NUMBER" --remove-label build-request
+            # Without build-request a reopened issue stops at the gate (authors cannot add it back);
+            # build-answered keeps it in the creator's daily count.
+            gh issue edit "$NUMBER" --remove-label build-request --add-label build-answered
             gh issue close "$NUMBER" --reason completed
           fi

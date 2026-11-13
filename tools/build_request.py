@@ -13,7 +13,8 @@ not make is refused, and a refusal never quotes the body.
 check writes GitHub step outputs (status = build, exists, preset or refused; reason, off,
 target, release, fingerprint). An existing builds/<fingerprint>/ is answered with its link at
 once; otherwise a user may make at most 3 build requests a day, counted from their issues with
-the build-request label opened in the last 24 hours (the issues API, GITHUB_TOKEN). The issue is
+the build-request or build-answered label opened in the last 24 hours (the issues API,
+GITHUB_TOKEN; answering an issue swaps build-request for build-answered). The issue is
 read again through the API first: a closed or unlabelled issue is skipped, and an issue the bot
 has already answered with a link gets no second build (status skip or done).
 Standard library only; runs on Windows and Linux.
@@ -37,6 +38,10 @@ import buildopts  # noqa: E402
 import ghpages  # noqa: E402
 
 LABEL = "build-request"
+ANSWERED_LABEL = "build-answered"  # answer swaps LABEL for this; both count toward the cap
+COUNTED = {LABEL, ANSWERED_LABEL}
+PER_PAGE = 100
+MAX_PAGES = 10
 OFF_HEADING = "Leave these features out"
 BOARD_HEADING = "Board"
 TARGETS = {"cyd": "CYD (the board with the screen)", "esp32": "Bare ESP32 (no screen, headless)"}
@@ -139,15 +144,27 @@ def recent(requests, now=None, upto=None):
     return out
 
 
+def _label_names(item):
+    labels = item.get("labels") if isinstance(item, dict) else None
+    return {str(label.get("name", "")) if isinstance(label, dict) else str(label) for label in labels or []}
+
+
 def fetch_requests(api, repo, user, now=None):
-    """The user's build-request issues touched in the last 24 hours, through api(path)."""
+    """The user's issues touched in the last 24 hours that carry build-request or build-answered,
+    through api(path). The API ANDs a labels filter, so it asks for all of the user's issues and
+    keeps those here. Fails closed on an odd answer or more pages than it reads."""
     since = (_now(now) - datetime.timedelta(hours=24)).strftime(STAMP)
-    query = urllib.parse.urlencode({"creator": user, "labels": LABEL, "state": "all",
-                                    "since": since, "per_page": 100})
-    got = api("/repos/%s/issues?%s" % (repo, query))
-    if not isinstance(got, list):
-        raise ValueError("the issues API did not answer with a list")
-    return got
+    out = []
+    for page in range(1, MAX_PAGES + 1):
+        query = urllib.parse.urlencode({"creator": user, "state": "all", "since": since,
+                                        "per_page": PER_PAGE, "page": page})
+        got = api("/repos/%s/issues?%s" % (repo, query))
+        if not isinstance(got, list):
+            raise ValueError("the issues API did not answer with a list")
+        out += [r for r in got if isinstance(r, dict) and _label_names(r) & COUNTED]
+        if len(got) < PER_PAGE:
+            return out
+    raise ValueError("too many issues to count")
 
 
 def live_issue(api, repo, number):

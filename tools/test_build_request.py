@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -38,8 +39,9 @@ def body(off=(), board=CYD, crlf=False, extra_off=(), extra_board=()):
     return text.replace("\n", "\r\n") if crlf else text
 
 
-def issue(number, login="caller", created="2026-11-13T11:00:00Z", pr=False):
-    d = {"number": number, "user": {"login": login}, "created_at": created}
+def issue(number, login="caller", created="2026-11-13T11:00:00Z", pr=False, labels=("build-request",)):
+    d = {"number": number, "user": {"login": login}, "created_at": created,
+         "labels": [{"name": n} for n in labels]}
     if pr:
         d["pull_request"] = {}
     return d
@@ -51,10 +53,16 @@ READY = {"user": {"login": "github-actions[bot]"},
 
 
 def fake_api(issues=(), live=None, comments=()):
-    """The GitHub API as build_request.main calls it, by path."""
+    """The GitHub API as build_request.main calls it, by path. The issues list honours creator,
+    labels (every label given must be on the issue, as GitHub ANDs them) and the pages."""
     def api(path):
         if path.startswith("/repos/revjmoney/axis-bbs/issues?"):
-            return list(issues)
+            q = dict(urllib.parse.parse_qsl(path.split("?", 1)[1]))
+            want = [n for n in q.get("labels", "").split(",") if n]
+            got = [i for i in issues if i["user"]["login"] == q.get("creator")
+                   and all(n in {label["name"] for label in i["labels"]} for n in want)]
+            per, page = int(q.get("per_page", 30)), int(q.get("page", 1))
+            return got[(page - 1) * per:page * per]
         if path == "/repos/revjmoney/axis-bbs/issues/10":
             return live if live is not None else OPEN
         if path == "/repos/revjmoney/axis-bbs/issues/10/comments?per_page=100":
@@ -168,19 +176,36 @@ class RateTest(unittest.TestCase):
         got = build_request.recent(reqs, now=NOW, upto=10)
         self.assertEqual([r["number"] for r in got], [2, 3])
 
-    def test_issues_query_uses_the_label_creator_and_a_day(self):
+    def test_issues_query_uses_the_creator_and_a_day(self):
         seen = []
 
         def api(path):
             seen.append(path)
-            return [issue(9)]
+            return [issue(9), issue(8, labels=("bug",))]
         got = build_request.fetch_requests(api, "revjmoney/axis-bbs", "some user", now=NOW)
         self.assertEqual(got, [issue(9)])
         self.assertEqual(seen[0].count("?"), 1)
         self.assertEqual(len(seen), 1)
         self.assertTrue(seen[0].startswith("/repos/revjmoney/axis-bbs/issues?"), seen[0])
-        for part in ("creator=some+user", "labels=build-request", "state=all", "since=2026-11-12T12%3A00%3A00Z"):
+        for part in ("creator=some+user", "state=all", "since=2026-11-12T12%3A00%3A00Z", "page=1"):
             self.assertIn(part, seen[0])
+        self.assertNotIn("labels=", seen[0])  # GitHub ANDs labels; either label must count
+
+    def test_answered_requests_still_count(self):
+        answered = [issue(n, labels=("build-answered",)) for n in (6, 7, 8)]
+        api = fake_api(issues=answered + [issue(10), issue(5, labels=("bug",)), issue(4, login="someone")])
+        got = build_request.fetch_requests(api, "revjmoney/axis-bbs", "caller", now=NOW)
+        self.assertEqual(sorted(r["number"] for r in got), [6, 7, 8, 10])
+        self.assertFalse(build_request.rate_ok("caller", build_request.recent(got, now=NOW, upto=10)))
+
+    def test_every_page_is_read_and_too_many_fails_closed(self):
+        other = [issue(n, labels=("bug",)) for n in range(100, 250)]
+        api = fake_api(issues=other + [issue(6, labels=("build-answered",))])
+        got = build_request.fetch_requests(api, "revjmoney/axis-bbs", "caller", now=NOW)
+        self.assertEqual([r["number"] for r in got], [6])
+        flood = fake_api(issues=[issue(n, labels=("bug",)) for n in range(2000)])
+        with self.assertRaises(ValueError):
+            build_request.fetch_requests(flood, "revjmoney/axis-bbs", "caller", now=NOW)
 
 
     def test_an_api_error_object_fails_closed(self):
@@ -342,6 +367,14 @@ class CheckCliTest(unittest.TestCase):
         rc, text = self.run_check(api)
         self.assertEqual(rc, 1)
         self.assertEqual(text, "")
+
+    def test_three_answered_requests_refuse_a_fourth_through_the_cli(self):
+        answered = [issue(n, labels=("build-answered",)) for n in (6, 7, 8)]
+        rc, text = self.run_check(fake_api(issues=answered + [issue(10)]))
+        self.assertEqual(rc, 0)
+        self.assertIn("status=refused", text)
+        rc, text = self.run_check(fake_api(issues=answered[:2] + [issue(10)]))
+        self.assertIn("status=build", text)
 
     def test_an_answered_issue_is_done_through_the_cli(self):
         rc, text = self.run_check(fake_api(comments=[READY]))
@@ -597,7 +630,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("!cancelled()", ans["if"])
         a = str(ans["steps"])
         for needle in ("build_request.py answer", "gh issue comment", "--body-file", "gh issue close",
-                       "--remove-label build-request"):
+                       "--remove-label build-request --add-label build-answered"):
             self.assertIn(needle, a)
         self.assertIn("'skip'", ans["if"])
 
