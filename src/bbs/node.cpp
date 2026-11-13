@@ -637,8 +637,11 @@ void Node::nextStep() {
         ~Depth() { --n.seqDepth_; }
     } depth(*this);
     while (inSeq_ && seqAt_ < seq_.size()) {
-        const LoginStep& next = seq_[seqAt_];
-        if (seqUnheld_ && next.clear && next.level <= menuWho().level) {  // a screen still up with no pause of its own: a key first
+        const LoginStep&   next = seq_[seqAt_];
+        const std::string& nc = next.cmd;  // these clear the screen themselves, whatever the step's CLEAR says
+        bool clears = next.clear || nc == "USERSTATS" || nc == "SHOWSTATS" || nc == "SYSTEMSTATS" || nc == "WHOISONLINE" || nc == "ONELINERS" ||
+                      nc == "FASTLOGIN";
+        if (seqUnheld_ && clears && next.level <= menuWho().level) {  // a screen still up with no pause of its own: a key first
             seqUnheld_ = false;
             seqPauseNext_ = true;
             seqResume();
@@ -1500,6 +1503,12 @@ void Node::wfcDraw(const WfcSnapshot& s, bool clear) {
 }
 
 void Node::openWfc(uint32_t nowMs) {
+    if (inSeq_ && (state_ == State::Poster || state_ == State::SeqPause) && seqAt_ > 0) {  // the WFC takes the screen mid login step
+        seqAt_--;  // (beginLocal then openWfc): that step again once Space leaves the WFC, not skipped
+        seqUnheld_ = seqPauseNext_ = false;
+        posterFile_.clear();
+        std::string().swap(posterCarry_);
+    }
     shell_.reset();
     wfcEsc_ = 0;
     state_ = State::Wfc;
@@ -2239,7 +2248,9 @@ void Node::key(char c) {
                         menuNote("No rumors yet.");
                         return;
                     }
-                    std::string r = all[0].size() > 33 ? all[0].substr(0, 31) + ".." : all[0];
+                    std::string r = all[0];
+                    if (r.compare(0, 7, "rumor: ") == 0) r.erase(0, 7);  // (some were added with the word already on them)
+                    if (r.size() > 33) r = r.substr(0, 31) + "..";
                     out_ += std::string("\r\n\x1b[4C") + theme::DGREY + "rumor: " + theme::HOT + r + theme::TEXT;
                     menu_->prompt();
                     return;
@@ -2861,6 +2872,7 @@ std::string Node::menuRumor() const {
     std::vector<std::string> all = listGet_ ? listGet_("rumor") : std::vector<std::string>{};
     if (all.empty()) return "";
     std::string r = all[(lastInput_ / 1000 + all.size() * 7 + node_) % all.size()];
+    if (r.compare(0, 7, "rumor: ") == 0) r.erase(0, 7);  // (some were added with the word already on them)
     int         col = 0, row = 0;
     size_t      at = menu_->def().prompt1.find("|XY");
     if (at != std::string::npos) std::sscanf(menu_->def().prompt1.c_str() + at + 3, "%d,%d", &col, &row);
