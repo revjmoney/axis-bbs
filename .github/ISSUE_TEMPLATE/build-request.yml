@@ -1,0 +1,46 @@
+# One box per selectable feature in installer/features.json (tools/test_build_request.py checks
+# that they match). tools/build_request.py reads the rendered issue and refuses any other line.
+name: Build request
+description: Ask for an AXIS Micro BBS firmware build with the features you pick left out.
+title: "Build request"
+labels: ["build-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **AXIS Micro BBS custom build** by Rev. J. Money / jmscnc.com
+
+        Every feature is in the build unless you tick it below. A robot builds it for the latest
+        release, comments here with a link that opens the web installer set to your build, and
+        closes the issue. A combination that was built before answers at once. Each GitHub user
+        can ask for 3 new builds a day.
+
+        Only the boxes and the board below are read. Anything else typed into the issue stops the
+        build; to change your request, edit the issue and use the boxes.
+  - type: checkboxes
+    id: leave-out
+    attributes:
+      label: Leave these features out
+      description: Tick a feature to leave it out. Some need others (the ANSI viewer and uploads need file areas).
+      options:
+        - label: LORD (lord)
+        - label: Scripts (scripts)
+        - label: DOS prompt (dosprompt)
+        - label: File areas (files)
+        - label: ANSI viewer (ansiview)
+        - label: Uploads and downloads (transfers)
+        - label: Cluster (cluster)
+        - label: Radio modem link (modemlink)
+        - label: Web and TLS (web)
+        - label: Sysop Net (nets)
+  - type: dropdown
+    id: board
+    attributes:
+      label: Board
+      description: Both run the same image; a bare ESP32 is set to headless over serial after flashing.
+      options:
+        - CYD (the board with the screen)
+        - Bare ESP32 (no screen, headless)
+      default: 0
+    validations:
+      required: true

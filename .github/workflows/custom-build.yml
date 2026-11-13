@@ -1,0 +1,159 @@
+# Custom AXIS Micro BBS builds from the "Build request" issue form (label build-request).
+#   parse    reads the issue with tools/build_request.py (the body only through the event file),
+#            checks it against installer/features.json, takes the latest release from
+#            gh-pages releases/index.json and counts the user's requests (3 a day).
+#   build    checks out that release tag (never anything from the issue) and builds with AXIS_OFF.
+#   publish  checks the images against their manifest and adds builds/<fingerprint>/ to gh-pages.
+#   answer   comments the installer link and closes the issue, or says why not and leaves it open.
+# Only values parse has checked (feature ids, the tag, the fingerprint) go on to later jobs, and
+# they reach run: lines through env, never through an expression inside the script.
+# Uses only the built in GITHUB_TOKEN.
+name: Custom build
+on:
+  issues:
+    types: [opened, edited]
+permissions:
+  contents: read
+concurrency:
+  group: custom-build-${{ github.event.issue.number }}
+  cancel-in-progress: true
+jobs:
+  parse:
+    if: >-
+      github.event.issue.state == 'open' &&
+      contains(github.event.issue.labels.*.name, 'build-request') &&
+      (github.event.action == 'opened' || github.event.changes.body)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read  # count the user's build requests
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+      reason: ${{ steps.check.outputs.reason }}
+      off: ${{ steps.check.outputs.off }}
+      target: ${{ steps.check.outputs.target }}
+      release: ${{ steps.check.outputs.release }}
+      fingerprint: ${{ steps.check.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # The release index and the list of builds, without downloading any image.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: gh-pages
+          path: ghp
+          filter: blob:none
+          sparse-checkout: /releases/index.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Read the request
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git -C ghp ls-tree -r --name-only HEAD builds > builds.txt
+          python3 -I tools/build_request.py check --event "$GITHUB_EVENT_PATH" --index ghp/releases/index.json --builds builds.txt --out "$GITHUB_OUTPUT"
+  build:
+    needs: parse
+    if: needs.parse.outputs.status == 'build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      AXIS_OFF: ${{ needs.parse.outputs.off }}
+      RELEASE: ${{ needs.parse.outputs.release }}
+      FP: ${{ needs.parse.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.parse.outputs.release }}
+          path: fw
+          persist-credentials: false
+      # A release without tools/pio_features.py would ignore AXIS_OFF and build everything.
+      - name: The release has the feature switches
+        run: |
+          test -f fw/tools/pio_features.py
+          grep -q pio_features.py fw/platformio.ini
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+          key: pio-6.1.18-espressif32-6.9.0-idf-3.40407.240606-${{ runner.os }}
+      - name: PlatformIO 6.1.18
+        run: |
+          sh tools/ci/apt_install.sh python3-venv
+          pip install --retries 5 platformio==6.1.18
+      # tools/pio_features.py reads AXIS_OFF and turns those features off.
+      - name: Compile
+        working-directory: fw
+        run: pio run -e cyd -j 2
+      - name: Images and manifest
+        run: python -I tools/build_request.py manifest fw/.pio/build/cyd out --off "$AXIS_OFF" --release "$RELEASE" --fingerprint "$FP" --partitions fw/partitions.csv
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: custom-build
+          path: out/
+          if-no-files-found: error
+          retention-days: 3
+  publish:
+    needs: [parse, build]
+    if: needs.parse.outputs.status == 'build' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write  # push the gh-pages branch, nothing else
+    env:
+      FP: ${{ needs.parse.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: custom-build
+          path: art
+      # build_request.py publish checks every image against the manifest (names, sizes, sha256,
+      # app0 size, fingerprint) before it copies, then prunes builds/ to 300 MB.
+      - name: Build to gh-pages
+        run: sh tools/ci/ghpages_publish.sh "custom build $FP" python3 -I tools/build_request.py publish --from art --fingerprint "$FP"
+  answer:
+    needs: [parse, build, publish]
+    if: >-
+      !cancelled() && (needs.parse.result == 'success' || needs.parse.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write  # comment and close
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      NUMBER: ${{ github.event.issue.number }}
+      PARSE_RESULT: ${{ needs.parse.result }}
+      STATUS: ${{ needs.parse.outputs.status }}
+      REASON: ${{ needs.parse.outputs.reason }}
+      FP: ${{ needs.parse.outputs.fingerprint }}
+      TARGET: ${{ needs.parse.outputs.target }}
+      RELEASE: ${{ needs.parse.outputs.release }}
+      OFF: ${{ needs.parse.outputs.off }}
+      BUILD_RESULT: ${{ needs.build.result }}
+      PUBLISH_RESULT: ${{ needs.publish.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Comment and close
+        run: |
+          state=$(python3 -I tools/build_request.py answer --parse-result "$PARSE_RESULT" --status "$STATUS" --reason "$REASON" --fingerprint "$FP" --target "$TARGET" --release "$RELEASE" --off "$OFF" --build-result "$BUILD_RESULT" --publish-result "$PUBLISH_RESULT" --repo "$GH_REPO" --run-url "$RUN_URL" --body body.md)
+          cat body.md
+          gh issue comment "$NUMBER" --body-file body.md
+          if [ "$state" = close ]; then gh issue close "$NUMBER" --reason completed; fi
