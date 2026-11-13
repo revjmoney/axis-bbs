@@ -30,7 +30,7 @@ struct Rig {
     void login() {
         n.begin(0);
         type("Rev\r");
-        if (n.state() == Node::State::SeqPause) type(" ");  // the default login sequence's one pause, then MAIN
+        while (n.state() == Node::State::SeqPause) type(" ");  // the default login sequence's pauses (last callers, stats), then MAIN
     }
     std::string type(const std::string& s) {
         n.input((const uint8_t*)s.data(), s.size(), 1000);
@@ -151,7 +151,7 @@ TEST_CASE("a door that can't start here (a DOS .EXE) is left off a menu file, an
     n.setMenus([&fs](const std::string& f) { return fs.count(f) ? fs[f] : std::string(); });
     n.begin(0);
     n.input((const uint8_t*)"Rev\r", 4, 1000);
-    if (n.state() == Node::State::SeqPause) n.input((const uint8_t*)" ", 1, 1000);
+    while (n.state() == Node::State::SeqPause) n.input((const uint8_t*)" ", 1, 1000);
     std::string out = plain(n.takeOutput());
     CHECK(out.find("Black Jack") == std::string::npos);
     CHECK(out.find("ANSI Pack Viewer") != std::string::npos);
@@ -216,7 +216,7 @@ struct SysRig {
         if (local) n->beginLocal(0);
         else {
             type("Rev\rpw\r");
-            if (n->state() == Node::State::SeqPause) type(" ");
+            while (n->state() == Node::State::SeqPause) type(" ");
         }
     }
     std::string type(const std::string& s) {
@@ -673,7 +673,7 @@ TEST_CASE("the autosig and password menu commands open the account screen (the t
         r.n->setMenus([&r](const std::string& f) { return r.fs.count(f) ? r.fs[f] : std::string(); });
         r.n->begin(0);
         r.type("Rev\rpw\r");
-        if (r.n->state() == Node::State::SeqPause) r.type(" ");
+        while (r.n->state() == Node::State::SeqPause) r.type(" ");
         std::string out = r.type("u");
         CHECK(out.find("Coming soon") == std::string::npos);
         CHECK(out.find("tagline") != std::string::npos);

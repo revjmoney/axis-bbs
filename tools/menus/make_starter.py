@@ -47,7 +47,8 @@ BARS = {
 }
 # Only commands that run on AXIS get a bar (the rest still answer "coming soon" when typed). A bar key with no
 # cmd= line would do nothing, so main() checks every bar has one. MSGMENU's E had none in ViSiON/3's set.
-EXTRA = {'MSGMENU': ['cmd=E|GOTO:EMAILM|*|0|Email Menu']}
+EXTRA = {'MSGMENU': ['cmd=E|GOTO:EMAILM|*|0|Email Menu'],
+         'MAIN': ['cmd=~~|RUN:RANDOMRUMOR|*|0|']}  # ~~ every time MAIN draws: one rumor just above the prompt
 # the front door keeps ViSiON/3's words and keys, moved into the window
 FRONT_X, FRONT_Y, FRONT_W = 12, 12, 24
 MAIN_PROMPT = '|08[|07|TIME|08] |10|UH |08-|15> |07'
@@ -63,9 +64,9 @@ step=NMAILSCAN|1|1|0|
 step=DISPLAYFILE|1|1|0|SAYLOR
 step=FASTLOGIN|0|0|0|
 step=PRINTNEWS|1|1|0|
-step=LASTCALLS|0|0|0|
+step=LASTCALLS|1|1|0|
 step=ONELINERS|0|0|0|
-step=USERSTATS|0|0|0|
+step=USERSTATS|1|1|0|
 step=INFOFORMREQUIRED|0|0|0|
 step=NEWUSERVAL|0|0|255|
 step=CHECKNUV|0|0|0|

@@ -118,7 +118,7 @@ TEST_CASE("a menu command runs the same engine") {
                  [] { return std::vector<std::string>{"hello"}; });
     n.beginLocalMenu(0);
     n.takeOutput();
-    n.input((const uint8_t*)" ", 1, 1000);  // the login sequence's mail pause, then the menu
+    while (n.state() == Node::State::SeqPause) n.input((const uint8_t*)" ", 1, 1000);  // the login sequence's pauses, then the menu
     n.takeOutput();
     n.input((const uint8_t*)"S", 1, 1000);
     std::string o = plain(n.takeOutput());

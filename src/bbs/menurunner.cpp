@@ -81,6 +81,7 @@ void MenuRunner::redraw() {
     }
     if (!carry.empty()) expandArt(carry, who_, value_, emit_);
     if (bar_) emit(bar_->draw());
+    if (beforePrompt) emit(beforePrompt());
     prompt();
 }
 
