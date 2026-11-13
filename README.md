@@ -76,7 +76,7 @@ Settings are changed on the board (BBS SETUP), over the USB serial console at 11
 
 The tree builds two ways. `CMakeLists.txt` picks from whether `IDF_PATH` is set.
 
-- **The board.** PlatformIO sets `IDF_PATH`, so this is the ESP32 image: `pio run -e cyd` (also `headless` and `headless-ring`). Native LORD is `src/lord/` and is in that image. `dosemu/` is not linked. An `.EXE` door tells the caller the DOS runtime is not in this firmware. Partitions in `partitions.csv`: app 1.875 MB, door cache 384 KB (left in place, unused by native LORD), LittleFS 1.69 MB.
+- **The board.** PlatformIO sets `IDF_PATH`, so this is the ESP32 image: `pio run -e cyd` (also `headless` and `headless-ring`). Native LORD is `src/lord/` and is in that image. `dosemu/` is not linked. An `.EXE` door tells the caller the DOS runtime is not in this firmware. Partitions in `partitions.csv`: app 2.25 MB, LittleFS 1.69 MB.
 - **The PC build.** A plain CMake run, with `IDF_PATH` unset, includes `CMakeLists.pc.txt`. That build links `dosemu/` and `third_party/i8086` (the 8086 emulator, high-level DOS, BIOS, FOSSIL) and also compiles the native engine, so the tests cover both. `doorhost` is how you play an unmodified EXE. Details: [the DOS emulator](https://revjmoney.github.io/axis-bbs/docs.html#dosemu).
 
   ```
