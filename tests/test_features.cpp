@@ -297,6 +297,19 @@ TEST_CASE("features: the SD card notice") {
     CHECK(std::string(axis::bbs::kSdNotice) == "YOU NEED AN SD CARD FOR FULL FUNCTIONS");
 }
 
+TEST_CASE("features: the SD card notice waits until the board knows whether it follows a main") {
+    using axis::bbs::sdNoticeWaits;
+    // before the cluster starts (boot, no Wi-Fi yet): a saved cluster key means it will look for a main, so wait
+    // (board 2, a cardless follower of a main with a card, never shows the notice at boot)
+    CHECK(sdNoticeWaits(false, true, false));
+    // no key saved: it runs alone, so it knows at once
+    CHECK_FALSE(sdNoticeWaits(false, false, false));
+    // started: wait while it is finding its main (Discovering, Joining), not once it is main or a follower
+    CHECK(sdNoticeWaits(true, true, true));
+    CHECK_FALSE(sdNoticeWaits(true, true, false));
+    CHECK_FALSE(sdNoticeWaits(true, false, false));
+}
+
 TEST_CASE("features: the telnet WFC draws the SD card notice when the snapshot has it") {
     for (bool on : {false, true}) {
         axis::bbs::BbsConfig c;

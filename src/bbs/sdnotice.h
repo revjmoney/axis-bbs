@@ -15,4 +15,11 @@ inline bool sdNoticeShown(bool hasCard, bool cardMain, bool builtWithSdFeature =
     return builtWithSdFeature && !hasCard && !cardMain;
 }
 
+// With the cluster built in, the notice waits while this board does not yet know whether it follows a main:
+// before the cluster starts when a cluster key is saved (it will look for one), and while it is finding its main.
+// A board with no key saved runs alone, so it knows at once.
+inline bool sdNoticeWaits(bool clusterStarted, bool keySaved, bool findingMain) {
+    return clusterStarted ? findingMain : keySaved;
+}
+
 }  // namespace axis::bbs

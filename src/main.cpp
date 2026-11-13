@@ -1159,9 +1159,25 @@ static void saveUsers() {
 static bool asFollower() { return cluster && cluster->role() == axis::cluster::Role::Follower; }
 
 // The SD card notice (bbs/sdnotice.h): no card here, a feature that needs one built in, and not a follower of a main
-// that has one. While the cluster is still finding its main it waits (a follower of a card main would only flash it).
+// that has one. While its place is unknown it waits (a follower of a card main would only flash it): the cluster has
+// not started yet but a cluster key is saved (it will look for a main), or it is still finding its main.
+#if AXIS_CLUSTER
+static int clusterKeySaved = -1;  // -1: not read yet from NVS "clu" (@CLUSTERKEY keeps it current)
+static bool clusterKeyIsSaved() {
+    if (clusterKeySaved < 0) {
+        Preferences p;
+        p.begin("clu", true);
+        clusterKeySaved = p.getString("key", "").length() > 0 ? 1 : 0;
+        p.end();
+    }
+    return clusterKeySaved == 1;
+}
+#endif
 static bool sdNotice() {
-    if (cluster && (cluster->role() == axis::cluster::Role::Discovering || cluster->role() == axis::cluster::Role::Joining)) return false;
+#if AXIS_CLUSTER
+    bool finding = cluster && (cluster->role() == axis::cluster::Role::Discovering || cluster->role() == axis::cluster::Role::Joining);
+    if (axis::bbs::sdNoticeWaits(cluster != nullptr, cluster ? false : clusterKeyIsSaved(), finding)) return false;
+#endif
     return axis::bbs::sdNoticeShown(storageHasSd(), asFollower() && cluster->mainHasCard());
 }
 
@@ -3727,10 +3743,10 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     return w;
 }
 
-#if !AXIS_CLUSTER
-// Built without the cluster: a chat line, a sysop page or a node line goes straight to this board's console and
-// sessions, as the cluster's onChat does on a main (startCluster). Node lines never go back to the sender.
-static void deliverHere(const axis::cluster::ChatLine& l) {
+// A chat line, a sysop page or a node line for this board's console and sessions: the cluster's onChat calls it for
+// every line that reaches this board, and a board built without the cluster calls it directly. Node lines never go
+// back to the sender.
+static void deliverChat(const axis::cluster::ChatLine& l) {
     if (l.page) {
         pageText = String(l.handle.c_str()) + ": " + l.text.c_str();
         pageAtMs = millis();
@@ -3759,7 +3775,6 @@ static void deliverHere(const axis::cluster::ChatLine& l) {
             sessionLine(i)->flush();
         }
 }
-#endif
 
 static bool panelConsoleNew = false;  // answerIn: the next session is the panel's own sysop console
 static void answerIn(WiFiClient incoming, const std::string& giveBack) {
@@ -3787,7 +3802,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
             [slot](const std::string& text, bool page) {  // through the main to every node (or just this board)
                 if (!node) return;
 #if !AXIS_CLUSTER
-                deliverHere({sessionNumber(slot), node->handle(), text, page});
+                deliverChat({sessionNumber(slot), node->handle(), text, page});
                 return;
 #endif
                 if (cluster) page ? cluster->page(node->handle(), text, slot) : cluster->chat(node->handle(), text, slot);
@@ -3813,7 +3828,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setNodeLink([slot](int kind, int to, const std::string& text) {  // notes, broadcasts, split chat keys
             if (!node) return;
 #if !AXIS_CLUSTER
-            deliverHere({sessionNumber(slot), node->handle(), text, kind == 1, kind, to});
+            deliverChat({sessionNumber(slot), node->handle(), text, kind == 1, kind, to});
             return;
 #endif
             if (cluster) {
@@ -4296,33 +4311,7 @@ static void startCluster() {
             web::announce(String("**") + boardCfg->bbsName.c_str() + "** " + l.text.c_str());
             return;
         }
-        if (l.page) {
-            pageText = String(l.handle.c_str()) + ": " + l.text.c_str();
-            pageAtMs = millis();
-            logEvent("PAGE from " + String(l.handle.c_str()) + " on node " + String(l.node) + ": " + l.text.c_str());
-            screenDirty = true;
-        }
-        if (localNode) {
-            if (l.kind >= 2) {
-                if (!l.to) localNode->nodeIn(l.kind, l.node, l.handle, l.text);  // the console gets broadcasts
-            } else {
-                localNode->chatIn(l.node, l.handle, l.text, l.page);
-            }
-            localFeed();
-        }
-        for (size_t i = 0; i < sessions.size(); i++)
-            if (sessionNode(i) && sessionLine(i)) {
-                if (l.kind >= 2) {  // node to node: only the node it's for (or all), never back to the sender
-                    int me = sessionNumber((int)i);
-                    if (me == l.node || (l.to && l.to != me)) continue;
-                    sessionNode(i)->nodeIn(l.kind, l.node, l.handle, l.text);
-                } else {
-                    sessionNode(i)->chatIn(l.node, l.handle, l.text, l.page);
-                }
-                std::string out = sessionNode(i)->takeOutput();
-                sessionLine(i)->write((const uint8_t*)out.data(), out.size());
-                sessionLine(i)->flush();
-            }
+        deliverChat(l);  // a chat line, a page or a node line: this board's console and sessions
     };
 #if AXIS_NETS
     cluster->settings = [] {  // plus "net_up=1" while Sysop Net runs here (an old follower keeps it as an unknown key)
@@ -4640,7 +4629,7 @@ static void startLocal() {
         [](const std::string& text, bool page) {
             if (!localNode) return;
 #if !AXIS_CLUSTER
-            deliverHere({localNode->number(), localNode->handle(), text, page});
+            deliverChat({localNode->number(), localNode->handle(), text, page});
             return;
 #endif
             if (cluster) page ? cluster->page(localNode->handle(), text) : cluster->chat(localNode->handle(), text);
@@ -5527,6 +5516,7 @@ static void runCommand(const String& cmd, Print& out) {
             p.begin("clu", false);
             bool ok = key == "off" ? p.remove("key") : p.putString("key", key) > 0;
             p.end();
+            if (ok) clusterKeySaved = key == "off" ? 0 : 1;  // (the SD card notice's "will it look for a main")
             // start over with the new key: drop every link, find the others again. Never here: the cluster does it at
             // the top of its next tick (loop()), so no command can clear its links while tick() is looping over them.
             if (cluster) cluster->restartSoon(key == "off" ? "" : key.c_str());
