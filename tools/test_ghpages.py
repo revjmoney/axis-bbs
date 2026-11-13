@@ -107,6 +107,21 @@ class PruneTest(unittest.TestCase):
     def test_releases_sort_by_version_number(self):
         self.assertEqual(ghpages.releases(self.gh), ["v0.100", "v0.60", "v0.52", "v0.9", "v0.8"])
 
+    def test_a_suffix_ranks_below_the_bare_version(self):
+        tags = ["v0.60", "v0.60-rc1", "v0.59", "v0.61-rc1", "v0.60.1"]
+        self.assertEqual(sorted(tags, key=ghpages.version_key, reverse=True),
+                         ["v0.61-rc1", "v0.60.1", "v0.60", "v0.60-rc1", "v0.59"])
+        self.assertEqual(sorted(["v0.60", "v0.60-rc1"], key=ghpages.version_key), ["v0.60-rc1", "v0.60"])
+        self.assertEqual(sorted(["v0.60-rc1", "v0.60"], key=ghpages.version_key), ["v0.60-rc1", "v0.60"])
+
+    def test_an_rc_never_pushes_out_its_final_release(self):
+        src = os.path.join(self.tmp, "dl")
+        write(os.path.join(src, "costs.json"), b"{}")
+        ghpages.add_release(self.gh, "v0.100-rc1", src)
+        self.assertEqual(ghpages.releases(self.gh), ["v0.100", "v0.100-rc1", "v0.60"])
+        with open(os.path.join(self.gh, "releases", "index.json"), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["latest"], "v0.100")
+
     def test_prune_keeps_the_three_newest_releases(self):
         ghpages.prune(self.gh, keep_releases=3, builds_cap=300 * MB)
         self.assertEqual(sorted(os.listdir(os.path.join(self.gh, "releases"))),
@@ -183,17 +198,21 @@ class PublishScriptTest(unittest.TestCase):
         return subprocess.run(["git", *args], cwd=cwd or self.work, check=True,
                               capture_output=True, text=True).stdout.strip()
 
-    def publish(self, msg, files):
-        """Run the script with a command that writes `files` ({path: text}) into $GHP."""
+    def publish(self, msg, files, opts=()):
+        """Run the script with a command that writes `files` ({path: text}) into $GHP;
+        a None value removes that folder."""
         script = os.path.join(ROOT, "tools", "ci", "ghpages_publish.sh")
         writer = os.path.join(self.tmp, "writer.py")
         with open(writer, "w", encoding="utf-8") as fh:
-            fh.write("import json, os, sys\n"
+            fh.write("import json, os, shutil, sys\n"
                      "for k, v in json.loads(sys.argv[1]).items():\n"
                      "    p = os.path.join(os.environ['GHP'], k)\n"
+                     "    if v is None:\n"
+                     "        shutil.rmtree(p)\n"
+                     "        continue\n"
                      "    os.makedirs(os.path.dirname(p), exist_ok=True)\n"
                      "    open(p, 'w').write(v)\n")
-        return subprocess.run([_sh(), script, msg, sys.executable, "-I", writer, json.dumps(files)],
+        return subprocess.run([_sh(), script, *opts, msg, sys.executable, "-I", writer, json.dumps(files)],
                               cwd=self.work, env=self.env, capture_output=True, text=True)
 
     def test_first_publish_creates_the_branch_and_later_ones_keep_one_commit(self):
@@ -205,6 +224,23 @@ class PublishScriptTest(unittest.TestCase):
         self.assertEqual(sorted(files), ["builds/abc/y", "index.html", "releases/v1/x"])
         self.assertEqual(self.git("rev-list", "--count", "gh-pages", cwd=self.origin), "1")
         self.assertEqual(self.git("log", "-1", "--format=%s", "gh-pages", cwd=self.origin), "two")
+
+    def test_losing_all_releases_or_builds_is_refused(self):
+        self.publish("one", {"index.html": "a", "releases/v1/x": "1", "builds/abc/y": "2"})
+        before = self.git("rev-parse", "gh-pages", cwd=self.origin)
+        for gone in ("releases", "builds"):
+            with self.subTest(gone=gone):
+                r = self.publish("drop", {gone: None})
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("removes all of %s/" % gone, r.stderr)
+                self.assertEqual(self.git("rev-parse", "gh-pages", cwd=self.origin), before)
+
+    def test_allow_prune_lets_the_release_path_drop_them(self):
+        self.publish("one", {"index.html": "a", "builds/abc/y": "2"})
+        r = self.publish("prune", {"builds": None}, opts=("--allow-prune",))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        files = self.git("ls-tree", "-r", "--name-only", "gh-pages", cwd=self.origin).split()
+        self.assertEqual(files, ["index.html"])
 
     def test_nothing_changed_pushes_nothing(self):
         self.publish("one", {"index.html": "a"})
@@ -280,6 +316,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("tools/ghpages.py site", text)
         self.assertNotIn("deploy-pages", text)
         self.assertIn("installer/*.json", text)
+        self.assertNotIn("--allow-prune", text)
         if doc:
             self.assertEqual(doc["jobs"]["publish"]["permissions"], {"contents": "write"})
 
@@ -287,7 +324,7 @@ class WorkflowTest(unittest.TestCase):
         text, doc = load_yaml(self.path("release.yml"))
         for needle in ("AXIS_PRESET", "buildcost.py manifest", "buildcost.py table", "sdkit.py",
                        "tools/ghpages.py release", "ghpages_publish.sh", "gh release create",
-                       "installer/presets.json"):
+                       "installer/presets.json", "--allow-prune"):
             self.assertIn(needle, text)
         if doc:
             jobs = doc["jobs"]

@@ -1,13 +1,14 @@
 """The SD card kit for a first install of the AXIS Micro BBS: sdcard-kit.zip.
 
-    python -I tools/sdkit.py OUT.zip [--with-lord]
+    python -I tools/sdkit.py OUT.zip [--with-themes] [--with-lord]
 
-Stages the card files in local/sdkit-stage the way tools/install_cyd.py --stage does (theme
-packs found in ~/Downloads, the /scripts programs from the repo, and with --with-lord the LORD
-game data) and zips them in the card's own layout, so the zip unpacks straight onto the card:
-themes/<look>/, doors/lord/, scripts/. Downloads (staged under cache/) are never zipped.
-LORD is left out unless asked for: it is a third party game, and whether its data may be
-republished on the public site is Rev's call.
+Stages the card files in local/sdkit-stage the way tools/install_cyd.py --stage does and zips
+them in the card's own layout, so the zip unpacks straight onto the card: themes/<look>/,
+doors/lord/, scripts/. Downloads (staged under cache/) are never zipped.
+By default the kit holds only the card files the repo itself holds (the /scripts programs);
+that is what the release publishes. --with-themes adds the theme packs found in ~/Downloads
+and --with-lord the LORD game data, for a kit made on this PC: neither is in the repo, and
+whether either may be republished on the public site is Rev's call.
 """
 import argparse
 import os
@@ -63,6 +64,7 @@ def write_kit(stage_dir, out_zip):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sdkit")
     ap.add_argument("out")
+    ap.add_argument("--with-themes", action="store_true")
     ap.add_argument("--with-lord", action="store_true")
     args = ap.parse_args(argv)
     import install_cyd
@@ -71,7 +73,8 @@ def main(argv=None):
     if os.path.isdir(stage):
         shutil.rmtree(stage)
     install_cyd.STAGE = stage
-    install_cyd.stage_themes([i for i, _f, _l in install_cyd.PACKS], {})
+    if args.with_themes:
+        install_cyd.stage_themes([i for i, _f, _l in install_cyd.PACKS], {})
     if args.with_lord:
         install_cyd.stage_lord()
     install_cyd.stage_scripts()

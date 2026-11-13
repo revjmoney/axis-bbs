@@ -153,14 +153,14 @@ jobs:
           merge-multiple: true
       - name: Cost table
         run: python -I tools/buildcost.py table rel --release "$TAG" --out rel/costs.json
-      # The card files a first install needs (tools/install_cyd.py --stage). LORD data is not
-      # republished; theme packs are added when they are present on the runner.
+      # The card files a first install needs, as tools/install_cyd.py --stage lays them out:
+      # only the card files the repo holds (no theme packs, no LORD data).
       - name: SD card kit
         run: python -I tools/sdkit.py rel/sdcard-kit.zip
       - name: Release to gh-pages
         run: |
           ls -lR rel
-          sh tools/ci/ghpages_publish.sh "release $TAG" python -I tools/ghpages.py release --tag "$TAG" --from rel
+          sh tools/ci/ghpages_publish.sh --allow-prune "release $TAG" python -I tools/ghpages.py release --tag "$TAG" --from rel
       - name: Attach cost table and SD card kit to the release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -60,5 +60,45 @@ class KitTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.out))
 
 
+class MainTest(unittest.TestCase):
+    """sdkit.main with install_cyd pointed at a temp repo and a temp Downloads folder."""
+
+    def setUp(self):
+        import install_cyd
+        self.ic = install_cyd
+        self.saved = (install_cyd.ROOT, install_cyd.DOWNLOADS, install_cyd.STAGE)
+        self.tmp = tempfile.mkdtemp()
+        install_cyd.ROOT = os.path.join(self.tmp, "repo")
+        install_cyd.DOWNLOADS = os.path.join(self.tmp, "Downloads")
+        write(os.path.join(install_cyd.ROOT, "scripts", "hello.axs"))
+        fn = install_cyd.PACKS[0][1]
+        os.makedirs(install_cyd.DOWNLOADS)
+        with zipfile.ZipFile(os.path.join(install_cyd.DOWNLOADS, fn), "w") as z:
+            z.writestr("ans/04_main.ans", "screen")
+        self.out = os.path.join(self.tmp, "kit.zip")
+
+    def tearDown(self):
+        self.ic.ROOT, self.ic.DOWNLOADS, self.ic.STAGE = self.saved
+        shutil.rmtree(self.tmp)
+
+    def names(self):
+        with zipfile.ZipFile(self.out) as z:
+            return sorted(z.namelist())
+
+    def run_main(self, *args):
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            return sdkit.main([self.out, *args])
+
+    def test_default_kit_holds_only_the_repo_files(self):
+        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(self.names(), ["README.txt", "scripts/hello.axs"])
+
+    def test_with_themes_adds_the_downloaded_packs(self):
+        self.assertEqual(self.run_main("--with-themes"), 0)
+        self.assertIn("themes/%s/MAIN.ANS" % self.ic.PACKS[0][0], self.names())
+
+
 if __name__ == "__main__":
     unittest.main()

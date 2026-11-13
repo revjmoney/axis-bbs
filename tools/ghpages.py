@@ -58,8 +58,13 @@ def merge(site_dir, gh_pages_dir, installer_dir=None):
 
 
 def version_key(tag):
-    """v0.9 < v0.52 < v0.100: numbers compare as numbers."""
-    return [(0, int(p), "") if p.isdigit() else (1, 0, p) for p in re.split(r"(\d+)", tag) if p]
+    """v0.9 < v0.52 < v0.100: numbers compare as numbers. A tag with anything after its dotted
+    numbers ranks below the bare version: v0.60-rc1 < v0.60 (and above v0.59)."""
+    m = re.match(r"^v?(\d+(?:\.\d+)*)(.*)$", tag)
+    if not m:
+        return ((), 0, tag)
+    nums = tuple(int(p) for p in m.group(1).split("."))
+    return (nums, 0 if m.group(2) else 1, m.group(2))
 
 
 def releases(gh_pages_dir):
