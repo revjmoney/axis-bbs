@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_CLUSTER  // a build without the cluster has nothing here to test
 #include <deque>
 #include <map>
 #include <memory>
@@ -1269,3 +1271,4 @@ TEST_CASE("the main's file answer moved into its frame is the same bytes as a pl
         CHECK(found == 1);
     }
 }
+#endif  // AXIS_CLUSTER

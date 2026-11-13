@@ -41,7 +41,11 @@ struct Group {
 };
 const Group kGroups[] = {
     {"BBS and sysop", {"bbs_name", "location", "sysop_handle", "sysop_real_name", "board_name", "ftn_address", "timezone", nullptr}},
-    {"Network", {"telnet_port", "public_host", "sessions", "modem_link", "lite_below_bps", nullptr}},
+    {"Network", {"telnet_port", "public_host", "sessions",
+#if AXIS_MODEMLINK
+                 "modem_link", "lite_below_bps",
+#endif
+                 nullptr}},
     {"Callers and limits", {"new_user_security", "nuv_yes", "nuv_no", "nuv_level", "daily_minutes", "idle_minutes", "ratio", "free_kb", nullptr}},
     {"Look", {"theme", "login_splash", nullptr}},
 };
@@ -51,6 +55,9 @@ bool inGroups(const std::string& k) {
             if (k == g.keys[i]) return true;
 #if AXIS_NETS
     if (k.rfind("net_", 0) == 0) return true;  // on the Sysop Net page (net_first_peer never shown in clear)
+#endif
+#if !AXIS_MODEMLINK
+    if (k == "modem_link" || k == "lite_below_bps") return true;  // kept as saved, shown nowhere: the modem link is not built in
 #endif
     return k.rfind("area", 0) == 0 || k.rfind("msgarea", 0) == 0 || k.rfind("door", 0) == 0 || k.rfind("menu.", 0) == 0 ||
            k == "messages_on" || k == "files_on" || k == "doors_on" || k == "setup_done" || k[0] == '#';
@@ -536,10 +543,12 @@ void SysopShell::settings(Layer& l) {
                            ask("New user password (Enter alone: none)", true, [this](const std::string& v) { did(run_("@NUP " + v)); });
                        }});
     l.items.push_back({"Clear the NUP", "anyone can apply", [this] { did(run_("@NUP")); }});
+#if AXIS_CLUSTER
     if (local_)  // this board's own key: set at the board, never over telnet
         l.items.push_back({"Cluster key", "(never shown; the same on every board)", [this] {
                                ask("Cluster key, 8+ (off: this board runs alone)", true, [this](const std::string& v) { did(run_("@CLUSTERKEY " + v)); });
                            }});
+#endif
 #if AXIS_DOSPROMPT
     l.items.push_back({"DOS prompt password", "(never shown)", [this] {
                            ask("New DOS prompt password", true, [this](const std::string& v) { did(run_("@DOSPASS " + v)); });
@@ -701,12 +710,16 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"Update No-IP now", "", show("NO-IP", "@NOIPNOW")});
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
+#if AXIS_MODEMLINK
     Item modemPage{"Modem", "LFD3K-SM radio callers", [this] { push("MODEM", [this](Layer& x) { modem(x); }); }};  // (last, online and here)
+#endif
 #if AXIS_NETS
     Item netPage{"Sysop Net", "board to board net", [this] { push("SYSOP NET", [this](Layer& x) { sysopNet(x); }); }};  // after Modem: no key moves
 #endif
     if (!local_) {  // the rest is for the sysop at the board: never over telnet
+#if AXIS_MODEMLINK
         l.items.push_back(modemPage);
+#endif
 #if AXIS_NETS
         l.items.push_back(netPage);
 #endif
@@ -724,7 +737,9 @@ void SysopShell::system(Layer& l) {
                            });
                        }});
     l.items.push_back({"Station", "sensors and relays", [this] { push("STATION", [this](Layer& x) { station(x); }); }});
+#if AXIS_MODEMLINK
     l.items.push_back(modemPage);
+#endif
 #if AXIS_NETS
     l.items.push_back(netPage);
 #endif
@@ -753,6 +768,7 @@ bool SysopShell::reloadIf(const std::string& title) {
     return true;
 }
 
+#if AXIS_MODEMLINK
 void SysopShell::modem(Layer& l) {
     std::string link = setting("modem_link"), lite = setting("lite_below_bps");
     l.items.push_back({"Take link reports from the modem", link == "0" ? "off" : "on", [this, link] {
@@ -789,6 +805,7 @@ void SysopShell::modem(Layer& l) {
     section("Modems on the LAN", found, searching ? "looking..." : "none found");
     l.items.push_back({"Look for modems again", "", [this] { did(run_("@MODEM scan")); }});
 }
+#endif  // AXIS_MODEMLINK
 
 // ---- look: the caller theme and the waiting screen's skin (blank: it follows the theme)
 void SysopShell::look(Layer& l) {

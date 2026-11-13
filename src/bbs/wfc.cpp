@@ -95,6 +95,7 @@ ArtValue wfcValues(const WfcSnapshot& s) {
         if (k == "PG") return s.page;
         if (k == "MB") return s.main ? "main board" : "follower board";
         if (k == "VN") return kAxisVersion;  // the firmware version
+#if AXIS_MODEMLINK  // (built without the modem link the |R? codes show nothing, as before the first report)
         if (k.size() == 2 && k[0] == 'R') {  // the newest LFD3K-SM radio link
             switch (k[1]) {
                 case 'L': return s.radio.label;
@@ -109,6 +110,7 @@ ArtValue wfcValues(const WfcSnapshot& s) {
                 default: break;
             }
         }
+#endif
         if (nodeCode(k)) {
             size_t i = k[1] - 'A';
             return i < s.nodes.size() ? nodeLine(s.nodes[i]) : "";

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_WEB  // a build without the web jobs has nothing here to test
 #include <string>
 
 #include "doctest.h"
@@ -24,3 +26,4 @@ TEST_CASE("nobody can ping the whole Discord through the board") {
     CHECK(l.find("@everyone") == std::string::npos);
     CHECK(l.find("@here") == std::string::npos);
 }
+#endif  // AXIS_WEB

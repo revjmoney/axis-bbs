@@ -226,3 +226,90 @@ TEST_CASE("features: a follower whose main has no file areas gets nothing, not a
     CHECK_FALSE(remote.rename("axis", "A.ZIP", "B.ZIP"));
 }
 #endif
+
+// ---- the cluster, the modem link and the web jobs (Task 5)
+#include "bbs/sdnotice.h"
+#include "bbs/setup_wizard.h"
+#include "bbs/wfc.h"
+#include "cluster/cluster.h"
+#include "net/telnet.h"
+
+#if !AXIS_CLUSTER
+TEST_CASE("features: built without the cluster the board runs alone") {
+    axis::cluster::Cluster c;  // the stand-in main.cpp compiles against (its pointer is always null)
+    CHECK(c.role() == axis::cluster::Role::Off);
+    CHECK(c.nodes().empty());
+    CHECK(c.numbers().empty());
+    CHECK(c.cardBoards().empty());
+    CHECK_FALSE(c.mainHasCard());
+    std::string reply;
+    CHECK_FALSE(c.request("V\x1f@WHO", reply));
+    CHECK_FALSE(c.requestTo("board", "F", reply));
+    CHECK(reply.empty());
+}
+#endif
+
+TEST_CASE("features: the modem's WILL 90 is taken only with the modem link built in") {
+    const std::string will90("\xFF\xFB\x5A", 3), do90("\xFF\xFD\x5A", 3), dont90("\xFF\xFE\x5A", 3);
+    axis::net::TelnetFilter t;
+    t.acceptLink(true);  // modem_link=1 in the settings
+    std::string app, reply;
+    t.fromNet((const uint8_t*)will90.data(), will90.size(), app, reply);
+    CHECK(reply == (AXIS_MODEMLINK ? do90 : dont90));  // off: refused like any option we do not use
+    CHECK(t.linkAgreed() == (AXIS_MODEMLINK == 1));
+    const std::string report = std::string("\xFF\xFA\x5A", 3) + "v=1 modem=LFD3K-SM kind=radio tier=SF7 bps=5469" + std::string("\xFF\xF0", 2);
+    app.clear();
+    reply.clear();
+    t.fromNet((const uint8_t*)report.data(), report.size(), app, reply);
+    CHECK(t.linkReports() == (AXIS_MODEMLINK ? 1u : 0u));
+    CHECK(app.empty());  // a plain telnet caller either way: no byte of it reaches the BBS
+}
+
+TEST_CASE("features: the WFC radio codes show the link only with the modem link built in") {
+    axis::bbs::WfcSnapshot s;
+    s.radio.label = "RADIO SF7";
+    s.radio.tier = "SF7";
+    auto v = axis::bbs::wfcValues(s);
+    CHECK(v("RL") == (AXIS_MODEMLINK ? "RADIO SF7" : ""));
+    CHECK(v("RT") == (AXIS_MODEMLINK ? "SF7" : ""));
+}
+
+TEST_CASE("features: the setup wizard asks for No-IP only with the web jobs built in") {
+    axis::bbs::SetupWizard w(axis::bbs::BbsConfig{}, [] { return 7u; });
+    bool asked = false;
+    for (const auto& f : w.fields()) asked = asked || f.key == std::string("noip_host");
+    CHECK(asked == (AXIS_WEB == 1));
+}
+
+TEST_CASE("features: the SD card notice") {
+    using axis::bbs::sdNoticeShown;
+    // a feature that needs the card built in, no card, running alone (or a follower of a main with no card): the notice
+    CHECK(sdNoticeShown(false, false, true));
+    // the same board as a follower of a main that has a card: none, the main serves it
+    CHECK_FALSE(sdNoticeShown(false, true, true));
+    // a card here: none
+    CHECK_FALSE(sdNoticeShown(true, false, true));
+    // built with no feature that needs the card (the no-sd preset): none, card or not
+    CHECK_FALSE(sdNoticeShown(false, false, false));
+    // this build's own answer follows its switches (the "needs_sd" features of installer/features.json)
+    const bool needsSd = AXIS_LORD || AXIS_SCRIPTS || AXIS_FILES || AXIS_ANSIVIEW || AXIS_TRANSFERS || AXIS_NETS;
+    CHECK(sdNoticeShown(false, false) == needsSd);
+    CHECK(std::string(axis::bbs::kSdNotice) == "YOU NEED AN SD CARD FOR FULL FUNCTIONS");
+}
+
+TEST_CASE("features: the telnet WFC draws the SD card notice when the snapshot has it") {
+    for (bool on : {false, true}) {
+        axis::bbs::BbsConfig c;
+        c.sysopHandle = "Rev";
+        axis::bbs::Node n(1, [] { return axis::bbs::SysInfo{}; }, c);
+        n.setWfcSnapshot([on] {
+            axis::bbs::WfcSnapshot s;
+            s.bbsName = "AXIS";
+            if (on) s.notice = axis::bbs::kSdNotice;
+            return s;
+        });
+        n.beginLocal(0);
+        n.openWfc(0);
+        CHECK((n.takeOutput().find("YOU NEED AN SD CARD FOR FULL FUNCTIONS") != std::string::npos) == on);
+    }
+}

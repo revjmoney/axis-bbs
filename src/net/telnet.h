@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <string>
 
+#include "bbs/features.h"
+
 namespace axis::net {
 
 // LFD3K-LINK, telnet option 90: the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM offers WILL 90, and once we
@@ -48,8 +50,8 @@ public:
     bool callerBinary() const { return callerBinary_; }  // caller said WILL BINARY: input is 8-bit clean
     int height() const { return height_; }
     // LFD3K-LINK: answer the modem's WILL 90 with DO 90 (off: DONT, as for any option we don't use). Off by default.
-    // Turned off during a call, further reports are ignored.
-    void            acceptLink(bool on) { linkOn_ = on; }
+    // Turned off during a call, further reports are ignored. Built without the modem link (AXIS_MODEMLINK) it stays off.
+    void            acceptLink(bool on) { linkOn_ = AXIS_MODEMLINK && on; }
     bool            linkAgreed() const { return linkAgreed_; }
     const LinkInfo& link() const { return link_; }
     uint32_t        linkReports() const { return linkSeq_; }  // one more for every report taken

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
+#include "bbs/features.h"
+#if AXIS_CLUSTER  // a build without the cluster runs alone: nothing here
 #include "cluster/cluster.h"
 
 #include "bbs/password.h"
@@ -424,6 +426,7 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
     links_.push_back({link, FrameReader(), 0});
     role_ = Role::Joining;
     mainIp_ = ip;
+    mainHasCard_ = theirSd;
     since_ = now;  // the main's Challenge comes first; take() answers it, then says Hello
     (void)from;
 }
@@ -885,3 +888,4 @@ void Cluster::tick(uint32_t now) {
 }
 
 }  // namespace axis::cluster
+#endif  // AXIS_CLUSTER

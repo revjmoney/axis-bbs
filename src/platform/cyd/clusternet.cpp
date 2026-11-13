@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_CLUSTER  // a build without the cluster runs alone: nothing here
 #include "platform/cyd/clusternet.h"
 
 #include <lwip/sockets.h>
@@ -112,3 +114,4 @@ void Esp32ClusterNet::close(int link) {
     it->second.c.stop();
     links_.erase(it);
 }
+#endif  // AXIS_CLUSTER

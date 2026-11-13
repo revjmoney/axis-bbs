@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_CLUSTER  // a build without the cluster has nothing here to test
 #include <string>
 #include <vector>
 
@@ -75,3 +77,4 @@ TEST_CASE("a busy main picks the lowest free node, never itself, a busy one or o
     CHECK(pickFreeNode(nodes, 3, {104}) == 0);  // node 3 is the main itself
     CHECK(pickFreeNode({node(1, 101, "Rev", "Menu")}, 1, {}) == 0);
 }
+#endif  // AXIS_CLUSTER

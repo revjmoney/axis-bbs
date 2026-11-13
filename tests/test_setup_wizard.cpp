@@ -3,8 +3,12 @@
 #include "doctest.h"
 #include "bbs/password.h"
 #include "bbs/setup_wizard.h"
+#include "bbs/features.h"
 
 using namespace axis::bbs;
+
+// the No-IP questions: 3, or none in a build without the web jobs (AXIS_WEB)
+constexpr int kNoIpQ = AXIS_WEB ? 3 : 0;
 
 static uint32_t rs = 7;
 static uint32_t rng() { return rs = rs * 1664525u + 1013904223u; }
@@ -18,7 +22,7 @@ static SetupWizard defaultsRun() {
     type(w, "Rev\r");
     type(w, "secret1\r");
     type(w, "secret1\r");
-    for (int i = 0; i < 15; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
+    for (int i = 0; i < 12 + kNoIpQ; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
     return w;
 }
 
@@ -65,7 +69,7 @@ TEST_CASE("wizard password echo is stars and the summary hides it") {
     type(w, "abcd");
     CHECK(w.takeOutput() == "****");
     type(w, "\rabcd\r");
-    for (int i = 0; i < 15; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
+    for (int i = 0; i < 12 + kNoIpQ; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
     CHECK(w.takeOutput().find("abcd") == std::string::npos);
 }
 
@@ -86,7 +90,7 @@ TEST_CASE("wizard password confirm mismatch restarts the password") {
     std::string out = w.takeOutput();
     CHECK(out.find("did not match") != std::string::npos);
     type(w, "good1\rgood1\r");
-    for (int i = 0; i < 15; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
+    for (int i = 0; i < 12 + kNoIpQ; i++) type(w, "\r");  // (11 settings + 3 optional No-IP questions + the optional NUP)
     type(w, "y");
     CHECK(checkPassword(w.result().sysopSalt, w.result().sysopHash, "good1"));
 }
@@ -115,7 +119,7 @@ TEST_CASE("wizard timezone by number") {
     w.begin();
     type(w, "Rev\rsecret1\rsecret1\r");
     // real name, bbs name, location, board name, public host, 3 No-IP questions, port
-    for (int i = 0; i < 9; i++) type(w, "\r");
+    for (int i = 0; i < 6 + kNoIpQ; i++) type(w, "\r");
     CHECK(w.takeOutput().find("PACIFIC") != std::string::npos);  // the list is shown
     type(w, "5\r");
     for (int i = 0; i < 5; i++) type(w, "\r");
@@ -134,12 +138,13 @@ TEST_CASE("wizard N at the summary cancels and nothing is applied") {
 
 TEST_CASE("wizard set and fields support the touch path") {
     SetupWizard w(BbsConfig{}, rng);
-    CHECK(w.fields().size() == 18);
+    CHECK(w.fields().size() == 15 + kNoIpQ);
     CHECK(w.defaultFor("bbs_name") == "Axis Underground CNC");
     w.set("bbs_name", "Shop BBS");
     CHECK(w.defaultFor("bbs_name") == "Shop BBS");
 }
 
+#if AXIS_WEB
 TEST_CASE("the wizard asks for optional No-IP dynamic DNS and keeps it out of the shared settings") {
     SetupWizard w(BbsConfig{}, rng);
     w.begin();
@@ -163,6 +168,7 @@ TEST_CASE("the wizard asks for optional No-IP dynamic DNS and keeps it out of th
     CHECK(w.result().publicHost == "axisbbs.ddns.net");
     CHECK(formatConfig(w.result()).find("noippass1") == std::string::npos);  // the password never goes in axis.ini
 }
+#endif
 
 TEST_CASE("a No-IP DDNS key updater name is never used as the public hostname") {
     SetupWizard w(BbsConfig{}, rng);
@@ -185,7 +191,7 @@ TEST_CASE("the wizard's last question sets a new user password, kept only as a h
     SetupWizard w(BbsConfig{}, rng);
     w.begin();
     type(w, "Rev\rsecret1\rsecret1\r");
-    for (int i = 0; i < 14; i++) type(w, "\r");  // everything up to the NUP
+    for (int i = 0; i < 11 + kNoIpQ; i++) type(w, "\r");  // everything up to the NUP
     CHECK(w.takeOutput().find("New user password") != std::string::npos);
     type(w, "elite\r");
     std::string out = w.takeOutput();
@@ -203,7 +209,7 @@ TEST_CASE("pressing Enter at the NUP question keeps the one already set") {
     SetupWizard w(c, rng);
     w.begin();
     type(w, "Rev\rsecret1\rsecret1\r");
-    for (int i = 0; i < 15; i++) type(w, "\r");
+    for (int i = 0; i < 12 + kNoIpQ; i++) type(w, "\r");
     type(w, "y");
     CHECK(w.result().nupHash == "def");
 }

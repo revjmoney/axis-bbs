@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
+#include "bbs/features.h"
+#if AXIS_WEB  // a build without the web jobs has no use for this
 #include "bbs/announce.h"
 
 namespace axis::bbs {
@@ -41,3 +43,4 @@ std::string announceLine(const std::string& e) {
 }
 
 }  // namespace axis::bbs
+#endif  // AXIS_WEB

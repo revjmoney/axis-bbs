@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
+#include "bbs/features.h"
+#if AXIS_CLUSTER  // a build without the cluster runs alone: nothing here
 #include "cluster/relay.h"
 
 #include <algorithm>
@@ -43,3 +45,4 @@ uint32_t pickFreeNode(const std::vector<NodeInfo>& nodes, int mainNumber, const 
 }
 
 }  // namespace axis::cluster
+#endif  // AXIS_CLUSTER

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")
+#include "bbs/features.h"
+#if AXIS_WEB  // the web task (Discord, dynamic DNS): web.h has the stand-ins
 #include "web.h"
 
 #include <HTTPClient.h>
@@ -361,3 +363,4 @@ String status() {
 }
 
 }  // namespace web
+#endif  // AXIS_WEB

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/setup_wizard.h"
+#include "bbs/features.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -53,9 +54,11 @@ const std::vector<SetupWizard::Field>& SetupWizard::fields() const {
         {"location", "Location", "city, state", false, true},
         {"board_name", "Board name on the LAN", "callers dial <name>.local", false, false},
         {"public_host", "Public hostname", "optional, for later internet access", false, true},
+#if AXIS_WEB  // No-IP is one of the web jobs: a build without them does not ask
         {"noip_host", "No-IP update hostname", "optional: your host, or all.ddnskey.com for a DDNS key", false, true},
         {"noip_user", "No-IP username", "your noip.com login or DDNS key username", false, true},
         {"noip_pass", "No-IP password", "your noip.com password or DDNS key password", true, true},
+#endif
         {"telnet_port", "Telnet port", "23 is standard", false, false},
         {"timezone", "Timezone", "number from the list", false, false},
         {"ftn_address", "FidoNet address", "99:1/0 is a private test zone", false, false},

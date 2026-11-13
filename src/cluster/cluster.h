@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "bbs/features.h"
 #include "cluster/protocol.h"
 
 namespace axis::cluster {
@@ -59,6 +60,7 @@ struct ChatLine {
     int         kind = 0, to = 0;  // node to node (bbs/node.h kNodeNote ...): the kind, and the node it is for (0 = all)
 };
 
+#if AXIS_CLUSTER
 class Cluster {
 public:
     Cluster(Net& net, std::string boardId) : net_(net), id_(std::move(boardId)) {}
@@ -70,6 +72,8 @@ public:
     const std::vector<int>&      numbers() const { return numbers_; }   // one per session (setSlots)
     uint32_t                     epoch() const { return epoch_; }
     uint32_t                     mainIp() const { return mainIp_; }
+    // follower: the main said it holds the SD card (its announcement's sd field, heard when this board joined)
+    bool                         mainHasCard() const { return mainHasCard_; }
     const std::vector<NodeInfo>& nodes() const { return nodes_; }
 
     // The shared cluster key and a source of random numbers (the board's hardware RNG). Without
@@ -200,6 +204,7 @@ private:
     std::vector<std::pair<std::string, std::string>> status_{{"", ""}};  // per session: handle, activity
     Role                  role_ = Role::Off;
     int                   number_ = 0, wantNumber_ = 0, lastMain_ = 0;
+    bool                  mainHasCard_ = false;
     uint32_t              epoch_ = 0, mainIp_ = 0, since_ = 0, lastBeat_ = 0, lastAnnounce_ = 0, minEpoch_ = 0, idleSince_ = 0;
     uint32_t              listenMs_ = 3000;  // how long discovery waits for a main before becoming one
     std::string           key_;
@@ -243,5 +248,33 @@ private:
     int                   restartNumber_ = 0;
     std::string           newKey_;
 };
+#else  // !AXIS_CLUSTER
+// Built without the cluster the board runs alone: main.cpp's `cluster` is a null pointer that never changes, so
+// every use of it folds away. This stand-in only gives that code something to compile against.
+class Cluster {
+public:
+    Role                         role() const { return Role::Off; }
+    int                          nodeNumber() const { return 0; }
+    bool                         mainHasCard() const { return false; }
+    const std::vector<int>&      numbers() const { return numbers_; }
+    const std::vector<NodeInfo>& nodes() const { return nodes_; }
+    std::vector<CardBoard>       cardBoards() const { return {}; }
+    void tick(uint32_t) {}
+    void setStatus(int, const std::string&, const std::string&) {}
+    void setFreeBytes(uint64_t) {}
+    void chat(const std::string&, const std::string&, int = 0) {}
+    void page(const std::string&, const std::string&, int = 0) {}
+    void send(const std::string&, int, int, const std::string&, int = 0) {}
+    bool request(const std::string&, std::string&, uint32_t = 4000) { return false; }
+    bool requestTo(const std::string&, const std::string&, std::string&, uint32_t = 2500) { return false; }
+    void sendUser(const std::string&) {}
+    void shareSettings() {}
+    void restartSoon(const std::string&) {}
+
+private:
+    std::vector<int>      numbers_;
+    std::vector<NodeInfo> nodes_;
+};
+#endif  // AXIS_CLUSTER
 
 }  // namespace axis::cluster

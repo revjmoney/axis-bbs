@@ -140,7 +140,7 @@ TEST_CASE("D lists the configured doors") {
     type(n, "d");
     std::string out = plain(n.takeOutput());
     CHECK((out.find("Legend of the Red Dragon") != std::string::npos) == (AXIS_LORD == 1));
-    CHECK(out.find("[1]") != std::string::npos);
+    CHECK((out.find("[1]") != std::string::npos) == (AXIS_LORD || AXIS_ANSIVIEW || AXIS_SCRIPTS));  // (no door built in: none listed)
     CHECK((out.find("ANSI Movies") != std::string::npos) == (AXIS_ANSIVIEW == 1));
     CHECK(n.state() == Node::State::Doors);
 }
@@ -180,6 +180,7 @@ TEST_CASE("a key that is not a door goes back to the menu") {
     CHECK(n.doorRequested().empty());
 }
 
+#if AXIS_LORD || AXIS_ANSIVIEW || AXIS_SCRIPTS  // (a build with no door at all has no door 1)
 TEST_CASE("after the door the caller is back at the menu") {
     Node n = loggedIn();
     type(n, "d1");
@@ -209,6 +210,7 @@ TEST_CASE("a long door does not count as idle time") {
     n.poll(20 * 60000 + 1000);
     CHECK(n.state() == Node::State::Menu);
 }
+#endif
 
 static SysInfo fullInfo() {
     SysInfo s = info();
@@ -351,6 +353,7 @@ TEST_CASE("a page asks for a message and sends it to the sysop") {
     CHECK(r.said.size() == 1);
 }
 
+#if AXIS_LORD || AXIS_ANSIVIEW || AXIS_SCRIPTS  // (a build with no door at all has no door 1)
 TEST_CASE("a door that's busy for another caller on this board sends the caller back politely") {
     Node n = loggedIn();
     type(n, "d1\r");
@@ -362,6 +365,7 @@ TEST_CASE("a door that's busy for another caller on this board sends the caller 
     CHECK(out.find("another caller") != std::string::npos);
     CHECK(out.find("Back from") == std::string::npos);  // they never went in
 }
+#endif
 
 TEST_CASE("with the login splash on, the RotatoCAM splash plays before the welcome, and a key skips it") {
     axis::bbs::BbsConfig c;
@@ -438,8 +442,10 @@ TEST_CASE("activity text follows the caller from login to a door and chat") {
     CHECK(n.activityText() == "logging in");
     type(n, "Rev\r");
     CHECK(n.activityText() == "main menu");
+#if AXIS_LORD || AXIS_ANSIVIEW  // (door 1 is LORD, else the movies)
     type(n, "d1\r");
     CHECK(n.activityText().rfind(AXIS_LORD ? "in Legend of the Red Dragon" : "in ANSI Movies", 0) == 0);
+#endif
 }
 
 TEST_CASE("a local sysop login starts at the menu as sysop, no handle or password asked") {
@@ -454,6 +460,7 @@ TEST_CASE("a local sysop login starts at the menu as sysop, no handle or passwor
     CHECK(plain(n.takeOutput()).find("Handle:") == std::string::npos);
 }
 
+#if AXIS_LORD || AXIS_ANSIVIEW || AXIS_SCRIPTS  // (a build with no door at all has no door 1)
 TEST_CASE("a door asked for at the board's own screen says to call in for doors") {
     Node n = loggedIn();
     type(n, "d1\r");
@@ -463,6 +470,7 @@ TEST_CASE("a door asked for at the board's own screen says to call in for doors"
     CHECK(n.state() == Node::State::Menu);
     CHECK(plain(n.takeOutput()).find("telnet") != std::string::npos);
 }
+#endif
 
 TEST_CASE("an edited main menu shows its items and only its hotkeys work") {
     axis::bbs::BbsConfig c;

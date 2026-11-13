@@ -1,6 +1,7 @@
 """Tests for tools/buildopts.py. Run: python -I -m unittest tools/test_buildopts.py"""
 import json
 import os
+import re
 import sys
 import unittest
 
@@ -46,6 +47,14 @@ class BuildOptsTest(unittest.TestCase):
     def test_every_feature_has_needs_sd_flag(self):
         for f in FEATURES:
             self.assertIn(f["needs_sd"], (True, False), f["id"])
+
+    def test_features_h_needs_sd_matches_the_list(self):
+        # AXIS_NEEDS_SD in src/bbs/features.h (the SD card notice) names exactly the needs_sd features' defines
+        with open(os.path.join(ROOT, "src", "bbs", "features.h"), encoding="utf-8") as fh:
+            line = next(l for l in fh if l.startswith("#define AXIS_NEEDS_SD "))
+        named = set(re.findall(r"AXIS_[A-Z]+", line.split(" ", 2)[2]))
+        want = {f["define"] for f in FEATURES if f.get("needs_sd") and not f.get("reserved")}
+        self.assertEqual(named, want)
 
     def test_files_off_alone_names_dependents(self):
         with self.assertRaises(ValueError) as cm:

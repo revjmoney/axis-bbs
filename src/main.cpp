@@ -42,6 +42,7 @@
 #include "bbs/viewcache.h"
 #include "bbs/features.h"
 #include "bbs/script.h"
+#include "bbs/sdnotice.h"
 #include "lord/game.h"
 #include "bbs/ansiterm.h"
 #include "bbs/ledsignal.h"
@@ -199,8 +200,12 @@ static SdFileLibrary                            sdFiles;  // the file areas on t
 #endif
 static axis::bbs::UserStore                     users;    // callers' accounts, internal flash /users.dat
 static axis::bbs::WifiPicker                    picker;   // the touch WiFi picker (no saved network, or @WIFIPICK)
+#if AXIS_CLUSTER
 static Esp32ClusterNet                          clusterNet;  // the boards on this LAN acting as one BBS
 static std::unique_ptr<axis::cluster::Cluster>  cluster;
+#else  // built without the cluster: the board runs alone, and every "if (cluster)" folds away
+static constexpr axis::cluster::Cluster*        cluster = nullptr;
+#endif
 static std::string                              lastStatus;
 static String                                   pageText;   // the last page for the sysop ("handle: text")
 static uint32_t                                 pageAtMs = 0;
@@ -244,7 +249,9 @@ static axis::bbs::UserSync                      userSync;     // which users sti
 #if AXIS_FILES
 static std::map<int, std::unique_ptr<axis::cluster::FileServer>> fileServers;  // main: one per follower
 #endif
+#if AXIS_CLUSTER
 static std::map<int, std::unique_ptr<axis::cluster::DoorFsServer>> doorServers;
+#endif
 static bool servedRequest = false;  // the main answered a follower this loop turn
 static uint32_t shotDoneMs = 0;      // the last @SHOT (it stalls the loop ~13 s on purpose)
 
@@ -465,11 +472,13 @@ static void listAddLocal(const std::string& n, const std::string& line) {
 // posting is done by whichever board holds the webhook (set it on a headless node): a follower
 // hands its news to the main, the main sends it to every board, and the board with the webhook posts.
 constexpr int kAnnounceKind = 21, kAnnounceAllKind = 22;
+#if AXIS_WEB  // (built without the web jobs there is no Discord: the news stays on the board)
 static void announceOut(const std::string& line) {
     if (!cluster) web::announce(String("**") + boardCfg->bbsName.c_str() + "** " + line.c_str());
     else if (asFollower()) cluster->send("", kAnnounceKind, 0, line);
     else cluster->send("", kAnnounceAllKind, 0, line);
 }
+#endif
 
 // The follower's theme art, at most kArtCacheCap bytes in all (bbs/artfetch.h).
 constexpr size_t kArtCacheCap = 16384;
@@ -804,7 +813,10 @@ static uint32_t lastServedMs = 0;  // main: a follower's door files
 #if AXIS_SD_POOL && !AXIS_FILES
 #error "AXIS_SD_POOL needs the file areas (AXIS_FILES)"
 #endif
-#if AXIS_FILES  // the file areas (features.h): without them a follower has no file menu and the main answers "0"
+#if AXIS_SD_POOL && !AXIS_CLUSTER
+#error "AXIS_SD_POOL needs the cluster (AXIS_CLUSTER): it pools the followers' cards"
+#endif
+#if AXIS_FILES && AXIS_CLUSTER  // the file areas (features.h): without them a follower has no file menu and the main answers "0"
 static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string& req, std::string& reply) {
     return cluster && cluster->request(req, reply);
 });
@@ -822,7 +834,7 @@ static std::string cardLabel(const std::string& id) {  // "node 2" (its lowest n
             if (n.id == id && (!low || n.number < low)) low = n.number;
     return low ? "node " + std::to_string(low) : "board " + id;
 }
-#if AXIS_FILES
+#if AXIS_FILES && AXIS_CLUSTER  // (the pool is the main's and its card followers')
 static std::vector<axis::cluster::PoolCard> poolCards() {
     std::vector<axis::cluster::PoolCard> v;
     if (storageHasSd()) v.push_back({"local", "this board", &sdFiles, storageFreeBytes(), true});
@@ -848,7 +860,7 @@ static axis::cluster::MirrorJob         mirrorJob(pooledFiles, [] {
     return v;
 });
 #endif
-#endif  // AXIS_FILES
+#endif  // AXIS_FILES && AXIS_CLUSTER
 static Mode                                     afterPick = Mode::Normal;
 static size_t                                   pendingSeen = 0;
 // the door the caller is in, if any (the screen copy is freed meanwhile)
@@ -1111,8 +1123,10 @@ static void logEvent(const String& what) {
     if (!serialWfc) Serial.printf("axis: %s\n", what.c_str());  // (not while the serial WFC owns the screen)
     if (panelSession && panelSession->authed() && panelClient.connected())  // the control panel's event feed
         panelClient.print(String("EVT ") + stamp + " " + what + "\n");
+#if AXIS_WEB
     std::string a = axis::bbs::announceLine(what.c_str());  // scene news for the Discord channel
     if (!a.empty()) announceOut(a);
+#endif
 }
 
 // users.dat written a block at a time (the whole file as one string is more than the main can spare)
@@ -1143,6 +1157,13 @@ static void saveUsers() {
 }
 
 static bool asFollower() { return cluster && cluster->role() == axis::cluster::Role::Follower; }
+
+// The SD card notice (bbs/sdnotice.h): no card here, a feature that needs one built in, and not a follower of a main
+// that has one. While the cluster is still finding its main it waits (a follower of a card main would only flash it).
+static bool sdNotice() {
+    if (cluster && (cluster->role() == axis::cluster::Role::Discovering || cluster->role() == axis::cluster::Role::Joining)) return false;
+    return axis::bbs::sdNoticeShown(storageHasSd(), asFollower() && cluster->mainHasCard());
+}
 
 // The message base: on the main (SD card, or internal flash), and the main's over the link on every
 // follower, so the whole cluster is one conversation.
@@ -1196,7 +1217,9 @@ static axis::bbs::MessageStore& callerMessages() {
 // own card with its card followers'; a board on its own has just its card.
 #if AXIS_FILES
 static axis::bbs::FileLibrary& callerFiles() {
+#if AXIS_CLUSTER
     if (asFollower()) return remoteFiles;
+#endif
 #if AXIS_SD_POOL
     if (cluster && cluster->role() == axis::cluster::Role::Main && !cluster->cardBoards().empty()) return pooledFiles;
 #endif
@@ -1305,8 +1328,10 @@ static void pushBoardToCallers(const std::shared_ptr<const axis::bbs::BbsConfig>
     one(node.get());
     one(localNode.get());
     for (size_t i = 0; i < sessions.size(); i++) one(sessions[i].node.get());
+#if AXIS_MODEMLINK
     for (size_t i = 0; i < sessions.size(); i++)  // modem_link off: calls already on stop taking link reports
         if (WifiStream* l = sessionLine(i)) l->acceptLink(boardCfg->modemLink);
+#endif
 }
 static std::unique_ptr<axis::bbs::AnsiTerm> localTerm;    // (only while the console is open: ~4 KB)
 static std::unique_ptr<AnsiScreen>          localScreen;
@@ -1406,6 +1431,7 @@ static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot
     auto        at = axis::bbs::drawWfc(wfcArt.empty() ? std::string_view(wfcBuiltin, sizeof kWfcCydAns - 1) : std::string_view(wfcArt), s, *t);
     if (spots) *spots = std::move(at);
     if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
+    else if (!s.notice.empty()) t->feed("\x1b[24;2H\x1b[0;1;37;41m " + s.notice + " \x1b[0m");  // the SD card notice (40 of 45 cells)
     return t;
 }
 
@@ -1819,6 +1845,7 @@ static void sendApp(const std::string& s) {
 
 // The LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM: the newest link report on this board (the WFC's |R? codes),
 // the last 10 radio calls (newest first) and the modems found on the LAN by mDNS (the sysop menu's System > Modem, @MODEM).
+#if AXIS_MODEMLINK
 struct RadioCall {
     std::string who, tiers;
     uint32_t    secs = 0, bytes = 0;
@@ -1876,6 +1903,11 @@ static void modemSearchPoll() {  // never waits: the results once the search is 
     if (localNode) localNode->sysopReload("MODEM");
     if (boardShell && boardShell->reloadIf("MODEM")) screenDirty = true;
 }
+#else  // built without the modem link: no radio calls kept and no mDNS search for modems
+static bool modemSearchRunning() { return false; }
+static void modemSearchForget() {}
+static void modemSearchPoll() {}
+#endif
 
 static void hangUp() {
     noteDoing("idle");
@@ -1889,6 +1921,7 @@ static void hangUp() {
         if (!loginGuard.allowed(ip, millis()))
             logEvent("login: " + line->remoteIP().toString() + " locked out for " + String(loginGuard.secondsLeft(ip, millis()) / 60) + " min");
     }
+#if AXIS_MODEMLINK
     if (line && node && node->viaModem()) {  // a radio call: into the Modem page's last 10
         std::string who = node->handle();
         for (char& c : who)
@@ -1897,6 +1930,7 @@ static void hangUp() {
                                                node->link().retrains});
         if (radioCalls.size() > 10) radioCalls.resize(10);
     }
+#endif
     line.reset();  // closes the connection
     logEvent("hang up" + heapText() + " " + String(node && !node->handle().empty() ? node->handle().c_str() : "") + " after " +
              String((millis() - callStartMs) / 1000) + "s");
@@ -1911,6 +1945,7 @@ static void hangUp() {
 }
 
 // A caller passed through to another node (the main's own node was busy).
+#if AXIS_CLUSTER
 class ClientPipe : public axis::cluster::Pipe {
 public:
     explicit ClientPipe(WiFiClient c) : c_(c) {}
@@ -1978,6 +2013,10 @@ static void pumpPassing() {
         passing.erase(passing.begin() + (long)i);
     }
 }
+#else  // built without the cluster: no other node to pass a caller to
+static bool passCaller(WiFiClient&) { return false; }
+static void pumpPassing() {}
+#endif
 
 static bool        axisProbeSoon = false;
 static uint32_t   axisProbeAt = 0;
@@ -3375,7 +3414,11 @@ static bool netStart() {
 
 // From the loop: starts the net on the main, pumps both sessions, dials on schedule, keeps the /net files.
 static void netTick() {
+#if AXIS_CLUSTER
     bool mainBoard = cluster && (cluster->role() == axis::cluster::Role::Main || cluster->role() == axis::cluster::Role::Off);
+#else
+    bool mainBoard = true;  // built without the cluster: the board runs alone, so it is its own main
+#endif
     bool up = netHost && boardCfg->netSysop && mainBoard;
     if (up != netSharedUp && cluster && cluster->role() == axis::cluster::Role::Main) {  // followers list the areas by it
         netSharedUp = up;
@@ -3665,7 +3708,9 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
             w.nodes.push_back({sessionNumber((int)i), n ? n->handle() : std::string(), n ? "Online" : "", n ? n->linkShown() : ""});
         }
     }  // (in a cluster the label rides in each board's activity: serviceSession)
+#if AXIS_MODEMLINK
     w.radio = axis::bbs::wfcRadio(lastRadio, lastRadioWho);
+#endif
     const auto& ev = events.lines();
     for (auto it = ev.rbegin(); it != ev.rend() && w.events.size() < 8; ++it) w.events.push_back(*it);
     rollDayCounters();
@@ -3678,6 +3723,7 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     w.ramFreeKb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
     w.uptimeS = millis() / 1000;
     w.main = !asFollower();
+    if (sdNotice()) w.notice = axis::bbs::kSdNotice;
     return w;
 }
 
@@ -3686,7 +3732,9 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     if (panelConsoleNew) line.reset(new PanelStream());
     else line.reset(new WifiStream(incoming));
     line->tapNode = sessionNumber(curSession);
+#if AXIS_MODEMLINK
     line->acceptLink(boardCfg->modemLink);  // the LFD3K-SM modem's link reports (LFD3K-LINK, telnet option 90)
+#endif
     callStartMs = millis();
     logEvent((panelConsoleNew ? String("sysop console from the panel") : "call from " + line->remoteIP().toString()) + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
              " KB, largest " + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024) + " KB)");
@@ -4117,8 +4165,10 @@ static void callerInput(const std::string& app) {
         if (wizard->finished()) {
             cfgSet(wizard->result());
             bool ok = configSave(*boardCfg);
+#if AXIS_WEB  // (built without the web jobs the wizard does not ask for No-IP)
             if (!wizard->noip().host.empty())  // the No-IP login stays in this board's own storage
                 web::setNoip(String(wizard->noip().host.c_str()) + "|" + wizard->noip().user.c_str() + "|" + wizard->noip().pass.c_str());
+#endif
             logEvent(String("setup ") + (ok ? "saved" : "SAVE FAILED") + " over telnet");
             char b[220];
             snprintf(b, sizeof b,
@@ -4181,6 +4231,9 @@ static bool sdFormatNow(String& result, bool& ok, bool force = false) {
 }
 
 // The cluster: find the other AXIS boards on this LAN (or become main), keep our node number.
+#if !AXIS_CLUSTER
+static void startCluster() {}  // built without the cluster: the board runs alone, it never looks for or answers another
+#else
 static void startCluster() {
     if (cluster) return;
     clusterNet.begin();
@@ -4461,6 +4514,7 @@ static void startCluster() {
     cluster->setKey(key.c_str());
     cluster->start(millis(), previous);
 }
+#endif  // AXIS_CLUSTER
 
 // No screen to pick WiFi on: a hotspot, AXIS-SETUP, with one web page (setupportal.h). The
 // password goes from the form straight to wifiJoin and the board's saved networks, never logged.
@@ -4865,6 +4919,9 @@ static void runCommand(const String& cmd, Print& out) {
                 out.printf("axis: node %d ip %s handle '%s' activity '%s'%s\n", n.number, IPAddress(n.ip).toString().c_str(),
                               n.handle.c_str(), n.activity.c_str(), n.number == cluster->nodeNumber() ? " (this board)" : "");
     } else if (cmd == "@MODEM" || cmd == "@MODEM scan") {  // LFD3K-SM radio callers now, the last 10, the modems on the LAN
+#if !AXIS_MODEMLINK
+        out.println("axis: the radio modem link is not in this firmware");
+#else
         if (cmd == "@MODEM scan" || (!modemSearch && millis() - modemSearchMs > 60000u) || !modemSearchMs) modemSearchStart();
         for (size_t i = 0; i < sessions.size(); i++) {
             axis::bbs::Node* n = sessionNode(i);
@@ -4879,6 +4936,7 @@ static void runCommand(const String& cmd, Print& out) {
             out.printf("call|%s|%s|%u|%u|%d\n", c.who.c_str(), c.tiers.c_str(), (unsigned)c.secs, (unsigned)c.bytes, (int)c.retrains);
         for (auto& m : foundModems) out.printf("found|%s|%s\n", m.name.c_str(), m.ip.c_str());
         if (modemSearch) out.println("search|on");
+#endif
     } else if (cmd == "@CARDS") {  // the SD cards in the pool: free space, up or down (bench)
         if (storageHasSd()) out.printf("axis: card on this board, %u MB free\n", (unsigned)(storageFreeBytes(true) >> 20));
         else out.println("axis: no SD card on this board");
@@ -5070,6 +5128,7 @@ static void runCommand(const String& cmd, Print& out) {
                       (unsigned)(storageFreeBytes() >> 20), WiFi.localIP().toString().c_str());
         out.print(line);
         out.print(axis::bbs::diagFields(sample).c_str());
+        if (sdNotice()) out.print(" sd=missing");  // the SD card notice (bbs/sdnotice.h)
         out.print('\n');
     } else if (cmd.startsWith("@UEDIT ")) {  // "@UEDIT handle|field|value": realname location email tagline security handle
         String a = cmd.substring(7);
@@ -5276,6 +5335,7 @@ static void runCommand(const String& cmd, Print& out) {
             writeWarrior(u.handle);
             out.printf("axis: added %s\n", u.handle.c_str());
         }
+#if AXIS_WEB
     } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
         out.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
     } else if (cmd == "@DDNS now") {  // bench: make the web task's DNS check due on its next turn
@@ -5288,6 +5348,10 @@ static void runCommand(const String& cmd, Print& out) {
         out.printf("axis: web: %s\n", web::status().c_str());
     } else if (cmd.startsWith("@NOIP")) {  // "@NOIP host|username|password": No-IP dynamic DNS; alone: off
         out.println(web::setNoip(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: noip saved" : "axis: @NOIP host|username|password");
+#else  // built without the web jobs: their settings stay saved as they are, unused
+    } else if (cmd.startsWith("@DISCORD") || cmd.startsWith("@DDNS") || cmd.startsWith("@NOIP") || cmd.startsWith("@WEB")) {
+        out.println("axis: the web jobs (Discord, No-IP, dynamic DNS) are not in this firmware");
+#endif
     } else if (cmd == "@LOGCLEAR") {  // wipe the event log (screen, flash file, its old copy) and the page shown on the WFC
         events = axis::bbs::EventLog();
         ::remove("/littlefs/events.log");
@@ -5295,6 +5359,7 @@ static void runCommand(const String& cmd, Print& out) {
         pageText = "";
         screenDirty = true;
         out.println("axis: event log cleared");
+#if AXIS_WEB
     } else if (cmd == "@WEBPING") {
         out.printf("axis: webping %s\n", web::ping().c_str());
     } else if (cmd == "@WEB") {
@@ -5302,6 +5367,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@WEBTEST") {
         web::announce(String("**") + boardCfg->bbsName.c_str() + "** is online. Telnet in and feed the scene.");
         out.println("axis: test announcement queued");
+#endif
     } else if (cmd == "@LED") {  // status light (bench): blue LED on the ring, RGB on a CYD
         ledReport = true;
     } else if (cmd == "@LOG") {  // the event log, newest last (bench)
@@ -5392,6 +5458,9 @@ static void runCommand(const String& cmd, Print& out) {
         // "@CLUSTERKEY secret": the key every board of this BBS shares (8+ characters, set the same on
         // each board); "@CLUSTERKEY off" forgets it (the board runs alone); alone, says whether one is set.
         // Per board, in flash: it never goes out with the settings and is never shown or logged.
+#if !AXIS_CLUSTER
+        out.println("axis: the cluster is not in this firmware: this board runs alone");  // (a saved key stays as it is)
+#else
         String key = cmd.length() > 12 ? cmd.substring(12) : String();
         key.trim();
         Preferences p;
@@ -5412,6 +5481,7 @@ static void runCommand(const String& cmd, Print& out) {
             logEvent(String("sysop: cluster key ") + (key == "off" ? "cleared" : "set") + (ok ? "" : " (SAVE FAILED)"));
             out.println(ok ? "axis: cluster key saved" : "axis: cluster key SAVE FAILED");
         }
+#endif
     } else if (cmd == "@AXIS" || cmd.startsWith("@AXIS ")) {  // "@AXIS host:port" adds a board, "@AXIS" lists, "@AXIS probe" asks one
         String rest = cmd.length() > 6 ? cmd.substring(6) : String();
         rest.trim();
@@ -5713,6 +5783,7 @@ static void ledUpdate() {
 
 // The LFD3K-SM modem's newest link report for this caller, into its node (before any door, movie or transfer takes the
 // turn, so a retrain during one still counts).
+#if AXIS_MODEMLINK
 static uint32_t lastRadioMs = 0;
 static void takeLinkReport() {
     axis::net::LinkInfo li;
@@ -5732,6 +5803,9 @@ static void takeLinkReport() {
     }
     if (node && node->linkRedrawDue(millis())) screenDirty = true;  // the tier changed (at most every 5 s), not every report
 }
+#else
+static void takeLinkReport() {}  // built without the modem link: a radio caller is a plain telnet caller
+#endif
 
 // One session's turn: its caller, and its own movie or transfer when it has one.
 static void serviceSession(int i) {

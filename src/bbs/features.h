@@ -43,3 +43,7 @@
 // Dependencies (the "needs" lists in installer/features.json).
 static_assert(!AXIS_ANSIVIEW || AXIS_FILES, "AXIS_ANSIVIEW needs AXIS_FILES");
 static_assert(!AXIS_TRANSFERS || AXIS_FILES, "AXIS_TRANSFERS needs AXIS_FILES");
+
+// 1 when the build has any feature that keeps its files on the SD card (the "needs_sd" ones in installer/features.json;
+// tools/test_buildopts.py checks the two lists agree). Such a board without a card shows the SD card notice (sdnotice.h).
+#define AXIS_NEEDS_SD (AXIS_LORD || AXIS_SCRIPTS || AXIS_FILES || AXIS_ANSIVIEW || AXIS_TRANSFERS || AXIS_NETS)

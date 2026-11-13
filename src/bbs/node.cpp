@@ -1479,6 +1479,7 @@ void Node::wfcDraw(const WfcSnapshot& s, bool clear) {
     if (heldCr) out_ += '\r';
     out_ += RST;
     if (!clear) out_ += "\x1b[J";  // whatever was below (a coming soon line)
+    if (!s.notice.empty()) out_ += std::string("\x1b[24;2H\x1b[0;1;37;41m ") + s.notice + " " + RST;  // the bottom row, whatever the art
 }
 
 void Node::openWfc(uint32_t nowMs) {
