@@ -3727,6 +3727,40 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     return w;
 }
 
+#if !AXIS_CLUSTER
+// Built without the cluster: a chat line, a sysop page or a node line goes straight to this board's console and
+// sessions, as the cluster's onChat does on a main (startCluster). Node lines never go back to the sender.
+static void deliverHere(const axis::cluster::ChatLine& l) {
+    if (l.page) {
+        pageText = String(l.handle.c_str()) + ": " + l.text.c_str();
+        pageAtMs = millis();
+        logEvent("PAGE from " + String(l.handle.c_str()) + " on node " + String(l.node) + ": " + l.text.c_str());
+        screenDirty = true;
+    }
+    if (localNode) {
+        if (l.kind >= 2) {
+            if (!l.to) localNode->nodeIn(l.kind, l.node, l.handle, l.text);  // the console gets broadcasts
+        } else {
+            localNode->chatIn(l.node, l.handle, l.text, l.page);
+        }
+        localFeed();
+    }
+    for (size_t i = 0; i < sessions.size(); i++)
+        if (sessionNode(i) && sessionLine(i)) {
+            if (l.kind >= 2) {
+                int me = sessionNumber((int)i);
+                if (me == l.node || (l.to && l.to != me)) continue;
+                sessionNode(i)->nodeIn(l.kind, l.node, l.handle, l.text);
+            } else {
+                sessionNode(i)->chatIn(l.node, l.handle, l.text, l.page);
+            }
+            std::string out = sessionNode(i)->takeOutput();
+            sessionLine(i)->write((const uint8_t*)out.data(), out.size());
+            sessionLine(i)->flush();
+        }
+}
+#endif
+
 static bool panelConsoleNew = false;  // answerIn: the next session is the panel's own sysop console
 static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     if (panelConsoleNew) line.reset(new PanelStream());
@@ -3752,6 +3786,10 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setChat(
             [slot](const std::string& text, bool page) {  // through the main to every node (or just this board)
                 if (!node) return;
+#if !AXIS_CLUSTER
+                deliverHere({sessionNumber(slot), node->handle(), text, page});
+                return;
+#endif
                 if (cluster) page ? cluster->page(node->handle(), text, slot) : cluster->chat(node->handle(), text, slot);
                 else
                     for (size_t i = 0; i < sessions.size(); i++)
@@ -3774,6 +3812,10 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
             });
         node->setNodeLink([slot](int kind, int to, const std::string& text) {  // notes, broadcasts, split chat keys
             if (!node) return;
+#if !AXIS_CLUSTER
+            deliverHere({sessionNumber(slot), node->handle(), text, kind == 1, kind, to});
+            return;
+#endif
             if (cluster) {
                 cluster->send(node->handle(), kind, to, text, slot);
                 return;
@@ -4597,6 +4639,10 @@ static void startLocal() {
     localNode->setChat(
         [](const std::string& text, bool page) {
             if (!localNode) return;
+#if !AXIS_CLUSTER
+            deliverHere({localNode->number(), localNode->handle(), text, page});
+            return;
+#endif
             if (cluster) page ? cluster->page(localNode->handle(), text) : cluster->chat(localNode->handle(), text);
             else localNode->chatIn(1, localNode->handle(), text, page);
         },
@@ -4604,6 +4650,12 @@ static void startLocal() {
             std::vector<axis::bbs::Node::WhoLine> v;
             if (cluster)
                 for (auto& n : cluster->nodes()) v.push_back({n.number, n.handle, n.activity});
+#if !AXIS_CLUSTER  // (built without the cluster: this board's own sessions)
+            for (size_t i = 0; i < sessions.size(); i++) {
+                axis::bbs::Node* n = sessionNode(i);
+                v.push_back({sessionNumber((int)i), n ? n->handle() : "", n ? "Online" : "", n ? n->linkShown() : ""});
+            }
+#endif
             return v;
         });
     localNode->beginLocalMenu(millis());
