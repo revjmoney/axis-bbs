@@ -24,11 +24,18 @@ while :; do
     GHP=$base/tree
     export GHP
     old=
-    if git fetch -q --no-tags --depth=1 origin "+refs/heads/gh-pages:refs/ghpages/old" 2>/dev/null; then
+    # ls-remote exits 2 when the branch is not there; any other failure stops here.
+    have=0
+    git ls-remote --exit-code --heads origin gh-pages > /dev/null || have=$?
+    if [ "$have" -eq 0 ]; then
+        git fetch -q --no-tags --depth=1 origin "+refs/heads/gh-pages:refs/ghpages/old"
         old=$(git rev-parse refs/ghpages/old)
         git archive "$old" | (cd "$GHP" && tar -xf -)
-    else
+    elif [ "$have" -eq 2 ]; then
         echo "no gh-pages branch yet, starting one"
+    else
+        echo "ghpages_publish: cannot reach origin" >&2
+        exit 1
     fi
     "$@"
     if [ ! -f "$GHP/index.html" ]; then

@@ -47,7 +47,9 @@ class KitTest(unittest.TestCase):
         with zipfile.ZipFile(self.out) as z:
             text = z.read("README.txt").decode("utf-8")
         self.assertIn("AXIS Micro BBS", text)
-        self.assertNotIn("—", text)
+        self.assertIn("scripts/", text)
+        self.assertNotIn("themes/", text)  # only the folders this kit has
+        self.assertNotIn("\u2014", text)
         self.assertNotIn("--", text)
 
     def test_empty_stage_is_refused(self):

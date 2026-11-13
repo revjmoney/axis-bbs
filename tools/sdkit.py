@@ -21,16 +21,18 @@ sys.path.insert(0, HERE)
 # staged folder -> folder on the card (see install_cyd.install_card)
 CARD = (("themes", "themes"), ("lord", "doors/lord"), ("scripts", "scripts"))
 
-README = """AXIS Micro BBS SD card kit
+README_HEAD = """AXIS Micro BBS SD card kit
 by Rev. J. Money / jmscnc.com
 
 For a first install. Copy everything in this zip to the root of the board's SD card
 (FAT32), keeping the folders:
-  themes/      screen sets the board can show
-  doors/lord/  LORD game data, when this kit has it
-  scripts/     programs for the Scripts door and SCRIPT: menu commands
-Nothing here holds users, messages or settings; those live on the board.
 """
+README_ROWS = {
+    "themes": "  themes/      screen sets the board can show\n",
+    "doors/lord": "  doors/lord/  LORD game data\n",
+    "scripts": "  scripts/     programs for the Scripts door and SCRIPT: menu commands\n",
+}
+README_TAIL = "Nothing here holds users, messages or settings; those live on the board.\n"
 
 
 def write_kit(stage_dir, out_zip):
@@ -50,7 +52,8 @@ def write_kit(stage_dir, out_zip):
         raise ValueError("nothing staged in %s: no themes, LORD data or scripts" % stage_dir)
     tmp = out_zip + ".part"
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("README.txt", README)
+        cards = [c for _s, c in CARD if any(a.startswith(c + "/") for _f, a in entries)]
+        z.writestr("README.txt", README_HEAD + "".join(README_ROWS[c] for c in cards) + README_TAIL)
         for full, arc in entries:
             z.write(full, arc)
     os.replace(tmp, out_zip)
