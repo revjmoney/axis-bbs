@@ -65,6 +65,7 @@
 #include "bbs/transferjob.h"
 #include "bbs/users.h"
 #include "bbs/wfc.h"
+#include "bbs/wfcanim.h"
 #include "bbs/wifipicker.h"
 #include "bbs/node.h"
 #include "bbs/setup_gate.h"
@@ -1253,6 +1254,11 @@ static axis::bbs::WfcSnapshot             wfcShown;            // the values on 
 static uint32_t                           wfcDrawnMs = 0, wfcSoonUntil = 0;  // last expanded; a "coming soon" line until then
 static bool                               wfcStale = true;     // draw it at the next turn (another screen was up, a key was tapped)
 static bool                               wfcOnPanel = false;  // the panel shows the WFC (@SHOT draws it again band by band)
+// The panel WFC moving against burn-in ("wfc_anim", bbs/wfcanim.h): it holds a 2,160 B copy of the cells only while it moves,
+// and stands still (that copy given back) while a caller is on, when memory runs short, or when it is turned off.
+static axis::bbs::WfcAnim wfcAnim;
+static const char*        wfcAnimWhy = "";  // why it stands still ("" = it may move)
+static uint32_t           wfcAnimFrameMs = 0, wfcAnimFrameUs = 0, wfcAnimTryMs = 0, wfcAnimSlowUs = 0, wfcAnimDrawUs = 0, wfcAnimBands = 0;
 static std::string                        wfcArt, wfcArtFolder;  // the theme's art while the WFC is up, and the skin folder it came from
 static bool                               wfcArtLoaded = false;  // wfcArt is current (empty: the theme has none, the built-in art is drawn from flash)
 static const int                          kWfcLeft = 2;        // 45 cells of 7 pixels: 2 spare pixels on the left, 3 on the right
@@ -1388,6 +1394,17 @@ static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot
 
 static bool wfcSoon() { return wfcSoonUntil && (int32_t)(millis() - wfcSoonUntil) < 0; }
 
+// The panel WFC may move: it is turned on, nobody is online on this board, and the heap's largest block is not short
+// (below 40 KB it stops, above 56 KB it may go again).
+static bool wfcAnimWanted() {
+    static bool low = false;
+    uint32_t    largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    if (largest < 40960u) low = true;
+    else if (largest > 57344u) low = false;
+    wfcAnimWhy = !boardHasPanel() ? "no panel" : !boardCfg->wfcAnim ? "turned off" : callersOnline() ? "a caller is on" : low ? "low memory" : "";
+    return !*wfcAnimWhy;
+}
+
 // The WFC on the board: false when it is unchanged. The terminal is drawn through the band (320x40, 4 rows of cells) straight
 // to the panel, top to bottom, and goes again, so the loop's stack only holds the snapshot.
 static bool drawWfc() {
@@ -1404,6 +1421,7 @@ static bool drawWfc() {
     if (screenBandsInit()) t = wfcTerm(s, soon, &spots);  // (the band is made at boot: this only tries again if that failed)
     LGFX_Sprite* band = screenBand();
     if (!t || !band) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
+        wfcAnim.unload();
         auto& g = screenGfx();
         g.fillScreen(pc(pal::BLACK));
         g.setFont(&fonts::Font0);
@@ -1412,9 +1430,12 @@ static bool drawWfc() {
         wfcOnPanel = false;
         return true;
     }
+    bool anim = wfcAnimWanted() && wfcAnim.load(*t);  // moving: its cells again (what is moving carries on)
+    if (!anim) wfcAnim.unload();
     tft.startWrite();  // (one bus hold for the six bands)
     for (int row = 0; row < 24; row += 4) {
-        AnsiScreen::renderCellsBand(*band, *t, row, 4);
+        if (anim) AnsiScreen::renderAnimBand(*band, wfcAnim, row / 4, now);
+        else AnsiScreen::renderCellsBand(*band, *t, row, 4);
         band->pushSprite(0, row * 10);
         tft.waitDMA();  // the next band is drawn into the same buffer
     }
@@ -1424,6 +1445,63 @@ static bool drawWfc() {
     wfcStale = false;
     wfcOnPanel = true;
     return true;
+}
+
+// Each loop turn: the moving WFC's next frame (about 15 a second), only the bands that move pushed. Stops at once (back to
+// the still screen) when a caller comes on, memory runs short or it is turned off; starts again through drawWfc.
+static void wfcAnimTick() {
+    uint32_t now = millis();
+    if (!wfcAnim.loaded()) {
+        if (wfcOnPanel && mode == Mode::Normal && now - wfcAnimTryMs > 2000u) {
+            wfcAnimTryMs = now;
+            if (wfcAnimWanted()) wfcStale = true, screenDirty = true;  // the next drawWfc loads it (or, no room, tries later)
+        }
+        return;
+    }
+    if (!wfcOnPanel || mode != Mode::Normal) {  // another screen is up: it starts again when the WFC is back
+        wfcAnim.unload();
+        return;
+    }
+    if (!wfcAnimWanted()) {  // the still screen, now
+        wfcAnim.unload();
+        wfcStale = true;
+        screenDirty = true;
+        wfcAnimTryMs = now;
+        return;
+    }
+    // a frame is drawn two bands a loop turn (so the loop keeps going), every band of it at the same moment (no tearing
+    // between bands): the next frame starts once all of this one is out
+    static uint8_t  pending = 0;
+    static uint32_t frameAt = 0;
+    if (!pending) {
+        if (now - wfcAnimFrameMs < 66u) return;  // about 15 frames a second
+        wfcAnimFrameMs = now;
+        wfcAnim.step(now);
+        pending = wfcAnim.bandsDue(now);
+        frameAt = now;
+    }
+    now = frameAt;
+    LGFX_Sprite* band = screenBand();
+    if (!pending || !band) return;
+    uint8_t due = 0;
+    for (int b = 0, k = 0; b < axis::bbs::WfcAnim::kBands && k < 2; b++)
+        if (pending & (1u << b)) due |= (uint8_t)(1u << b), k++;
+    pending &= (uint8_t)~due;
+    uint32_t t0 = micros();
+    wfcAnimDrawUs = wfcAnimBands = 0;
+    tft.startWrite();
+    for (int b = 0; b < axis::bbs::WfcAnim::kBands; b++) {
+        if (!(due & (1u << b))) continue;
+        uint32_t d0 = micros();
+        AnsiScreen::renderAnimBand(*band, wfcAnim, b, now);
+        wfcAnimDrawUs += micros() - d0;
+        wfcAnimBands++;
+        band->pushSprite(0, b * axis::bbs::WfcAnim::kBandH);
+        tft.waitDMA();
+    }
+    tft.endWrite();
+    wfcAnimFrameUs = micros() - t0;
+    if (wfcAnimFrameUs > wfcAnimSlowUs) wfcAnimSlowUs = wfcAnimFrameUs;
 }
 
 // A node's details (tap its line on the WFC): who, where, how long, and a KICK for the sysop.
@@ -5259,8 +5337,49 @@ static void runCommand(const String& cmd, Print& out) {
         if (wfcOnPanel && !screenSprite()) wfc = wfcTerm(wfcShown, wfcSoon());
         screenShot([] {  // the cluster keeps its heartbeat while the screen streams out
             if (cluster) cluster->tick(millis());
-        }, wfc.get());
+        }, wfc.get(), wfc && wfcAnim.loaded() ? &wfcAnim : nullptr);
         shotDoneMs = millis();  // (the loop's stall check comes next: this one was on purpose)
+    } else if (cmd == "@WFCFX" || cmd.startsWith("@WFCFX ")) {  // bench: the panel WFC's animation (wfc_anim)
+        // @WFCFX: what it is doing. @WFCFX <effect> [part] [hold=<ms>]: start one now (held that far in), @WFCFX run: let a
+        // held one go, @WFCFX calm: a still spell now, @WFCFX hang|hacky|vanna: what the stick figure does next
+        String arg = cmd.substring(6);
+        arg.trim();
+        arg.toLowerCase();
+        uint32_t now = millis();
+        if (arg == "run") wfcAnim.hold(-1);
+        else if (arg == "calm") wfcAnim.calm(now);
+        else if (arg == "hang" || arg == "hacky" || arg == "vanna")  // the stick figure: what it does next (it walks there first)
+            wfcAnim.walkerDo(arg == "hang" ? axis::bbs::WfcAnim::Hang : arg == "hacky" ? axis::bbs::WfcAnim::Hacky : axis::bbs::WfcAnim::Vanna, now);
+        else if (arg.length()) {
+            int    sp = arg.indexOf(' ');
+            String name = sp < 0 ? arg : arg.substring(0, sp), rest = sp < 0 ? String() : arg.substring(sp + 1);
+            int    fx = axis::bbs::WfcAnim::fxByName(name.c_str()), part = -1, hold = -1, h = rest.indexOf("hold=");
+            if (h >= 0) hold = rest.substring(h + 5).toInt(), rest = rest.substring(0, h);
+            rest.trim();
+            if (rest.length()) part = rest.toInt();
+            if (fx < 0) {
+                out.print("axis: wfcfx: effects are");
+                for (int i = 0; i < axis::bbs::WfcAnim::kFxCount; i++) out.printf(" %s", axis::bbs::WfcAnim::fxName(i));
+                out.println();
+            } else if (!wfcAnim.loaded()) {
+                out.printf("axis: wfcfx: the WFC is still (%s)\n", *wfcAnimWhy ? wfcAnimWhy : "not on the panel");
+            } else if (!wfcAnim.force(fx, now, part)) {
+                out.println("axis: wfcfx: nothing on the screen for that one");
+            } else {
+                wfcAnim.hold(hold);
+            }
+        }
+        out.printf("axis: wfcfx %s parts=%d runs=%d still=%d ox=%d held=%d frame_us=%u draw_us=%u bands=%u slowest_us=%u",
+                   wfcAnim.loaded() ? "moving" : *wfcAnimWhy ? wfcAnimWhy : "still", wfcAnim.parts(), wfcAnim.runs(), (int)wfcAnim.still(),
+                   wfcAnim.ox(), (int)wfcAnim.held(), (unsigned)wfcAnimFrameUs, (unsigned)wfcAnimDrawUs, (unsigned)wfcAnimBands, (unsigned)wfcAnimSlowUs);
+        for (int i = 0; i < axis::bbs::WfcAnim::kActs; i++) {
+            const auto& a = wfcAnim.act(i);
+            if (a.on) out.printf(" %s@%d/%u", axis::bbs::WfcAnim::fxName(a.fx), (int)(now - a.start), (unsigned)a.dur);
+        }
+        if (wfcAnim.jiggle().on) out.printf(" jiggle=%s", axis::bbs::WfcAnim::wigName(wfcAnim.jiggle().fx));
+        static const char* const kDoing[] = {"walking", "hanging out", "hacky sack", "showing a letter"};
+        if (wfcAnim.walker().on) out.printf(" figure=%s flipped=%d", kDoing[wfcAnim.walker().doing & 3], wfcAnim.flipped());
+        out.println();
     } else if (cmd == "@SPRITEFAIL") {  // bench: the next screen away from the WFC finds no room for the full copy
         screenFailNext();
         out.println("axis: the next full screen copy fails");
@@ -5996,6 +6115,7 @@ void loop() {
         if (mode == Mode::Normal) screenDirty = true;
     }
     if (screenDirty) drawScreen();
+    wfcAnimTick();  // the panel WFC's next frame (stands still while anyone is online)
     if (!servedRequest) delay(5);  // a follower's request is answered before the nap
     servedRequest = false;
 }

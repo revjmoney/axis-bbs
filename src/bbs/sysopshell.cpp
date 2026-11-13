@@ -43,7 +43,7 @@ const Group kGroups[] = {
     {"BBS and sysop", {"bbs_name", "location", "sysop_handle", "sysop_real_name", "board_name", "ftn_address", "timezone", nullptr}},
     {"Network", {"telnet_port", "public_host", "sessions", "modem_link", "lite_below_bps", nullptr}},
     {"Callers and limits", {"new_user_security", "nuv_yes", "nuv_no", "nuv_level", "daily_minutes", "idle_minutes", "ratio", "free_kb", nullptr}},
-    {"Look", {"theme", "login_splash", nullptr}},
+    {"Look", {"theme", "login_splash", "wfc_anim", nullptr}},
 };
 bool inGroups(const std::string& k) {
     for (auto& g : kGroups)
@@ -785,6 +785,8 @@ void SysopShell::look(Layer& l) {
     std::string ws = setting("wfc");
     const char* w = theme::isClassicWfc(ws) ? "classic" : theme::knownLook(ws);
     l.items.push_back({"Waiting screen skin", w ? w : "follows the theme", [this] { push("WFC SKIN", [this](Layer& x) { lookPick(x, "wfc", true); }); }});
+    bool anim = setting("wfc_anim") != "0";  // the board's own panel only (against burn-in): telnet and serial WFCs stay still
+    l.items.push_back({"Waiting screen animation", anim ? "on" : "off", [this, anim] { did(run_(std::string("@SET wfc_anim=") + (anim ? "0" : "1"))); }});
 }
 
 void SysopShell::lookPick(Layer& l, const std::string& key, bool follow) {

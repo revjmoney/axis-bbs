@@ -1055,7 +1055,7 @@ bool Node::onlySwitches(const BbsConfig& a, const BbsConfig& b) {
            a.ftnAddress == b.ftnAddress && a.newUserSecurity == b.newUserSecurity && a.dailyMinutes == b.dailyMinutes &&
            a.idleMinutes == b.idleMinutes && a.sessions == b.sessions && a.nuvYes == b.nuvYes && a.nuvNo == b.nuvNo && a.nuvLevel == b.nuvLevel &&
            a.ratio == b.ratio && a.freeKb == b.freeKb && a.theme == b.theme && a.wfc == b.wfc && a.loginSplash == b.loginSplash &&
-           a.sysopTelnet == b.sysopTelnet && a.setupDone == b.setupDone && a.unknown == b.unknown &&
+           a.sysopTelnet == b.sysopTelnet && a.wfcAnim == b.wfcAnim && a.setupDone == b.setupDone && a.unknown == b.unknown &&
            std::equal(a.areas.begin(), a.areas.end(), b.areas.begin(), b.areas.end(), area) &&
            std::equal(a.msgAreas.begin(), a.msgAreas.end(), b.msgAreas.begin(), b.msgAreas.end(), area) &&
            std::equal(a.mainMenu.begin(), a.mainMenu.end(), b.mainMenu.begin(), b.mainMenu.end(), item);
