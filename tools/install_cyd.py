@@ -169,7 +169,7 @@ def curl(url, dest):
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.isfile(dest) and os.path.getsize(dest) > 0:
         return True
-    r = subprocess.run(["curl.exe", "-fL", "--retry", "2", "--retry-delay", "2", "-o", dest, url],
+    r = subprocess.run([shutil.which("curl.exe") or "curl", "-fL", "--retry", "2", "--retry-delay", "2", "-o", dest, url],
                        capture_output=True, text=True)
     if r.returncode != 0 or not os.path.isfile(dest) or os.path.getsize(dest) == 0:
         say(f"  download failed: {url}")
