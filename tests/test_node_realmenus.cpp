@@ -230,3 +230,49 @@ TEST_CASE("shipped menus: * on the rumors menu prints one rumor under the prompt
     r.type("q");
     CHECK(r.has("Messages Menu"));
 }
+
+TEST_CASE("an older card LOGIN.SEQ (no pauses after last callers and stats) still holds each screen") {
+    Real r;
+    std::string old = shipped("LOGIN.SEQ");
+    for (const char* s : {"LASTCALLS|1|1|0|", "USERSTATS|1|1|0|"}) {
+        size_t at = old.find(s);
+        REQUIRE(at != std::string::npos);
+        old.replace(at + std::string(s).find('|'), 5, "|0|0|");
+    }
+    REQUIRE(old.find("LASTCALLS|0|0|0|") != std::string::npos);
+    r.n.setMenus([old](const std::string& f) { return f == "LOGIN.SEQ" ? old : shipped(f); });
+    r.toPassword();
+    r.type("pass1234\r");
+    r.type(" ");   // the poster
+    r.type("1");   // normal login
+    r.type(" ");   // the news
+    CHECK(r.has("Spindle Kid"));  // last callers, held though ONELINERS clears the screen itself
+    CHECK(r.n.state() == Node::State::SeqPause);
+    r.type(" ");
+    CHECK(r.has("hello from a oneliner"));
+    r.type(" ");
+    CHECK(r.has("KB free"));  // the stats, held though MAIN clears
+    CHECK(r.n.state() == Node::State::SeqPause);
+    r.type(" ");
+    CHECK(r.has("Messages Menu"));
+}
+
+TEST_CASE("the WFC logon (beginLocal, then the WFC up): Space shows the poster, not skipped behind the WFC") {
+    Real r;
+    r.n.beginLocal(0);
+    r.n.openWfc(0);
+    r.term.feed(r.n.takeOutput());
+    r.type(" ");
+    CHECK(r.has("SAYLOR POSTER"));
+    CHECK(r.has("press a key"));
+    r.type(" ");
+    CHECK(r.has("Normal Login"));
+}
+
+TEST_CASE("a rumor stored with \"rumor: \" on it is not shown as \"rumor: rumor:\"") {
+    Real r;
+    r.lists["rumors"] = {"rumor: the jar is full"};
+    r.toMain();
+    CHECK(r.has("rumor: the jar is full"));
+    CHECK(!r.has("rumor: rumor:"));
+}
