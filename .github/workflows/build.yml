@@ -30,6 +30,10 @@ jobs:
         run: python3 tools/art/check_menus.py
       - name: Build options
         run: python3 -I tools/test_buildopts.py
+      - name: Installer icons
+        run: python3 -I tools/test_icons.py
+      - name: Installer page logic
+        run: node --test site/installer-logic.test.mjs
 
   firmware:
     runs-on: ubuntu-latest
