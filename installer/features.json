@@ -1,0 +1,13 @@
+[
+  {"id": "lord", "define": "AXIS_LORD", "label": "LORD", "about": "Legend of the Red Dragon, the door game, played in the board's own interpreter.", "needs": [], "needs_sd": true},
+  {"id": "scripts", "define": "AXIS_SCRIPTS", "label": "Scripts", "about": "Script doors and event scripts loaded from the SD card.", "needs": [], "needs_sd": true},
+  {"id": "dosprompt", "define": "AXIS_DOSPROMPT", "label": "DOS prompt", "about": "The DOS prompt door for running small DOS programs.", "needs": [], "needs_sd": false},
+  {"id": "files", "define": "AXIS_FILES", "label": "File areas", "about": "File areas with listings, descriptions and the file library.", "needs": [], "needs_sd": true},
+  {"id": "ansiview", "define": "AXIS_ANSIVIEW", "label": "ANSI viewer", "about": "Plays ANSI art packs straight from ZIP files in the file areas.", "needs": ["files"], "needs_sd": true},
+  {"id": "transfers", "define": "AXIS_TRANSFERS", "label": "Uploads and downloads", "about": "XMODEM and ZMODEM uploads and downloads for the file areas.", "needs": ["files"], "needs_sd": true},
+  {"id": "cluster", "define": "AXIS_CLUSTER", "label": "Cluster", "about": "Link several boards into one BBS with a main and followers.", "needs": [], "needs_sd": false},
+  {"id": "modemlink", "define": "AXIS_MODEMLINK", "label": "Radio modem link", "about": "Talk to the LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM over the serial port.", "needs": [], "needs_sd": false},
+  {"id": "web", "define": "AXIS_WEB", "label": "Web and TLS", "about": "The web page, secure connections and dynamic DNS updates.", "needs": [], "needs_sd": false},
+  {"id": "nets", "define": "AXIS_NETS", "label": "Sysop Net", "about": "board to board message nets", "needs": [], "needs_sd": true},
+  {"id": "gpio", "define": "AXIS_GPIO", "label": "GPIO", "about": "Pin control from the BBS. Reserved, not selectable yet.", "needs": [], "needs_sd": false, "reserved": true}
+]

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include "lord/game.h"
+#include "bbs/features.h"
+#if AXIS_LORD
 
 #include <cstring>
 #include <ctime>
@@ -1605,3 +1607,5 @@ bool NativeLord::step() {
 
 }  // namespace lord
 }  // namespace axis
+
+#endif  // AXIS_LORD

@@ -194,6 +194,7 @@ add_executable(axis_tests
     tests/test_net_core.cpp
     tests/test_net_session.cpp
     tests/test_net_record_log.cpp
+    tests/test_features.cpp
     tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
@@ -225,3 +226,19 @@ if(WIN32)
 endif()
 
 target_compile_definitions(axiscore PUBLIC AXIS_SD_POOL=1)  # the PC build and tests cover the pool build too
+
+# Switched-off core for host tests: cmake -DAXIS_OFF=lord,scripts (same names as the firmware build).
+set(AXIS_OFF "" CACHE STRING "Comma list of features to switch off (see installer/features.json)")
+if(AXIS_OFF)
+  execute_process(COMMAND python -I ${CMAKE_SOURCE_DIR}/tools/buildopts.py flags --off ${AXIS_OFF}
+                  OUTPUT_VARIABLE AXIS_OFF_FLAGS RESULT_VARIABLE AXIS_OFF_RC OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT AXIS_OFF_RC EQUAL 0)
+    message(FATAL_ERROR "AXIS_OFF refused: ${AXIS_OFF}")
+  endif()
+  separate_arguments(AXIS_OFF_FLAGS)
+  target_compile_options(axiscore PUBLIC ${AXIS_OFF_FLAGS})
+  target_compile_definitions(axis_tests PRIVATE AXIS_TEST_SWITCHED=1)
+  if(AXIS_OFF_FLAGS MATCHES "AXIS_TRANSFERS=0")  # the XMODEM/ZMODEM test tool has nothing to link
+    set_target_properties(xfertest PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  endif()
+endif()

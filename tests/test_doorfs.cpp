@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_CLUSTER  // a build without the cluster has nothing here to test
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -215,3 +217,4 @@ TEST_CASE("after a write or a record lock the next read sees fresh data") {
     CHECK(std::string(b, 4) == "ccbb");
     rfs.close(h);
 }
+#endif  // AXIS_CLUSTER

@@ -1,3 +1,5 @@
 # ANSI art is raw bytes: CR LF pairs are part of the drawing, so git must never convert them
 *.ans -text
 *.ANS -text
+# The build scripts run straight from the site: sh needs LF line ends on every checkout (the Windows CI too)
+*.sh text eol=lf

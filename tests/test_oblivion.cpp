@@ -4,6 +4,7 @@
 #include <string>
 
 #include "doctest.h"
+#include "bbs/features.h"
 #include "bbs/node.h"
 #include "bbs/password.h"
 #include "bbs/theme.h"
@@ -71,14 +72,14 @@ TEST_CASE("after login the Oblivion main menu: a boxed two-column list and the b
     o.type("l");
     std::string out = plain(o.type("Rev\r"));
     CHECK(out.find("M A I N") != std::string::npos);
-    CHECK(out.find("File Vaults") != std::string::npos);
+    CHECK((out.find("File Vaults") != std::string::npos) == (AXIS_FILES == 1));
     CHECK(out.find("Message Bases") != std::string::npos);
     CHECK(out.find("User Settings") != std::string::npos);
     CHECK(out.find("[Main Menu]") != std::string::npos);
     out = plain(o.type("i"));  // a command, then just the prompt again (O/2 style), ? for the menu
     CHECK(out.find("[Main Menu]") != std::string::npos);
     CHECK(out.find("File Vaults") == std::string::npos);
-    CHECK(plain(o.type("?")).find("File Vaults") != std::string::npos);
+    CHECK(plain(o.type("?")).find(AXIS_FILES ? "File Vaults" : "Message Bases") != std::string::npos);
 }
 
 TEST_CASE("the Axis look still opens on the drippy login screen") {

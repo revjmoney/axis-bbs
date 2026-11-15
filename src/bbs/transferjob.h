@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "bbs/features.h"
 #include "bbs/filelib.h"
 #include "bbs/uploadproc.h"
 #include "door/bytestream.h"
@@ -22,6 +23,7 @@ struct TransferRequest {
 
 std::string cleanUploadName(const std::string& name);  // upper case, safe characters, no path
 
+#if AXIS_TRANSFERS
 class TransferJob {
 public:
     TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info = {});
@@ -61,5 +63,27 @@ private:
     bool                           ok_ = false, done_ = false, gotFile_ = false, kept_ = false, wantWorkspace_ = false;
     uint32_t                       lastDraw_ = 0;
 };
+#else
+// Downloads and uploads are left out of this build (features.h): transferjob.cpp, uploadproc.cpp and XMODEM/ZMODEM
+// compile to nothing. The Files menu offers no transfer, so the host never makes one of these.
+class TransferJob {
+public:
+    bool                   step(uint32_t) { return false; }
+    bool                   needsWorkspace() const { return false; }
+    void                   beginProcessing(uint8_t*, size_t, uint8_t* = nullptr) {}
+    bool                   waiting = false;
+    uint32_t               waitSince = 0;
+    bool                   ok() const { return false; }
+    uint32_t               bytes() const { return 0; }
+    uint32_t               size() const { return 0; }
+    const std::string&     savedName() const { return note_; }
+    const std::string&     note() const { return note_; }
+    const TransferRequest& request() const { return req_; }
+
+private:
+    TransferRequest req_;
+    std::string     note_;
+};
+#endif
 
 }  // namespace axis::bbs

@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 // The ANSI viewer's SD view cache: one uncompressed copy per pack, made a step at a time while the board
 // is idle, played with no inflate window held.
+#include "bbs/features.h"
+#if AXIS_ANSIVIEW  // a build that leaves the ANSI viewer out has nothing here to test
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -289,3 +291,5 @@ TEST_CASE("view cache: a pack with a damaged piece gets no copy and is not tried
     runPass(g);
     CHECK(s.creates == creates);  // remembered until a reboot
 }
+
+#endif  // AXIS_ANSIVIEW

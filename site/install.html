@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIS Micro BBS Installer</title>
+<meta name="description" content="Flash the AXIS Micro BBS firmware onto a CYD or a bare ESP32, and the LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM onto a Heltec radio, straight from Chrome or Edge. By Rev. J. Money / jmscnc.com.">
+<meta name="theme-color" content="#07070b">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="icons/install.svg" type="image/svg+xml">
+<link rel="stylesheet" href="install.css">
+</head>
+<body>
+<div class="ax">
+
+<header class="top">
+  <a href="index.html" class="logo-link"><img class="logo" src="media/simian-logo.png" alt="Simian Tactical Unit monkey logo" width="112" height="120"></a>
+  <div class="top-text">
+    <h1 class="title">AXIS MICRO BBS INSTALLER</h1>
+    <p class="cyan names">AXIS Micro BBS firmware and the LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM</p>
+    <p class="dim">by Rev. J. Money / <a class="amber" href="https://jmscnc.com">jmscnc.com</a></p>
+    <div class="lights" id="lights" aria-hidden="true">
+      <span class="led">OH</span><span class="led">CD</span><span class="led">SD</span><span class="led">RD</span><span class="led">HS</span><span class="led">EC</span><span class="led">DC</span><span class="led">AA</span>
+    </div>
+  </div>
+</header>
+
+<div class="marquee" aria-hidden="true"><span id="marquee">AXIS MICRO BBS INSTALLER  ///  plug in, pick a build, press INSTALL  ///</span></div>
+
+<section class="sd-notice" aria-labelledby="sd-head">
+  <img class="ico x3" src="icons/sd.svg" alt="" width="48" height="48">
+  <div>
+    <h2 id="sd-head">YOU NEED AN SD CARD FOR FULL FUNCTIONS</h2>
+    <p>Features marked <span class="sd-badge">SD</span> keep their data on the card in the BBS board. A board in a cluster whose main has a card gets every function through the main, so it needs no card of its own. A board that runs alone with no card: pick the <b>No SD card</b> build below.</p>
+  </div>
+</section>
+
+<p class="browser-note" id="browser-note" hidden>This browser cannot flash a board. Open this page in <b>Chrome</b> or <b>Edge</b> on a Windows or Linux computer. You can still pick a build here and use the command for your own PC at the bottom.</p>
+
+<section class="release-row">
+  <img class="ico x2" src="icons/release.svg" alt="" width="32" height="32">
+  <label for="release">Release</label>
+  <select id="release" disabled><option>loading...</option></select>
+  <span class="dim" id="release-note"></span>
+</section>
+
+<section aria-labelledby="step1-head" id="step1">
+  <h2 class="step" id="step1-head"><img class="ico x2" src="icons/step1.svg" alt="" width="32" height="32">1. What are you flashing?</h2>
+  <div class="targets" role="radiogroup" aria-labelledby="step1-head">
+    <label class="card"><input type="radio" name="target" value="board" checked>
+      <img class="ico x3" src="icons/cyd.svg" alt="" width="48" height="48">
+      <span><b>AXIS Micro BBS</b><br><span class="dim">the BBS board</span></span></label>
+    <label class="card" data-radio><input type="radio" name="target" value="radio">
+      <img class="ico x3" src="icons/heltec_v4.svg" alt="" width="48" height="48">
+      <span><b>LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM</b><br><span class="dim">the radio</span></span></label>
+    <label class="card" data-radio><input type="radio" name="target" value="both">
+      <img class="ico x3" src="icons/both.svg" alt="" width="48" height="48">
+      <span><b>Both</b><br><span class="dim">the BBS board first, then plug in the radio</span></span></label>
+  </div>
+  <p class="radio-wait" id="radio-wait" hidden>Radio images come with the first LFD3K-SM release.</p>
+  <div class="pick2">
+    <div class="pick board-pick" id="board-pick">
+      <div class="amber">Which BBS board?</div>
+      <label class="card"><input type="radio" name="board" value="cyd" checked>
+        <img class="ico x3" src="icons/cyd.svg" alt="" width="48" height="48">
+        <span><b>CYD</b> <span class="dim">ESP32 with the 2.8" touch screen: the WFC, touch setup and the local console</span></span></label>
+      <label class="card"><input type="radio" name="board" value="esp32">
+        <img class="ico x3" src="icons/esp32.svg" alt="" width="48" height="48">
+        <span><b>Bare ESP32</b> <span class="dim">no screen: one status LED, setup over its AXIS-SETUP hotspot. The installer sets it to headless after flashing. Later: a screw terminal breakout for sensors and blinkies</span></span></label>
+    </div>
+    <div class="pick radio-pick" id="radio-pick">
+      <div class="cyan">Which radio?</div>
+      <label class="card" data-radio><input type="radio" name="radio" value="v4" checked>
+        <img class="ico x3" src="icons/heltec_v4.svg" alt="" width="48" height="48">
+        <span><b>Heltec V4</b> <span class="dim">LoRa radio, SX1262 with the GC1109 front end (about +12 dB). With the multimode layout (modem, Simian Radar, RNode, Meshtastic) only the modem slot is written; otherwise the modem alone</span></span></label>
+      <label class="card" data-radio><input type="radio" name="radio" value="v3">
+        <img class="ico x3" src="icons/heltec_v3.svg" alt="" width="48" height="48">
+        <span><b>Heltec V3</b> <span class="dim">SX1262, no front end, the modem alone</span></span></label>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="step2-head" id="step2">
+  <h2 class="step" id="step2-head"><img class="ico x2" src="icons/step2.svg" alt="" width="32" height="32">2. Pick a build <span class="dim">(for the AXIS Micro BBS board)</span></h2>
+  <p class="mem-note" id="mem-note">Leaving features out frees mostly <b>flash</b> (room for new features), not idle free memory. What does go away are the <b>busy-time memory spikes</b> in the last column.</p>
+  <div class="ptable" role="radiogroup" aria-label="Builds" id="ptable">
+    <div class="prow phead"><div>Build</div><div>What's in it</div><div class="r">Flash used</div><div class="r">Flash freed</div><div>Memory spikes gone</div></div>
+  </div>
+  <p class="dim small" id="cost-note"></p>
+  <div class="custom-box">
+    <button type="button" class="custom-btn" id="custom-btn" aria-expanded="false"><img class="ico x2" src="icons/custom.svg" alt="" width="32" height="32"> Custom build: tick your own features</button>
+    <span class="dim">GitHub Actions builds it in a few minutes; asking needs a GitHub account.</span>
+    <div class="custom-panel" id="custom-panel" hidden>
+      <p class="dim">Every feature starts on. Untick what you want left out. <span id="custom-release"></span></p>
+      <div class="feature-grid" id="feature-grid"></div>
+      <p class="custom-status" id="custom-status" aria-live="polite"></p>
+      <div class="custom-actions" id="custom-actions"></div>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="step3-head">
+  <h2 class="step" id="step3-head"><img class="ico x2" src="icons/step3.svg" alt="" width="32" height="32">3. Install</h2>
+  <p id="summary" class="summary"></p>
+  <button type="button" class="btn" id="install-btn"><img class="ico x2" src="icons/install.svg" alt="" width="32" height="32"> INSTALL</button>
+  <span class="dim after-btn">the browser asks which USB port; Chrome or Edge on Windows or Linux</span>
+  <p class="dim small">An update writes the firmware only: users, messages and settings stay. A board that does not run AXIS yet gets a first install, after a warning.</p>
+  <p class="small" id="kit-line"></p>
+
+  <div class="warn-box" id="warn-box" hidden role="alertdialog" aria-labelledby="warn-head">
+    <h3 id="warn-head">FIRST INSTALL</h3>
+    <p class="warn-big" id="warn-text"></p>
+    <p id="warn-why"></p>
+    <p id="warn-kit"></p>
+    <label class="confirm"><input type="checkbox" id="warn-check"> I understand. Replace everything on this board.</label>
+    <div><button type="button" class="btn-danger" id="warn-go" disabled>REPLACE EVERYTHING AND INSTALL</button> <button type="button" class="btn-plain" id="warn-cancel">Cancel, write nothing</button></div>
+  </div>
+
+  <div class="next-box" id="next-box" hidden>
+    <p>The board is done. Unplug it, plug in the <b>radio</b>, then press CONTINUE and pick its port.</p>
+    <button type="button" class="btn" id="next-go">CONTINUE WITH THE RADIO</button> <button type="button" class="btn-plain" id="next-cancel">Cancel, skip the radio</button>
+  </div>
+
+  <div class="flash" id="flash">
+    <div class="amber flash-title" id="flash-title">FLASHING: waiting for INSTALL</div>
+    <div class="bar" id="bar"></div>
+    <div class="dim stage" id="stage">waiting for INSTALL</div>
+    <div class="log" id="log" role="log" aria-live="polite"></div>
+  </div>
+</section>
+
+<section class="pc" aria-labelledby="pc-head">
+  <h2 id="pc-head" class="amber">Or build it on your own PC</h2>
+  <p class="dim">One command downloads every tool it is missing, builds what you picked above and flashes it. It shows the same warning before a first install.</p>
+  <p class="os">Windows (PowerShell)</p>
+  <pre class="cmd" id="cmd-win"></pre>
+  <p class="os">Linux (sh)</p>
+  <pre class="cmd" id="cmd-linux"></pre>
+</section>
+
+<footer class="foot">
+  AXIS Micro BBS and the LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM by Rev. J. Money / <a href="https://jmscnc.com">jmscnc.com</a>. Free software, GPLv3 or later. <a href="https://github.com/revjmoney/axis-bbs">Source on GitHub</a>.<br>
+  LoRa&reg; is a registered trademark of Semtech Corporation.
+</footer>
+
+</div>
+<script src="installer-logic.js"></script>
+<script type="module" src="install.js"></script>
+</body>
+</html>

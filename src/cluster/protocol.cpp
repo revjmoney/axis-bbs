@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
+#include "bbs/features.h"
+#if AXIS_CLUSTER  // a build without the cluster runs alone: nothing here
 #include "cluster/protocol.h"
 
 namespace axis::cluster {
@@ -67,3 +69,4 @@ bool FrameReader::next(Frame& type, std::string& body) {
 }
 
 }  // namespace axis::cluster
+#endif  // AXIS_CLUSTER

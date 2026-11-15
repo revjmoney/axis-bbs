@@ -9,7 +9,11 @@
 #pragma once
 #include <Arduino.h>
 
+#include "bbs/features.h"
+
 namespace web {
+
+#if AXIS_WEB
 
 void begin();                                     // load the settings
 void tick();                                      // the main loop, often: starts the task when a check or a line is waiting
@@ -31,5 +35,22 @@ void ddnsSoon();                                  // bench: the next tick hands 
 void noipNow();                                   // bench: update No-IP right now (blocking)
 String status();                                  // for the serial console: what's set (no secrets)
 String ping();                                    // bench: the public IP over HTTPS (proves TLS and the roots), blocking
+
+#else  // built without the web jobs (AXIS_WEB): no task, no Discord, no DNS. The settings saved in NVS "web" are never
+       // opened here, so they stay as they are for a later build that has them.
+inline void     begin() {}
+inline void     tick() {}
+inline void     setMain(bool) {}
+inline void     setDoorRunning(bool) {}
+inline bool     busy() { return false; }
+inline bool     working() { return false; }
+inline uint32_t droppedLines() { return 0; }
+inline uint32_t gatedChecks() { return 0; }
+inline uint32_t gatedLargestKb() { return 0; }
+inline uint32_t startFails() { return 0; }
+inline uint32_t startLargestKb() { return 0; }
+inline uint32_t stackMark() { return 0; }
+inline void     announce(const String&) {}
+#endif  // AXIS_WEB
 
 }  // namespace web

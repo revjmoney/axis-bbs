@@ -1,4 +1,5 @@
 #include "bbs/sysopshell.h"
+#include "bbs/features.h"
 
 #include <map>
 #include <regex>
@@ -174,6 +175,7 @@ TEST_CASE("deleting asks first, and N keeps the user") {
     CHECK(r.ranCmd("@UDEL Kid"));
 }
 
+#if AXIS_FILES
 TEST_CASE("file areas: rename one and it keeps its id and level") {
     Rig r;
     r.shell.begin();
@@ -183,6 +185,16 @@ TEST_CASE("file areas: rename one and it keeps its id and level") {
     r.type("Toolpaths\r");
     CHECK(r.ranCmd("@AREASET files|2|gcode|Toolpaths|20"));
 }
+#else
+TEST_CASE("file areas: a build without them says so and asks the board nothing") {
+    Rig r;
+    r.shell.begin();
+    r.ran.clear();
+    r.type("2");  // File areas
+    CHECK(plain(r.out).find("The file areas are not in this firmware.") != std::string::npos);
+    CHECK(r.ran.empty());
+}
+#endif
 
 TEST_CASE("settings come in groups and salts or hashes never appear") {
     Rig r;
@@ -225,13 +237,14 @@ TEST_CASE("sections switch messages off and turn original LORD back on") {
     r.shell.begin();
     r.type("7");  // Sections, after System
     std::string o = plain(r.out);
+    CHECK((o.find("Files") != std::string::npos) == (AXIS_FILES == 1));  // (a build without the file areas: no switch)
     CHECK(o.find("Messages") != std::string::npos);
     CHECK(o.find("Legend of the Red Dragon") != std::string::npos);
     CHECK(o.find("LORD Fast") != std::string::npos);
     CHECK(o.find("off") != std::string::npos);
     r.type("1");
     CHECK(r.ranCmd("@SET messages_on=0"));
-    r.type("4");
+    r.type(AXIS_FILES ? "4" : "3");  // (Messages, Files, Doors, then the doors)
     CHECK(r.ranCmd("@SET door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys|1"));
 }
 
@@ -319,15 +332,29 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         Rig r;
         r.replies["@SETTINGS"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
         r.shell.beginAt(SysopSection::Settings);
-        r.type("b");  // page 1 ends with Files (b), Messages (c), Doors (d), Free downloads (e)
-        CHECK(r.ranCmd("@SET files_on=0"));
-        r.type("c");
+        // Row 9 is the cluster key and row 10 (a) the DOS prompt password, each when the build has it. Then Files (when the build has the file areas),
+        // Messages, Doors, Free downloads, Telnet sysop access. A page holds 1 to 9 and a to e; N turns it. In the full
+        // build: Files b, Messages c, Doors d, Free downloads e, and Telnet sysop access 1 on page 2.
+        if (!AXIS_DOSPROMPT) CHECK(plain(r.out).find("DOS prompt") == std::string::npos);  // left out: no password to set
+        int  row = 9 + AXIS_CLUSTER + AXIS_DOSPROMPT;
+        auto pick = [&r](int at) {
+            if (at > 14) {
+                r.type("n");
+                at -= 14;
+            }
+            r.type(std::string(1, "123456789abcde"[at - 1]));
+        };
+        if (AXIS_FILES) {
+            pick(row++);
+            CHECK(r.ranCmd("@SET files_on=0"));
+        }
+        pick(row++);
         CHECK(r.ranCmd("@SET messages_on=1"));
-        r.type("e");
+        row++;  // (Doors)
+        pick(row++);
         r.type("750\r");
         CHECK(r.ranCmd("@SET free_kb=750"));
-        r.type("n");
-        r.type("1");  // page 2: Telnet sysop access
+        pick(row);
         CHECK(r.ranCmd("@SET sysop_telnet=0"));
     }
     {  // the top layer has a Look entry
@@ -368,7 +395,7 @@ TEST_CASE("over telnet the board-only items are not there: no restart, setup, fo
     for (const char* s : {"Restart this board", "Rerun setup", "Format SD card", "Station"}) CHECK(o.find(s) != std::string::npos);
     r.out.clear();
     r.shell.beginAt(SysopSection::Settings);
-    CHECK(plain(r.out).find("Cluster key") != std::string::npos);
+    CHECK((plain(r.out).find("Cluster key") != std::string::npos) == (AXIS_CLUSTER == 1));  // (built without the cluster: no key)
 }
 
 TEST_CASE("a board's own commands are never run for another board") {
@@ -400,7 +427,8 @@ TEST_CASE("a layer asks for the settings once however many it shows") {
     for (auto& c : r.ran) n += c == "@SETTINGS";
     CHECK(n == 1);
     r.ran.clear();
-    r.type("b");  // Files off: the layer is built again, and asks again (once)
+    // the first board switch (Files off in the full build, row b): the layer is built again, and asks again (once)
+    r.type(std::string(1, "123456789abcde"[9 + AXIS_CLUSTER + AXIS_DOSPROMPT - 1]));
     n = 0;
     for (auto& c : r.ran) n += c == "@SETTINGS";
     CHECK(n == 1);
@@ -409,4 +437,32 @@ TEST_CASE("a layer asks for the settings once however many it shows") {
     n = 0;
     for (auto& c : r.ran) n += c == "@SETTINGS";
     CHECK(n == 1);
+}
+
+// ---- build switches (Task 5): what the sysop menu shows without the cluster or the modem link
+TEST_CASE("features: the Modem page and the modem settings show only with the modem link built in") {
+    using axis::bbs::SysopSection;
+    const bool modem = AXIS_MODEMLINK == 1;
+    {
+        Rig r;
+        r.shell.beginAt(SysopSection::System);
+        CHECK((plain(r.out).find("LFD3K-SM radio callers") != std::string::npos) == modem);
+    }
+    for (char page : {'2', '5'}) {  // Network, then Other settings: kept as saved, shown on Network or nowhere
+        Rig r;
+        r.replies["@SETTINGS"] += "modem_link=1\nlite_below_bps=7031\n";
+        r.shell.beginAt(SysopSection::Settings);
+        r.out.clear();
+        r.type(std::string(1, page));
+        std::string o = plain(r.out);
+        CHECK((o.find("modem_link") != std::string::npos) == (modem && page == '2'));
+        CHECK((o.find("lite_below_bps") != std::string::npos) == (modem && page == '2'));
+    }
+}
+
+TEST_CASE("features: the cluster key is offered only with the cluster built in") {
+    using axis::bbs::SysopSection;
+    Rig r;
+    r.shell.beginAt(SysopSection::Settings);
+    CHECK((plain(r.out).find("Cluster key") != std::string::npos) == (AXIS_CLUSTER == 1));
 }

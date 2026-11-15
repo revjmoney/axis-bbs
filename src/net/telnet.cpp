@@ -192,7 +192,7 @@ void TelnetFilter::subnegotiation() {
         int w = b(1) << 8 | b(2), h = b(3) << 8 | b(4);
         if (w > 0) width_ = w;
         if (h > 0) height_ = h;
-    } else if (!sb_.empty() && (uint8_t)sb_[0] == kLinkOption && linkAgreed_ && linkOn_) {  // a report we asked for (DO 90), still wanted
+    } else if (!sb_.empty() && (uint8_t)sb_[0] == kLinkOption && linkAgreed_ && linkOn_ && AXIS_MODEMLINK) {  // a report we asked for (DO 90), still wanted
         if (parseLinkInfo(sb_.substr(1), link_)) linkSeq_++;
     }
 }

@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/uploadproc.h"
+#include "bbs/features.h"
+#if AXIS_TRANSFERS
 
 #include <cctype>
 
@@ -233,3 +235,5 @@ bool UploadProcessor::step() {
 }
 
 }  // namespace axis::bbs
+
+#endif  // AXIS_TRANSFERS

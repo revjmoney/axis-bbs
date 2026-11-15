@@ -164,7 +164,9 @@ BbsConfig parseConfig(const std::string& ini) {
     bool script = false, native = false;
     std::vector<DoorEntry> kept;
     for (auto& d : listed) {
-        if (d.exe == "*DOSSHELL") continue;  // the DOS prompt is out of the firmware
+        // the old *DOSSHELL row: the full build drops it as it always has. A build with the DOS prompt switched off
+        // keeps a saved row as written (never offered: doorRuns), like any door that build leaves out.
+        if (AXIS_DOSPROMPT && d.exe == "*DOSSHELL") continue;
         script = script || d.exe == "*SCRIPT";
         native = native || d.exe == "*LORD";
         kept.push_back(std::move(d));

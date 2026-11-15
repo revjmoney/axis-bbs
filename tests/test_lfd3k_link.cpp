@@ -10,6 +10,7 @@
 #include "bbs/node.h"
 #include "bbs/wfc.h"
 #include "doctest.h"
+#include "bbs/features.h"
 #include "net/telnet.h"
 #include "net/telnetstream.h"
 
@@ -66,6 +67,7 @@ LinkInfo report(const std::string& payload) {
 }  // namespace
 
 // plan: link_option_negotiation
+#if AXIS_MODEMLINK  // (built without the modem link the board answers DONT 90 and takes no report: test_features)
 TEST_CASE("the modem's WILL 90 is answered DO 90 only when modem_link is on, else refused") {
     TelnetFilter on;
     on.acceptLink(true);
@@ -103,8 +105,10 @@ TEST_CASE("the modem's WILL 90 is answered DO 90 only when modem_link is on, els
     CHECK(l2.available() == 0);
     CHECK(l2.toCaller == IAC_DONT90);
 }
+#endif
 
 // plan: link_sb_parse_all_fields
+#if AXIS_MODEMLINK  // (built without the modem link the board answers DONT 90 and takes no report: test_features)
 TEST_CASE("a link report IAC SB 90 ... IAC SE is read into every field") {
     TelnetFilter t = agreed();
     feed(t, sb90(kFull));
@@ -138,6 +142,7 @@ TEST_CASE("a link report IAC SB 90 ... IAC SE is read into every field") {
     CHECK(axis::net::linkLabel(w) == "WIFI");
     CHECK_FALSE(w.radio());
 }
+#endif
 
 // plan: link_sb_garbage_ignored
 TEST_CASE("garbage, unknown keys and bad numbers in a link report are ignored or clamped") {
@@ -194,6 +199,7 @@ TEST_CASE("garbage, unknown keys and bad numbers in a link report are ignored or
 }
 
 // plan: link_sb_oversize_dropped
+#if AXIS_MODEMLINK  // (built without the modem link the board answers DONT 90 and takes no report: test_features)
 TEST_CASE("a link report longer than 160 bytes is dropped whole, one of 160 is kept") {
     std::string ok = "v=1 tier=SF7 bps=1000 " + std::string(160 - 22, 'x');  // 160 bytes: real fields then a junk token
     REQUIRE(ok.size() == 160);
@@ -221,8 +227,10 @@ TEST_CASE("a link report longer than 160 bytes is dropped whole, one of 160 is k
     CHECK(t.linkReports() == 2);
     CHECK(t.link().tier == "SF10");
 }
+#endif
 
 // plan: link_sb_split_across_reads
+#if AXIS_MODEMLINK  // (built without the modem link the board answers DONT 90 and takes no report: test_features)
 TEST_CASE("a link report split across several reads is still read") {
     std::string whole = std::string("A") + sb90(kFull) + "B";
     for (size_t cut = 1; cut < whole.size(); cut++) {  // every split point
@@ -258,6 +266,7 @@ TEST_CASE("a link report split across several reads is still read") {
     CHECK(got.tier == "SF7");
     CHECK_FALSE(l.takeLink(got));  // taken once
 }
+#endif
 
 // plan: link_never_reaches_caller_input
 TEST_CASE("no byte of the link option or its report reaches the caller's input") {
@@ -346,6 +355,7 @@ TEST_CASE("the WFC shows a radio caller's RADIO SF label after the activity") {
 }
 
 // plan: wfc_codes_link
+#if AXIS_MODEMLINK  // (built without the modem link the board answers DONT 90 and takes no report: test_features)
 TEST_CASE("the WFC pipe codes RL RW RO RT RB RS RR RN RZ show the newest link") {
     axis::bbs::WfcSnapshot s;
     CHECK(axis::bbs::expandArt("[|RL|RW|RO|RT|RB|RS|RR|RN|RZ]", {}, axis::bbs::wfcValues(s)) == "[]");  // before any report
@@ -378,6 +388,7 @@ TEST_CASE("the WFC pipe codes RL RW RO RT RB RS RR RN RZ show the newest link") 
     b.radio = axis::bbs::wfcRadio(report("v=1 modem=M caller=Rev tier=SF9 bps=1758"), "");
     CHECK_FALSE(a == b);
 }
+#endif
 
 // plan: config_modem_keys_roundtrip
 TEST_CASE("the modem_link and lite_below_bps settings round trip and default sensibly") {

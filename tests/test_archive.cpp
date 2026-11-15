@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_FILES || AXIS_DOSPROMPT  // a build that leaves the file areas and the DOS prompt out has nothing here to test
 #include <cstring>
 #include <string>
 #include <vector>
@@ -172,3 +174,5 @@ TEST_CASE("something that isn't an archive says so instead of listing junk") {
     CHECK(a.kind.empty());
     CHECK(a.entries.empty());
 }
+
+#endif  // AXIS_FILES || AXIS_DOSPROMPT

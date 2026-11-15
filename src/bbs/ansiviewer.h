@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "bbs/features.h"
 #include "bbs/filelib.h"
 #include "bbs/lightbar.h"
 #include "bbs/zipreader.h"
@@ -17,6 +18,7 @@
 
 namespace axis::bbs {
 
+#if AXIS_ANSIVIEW
 class AnsiViewer {
 public:
     static constexpr int kPerPage = 54;  // three columns of 18
@@ -97,6 +99,15 @@ private:
     bool                         cache_ = false;
     void shortOnMemory();  // the piece is dropped: back to the list, with the note
 };
+#else
+// The ANSI viewer is left out of this build (features.h): ansiviewer.cpp and the view cache compile to nothing, and its
+// door is never offered (config.h doorBuiltIn), so the host never makes one of these.
+class AnsiViewer {
+public:
+    bool step() { return false; }
+    bool idle() { return false; }
+};
+#endif
 
 bool isAnsiPiece(const std::string& name);  // .ANS .ICE .CIA .DRK .LGO .ASC .NFO .DIZ .TXT .MEM
 

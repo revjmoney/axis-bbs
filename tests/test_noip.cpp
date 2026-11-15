@@ -1,3 +1,5 @@
+#include "bbs/features.h"
+#if AXIS_WEB  // a build without the web jobs has nothing here to test
 #include "bbs/noip.h"
 
 #include "doctest.h"
@@ -44,3 +46,4 @@ TEST_CASE("the No-IP update URL names the host and IP") {
     CHECK(axis::bbs::noipUrl("all.ddnskey.com", "203.0.113.7") ==
           "https://dynupdate.no-ip.com/nic/update?hostname=all.ddnskey.com&myip=203.0.113.7");
 }
+#endif  // AXIS_WEB

@@ -41,7 +41,11 @@ struct Group {
 };
 const Group kGroups[] = {
     {"BBS and sysop", {"bbs_name", "location", "sysop_handle", "sysop_real_name", "board_name", "ftn_address", "timezone", nullptr}},
-    {"Network", {"telnet_port", "public_host", "sessions", "modem_link", "lite_below_bps", nullptr}},
+    {"Network", {"telnet_port", "public_host", "sessions",
+#if AXIS_MODEMLINK
+                 "modem_link", "lite_below_bps",
+#endif
+                 nullptr}},
     {"Callers and limits", {"new_user_security", "nuv_yes", "nuv_no", "nuv_level", "daily_minutes", "idle_minutes", "ratio", "free_kb", nullptr}},
     {"Look", {"theme", "login_splash", "wfc_anim", nullptr}},
 };
@@ -51,6 +55,9 @@ bool inGroups(const std::string& k) {
             if (k == g.keys[i]) return true;
 #if AXIS_NETS
     if (k.rfind("net_", 0) == 0) return true;  // on the Sysop Net page (net_first_peer never shown in clear)
+#endif
+#if !AXIS_MODEMLINK
+    if (k == "modem_link" || k == "lite_below_bps") return true;  // kept as saved, shown nowhere: the modem link is not built in
 #endif
     return k.rfind("area", 0) == 0 || k.rfind("msgarea", 0) == 0 || k.rfind("door", 0) == 0 || k.rfind("menu.", 0) == 0 ||
            k == "messages_on" || k == "files_on" || k == "doors_on" || k == "setup_done" || k[0] == '#';
@@ -140,7 +147,13 @@ void SysopShell::refresh() {
 void SysopShell::enter(SysopSection s) {
     switch (s) {
         case SysopSection::Users: push("USERS", [this](Layer& x) { users(x); }); break;
-        case SysopSection::FileAreas: push("FILE AREAS", [this](Layer& x) { areas(x, false); }); break;
+        case SysopSection::FileAreas:
+#if AXIS_FILES
+            push("FILE AREAS", [this](Layer& x) { areas(x, false); });
+#else
+            pushText("FILE AREAS", "The file areas are not in this firmware.");
+#endif
+            break;
         case SysopSection::MsgBases: push("MSG BASES", [this](Layer& x) { areas(x, true); }); break;
         case SysopSection::Settings: push("SETTINGS", [this](Layer& x) { settings(x); }); break;
         case SysopSection::Menus: push("MENUS", [this](Layer& x) { menus(x); }); break;
@@ -161,7 +174,7 @@ void SysopShell::beginAt(SysopSection s) {
 void SysopShell::begin() {
     push("SYSOP", [this](Layer& l) {
         l.items = {{"Users", "", [this] { enter(SysopSection::Users); }},
-                   {"File areas", "", [this] { enter(SysopSection::FileAreas); }},
+                   {"File areas", "", [this] { enter(SysopSection::FileAreas); }},  // (without them: "not in this firmware")
                    {"Message bases", "", [this] { enter(SysopSection::MsgBases); }},
                    {"Settings", "", [this] { enter(SysopSection::Settings); }},
                    {"Menus", "", [this] { enter(SysopSection::Menus); }},
@@ -530,17 +543,23 @@ void SysopShell::settings(Layer& l) {
                            ask("New user password (Enter alone: none)", true, [this](const std::string& v) { did(run_("@NUP " + v)); });
                        }});
     l.items.push_back({"Clear the NUP", "anyone can apply", [this] { did(run_("@NUP")); }});
+#if AXIS_CLUSTER
     if (local_)  // this board's own key: set at the board, never over telnet
         l.items.push_back({"Cluster key", "(never shown; the same on every board)", [this] {
                                ask("Cluster key, 8+ (off: this board runs alone)", true, [this](const std::string& v) { did(run_("@CLUSTERKEY " + v)); });
                            }});
+#endif
+#if AXIS_DOSPROMPT
     l.items.push_back({"DOS prompt password", "(never shown)", [this] {
                            ask("New DOS prompt password", true, [this](const std::string& v) { did(run_("@DOSPASS " + v)); });
                        }});
+#endif
     // the board-wide switches (a caller's own access is on the caller's page)
     std::string files = setting("files_on"), msgs = setting("messages_on"), doors = setting("doors_on"), tel = setting("sysop_telnet"), freekb = setting("free_kb");
     auto flip = [this](const std::string& key, bool on) { return [this, key, on] { did(run_("@SET " + key + "=" + (on ? "0" : "1"))); }; };
+#if AXIS_FILES  // (a build without the file areas keeps files_on as saved and never shows it)
     l.items.push_back({"Files", files == "0" ? "off" : "on", flip("files_on", files != "0")});
+#endif
     l.items.push_back({"Messages", msgs == "0" ? "off" : "on", flip("messages_on", msgs != "0")});
     l.items.push_back({"Doors", doors == "0" ? "off" : "on", flip("doors_on", doors != "0")});
     l.items.push_back({"Free downloads (KB)", freekb, [this] {
@@ -657,7 +676,7 @@ void SysopShell::sections(Layer& l) {
         else if (k == "doors_on") doors = v;
         else if (k.size() > 4 && k.rfind("door", 0) == 0 && k[4] >= '0' && k[4] <= '9') {
             auto f = split(v, '|');
-            if (f.size() < 3 || f[0].empty()) continue;
+            if (f.size() < 3 || f[0].empty() || doorLeftOut(f[2])) continue;  // (a door this build leaves out: not listed)
             bool on = true;
             if (f.size() > 5 && !f[5].empty()) on = f[5] != "0";
             else if (lordGameExe(f[2])) on = false;
@@ -670,7 +689,9 @@ void SysopShell::sections(Layer& l) {
         return [this, key, on] { did(run_("@SET " + key + "=" + (on ? "0" : "1"))); };
     };
     l.items.push_back({"Messages", messages == "0" ? "off" : "on", flip("messages_on", messages != "0")});
+#if AXIS_FILES
     l.items.push_back({"Files", files == "0" ? "off" : "on", flip("files_on", files != "0")});
+#endif
     l.items.push_back({"Doors", doors == "0" ? "off" : "on", flip("doors_on", doors != "0")});
     for (const DoorRow& d : doorRows)
         l.items.push_back({d.name, d.on ? "on" : "off", [this, d] {
@@ -689,12 +710,16 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"Update No-IP now", "", show("NO-IP", "@NOIPNOW")});
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
+#if AXIS_MODEMLINK
     Item modemPage{"Modem", "LFD3K-SM radio callers", [this] { push("MODEM", [this](Layer& x) { modem(x); }); }};  // (last, online and here)
+#endif
 #if AXIS_NETS
     Item netPage{"Sysop Net", "board to board net", [this] { push("SYSOP NET", [this](Layer& x) { sysopNet(x); }); }};  // after Modem: no key moves
 #endif
     if (!local_) {  // the rest is for the sysop at the board: never over telnet
+#if AXIS_MODEMLINK
         l.items.push_back(modemPage);
+#endif
 #if AXIS_NETS
         l.items.push_back(netPage);
 #endif
@@ -712,7 +737,9 @@ void SysopShell::system(Layer& l) {
                            });
                        }});
     l.items.push_back({"Station", "sensors and relays", [this] { push("STATION", [this](Layer& x) { station(x); }); }});
+#if AXIS_MODEMLINK
     l.items.push_back(modemPage);
+#endif
 #if AXIS_NETS
     l.items.push_back(netPage);
 #endif
@@ -741,6 +768,7 @@ bool SysopShell::reloadIf(const std::string& title) {
     return true;
 }
 
+#if AXIS_MODEMLINK
 void SysopShell::modem(Layer& l) {
     std::string link = setting("modem_link"), lite = setting("lite_below_bps");
     l.items.push_back({"Take link reports from the modem", link == "0" ? "off" : "on", [this, link] {
@@ -777,6 +805,7 @@ void SysopShell::modem(Layer& l) {
     section("Modems on the LAN", found, searching ? "looking..." : "none found");
     l.items.push_back({"Look for modems again", "", [this] { did(run_("@MODEM scan")); }});
 }
+#endif  // AXIS_MODEMLINK
 
 // ---- look: the caller theme and the waiting screen's skin (blank: it follows the theme)
 void SysopShell::look(Layer& l) {

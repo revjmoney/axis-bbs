@@ -15,6 +15,7 @@
 
 namespace axis::bbs {
 
+#if AXIS_FILES
 class FileBrowser {
     std::function<std::string(uint32_t)> gate_;
     uint32_t                             since_ = 0;
@@ -72,5 +73,26 @@ private:
     bool                         usingList_ = false;   // a lightbar is on screen
     bool                         typedAreas_ = false;  // after New or Search: the old "area number" line
 };
+#else
+// The file areas are left out of this build (features.h): filebrowser.cpp compiles to nothing, and the main menu never
+// offers Files, so a Node never opens one of these.
+class FileBrowser {
+public:
+    FileBrowser(const std::vector<FileArea>&, FileLibrary&, std::string&) {}
+    void                   setDownloadGate(std::function<std::string(uint32_t size)>) {}
+    void                   setNewSince(uint32_t) {}
+    void                   setLightbars(bool) {}
+    void                   begin() {}
+    std::string            where() const { return "area list"; }
+    bool                   key(char) { return false; }
+    bool                   tick(uint32_t, uint32_t) { return false; }
+    bool                   wantsTransfer() const { return false; }
+    const TransferRequest& transfer() const { return req_; }
+    void                   transferDone(bool, uint32_t, uint32_t, const std::string&, uint32_t) {}
+
+private:
+    TransferRequest req_;
+};
+#endif
 
 }  // namespace axis::bbs

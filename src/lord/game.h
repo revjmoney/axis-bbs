@@ -8,12 +8,14 @@
 #include <string>
 #include <vector>
 
+#include "bbs/features.h"
 #include "door/bytestream.h"
 #include "door/hostfs.h"
 
 namespace axis {
 namespace lord {
 
+#if AXIS_LORD
 class NativeLord {
 public:
     NativeLord(door::HostFs& fs, door::ByteStream& line, std::string alias, door::LockTable* locks, int owner);
@@ -208,6 +210,19 @@ private:
 // file could not be written. Existing records are not changed. The name and the BBS field
 // are both the handle, so the next visit finds the same warrior.
 int ensureWarrior(door::HostFs& fs, door::LockTable* locks, int owner, const std::string& alias);
+#else
+// LORD is left out of this build (features.h): game.cpp and realm.cpp compile to nothing. The board never offers the
+// door and sets no warrior hook, so nothing makes one of these; the stub only keeps the board's LORD plumbing compiling.
+class NativeLord {
+public:
+    NativeLord(door::HostFs&, door::ByteStream&, std::string, door::LockTable*, int) {}
+    void setRng(uint32_t (*)()) {}
+    void setMailbox(void*, int (*)(void*, char*, int, char*, int), void (*)(void*, const char*, const char*, const char*)) {}
+    void begin() {}
+    bool step() { return false; }
+};
+inline int ensureWarrior(door::HostFs&, door::LockTable*, int, const std::string&) { return -1; }
+#endif
 
 }  // namespace lord
 }  // namespace axis

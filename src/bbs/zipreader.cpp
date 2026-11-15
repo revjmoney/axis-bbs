@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/zipreader.h"
+#include "bbs/features.h"
+#if AXIS_FILES || AXIS_DOSPROMPT
 
 #include <algorithm>
 #include <cstdlib>
@@ -204,3 +206,5 @@ ZipReader::Result ZipReader::extract(const ZipEntry& e, uint8_t* ws, size_t wsSi
 }
 
 }  // namespace axis::bbs
+
+#endif  // AXIS_FILES || AXIS_DOSPROMPT

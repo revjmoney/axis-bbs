@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/filebrowser.h"
+#include "bbs/features.h"
+#if AXIS_FILES
 
 #include <cctype>
 #include <cstdio>
@@ -157,8 +159,13 @@ void FileBrowser::showPage(int at) {
     size_t ix = (size_t)page_ * kPerPage + (size_t)list_.current();
     std::string about = ix < files_.size() ? files_[ix].name + "  " + fileSizeText(files_[ix].size) + "  " + files_[ix].desc : "";
     out_ += listScreenStatus(about);
+#if AXIS_TRANSFERS
     out_ += listScreenKeys(theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
                            theme::key("D", "ownload  ") + theme::key("U", "pload  ") + theme::key("Q", "uit") + "   Enter selects");
+#else  // (no downloads or uploads in this firmware)
+    out_ += listScreenKeys(theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
+                           theme::key("Q", "uit") + "   Enter selects");
+#endif
 }
 
 void FileBrowser::selectFile(size_t index) {
@@ -172,6 +179,10 @@ void FileBrowser::selectFile(size_t index) {
             return;
         }
         view(f.name);
+        return;
+    }
+    if (!AXIS_TRANSFERS) {  // no downloads in this firmware: what is known about it instead
+        info(f.name);
         return;
     }
     if (std::string why = gate_ ? gate_(f.size) : std::string(); !why.empty()) {
@@ -198,6 +209,7 @@ bool FileBrowser::listCommand(char c) {
             showPage();
             return true;
         case 'd':
+            if (!AXIS_TRANSFERS) return false;
             out_ += "d\r\n   ";
             out_ += DIM;
             out_ += "File name: ";
@@ -208,6 +220,7 @@ bool FileBrowser::listCommand(char c) {
             st_ = St::DownName;
             return true;
         case 'u':
+            if (!AXIS_TRANSFERS) return false;
             out_ += "u\r\n   ";
             out_ += DIM;
             out_ += "Describe it in one line (Enter to cancel): ";
@@ -308,8 +321,12 @@ void FileBrowser::showNewFiles() {
 
 void FileBrowser::listPrompt() {
     out_ += "\r\n   ";
+#if AXIS_TRANSFERS
     out_ += theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
             theme::key("D", "ownload  ") + theme::key("U", "pload  ") + theme::key("Q", "uit");
+#else
+    out_ += theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") + theme::key("Q", "uit");
+#endif
     out_ += theme::WHITE;
     out_ += ": ";
 }
@@ -391,7 +408,7 @@ void FileBrowser::view(const std::string& name) {
     }
     if (!isTextFile(f->name)) {
         out_ += AMBER;
-        out_ += "   " + f->name + " isn't a text file: [D]ownload it instead.\r\n";
+        out_ += "   " + f->name + (AXIS_TRANSFERS ? " isn't a text file: [D]ownload it instead.\r\n" : " isn't a text file: [I]nfo shows what is in it.\r\n");
         st_ = St::List;
         listPrompt();
         return;
@@ -585,6 +602,7 @@ bool FileBrowser::key(char c) {
                     showPage();
                     break;
                 case 'd':
+                    if (!AXIS_TRANSFERS) break;
                     out_ += "d\r\n   ";
                     out_ += DIM;
                     out_ += "File name: ";
@@ -594,6 +612,7 @@ bool FileBrowser::key(char c) {
                     st_ = St::DownName;
                     break;
                 case 'u':
+                    if (!AXIS_TRANSFERS) break;
                     out_ += "u\r\n   ";
                     out_ += DIM;
                     out_ += "Describe it in one line (Enter to cancel): ";
@@ -744,3 +763,5 @@ bool FileBrowser::key(char c) {
 }
 
 }  // namespace axis::bbs
+
+#endif  // AXIS_FILES

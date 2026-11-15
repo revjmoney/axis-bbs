@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "cluster/remotefiles.h"
+#include "bbs/features.h"
+#if AXIS_FILES
 
 #include <cstdlib>
 #include <cstring>
@@ -230,3 +232,5 @@ bool RemoteFileLibrary::rename(const std::string& a, const std::string& from, co
 }
 
 }  // namespace axis::cluster
+
+#endif  // AXIS_FILES

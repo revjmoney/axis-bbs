@@ -1,0 +1,6 @@
+{
+  "lord": {"peak_kb": 20, "what": "LORD, about 20 KB with its event script held in memory"},
+  "ansiview": {"peak_kb": 44, "what": "ZIP window, 32 KB inflate window plus 12 KB decompressor state"},
+  "transfers": {"peak_kb": 8, "what": "XMODEM and ZMODEM buffers (estimate, not yet measured)"},
+  "web": {"peak_kb": 48, "what": "TLS handshake, about 48 KB"}
+}

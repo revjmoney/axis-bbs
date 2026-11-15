@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/viewcache.h"
+#include "bbs/features.h"
+#if AXIS_ANSIVIEW
 
 #include <algorithm>
 #include <cctype>
@@ -296,3 +298,5 @@ bool Filler::step() {
 }
 
 }  // namespace axis::bbs::viewcache
+
+#endif  // AXIS_ANSIVIEW

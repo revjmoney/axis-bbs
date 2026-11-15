@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include "platform/cyd/sdfiles.h"
+#include "bbs/features.h"
+#if AXIS_FILES
 
 
 #include <map>
@@ -151,3 +153,5 @@ bool SdFileLibrary::read(const std::string& areaId, const std::string& name, std
     ::close(fd);
     return true;
 }
+
+#endif  // AXIS_FILES

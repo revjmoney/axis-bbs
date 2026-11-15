@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "doctest.h"
+#include "bbs/features.h"
 #include "door/session.h"
 #include "net/zmodem.h"
 #include "platform/pc/stdhostfs.h"
@@ -186,6 +187,7 @@ TEST_CASE("repeated door exit, load failure, hangup and out of memory leave the 
     CHECK(saw.size() == 6);
 }
 
+#if AXIS_TRANSFERS  // (a build without transfers has no ZMODEM)
 TEST_CASE("a spinning door and a ZMODEM transfer on another line both finish") {
     fs::path d = tmpDir("both");
     writeExe(d / "T.EXE", kSpin);
@@ -229,3 +231,4 @@ TEST_CASE("a spinning door and a ZMODEM transfer on another line both finish") {
     CHECK(got == file);
     CHECK(locks.count() == 0);  // the spinner never locked anything, and it is still the live session
 }
+#endif

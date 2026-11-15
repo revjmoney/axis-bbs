@@ -28,6 +28,28 @@ jobs:
           ./build/axis_tests --reporters=console
       - name: Menu art and lightbars
         run: python3 tools/art/check_menus.py
+      - name: Build options
+        run: python3 -I tools/test_buildopts.py
+      - name: Installer icons
+        run: python3 -I tools/test_icons.py
+      - name: Installer page logic
+        run: node --test site/installer-logic.test.mjs
+      # axis_flash.py decides like the page (flash-plans.json) and install.sh runs its dry run under dash
+      - name: Build-it-yourself flasher and install.sh (dry run)
+        run: python3 -I tools/test_axis_flash.py
+
+  # install.ps1 under Windows PowerShell 5.1 (and install.sh under Git's sh), dry run only
+  install-scripts-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Build-it-yourself flasher, install.ps1 and install.sh (dry run)
+        shell: powershell
+        run: python -I tools/test_axis_flash.py
 
   firmware:
     runs-on: ubuntu-latest

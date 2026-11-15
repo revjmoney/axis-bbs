@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_WEB  // a build without the web jobs has no use for this
 #include "noip.h"
 
 namespace axis::bbs {
@@ -31,3 +33,4 @@ std::string noipUrl(const std::string& host, const std::string& ip) {
 }
 
 }  // namespace axis::bbs
+#endif  // AXIS_WEB

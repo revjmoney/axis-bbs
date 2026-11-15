@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Rev. J. Money
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/archive.h"
+#include "bbs/features.h"
+#if AXIS_FILES || AXIS_DOSPROMPT
 
 #include <cstring>
 #include <memory>
@@ -226,3 +228,5 @@ ArchiveInfo listArchive(const std::string& name, RandomFile& f) {
 }
 
 }  // namespace axis::bbs
+
+#endif  // AXIS_FILES || AXIS_DOSPROMPT

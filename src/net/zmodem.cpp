@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 #include "net/zmodem.h"
+#include "bbs/features.h"
+#if AXIS_TRANSFERS
 
 #include <cstdio>
 #include <cstdlib>
@@ -445,3 +447,5 @@ bool ZmodemReceiver::step(uint32_t now) {
 }
 
 }  // namespace axis::net
+
+#endif  // AXIS_TRANSFERS

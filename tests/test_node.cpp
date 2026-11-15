@@ -3,6 +3,7 @@
 #include <regex>
 
 #include "doctest.h"
+#include "bbs/features.h"
 #include "bbs/login_art.h"
 #include "bbs/node.h"
 #include "bbs/theme.h"
@@ -138,12 +139,13 @@ TEST_CASE("D lists the configured doors") {
     Node n = loggedIn();
     type(n, "d");
     std::string out = plain(n.takeOutput());
-    CHECK(out.find("Legend of the Red Dragon") != std::string::npos);
-    CHECK(out.find("[1]") != std::string::npos);
-    CHECK(out.find("ANSI Movies") != std::string::npos);
+    CHECK((out.find("Legend of the Red Dragon") != std::string::npos) == (AXIS_LORD == 1));
+    CHECK((out.find("[1]") != std::string::npos) == (AXIS_LORD || AXIS_ANSIVIEW || AXIS_SCRIPTS));  // (no door built in: none listed)
+    CHECK((out.find("ANSI Movies") != std::string::npos) == (AXIS_ANSIVIEW == 1));
     CHECK(n.state() == Node::State::Doors);
 }
 
+#if AXIS_ANSIVIEW
 TEST_CASE("the movie door is its own row and a copied viewer is listed once") {
     axis::bbs::BbsConfig c;
     c.doors = {{"lord", "Legend of the Red Dragon", "*LORD", "", "none"},
@@ -152,13 +154,16 @@ TEST_CASE("the movie door is its own row and a copied viewer is listed once") {
                {"ansiview", "ANSI Pack Viewer", "*ANSIVIEW", "ansi,scene-block", "doorsys"}};
     Node n(1, info, c);
     auto doors = n.doorChoices();
-    REQUIRE(doors.size() == 3);
-    CHECK(doors[1].name == "ANSI Movies");
-    CHECK(doors[1].args == "ansi");
-    CHECK(doors[2].name == "ANSI Packs");
-    CHECK(doors[2].id == "ansiview");
+    const size_t lord = AXIS_LORD ? 1 : 0;  // (the LORD row first, when LORD is in the build)
+    REQUIRE(doors.size() == 2 + lord);
+    CHECK(doors[lord].name == "ANSI Movies");
+    CHECK(doors[lord].args == "ansi");
+    CHECK(doors[lord + 1].name == "ANSI Packs");
+    CHECK(doors[lord + 1].id == "ansiview");
 }
+#endif
 
+#if AXIS_LORD
 TEST_CASE("choosing LORD requests the door") {
     Node n = loggedIn();
     type(n, "d1");
@@ -166,6 +171,7 @@ TEST_CASE("choosing LORD requests the door") {
     CHECK(n.doorRequested() == "lord");
     CHECK(n.door().exe == "*LORD");  // the native game
 }
+#endif
 
 TEST_CASE("a key that is not a door goes back to the menu") {
     Node n = loggedIn();
@@ -174,6 +180,7 @@ TEST_CASE("a key that is not a door goes back to the menu") {
     CHECK(n.doorRequested().empty());
 }
 
+#if AXIS_LORD || AXIS_ANSIVIEW || AXIS_SCRIPTS  // (a build with no door at all has no door 1)
 TEST_CASE("after the door the caller is back at the menu") {
     Node n = loggedIn();
     type(n, "d1");
@@ -203,6 +210,7 @@ TEST_CASE("a long door does not count as idle time") {
     n.poll(20 * 60000 + 1000);
     CHECK(n.state() == Node::State::Menu);
 }
+#endif
 
 static SysInfo fullInfo() {
     SysInfo s = info();
@@ -345,6 +353,7 @@ TEST_CASE("a page asks for a message and sends it to the sysop") {
     CHECK(r.said.size() == 1);
 }
 
+#if AXIS_LORD || AXIS_ANSIVIEW || AXIS_SCRIPTS  // (a build with no door at all has no door 1)
 TEST_CASE("a door that's busy for another caller on this board sends the caller back politely") {
     Node n = loggedIn();
     type(n, "d1\r");
@@ -356,6 +365,7 @@ TEST_CASE("a door that's busy for another caller on this board sends the caller 
     CHECK(out.find("another caller") != std::string::npos);
     CHECK(out.find("Back from") == std::string::npos);  // they never went in
 }
+#endif
 
 TEST_CASE("with the login splash on, the RotatoCAM splash plays before the welcome, and a key skips it") {
     axis::bbs::BbsConfig c;
@@ -432,8 +442,10 @@ TEST_CASE("activity text follows the caller from login to a door and chat") {
     CHECK(n.activityText() == "logging in");
     type(n, "Rev\r");
     CHECK(n.activityText() == "main menu");
+#if AXIS_LORD || AXIS_ANSIVIEW  // (door 1 is LORD, else the movies)
     type(n, "d1\r");
-    CHECK(n.activityText().rfind("in Legend of the Red Dragon", 0) == 0);
+    CHECK(n.activityText().rfind(AXIS_LORD ? "in Legend of the Red Dragon" : "in ANSI Movies", 0) == 0);
+#endif
 }
 
 TEST_CASE("a local sysop login starts at the menu as sysop, no handle or password asked") {
@@ -448,6 +460,7 @@ TEST_CASE("a local sysop login starts at the menu as sysop, no handle or passwor
     CHECK(plain(n.takeOutput()).find("Handle:") == std::string::npos);
 }
 
+#if AXIS_LORD || AXIS_ANSIVIEW || AXIS_SCRIPTS  // (a build with no door at all has no door 1)
 TEST_CASE("a door asked for at the board's own screen says to call in for doors") {
     Node n = loggedIn();
     type(n, "d1\r");
@@ -457,6 +470,7 @@ TEST_CASE("a door asked for at the board's own screen says to call in for doors"
     CHECK(n.state() == Node::State::Menu);
     CHECK(plain(n.takeOutput()).find("telnet") != std::string::npos);
 }
+#endif
 
 TEST_CASE("an edited main menu shows its items and only its hotkeys work") {
     axis::bbs::BbsConfig c;
@@ -498,10 +512,14 @@ TEST_CASE("with no DOS runtime in the firmware, every .EXE door stays off the do
     CHECK(out.find("LORD Fast") == std::string::npos);
     CHECK(out.find("AXIS FOUR") == std::string::npos);
     CHECK(out.find("BBS Black Jack") == std::string::npos);
+#if AXIS_LORD
     CHECK(out.find("LORD") != std::string::npos);  // the native game the saved list gets
     type(caller, "1");
     CHECK(caller.state() == Node::State::InDoor);
     CHECK(caller.door().exe == "*LORD");
+#else
+    CHECK(out.find("LORD") == std::string::npos);  // the native game's row is there, but this build has no LORD
+#endif
 
     c.doors[0].enabled = true;
     Node sysop(1, info, c);
@@ -530,7 +548,7 @@ TEST_CASE("section switches hide messages, files and doors for every caller") {
     type(n, "s");
     CHECK(plain(n.takeOutput()).find("Messages are off.") != std::string::npos);
     type(n, "f");
-    CHECK(plain(n.takeOutput()).find("Files are off.") != std::string::npos);
+    CHECK(plain(n.takeOutput()).find(AXIS_FILES ? "Files are off." : "The file areas are not in this firmware.") != std::string::npos);
     type(n, "d");
     CHECK(plain(n.takeOutput()).find("Doors are off.") != std::string::npos);
     CHECK(n.state() == Node::State::Menu);

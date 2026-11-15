@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "doctest.h"
 #include "bbs/config.h"
+#include "bbs/features.h"
 
 using namespace axis::bbs;
 
@@ -79,7 +80,9 @@ TEST_CASE("config has the native LORD as the default door, and no DOS doors") {
     CHECK(c.doors[0].exe == "*LORD");      // the game built into the firmware
     CHECK(c.doors[1].exe == "*ANSIVIEW");  // the built-in ANSI Pack Viewer
     CHECK(c.doors[2].exe == "*SCRIPT");    // programs from /scripts on the card
-    for (const auto& d : c.doors) CHECK(axis::bbs::doorRuns(d));
+    for (const auto& d : c.doors)  // (a door the build leaves out stays listed, and does not run)
+        CHECK(axis::bbs::doorRuns(d) == ((d.exe != "*LORD" || AXIS_LORD) && (d.exe != "*SCRIPT" || AXIS_SCRIPTS) &&
+                                         (d.exe != "*ANSIVIEW" || AXIS_ANSIVIEW)));
 }
 
 TEST_CASE("stock LORD arguments gain NOEMS; custom tails and other doors stay") {
@@ -177,9 +180,15 @@ TEST_CASE("the DOS prompt password hash survives a save, and the script door is 
     }
     CHECK(script);
     CHECK(native);
+#if AXIS_DOSPROMPT
     CHECK_FALSE(dos);
     CHECK(back.doors.size() == 3);
     CHECK(parseConfig(formatConfig(back)).doors.size() == 3);  // listed once, not again on every save
+#else
+    CHECK(dos);  // a build without the DOS prompt keeps the saved row as written (and never offers it)
+    CHECK(back.doors.size() == 4);
+    CHECK(parseConfig(formatConfig(back)).doors.size() == 4);
+#endif
 }
 
 TEST_CASE("a board takes two callers at once unless the settings say otherwise, and never more than four") {

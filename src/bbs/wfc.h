@@ -41,13 +41,14 @@ struct WfcSnapshot {
     uint32_t                 totalCalls = 0;  // every call ever on this board (|TC)
     bool                     main = true;  // "main board" / "follower board"
     WfcRadio                 radio;        // the newest radio link (|RL |RW |RO |RT |RB |RS |RR |RN |RZ)
+    std::string              notice;       // drawn over the bottom row whatever the art (the SD card notice); "" = none
     // "the same screen": the uptime by the minute and free RAM in 8 KB steps (time is HH:MM), so an idle WFC is redrawn
     // once a minute, not at every 5 s check while the heap wobbles
     bool operator==(const WfcSnapshot& o) const {
         return bbsName == o.bbsName && sysop == o.sysop && lastCaller == o.lastCaller && ip == o.ip && time == o.time && date == o.date &&
                page == o.page && nodes == o.nodes && events == o.events && callsToday == o.callsToday && postsToday == o.postsToday &&
                uploadsToday == o.uploadsToday && totalCalls == o.totalCalls && sdFreeKb == o.sdFreeKb && ramFreeKb / 8 == o.ramFreeKb / 8 && uptimeS / 60 == o.uptimeS / 60 &&
-               main == o.main && radio == o.radio;
+               main == o.main && radio == o.radio && notice == o.notice;
     }
 };
 

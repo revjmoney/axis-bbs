@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include "bbs/features.h"
+#if AXIS_TRANSFERS  // a build that leaves transfers out has nothing here to test
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -160,3 +162,5 @@ TEST_CASE("progress moves forward through the steps") {
     CHECK(forward);
     CHECK(p.progress() == doctest::Approx(1.0));
 }
+
+#endif  // AXIS_TRANSFERS

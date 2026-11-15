@@ -1,0 +1,845 @@
+{
+ "about": "Shared flash decisions: site/installer-logic.js planFlash (node --test) and Task 9's axis_flash.py read this file; regenerate with python -I tools/gen_flashplans.py. device: what was read from the board (chip name as esptool reports it, the flash size in bytes esptool detects or null, the bytes at 0x8000, the first bytes at the target app image's offset, optionally the sha256 of the boot loader region). target: a key of targets (a manifest plus its partition table bytes, the project name in the app header, flash_size for radios (required: a radio target without it is refused), slot for the multimode modem). expect: kind update|first|refuse, a reason code, the data partitions a first install erases (label, offset, size; never one a written image covers, never below 0x9000), the images written in order (role, offset).",
+ "first_install_warning": "This replaces everything on this board. Whatever it runs now, and its settings, will be gone.",
+ "multimode_marker": "picker_nvs",
+ "codes": [
+  "update",
+  "first",
+  "chip",
+  "flash-size",
+  "too-big",
+  "no-multimode",
+  "slot",
+  "multimode-layout"
+ ],
+ "targets": {
+  "axis-board": {
+   "about": "AXIS Micro BBS board image (a Task 6 manifest; table = its partitions.bin)",
+   "kind": "board",
+   "chip": "ESP32",
+   "project": "axis-bbs",
+   "layout": "single",
+   "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000024006170703000000000000000000000000000000000aa5001820000250000001b007370696666730000000000000000000000000000ebebffffffffffffffffffffffffffff58b91e821b387e7698c61bd0319bfa3a",
+   "images": [
+    {
+     "role": "bootloader",
+     "file": "bootloader.bin",
+     "offset": 4096,
+     "size": 27248,
+     "sha256": "20b967a0a5c276f79d2e1fe999d4afa607bfa46abf6f4ca0c08496f779d11b66"
+    },
+    {
+     "role": "partitions",
+     "file": "partitions.bin",
+     "offset": 32768,
+     "size": 3072,
+     "sha256": "0e737991d33b2886bd0e71a1c6a7584a6b61ebf98dce41093915d726a31e2eb6"
+    },
+    {
+     "role": "otadata",
+     "file": "ota_data_initial.bin",
+     "offset": 57344,
+     "size": 8192,
+     "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+     "role": "app",
+     "file": "firmware.bin",
+     "offset": 65536,
+     "size": 1904544,
+     "sha256": "815d4c829d2e8e11dca83abf7a051ff98d99fd7f4bbe7c11f4fcede17e55fd71"
+    }
+   ]
+  },
+  "axis-board-too-big": {
+   "about": "the same board image with an app larger than app0 (0x240000)",
+   "kind": "board",
+   "chip": "ESP32",
+   "project": "axis-bbs",
+   "layout": "single",
+   "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000024006170703000000000000000000000000000000000aa5001820000250000001b007370696666730000000000000000000000000000ebebffffffffffffffffffffffffffff58b91e821b387e7698c61bd0319bfa3a",
+   "images": [
+    {
+     "role": "bootloader",
+     "file": "bootloader.bin",
+     "offset": 4096,
+     "size": 27248,
+     "sha256": "20b967a0a5c276f79d2e1fe999d4afa607bfa46abf6f4ca0c08496f779d11b66"
+    },
+    {
+     "role": "partitions",
+     "file": "partitions.bin",
+     "offset": 32768,
+     "size": 3072,
+     "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+     "role": "app",
+     "file": "firmware.bin",
+     "offset": 65536,
+     "size": 2359297,
+     "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+   ]
+  },
+  "radio-v4-multimode": {
+   "about": "LFD3K-SM heltec_v4: the modem slot (slot ota_1) of the multimode layout; only the app image is written",
+   "kind": "radio",
+   "chip": "ESP32-S3",
+   "project": "lfd3k_sm",
+   "layout": "multimode",
+   "slot": "ota_1",
+   "flash_size": 16777216,
+   "part_table_hex": "aa5001020090000000f000006e76730000000000000000000000000000000000aa50010000800100002000006f74616461746100000000000000000000000000aa50010200a00100006000007069636b65725f6e767300000000000000000000aa5000000000020000000800666163746f727900000000000000000000000000aa50001000000a00000040006f74615f30000000000000000000000000000000aa50001100004a00000018006f74615f31000000000000000000000000000000aa50001200006200000018006f74615f32000000000000000000000000000000aa50001300007a00000020006f74615f33000000000000000000000000000000aa50010200009a00000001006c6664336b5f6e76730000000000000000000000aa50018200009b00000020007370696666730000000000000000000000000000aa5001820000bb00000010006c6974746c656673000000000000000000000000aa5001400000cb000000320063616d6462000000000000000000000000000000aa5001030000fd0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffffb37ffcef80a17aaafb4132f3e14badaa",
+   "images": [
+    {
+     "role": "app",
+     "file": "firmware.bin",
+     "offset": 4849664,
+     "size": 1059504,
+     "sha256": "810cc6fc005519796545ec09d1668c481416bd99848b83c237062072b7c68232"
+    }
+   ]
+  },
+  "radio-v4-single": {
+   "about": "LFD3K-SM heltec_v4_single (firmware/partitions.csv), a 16 MB Heltec V4",
+   "kind": "radio",
+   "chip": "ESP32-S3",
+   "project": "lfd3k_sm",
+   "layout": "single",
+   "flash_size": 16777216,
+   "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+   "images": [
+    {
+     "role": "bootloader",
+     "file": "bootloader.bin",
+     "offset": 0,
+     "size": 20000,
+     "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "role": "partitions",
+     "file": "partitions.bin",
+     "offset": 32768,
+     "size": 3072,
+     "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+     "role": "otadata",
+     "file": "ota_data_initial.bin",
+     "offset": 57344,
+     "size": 8192,
+     "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+     "role": "app",
+     "file": "firmware.bin",
+     "offset": 65536,
+     "size": 1000000,
+     "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+   ]
+  },
+  "radio-v4-single-no-size": {
+   "about": "a radio manifest without flash_size: the V3/V4 check cannot run, so it is refused (fail closed)",
+   "kind": "radio",
+   "chip": "ESP32-S3",
+   "project": "lfd3k_sm",
+   "layout": "single",
+   "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+   "images": [
+    {
+     "role": "bootloader",
+     "file": "bootloader.bin",
+     "offset": 0,
+     "size": 20000,
+     "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "role": "partitions",
+     "file": "partitions.bin",
+     "offset": 32768,
+     "size": 3072,
+     "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+     "role": "otadata",
+     "file": "ota_data_initial.bin",
+     "offset": 57344,
+     "size": 8192,
+     "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+     "role": "app",
+     "file": "firmware.bin",
+     "offset": 65536,
+     "size": 1000000,
+     "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+   ]
+  },
+  "radio-v3-single": {
+   "about": "LFD3K-SM heltec_v3_single (firmware/partitions.csv), an 8 MB Heltec V3",
+   "kind": "radio",
+   "chip": "ESP32-S3",
+   "project": "lfd3k_sm",
+   "layout": "single",
+   "flash_size": 8388608,
+   "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+   "images": [
+    {
+     "role": "bootloader",
+     "file": "bootloader.bin",
+     "offset": 0,
+     "size": 20000,
+     "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    {
+     "role": "partitions",
+     "file": "partitions.bin",
+     "offset": 32768,
+     "size": 3072,
+     "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    {
+     "role": "otadata",
+     "file": "ota_data_initial.bin",
+     "offset": 57344,
+     "size": 8192,
+     "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    {
+     "role": "app",
+     "file": "firmware.bin",
+     "offset": 65536,
+     "size": 1000000,
+     "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    }
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "board-update",
+   "about": "a CYD already on AXIS with the same table: the app only",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000024006170703000000000000000000000000000000000aa5001820000250000001b007370696666730000000000000000000000000000ebebffffffffffffffffffffffffffff58b91e821b387e7698c61bd0319bfa3a",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000076302e3631000000000000000000000000000000000000000000000000000000617869732d626273000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "axis-board",
+   "expect": {
+    "kind": "update",
+    "code": "update",
+    "erase": [],
+    "regions": [
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "board-first-blank",
+   "about": "a brand-new ESP32 (blank flash)",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "app_header_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "axis-board",
+   "expect": {
+    "kind": "first",
+    "code": "first",
+    "erase": [
+     {
+      "label": "nvs",
+      "offset": 36864,
+      "size": 20480
+     },
+     {
+      "label": "spiffs",
+      "offset": 2424832,
+      "size": 1769472
+     }
+    ],
+    "regions": [
+     {
+      "role": "bootloader",
+      "offset": 4096
+     },
+     {
+      "role": "partitions",
+      "offset": 32768
+     },
+     {
+      "role": "otadata",
+      "offset": 57344
+     },
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "board-first-stock",
+   "about": "a CYD on a stock Arduino sketch and table",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000014006170703000000000000000000000000000000000aa50001100001500000014006170703100000000000000000000000000000000aa50018200002900000016007370696666730000000000000000000000000000aa50010300003f0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffff972dae2ff872a0142d60bad124c0666b",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab0000000000000000000000006573702d6964663a2076342e342e37000000000000000000000000000000000061726475696e6f2d6c69622d6275696c64657200000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "axis-board",
+   "expect": {
+    "kind": "first",
+    "code": "first",
+    "erase": [
+     {
+      "label": "nvs",
+      "offset": 36864,
+      "size": 20480
+     },
+     {
+      "label": "spiffs",
+      "offset": 2424832,
+      "size": 1769472
+     }
+    ],
+    "regions": [
+     {
+      "role": "bootloader",
+      "offset": 4096
+     },
+     {
+      "role": "partitions",
+      "offset": 32768
+     },
+     {
+      "role": "otadata",
+      "offset": 57344
+     },
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "board-first-old-layout",
+   "about": "AXIS on an older partition layout: a different table is a first install",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa5000100000010000001e006170703000000000000000000000000000000000aa50018200001f0000000600646f6f7200000000000000000000000000000000aa5001820000250000001b007370696666730000000000000000000000000000ebebffffffffffffffffffffffffffff6534f399aa376fd526db4a3986cc0784",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000076302e3631000000000000000000000000000000000000000000000000000000617869732d626273000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "axis-board",
+   "expect": {
+    "kind": "first",
+    "code": "first",
+    "erase": [
+     {
+      "label": "nvs",
+      "offset": 36864,
+      "size": 20480
+     },
+     {
+      "label": "spiffs",
+      "offset": 2424832,
+      "size": 1769472
+     }
+    ],
+    "regions": [
+     {
+      "role": "bootloader",
+      "offset": 4096
+     },
+     {
+      "role": "partitions",
+      "offset": 32768
+     },
+     {
+      "role": "otadata",
+      "offset": 57344
+     },
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "board-first-same-table-foreign-app",
+   "about": "the AXIS table but another program in app0: first install; the identical table is not rewritten",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000024006170703000000000000000000000000000000000aa5001820000250000001b007370696666730000000000000000000000000000ebebffffffffffffffffffffffffffff58b91e821b387e7698c61bd0319bfa3a",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab0000000000000000000000006573702d6964663a2076342e342e37000000000000000000000000000000000061726475696e6f2d6c69622d6275696c64657200000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "axis-board",
+   "expect": {
+    "kind": "first",
+    "code": "first",
+    "erase": [
+     {
+      "label": "nvs",
+      "offset": 36864,
+      "size": 20480
+     },
+     {
+      "label": "spiffs",
+      "offset": 2424832,
+      "size": 1769472
+     }
+    ],
+    "regions": [
+     {
+      "role": "bootloader",
+      "offset": 4096
+     },
+     {
+      "role": "otadata",
+      "offset": 57344
+     },
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "board-first-same-bootloader",
+   "about": "a different table but the boot loader on the board is already this one: it is not rewritten",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000014006170703000000000000000000000000000000000aa50001100001500000014006170703100000000000000000000000000000000aa50018200002900000016007370696666730000000000000000000000000000aa50010300003f0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffff972dae2ff872a0142d60bad124c0666b",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab0000000000000000000000006573702d6964663a2076342e342e37000000000000000000000000000000000061726475696e6f2d6c69622d6275696c64657200000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "bootloader_sha256": "20b967a0a5c276f79d2e1fe999d4afa607bfa46abf6f4ca0c08496f779d11b66"
+   },
+   "target": "axis-board",
+   "expect": {
+    "kind": "first",
+    "code": "first",
+    "erase": [
+     {
+      "label": "nvs",
+      "offset": 36864,
+      "size": 20480
+     },
+     {
+      "label": "spiffs",
+      "offset": 2424832,
+      "size": 1769472
+     }
+    ],
+    "regions": [
+     {
+      "role": "partitions",
+      "offset": 32768
+     },
+     {
+      "role": "otadata",
+      "offset": 57344
+     },
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "board-image-on-radio",
+   "about": "a radio (ESP32-S3) offered the board image",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa5001020090000000f000006e76730000000000000000000000000000000000aa50010000800100002000006f74616461746100000000000000000000000000aa50010200a00100006000007069636b65725f6e767300000000000000000000aa5000000000020000000800666163746f727900000000000000000000000000aa50001000000a00000040006f74615f30000000000000000000000000000000aa50001100004a00000018006f74615f31000000000000000000000000000000aa50001200006200000018006f74615f32000000000000000000000000000000aa50001300007a00000020006f74615f33000000000000000000000000000000aa50010200009a00000001006c6664336b5f6e76730000000000000000000000aa50018200009b00000020007370696666730000000000000000000000000000aa5001820000bb00000010006c6974746c656673000000000000000000000000aa5001400000cb000000320063616d6462000000000000000000000000000000aa5001030000fd0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffffb37ffcef80a17aaafb4132f3e14badaa",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "axis-board",
+   "expect": {
+    "kind": "refuse",
+    "code": "chip",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "board-too-big",
+   "about": "an app larger than app0",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000024006170703000000000000000000000000000000000aa5001820000250000001b007370696666730000000000000000000000000000ebebffffffffffffffffffffffffffff58b91e821b387e7698c61bd0319bfa3a",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000076302e3631000000000000000000000000000000000000000000000000000000617869732d626273000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "axis-board-too-big",
+   "expect": {
+    "kind": "refuse",
+    "code": "too-big",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "radio-image-on-cyd",
+   "about": "a CYD (ESP32) offered a radio image",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000024006170703000000000000000000000000000000000aa5001820000250000001b007370696666730000000000000000000000000000ebebffffffffffffffffffffffffffff58b91e821b387e7698c61bd0319bfa3a",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000076302e3631000000000000000000000000000000000000000000000000000000617869732d626273000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v3-single",
+   "expect": {
+    "kind": "refuse",
+    "code": "chip",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "radio-multimode-on-cyd",
+   "about": "a CYD (ESP32) offered the multimode modem slot",
+   "device": {
+    "chip": "ESP32",
+    "flash_size": 4194304,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000024006170703000000000000000000000000000000000aa5001820000250000001b007370696666730000000000000000000000000000ebebffffffffffffffffffffffffffff58b91e821b387e7698c61bd0319bfa3a",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000076302e3631000000000000000000000000000000000000000000000000000000617869732d626273000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-multimode",
+   "expect": {
+    "kind": "refuse",
+    "code": "chip",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "v4-multimode-update",
+   "about": "a V4 with the multimode table: only the modem slot",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa5001020090000000f000006e76730000000000000000000000000000000000aa50010000800100002000006f74616461746100000000000000000000000000aa50010200a00100006000007069636b65725f6e767300000000000000000000aa5000000000020000000800666163746f727900000000000000000000000000aa50001000000a00000040006f74615f30000000000000000000000000000000aa50001100004a00000018006f74615f31000000000000000000000000000000aa50001200006200000018006f74615f32000000000000000000000000000000aa50001300007a00000020006f74615f33000000000000000000000000000000aa50010200009a00000001006c6664336b5f6e76730000000000000000000000aa50018200009b00000020007370696666730000000000000000000000000000aa5001820000bb00000010006c6974746c656673000000000000000000000000aa5001400000cb000000320063616d6462000000000000000000000000000000aa5001030000fd0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffffb37ffcef80a17aaafb4132f3e14badaa",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-multimode",
+   "expect": {
+    "kind": "update",
+    "code": "update",
+    "erase": [],
+    "regions": [
+     {
+      "role": "app",
+      "offset": 4849664
+     }
+    ]
+   }
+  },
+  {
+   "name": "v4-multimode-empty-slot",
+   "about": "a V4 with the multimode table and nothing in the modem slot yet: still only the slot",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa5001020090000000f000006e76730000000000000000000000000000000000aa50010000800100002000006f74616461746100000000000000000000000000aa50010200a00100006000007069636b65725f6e767300000000000000000000aa5000000000020000000800666163746f727900000000000000000000000000aa50001000000a00000040006f74615f30000000000000000000000000000000aa50001100004a00000018006f74615f31000000000000000000000000000000aa50001200006200000018006f74615f32000000000000000000000000000000aa50001300007a00000020006f74615f33000000000000000000000000000000aa50010200009a00000001006c6664336b5f6e76730000000000000000000000aa50018200009b00000020007370696666730000000000000000000000000000aa5001820000bb00000010006c6974746c656673000000000000000000000000aa5001400000cb000000320063616d6462000000000000000000000000000000aa5001030000fd0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffffb37ffcef80a17aaafb4132f3e14badaa",
+    "app_header_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-multimode",
+   "expect": {
+    "kind": "update",
+    "code": "update",
+    "erase": [],
+    "regions": [
+     {
+      "role": "app",
+      "offset": 4849664
+     }
+    ]
+   }
+  },
+  {
+   "name": "v4-multimode-needs-layout",
+   "about": "the multimode slot image on a V4 without the multimode layout",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-multimode",
+   "expect": {
+    "kind": "refuse",
+    "code": "no-multimode",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "v4-multimode-other-slot",
+   "about": "a multimode layout whose modem slot differs from the image's",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa5001020090000000f000006e76730000000000000000000000000000000000aa50010000800100002000006f74616461746100000000000000000000000000aa50010200a00100006000007069636b65725f6e767300000000000000000000aa5000000000020000000800666163746f727900000000000000000000000000aa50001000000a00000040006f74615f30000000000000000000000000000000aa50001100004a00000010006f74615f31000000000000000000000000000000aa50001200006200000018006f74615f32000000000000000000000000000000aa50001300007a00000020006f74615f33000000000000000000000000000000aa50010200009a00000001006c6664336b5f6e76730000000000000000000000aa50018200009b00000020007370696666730000000000000000000000000000aa5001820000bb00000010006c6974746c656673000000000000000000000000aa5001400000cb000000320063616d6462000000000000000000000000000000aa5001030000fd0000000100636f726564756d70000000000000000000000000ebebfffffffffffffffffffffffffffff070a35dbdc7f646f6ce7433526ae4f8",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-multimode",
+   "expect": {
+    "kind": "refuse",
+    "code": "slot",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "v3-on-multimode",
+   "about": "the V3 image on a 16 MB multimode V4: the flash size says it is a V4",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa5001020090000000f000006e76730000000000000000000000000000000000aa50010000800100002000006f74616461746100000000000000000000000000aa50010200a00100006000007069636b65725f6e767300000000000000000000aa5000000000020000000800666163746f727900000000000000000000000000aa50001000000a00000040006f74615f30000000000000000000000000000000aa50001100004a00000018006f74615f31000000000000000000000000000000aa50001200006200000018006f74615f32000000000000000000000000000000aa50001300007a00000020006f74615f33000000000000000000000000000000aa50010200009a00000001006c6664336b5f6e76730000000000000000000000aa50018200009b00000020007370696666730000000000000000000000000000aa5001820000bb00000010006c6974746c656673000000000000000000000000aa5001400000cb000000320063616d6462000000000000000000000000000000aa5001030000fd0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffffb37ffcef80a17aaafb4132f3e14badaa",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v3-single",
+   "expect": {
+    "kind": "refuse",
+    "code": "flash-size",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "v4-single-on-multimode",
+   "about": "the single-mode V4 image on a board with the multimode layout: never a first install",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa5001020090000000f000006e76730000000000000000000000000000000000aa50010000800100002000006f74616461746100000000000000000000000000aa50010200a00100006000007069636b65725f6e767300000000000000000000aa5000000000020000000800666163746f727900000000000000000000000000aa50001000000a00000040006f74615f30000000000000000000000000000000aa50001100004a00000018006f74615f31000000000000000000000000000000aa50001200006200000018006f74615f32000000000000000000000000000000aa50001300007a00000020006f74615f33000000000000000000000000000000aa50010200009a00000001006c6664336b5f6e76730000000000000000000000aa50018200009b00000020007370696666730000000000000000000000000000aa5001820000bb00000010006c6974746c656673000000000000000000000000aa5001400000cb000000320063616d6462000000000000000000000000000000aa5001030000fd0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffffb37ffcef80a17aaafb4132f3e14badaa",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-single",
+   "expect": {
+    "kind": "refuse",
+    "code": "multimode-layout",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "v4-single-update",
+   "about": "a V4 already on the single-mode modem",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-single",
+   "expect": {
+    "kind": "update",
+    "code": "update",
+    "erase": [],
+    "regions": [
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "v3-image-on-v4-single",
+   "about": "the V3 image on a V4 running the single-mode modem: same chip and table, 16 MB says V4",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v3-single",
+   "expect": {
+    "kind": "refuse",
+    "code": "flash-size",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "v4-image-on-v3-single",
+   "about": "the V4 image on a V3 running the single-mode modem: 8 MB says V3",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 8388608,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-single",
+   "expect": {
+    "kind": "refuse",
+    "code": "flash-size",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "v3-update",
+   "about": "a V3 already on the single-mode modem",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 8388608,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v3-single",
+   "expect": {
+    "kind": "update",
+    "code": "update",
+    "erase": [],
+    "regions": [
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "v3-first-meshtastic",
+   "about": "a V3 on Meshtastic (its own table): first install, boot loader at 0x0",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 8388608,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000014006170703000000000000000000000000000000000aa50001100001500000014006170703100000000000000000000000000000000aa50018200002900000016007370696666730000000000000000000000000000aa50010300003f0000000100636f726564756d70000000000000000000000000ebebffffffffffffffffffffffffffff972dae2ff872a0142d60bad124c0666b",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab000000000000000000000000322e372e323600000000000000000000000000000000000000000000000000006d65736874617374696300000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v3-single",
+   "expect": {
+    "kind": "first",
+    "code": "first",
+    "erase": [
+     {
+      "label": "nvs",
+      "offset": 36864,
+      "size": 20480
+     },
+     {
+      "label": "storage",
+      "offset": 3211264,
+      "size": 1048576
+     }
+    ],
+    "regions": [
+     {
+      "role": "bootloader",
+      "offset": 0
+     },
+     {
+      "role": "partitions",
+      "offset": 32768
+     },
+     {
+      "role": "otadata",
+      "offset": 57344
+     },
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "v3-first-blank",
+   "about": "a blank V3",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 8388608,
+    "part_table_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "app_header_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v3-single",
+   "expect": {
+    "kind": "first",
+    "code": "first",
+    "erase": [
+     {
+      "label": "nvs",
+      "offset": 36864,
+      "size": 20480
+     },
+     {
+      "label": "storage",
+      "offset": 3211264,
+      "size": 1048576
+     }
+    ],
+    "regions": [
+     {
+      "role": "bootloader",
+      "offset": 0
+     },
+     {
+      "role": "partitions",
+      "offset": 32768
+     },
+     {
+      "role": "otadata",
+      "offset": 57344
+     },
+     {
+      "role": "app",
+      "offset": 65536
+     }
+    ]
+   }
+  },
+  {
+   "name": "radio-manifest-no-flash-size",
+   "about": "a radio manifest that does not say its flash size",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-single-no-size",
+   "expect": {
+    "kind": "refuse",
+    "code": "flash-size",
+    "erase": [],
+    "regions": []
+   }
+  },
+  {
+   "name": "radio-unknown-flash-size",
+   "about": "a radio whose flash size could not be read",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": null,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-single",
+   "expect": {
+    "kind": "refuse",
+    "code": "flash-size",
+    "erase": [],
+    "regions": []
+   }
+  }
+ ]
+}
