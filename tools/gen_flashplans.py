@@ -113,6 +113,10 @@ TARGETS = {
         "about": "LFD3K-SM heltec_v4_single (firmware/partitions.csv), a 16 MB Heltec V4",
         "kind": "radio", "chip": "ESP32-S3", "project": "lfd3k_sm", "layout": "single", "flash_size": 16 * MB,
         "part_table_hex": h(SINGLE_TABLE), "images": single_radio("1234", 16 * MB)},
+    "radio-v4-single-no-size": {
+        "about": "a radio manifest without flash_size: the V3/V4 check cannot run, so it is refused (fail closed)",
+        "kind": "radio", "chip": "ESP32-S3", "project": "lfd3k_sm", "layout": "single",
+        "part_table_hex": h(SINGLE_TABLE), "images": single_radio("1234", 16 * MB)},
     "radio-v3-single": {
         "about": "LFD3K-SM heltec_v3_single (firmware/partitions.csv), an 8 MB Heltec V3",
         "kind": "radio", "chip": "ESP32-S3", "project": "lfd3k_sm", "layout": "single", "flash_size": 8 * MB,
@@ -122,8 +126,9 @@ TARGETS = {
 ALL_BOARD = [["bootloader", 0x1000], ["partitions", 0x8000], ["otadata", 0xE000], ["app", 0x10000]]
 ALL_RADIO = [["bootloader", 0x0], ["partitions", 0x8000], ["otadata", 0xE000], ["app", 0x10000]]
 # first installs erase the data partitions of the target's table (hand-written from the layouts above)
-ERASE_BOARD = [["nvs", 0x9000, 0x5000], ["otadata", 0xE000, 0x2000], ["spiffs", 0x250000, 0x1B0000]]
-ERASE_RADIO = [["nvs", 0x9000, 0x5000], ["otadata", 0xE000, 0x2000], ["storage", 0x310000, 0x100000]]
+# (otadata is not in the list: the otadata image written at 0xE000 replaces it, and an erase never overlaps a write)
+ERASE_BOARD = [["nvs", 0x9000, 0x5000], ["spiffs", 0x250000, 0x1B0000]]
+ERASE_RADIO = [["nvs", 0x9000, 0x5000], ["storage", 0x310000, 0x100000]]
 
 
 def case(name, about, chip, flash, table_b, app_b, target, kind, regions, code, erase=(), bl=None):
@@ -184,6 +189,8 @@ CASES = [
          ARDUINO_TABLE, MESH_APP, "radio-v3-single", "first", ALL_RADIO, "first", ERASE_RADIO),
     case("v3-first-blank", "a blank V3", "ESP32-S3", V3, BLANK, BLANK_APP, "radio-v3-single", "first", ALL_RADIO,
          "first", ERASE_RADIO),
+    case("radio-manifest-no-flash-size", "a radio manifest that does not say its flash size", "ESP32-S3", V4,
+         SINGLE_TABLE, MODEM_APP, "radio-v4-single-no-size", "refuse", [], "flash-size"),
     case("radio-unknown-flash-size", "a radio whose flash size could not be read", "ESP32-S3", None, SINGLE_TABLE,
          MODEM_APP, "radio-v4-single", "refuse", [], "flash-size"),
 ]
@@ -194,8 +201,10 @@ DOC = {
               "(chip name as esptool reports it, the flash size in bytes esptool detects or null, the bytes at 0x8000, "
               "the first bytes at the target app image's offset, optionally the sha256 of the boot loader region). "
               "target: a key of targets (a manifest plus its partition table bytes, the project name in the app "
-              "header, flash_size for radios, slot for the multimode modem). expect: kind update|first|refuse, a "
-              "reason code, the data partitions a first install erases (label, offset, size), the images written "
+              "header, flash_size for radios (required: a radio target without it is refused), slot for the "
+              "multimode modem). expect: kind update|first|refuse, a "
+              "reason code, the data partitions a first install erases (label, offset, size; never one a written image "
+              "covers, never below 0x9000), the images written "
               "in order (role, offset)."),
     "first_install_warning": "This replaces everything on this board. Whatever it runs now, and its settings, will be gone.",
     "multimode_marker": "picker_nvs",

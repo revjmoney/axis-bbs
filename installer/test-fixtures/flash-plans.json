@@ -1,5 +1,5 @@
 {
- "about": "Shared flash decisions: site/installer-logic.js planFlash (node --test) and Task 9's axis_flash.py read this file; regenerate with python -I tools/gen_flashplans.py. device: what was read from the board (chip name as esptool reports it, the flash size in bytes esptool detects or null, the bytes at 0x8000, the first bytes at the target app image's offset, optionally the sha256 of the boot loader region). target: a key of targets (a manifest plus its partition table bytes, the project name in the app header, flash_size for radios, slot for the multimode modem). expect: kind update|first|refuse, a reason code, the data partitions a first install erases (label, offset, size), the images written in order (role, offset).",
+ "about": "Shared flash decisions: site/installer-logic.js planFlash (node --test) and Task 9's axis_flash.py read this file; regenerate with python -I tools/gen_flashplans.py. device: what was read from the board (chip name as esptool reports it, the flash size in bytes esptool detects or null, the bytes at 0x8000, the first bytes at the target app image's offset, optionally the sha256 of the boot loader region). target: a key of targets (a manifest plus its partition table bytes, the project name in the app header, flash_size for radios (required: a radio target without it is refused), slot for the multimode modem). expect: kind update|first|refuse, a reason code, the data partitions a first install erases (label, offset, size; never one a written image covers, never below 0x9000), the images written in order (role, offset).",
  "first_install_warning": "This replaces everything on this board. Whatever it runs now, and its settings, will be gone.",
  "multimode_marker": "picker_nvs",
  "codes": [
@@ -140,6 +140,44 @@
     }
    ]
   },
+  "radio-v4-single-no-size": {
+   "about": "a radio manifest without flash_size: the V3/V4 check cannot run, so it is refused (fail closed)",
+   "kind": "radio",
+   "chip": "ESP32-S3",
+   "project": "lfd3k_sm",
+   "layout": "single",
+   "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+   "images": [
+    {
+     "role": "bootloader",
+     "file": "bootloader.bin",
+     "offset": 0,
+     "size": 20000,
+     "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "role": "partitions",
+     "file": "partitions.bin",
+     "offset": 32768,
+     "size": 3072,
+     "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+     "role": "otadata",
+     "file": "ota_data_initial.bin",
+     "offset": 57344,
+     "size": 8192,
+     "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+     "role": "app",
+     "file": "firmware.bin",
+     "offset": 65536,
+     "size": 1000000,
+     "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+   ]
+  },
   "radio-v3-single": {
    "about": "LFD3K-SM heltec_v3_single (firmware/partitions.csv), an 8 MB Heltec V3",
    "kind": "radio",
@@ -223,11 +261,6 @@
       "size": 20480
      },
      {
-      "label": "otadata",
-      "offset": 57344,
-      "size": 8192
-     },
-     {
       "label": "spiffs",
       "offset": 2424832,
       "size": 1769472
@@ -271,11 +304,6 @@
       "label": "nvs",
       "offset": 36864,
       "size": 20480
-     },
-     {
-      "label": "otadata",
-      "offset": 57344,
-      "size": 8192
      },
      {
       "label": "spiffs",
@@ -323,11 +351,6 @@
       "size": 20480
      },
      {
-      "label": "otadata",
-      "offset": 57344,
-      "size": 8192
-     },
-     {
       "label": "spiffs",
       "offset": 2424832,
       "size": 1769472
@@ -373,11 +396,6 @@
       "size": 20480
      },
      {
-      "label": "otadata",
-      "offset": 57344,
-      "size": 8192
-     },
-     {
       "label": "spiffs",
       "offset": 2424832,
       "size": 1769472
@@ -418,11 +436,6 @@
       "label": "nvs",
       "offset": 36864,
       "size": 20480
-     },
-     {
-      "label": "otadata",
-      "offset": 57344,
-      "size": 8192
      },
      {
       "label": "spiffs",
@@ -724,11 +737,6 @@
       "size": 20480
      },
      {
-      "label": "otadata",
-      "offset": 57344,
-      "size": 8192
-     },
-     {
       "label": "storage",
       "offset": 3211264,
       "size": 1048576
@@ -774,11 +782,6 @@
       "size": 20480
      },
      {
-      "label": "otadata",
-      "offset": 57344,
-      "size": 8192
-     },
-     {
       "label": "storage",
       "offset": 3211264,
       "size": 1048576
@@ -802,6 +805,23 @@
       "offset": 65536
      }
     ]
+   }
+  },
+  {
+   "name": "radio-manifest-no-flash-size",
+   "about": "a radio manifest that does not say its flash size",
+   "device": {
+    "chip": "ESP32-S3",
+    "flash_size": 16777216,
+    "part_table_hex": "aa50010200900000005000006e76730000000000000000000000000000000000aa50010000e00000002000006f74616461746100000000000000000000000000aa50001000000100000018006f74615f30000000000000000000000000000000aa50001100001900000018006f74615f31000000000000000000000000000000aa500183000031000000100073746f7261676500000000000000000000000000ebebfffffffffffffffffffffffffffff1347f10fab0590bd3b0a863bb98a6ce",
+    "app_header_hex": "e905022f00000000ffffffffffffffffffffffffffffffff00000000000000003254cdab00000000000000000000000034626531393266000000000000000000000000000000000000000000000000006c6664336b5f736d000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   },
+   "target": "radio-v4-single-no-size",
+   "expect": {
+    "kind": "refuse",
+    "code": "flash-size",
+    "erase": [],
+    "regions": []
    }
   },
   {

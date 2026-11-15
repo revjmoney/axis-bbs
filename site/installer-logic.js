@@ -225,6 +225,9 @@
       return refuse("chip", "This is an " + device.chip + " (" + chipWhat(device.chip) + "). The " + name +
         " image is for an " + target.chip + " (" + chipWhat(target.chip) + ").");
     }
+    if (target.kind === "radio" && !target.flashSize) {
+      return refuse("flash-size", "This radio image does not say which flash size it is for, so the installer cannot tell a Heltec V3 (8 MB) from a Heltec V4 (16 MB).");
+    }
     if (target.flashSize && device.flashSize !== target.flashSize) {
       var isModel = radioModel(device.flashSize), forModel = radioModel(target.flashSize) || sizeText(target.flashSize);
       return refuse("flash-size", "This radio has " + sizeText(device.flashSize) + " of flash" +
@@ -284,11 +287,20 @@
           String(device.bootloaderSha256).toLowerCase() === String(img.sha256).toLowerCase()) continue; // already this boot loader
       regions.push(copyImage(img));
     }
-    return { kind: "first", code: "first", erase: dataPartitions(want), regions: regions, reason: why + " " + FIRST_INSTALL_WARNING };
+    // erase the data partitions a written image does not already replace (the otadata image covers otadata)
+    var erase = dataPartitions(want).filter(function (e) {
+      for (var k = 0; k < regions.length; k++) if (overlaps(e, regions[k])) return false;
+      return true;
+    });
+    return { kind: "first", code: "first", erase: erase, regions: regions, reason: why + " " + FIRST_INSTALL_WARNING };
   }
 
   function refused(why) {
     throw new Error("refused: " + why);
+  }
+
+  function overlaps(a, b) {
+    return a.offset < b.offset + b.size && b.offset < a.offset + a.size;
   }
 
   function inside(r, p) {
@@ -300,7 +312,8 @@
    *   update: no erase; exactly one app image at the target's app offset; single layout: inside an app partition
    *     of the board's own table; multimode: exactly the partition labelled target.slot, identical in the target's
    *     table and the board's. So an update never touches NVS (0x9000), otadata, LittleFS (0x250000) or another slot.
-   *   first: every erase is a data partition of the target's table; the boot loader sits below 0x8000, the table at
+   *   first: every erase is a data partition of the target's table, at or above 0x9000, and overlaps no image being
+   *     written and no app partition of the target's table; the boot loader sits below 0x8000, the table at
    *     0x8000, otadata at the target's otadata partition, the app in the target's app partition.
    */
   function guardRegions(plan, deviceTable, target) {
@@ -342,6 +355,14 @@
         if (data[j].offset === erase[i].offset && data[j].size === erase[i].size) hit = true;
       }
       if (!hit) refused("erase at 0x" + erase[i].offset.toString(16) + " is not a data partition of the image's table");
+      // the erase rule on its own: never the boot loader or the table, never a written image, never an app
+      if (erase[i].offset < 0x9000) refused("erase at 0x" + erase[i].offset.toString(16) + " is below 0x9000");
+      for (j = 0; j < plan.regions.length; j++) {
+        if (overlaps(erase[i], plan.regions[j])) refused("erase at 0x" + erase[i].offset.toString(16) + " overlaps the " + plan.regions[j].role + " being written");
+      }
+      for (j = 0; j < want.length; j++) {
+        if (want[j].type === 0 && overlaps(erase[i], want[j])) refused("erase at 0x" + erase[i].offset.toString(16) + " overlaps the app partition " + want[j].label);
+      }
     }
     var ota = null;
     for (i = 0; i < want.length; i++) if (want[i].type === 1 && want[i].subtype === 0) ota = want[i];

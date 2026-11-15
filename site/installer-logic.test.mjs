@@ -135,7 +135,7 @@ test("the first-install warning is the shared text", () => {
 test("planFlash: a first install erases the target's data partitions; an update erases nothing", () => {
   const first = plans.cases.find((x) => x.name === "board-first-blank");
   const p = L.planFlash(deviceFrom(first.device), targetFrom(plans.targets[first.target]));
-  assert.deepEqual(p.erase.map((e) => [e.label, e.offset]), [["nvs", 0x9000], ["otadata", 0xe000], ["spiffs", 0x250000]]);
+  assert.deepEqual(p.erase.map((e) => [e.label, e.offset]), [["nvs", 0x9000], ["spiffs", 0x250000]]);
   const upd = plans.cases.find((x) => x.name === "board-update");
   assert.deepEqual(L.planFlash(deviceFrom(upd.device), targetFrom(plans.targets[upd.target])).erase, []);
 });
@@ -175,6 +175,38 @@ test("guardRegions refuses an update that would touch NVS, otadata, LittleFS or 
   const oldMm = L.parseTable(hex(plans.cases.find((x) => x.name === "v4-multimode-other-slot").device.part_table_hex));
   assert.throws(() => L.guardRegions(upd({ role: "app", offset: 0x4a0000, size: 1000 }), oldMm, mmT), /refused/);
   assert.throws(() => L.guardRegions({ kind: "refuse", erase: [], regions: [] }, axis, axisT), /refused/);
+});
+
+test("planFlash refuses a radio manifest without flash_size (fail closed)", () => {
+  const c = plans.cases.find((x) => x.name === "radio-manifest-no-flash-size");
+  const p = L.planFlash(deviceFrom(c.device), targetFrom(plans.targets[c.target]));
+  assert.equal(p.kind, "refuse");
+  assert.equal(p.code, "flash-size");
+  assert.match(p.reason, /does not say which flash size/);
+});
+
+test("guardRegions refuses an erase below 0x9000, over a written image or over an app partition", () => {
+  const axisT = targetFrom(plans.targets["axis-board"]);
+  const c = plans.cases.find((x) => x.name === "board-first-blank");
+  const good = L.planFlash(deviceFrom(c.device), axisT);
+  const withErase = (e) => Object.assign({}, good, { erase: good.erase.concat([e]) });
+  assert.throws(() => L.guardRegions(withErase({ label: "x", offset: 0x8000, size: 0x1000 }), null, axisT), /refused/);
+  assert.throws(() => L.guardRegions(withErase({ label: "otadata", offset: 0xe000, size: 0x2000 }), null, axisT), /refused/);
+  // a malformed table: a data partition that overlaps the app partition
+  const rows = [[0x9000, 0x5000, 1, 2, "nvs"], [0xe000, 0x2000, 1, 0, "otadata"], [0x10000, 0x240000, 0, 0x10, "app0"], [0x200000, 0x100000, 1, 0x82, "spiffs"]];
+  const bytes = new Uint8Array(32 * (rows.length + 1)).fill(0xff);
+  rows.forEach(([off, size, type, sub, label], i) => {
+    const b = i * 32;
+    bytes[b] = 0xaa; bytes[b + 1] = 0x50; bytes[b + 2] = type; bytes[b + 3] = sub;
+    new DataView(bytes.buffer).setUint32(b + 4, off, true);
+    new DataView(bytes.buffer).setUint32(b + 8, size, true);
+    for (let k = 0; k < label.length; k++) bytes[b + 12 + k] = label.charCodeAt(k);
+    for (let k = label.length; k < 20; k++) bytes[b + 12 + k] = 0;
+  });
+  const bad = Object.assign({}, axisT, { partTable: bytes });
+  const app = axisT.images.find((i) => i.role === "app");
+  const plan = { kind: "first", erase: [{ label: "spiffs", offset: 0x200000, size: 0x100000 }], regions: [Object.assign({}, app)] };
+  assert.throws(() => L.guardRegions(plan, null, bad), /refused/);
 });
 
 test("guardRegions checks a first install against the target table", () => {

@@ -663,7 +663,9 @@ async function flashJob(job, port, picks) {
     const device = { chip: dev.chip, flashSize: dev.flashSize, partTable: devTable, appHeader: null, bootloaderSha256: null };
 
     // a wrong chip or radio model is refused before anything is downloaded
-    let plan = device.chip === target.chip && (!target.flashSize || device.flashSize === target.flashSize) ? null : L.planFlash(device, target);
+    const sizeOk = job !== "radio" ? !target.flashSize || device.flashSize === target.flashSize
+      : !!target.flashSize && device.flashSize === target.flashSize;
+    let plan = device.chip === target.chip && sizeOk ? null : L.planFlash(device, target);
     let images = [];
     if (!plan) {
       images = await fetchImages(m, t.base);
