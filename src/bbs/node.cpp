@@ -255,6 +255,7 @@ void Node::beginLocal(uint32_t nowMs) {
     sysop_ = true;
     local_ = true;
     loggedIn();
+    drainSeq();  // a login step that ended through the menu path: its next step now, not at the next key
 }
 
 void Node::beginLocalQuiet(uint32_t nowMs) {  // (the bulletin, oneliners and menu art cost the main RAM it hasn't got)
@@ -337,7 +338,7 @@ char v3Command(const std::string& f) {
         {"READMSGS", 'm'}, {"LISTMSGAR", 'm'}, {"SELECTMSGAREA", 'm'}, {"COMPOSEMSG", 'm'}, {"NEWSCAN", 's'},
         {"LISTFILES", 'f'}, {"SELECTFILEAREA", 'f'}, {"DOWNLOADFILE", 'f'}, {"UPLOADFILE", 'f'}, {"SEARCH_FILES", 'f'},
         {"FILE_NEWSCAN", 'f'}, {"CHAT", 'p'}, {"ONELINER", 'o'}, {"LISTUSERS", 'h'}, {"LASTCALLERS", 'l'},
-        {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RANDOMRUMOR", 'r'}, {"RUMORSADD", 'r'}, {"BBSLIST", 'b'}, {"BBSLISTADD", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'}, {"NUV", 'a'}, {"NEWUSERVOTE", 'a'}, {"CHECKNUV", 'a'},
+        {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RUMORSADD", 'r'}, {"BBSLIST", 'b'}, {"BBSLISTADD", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'}, {"NUV", 'a'}, {"NEWUSERVOTE", 'a'}, {"CHECKNUV", 'a'},
         {"SHOWSTATS", 'i'}, {"SYSTEMSTATS", 'i'}, {"USERCONFIG", 'u'}, {"CFG_AUTOSIG", 'u'}, {"CFG_PASSWORD", 'u'},  // (the account screen: the tagline is the autosig)
         {"SENDPRIVMAIL", 'e'}, {"READPRIVMAIL", 'e'},
         {"MAINLOGOFF", 'g'}};
@@ -374,6 +375,7 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
         [this](const std::string& k) { return menuValue(k); }));
     menu_->setArtPieces(std::move(pieces));
     menu_->drawArt = [this](const std::string& f) { return drawMenuArt(f); };  // (one drawer for every art screen)
+    menu_->beforePrompt = [this] { return menuRumor(); };
     menu_->cantRun = [this](const MenuCmd& c) {  // a DOOR: line whose door can't start here (a DOS .EXE): off the menu
         std::string cmd = c.cmd;
         for (char& ch : cmd) ch = (char)std::toupper((unsigned char)ch);
@@ -614,7 +616,7 @@ void Node::startSequence() {
     }
     seqAt_ = 0;
     inSeq_ = true;
-    seqFast_ = seqPauseNext_ = false;
+    seqFast_ = seqPauseNext_ = seqUnheld_ = false;
     nextStep();
 }
 
@@ -638,6 +640,16 @@ void Node::nextStep() {
     } depth(*this);
     while (inSeq_ && seqAt_ < seq_.size()) {
         if (seqWait()) return;  // a slow caller: the screen before this one is still going out
+        const LoginStep&   next = seq_[seqAt_];
+        const std::string& nc = next.cmd;  // these clear the screen themselves, whatever the step's CLEAR says
+        bool clears = next.clear || nc == "USERSTATS" || nc == "SHOWSTATS" || nc == "SYSTEMSTATS" || nc == "WHOISONLINE" || nc == "ONELINERS" ||
+                      nc == "FASTLOGIN";
+        if (seqUnheld_ && clears && next.level <= menuWho().level) {  // a screen still up with no pause of its own: a key first
+            seqUnheld_ = false;
+            seqPauseNext_ = true;
+            seqResume();
+            return;
+        }
         const LoginStep s = seq_[seqAt_++];
         if (s.level > menuWho().level) continue;
         const std::string& c = s.cmd;
@@ -661,24 +673,30 @@ void Node::nextStep() {
                 if (c == "PRINTNEWS") hold = true;  // stays up for a key so the local screen can show it
             }
         } else if (c == "SYSOPNOTICES" || c == "NMAILSCAN") {
-            if (s.clear) out_ += theme::CLS;
-            showNotes();
+            if (notes_.empty()) shown = false;  // nothing waiting: no clear and no pause (a blank screen and a key for nothing)
+            else {
+                if (s.clear) out_ += theme::CLS;
+                showNotes();
+            }
         } else if (c == "RANDOMRUMOR") {
             if (s.clear) out_ += theme::CLS;
             rumorLine();
         } else if (c == "LASTCALLS" || c == "LASTCALLERS") {  // these screens end through showMenu(): the sequence picks up there
             if (s.clear) out_ += theme::CLS;
             seqPauseNext_ = s.pause;
+            seqUnheld_ = !s.pause;
             showLastCallers();
             return;
         } else if (c == "WHOISONLINE") {
             if (s.clear) out_ += theme::CLS;
             seqPauseNext_ = s.pause;
+            seqUnheld_ = !s.pause;
             showWhoOnline();
             return;
         } else if (c == "USERSTATS" || c == "SHOWSTATS" || c == "SYSTEMSTATS") {
             if (s.clear) out_ += theme::CLS;
             seqPauseNext_ = s.pause;
+            seqUnheld_ = !s.pause;
             showSystemInfo();
             return;
         } else if (c == "SCRIPT" || c == "script") {
@@ -716,6 +734,13 @@ void Node::nextStep() {
             seqResume();
             return;
         }
+        if (shown) seqUnheld_ = true;
+    }
+    if (seqUnheld_) {  // the main menu clears too
+        seqUnheld_ = false;
+        seqPauseNext_ = true;
+        seqResume();
+        return;
     }
     if (seqWait()) return;  // (and the menu after the last step)
     inSeq_ = false;
@@ -1079,7 +1104,7 @@ bool Node::onlySwitches(const BbsConfig& a, const BbsConfig& b) {
            a.ftnAddress == b.ftnAddress && a.newUserSecurity == b.newUserSecurity && a.dailyMinutes == b.dailyMinutes &&
            a.idleMinutes == b.idleMinutes && a.sessions == b.sessions && a.nuvYes == b.nuvYes && a.nuvNo == b.nuvNo && a.nuvLevel == b.nuvLevel &&
            a.ratio == b.ratio && a.freeKb == b.freeKb && a.theme == b.theme && a.wfc == b.wfc && a.loginSplash == b.loginSplash &&
-           a.sysopTelnet == b.sysopTelnet && a.setupDone == b.setupDone && a.unknown == b.unknown &&
+           a.sysopTelnet == b.sysopTelnet && a.wfcAnim == b.wfcAnim && a.setupDone == b.setupDone && a.unknown == b.unknown &&
            std::equal(a.areas.begin(), a.areas.end(), b.areas.begin(), b.areas.end(), area) &&
            std::equal(a.msgAreas.begin(), a.msgAreas.end(), b.msgAreas.begin(), b.msgAreas.end(), area) &&
            std::equal(a.mainMenu.begin(), a.mainMenu.end(), b.mainMenu.begin(), b.mainMenu.end(), item);
@@ -1394,7 +1419,13 @@ void Node::input(const uint8_t* p, size_t n, uint32_t nowMs) {
     for (size_t i = 0; i < n && state_ != State::Done; i++) {
         if (seqDue_) drainSeq();
         if (seqDue_) break;  // a slow caller's next login step waits for room: keys typed ahead of it are dropped (as on the poster)
-        key((char)p[i]);
+        char c = (char)p[i];
+        if (crLf_ && (c == '\n' || c == 0)) {  // CR LF and CR NUL are one Enter: the LF must not answer the next screen
+            crLf_ = false;
+            continue;
+        }
+        crLf_ = c == '\r' && state_ != State::Transfer && state_ != State::InDoor && state_ != State::Script;
+        key(c);
         drainSeq();
     }
 }
@@ -1527,6 +1558,12 @@ void Node::wfcDraw(const WfcSnapshot& s, bool clear) {
 }
 
 void Node::openWfc(uint32_t nowMs) {
+    if (inSeq_ && (state_ == State::Poster || state_ == State::SeqPause) && seqAt_ > 0) {  // the WFC takes the screen mid login step
+        seqAt_--;  // (beginLocal then openWfc): that step again once Space leaves the WFC, not skipped
+        seqUnheld_ = seqPauseNext_ = false;
+        posterFile_.clear();
+        std::string().swap(posterCarry_);
+    }
     shell_.reset();
     wfcEsc_ = 0;
     state_ = State::Wfc;
@@ -1787,6 +1824,7 @@ void Node::key(char c) {
     }
     if (state_ == State::Poster) return;  // keys while the poster streams out: the pause after it waits for one
     if (state_ == State::SeqPause) {
+        seqUnheld_ = false;
         nextStep();
         return;
     }
@@ -2257,6 +2295,19 @@ void Node::key(char c) {
                 if (cmd == "SCRIPT" || cmd.compare(0, 7, "SCRIPT:") == 0) {
                     name = cmd == "SCRIPT" ? a.args : a.arg.substr(7);
                     if (!startScript(name, ScriptBack::Menu)) menuNote("That script is not on the card.");
+                    return;
+                }
+                if (cmd == "RANDOMRUMOR") {  // one rumor under the prompt, inside the menu window (not the whole rumors screen)
+                    std::vector<std::string> all = listGet_ ? listGet_("rumor") : std::vector<std::string>{};
+                    if (all.empty()) {
+                        menuNote("No rumors yet.");
+                        return;
+                    }
+                    std::string r = all[0];
+                    if (r.compare(0, 7, "rumor: ") == 0) r.erase(0, 7);  // (some were added with the word already on them)
+                    if (r.size() > 33) r = r.substr(0, 31) + "..";
+                    out_ += std::string("\r\n\x1b[4C") + theme::DGREY + "rumor: " + theme::HOT + r + theme::TEXT;
+                    menu_->prompt();
                     return;
                 }
                 if (cmd == "RUMORSLIST" || cmd == "RUMORSADD" || cmd == "BBSLISTADD") {  // straight to the list, or to typing one in
@@ -2860,6 +2911,35 @@ void Node::rumorLine() {
     if (all.empty()) return;
     const std::string& r = all[(lastInput_ / 1000 + all.size() * 7 + node_) % all.size()];
     out_ += std::string("\r\n  ") + theme::DGREY + "rumor: " + theme::HOT + r.substr(0, 68) + theme::TEXT;
+}
+
+// A menu file with "~~|RUN:RANDOMRUMOR" (MAIN): one rumor on the row above its prompt, at the prompt's column and cut to the
+// menu window (columns 4 to 44, docs/MENU-ART.md), so it never paints over the theme's art. No |XY in the prompt: a line of its own.
+std::string Node::menuRumor() const {
+    if (!menu_) return "";
+    bool want = false;
+    for (const MenuCmd& c : menu_->def().cmds) {
+        std::string cmd = c.cmd;
+        for (char& ch : cmd) ch = (char)std::toupper((unsigned char)ch);
+        if (cmd == "RUN:RANDOMRUMOR" && c.keys.find("~~") != std::string::npos && acsAllows(c.acs, menuWho())) want = true;
+    }
+    if (!want) return "";
+    std::vector<std::string> all = listGet_ ? listGet_("rumor") : std::vector<std::string>{};
+    if (all.empty()) return "";
+    std::string r = all[(lastInput_ / 1000 + all.size() * 7 + node_) % all.size()];
+    if (r.compare(0, 7, "rumor: ") == 0) r.erase(0, 7);  // (some were added with the word already on them)
+    int         col = 0, row = 0;
+    size_t      at = menu_->def().prompt1.find("|XY");
+    if (at != std::string::npos) std::sscanf(menu_->def().prompt1.c_str() + at + 3, "%d,%d", &col, &row);
+    std::string head = "rumor: ";
+    size_t      room = row > 1 && col >= 1 && col < 44 ? (size_t)(45 - col) : 72;
+    room = room > head.size() + 8 ? room - head.size() : 8;
+    if (r.size() > room) {  // cut at a word, with ".." to say there is more ([L]ist shows it whole)
+        size_t sp = r.rfind(' ', room - 2);
+        r = r.substr(0, sp != std::string::npos && sp > room / 2 ? sp : room - 2) + "..";
+    }
+    std::string pos = row > 1 && col >= 1 ? "\x1b[" + std::to_string(row - 1) + ";" + std::to_string(col) + "H" : std::string("\r\n  ");
+    return pos + theme::DGREY + head + theme::HOT + r + "\x1b[0m";
 }
 
 void Node::showRumors() {

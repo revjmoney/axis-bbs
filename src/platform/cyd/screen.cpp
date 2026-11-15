@@ -96,7 +96,7 @@ static void shotRows(const uint8_t* p, int rows, void (*eachRow)()) {
     }
 }
 
-void screenShot(void (*eachRow)(), const axis::bbs::AnsiTerm* wfc) {
+void screenShot(void (*eachRow)(), const axis::bbs::AnsiTerm* wfc, const axis::bbs::WfcAnim* anim) {
     bool bands = wfc && band.getBuffer();
     if (!bands && !full.getBuffer()) {
         Serial.println("@SHOT NONE");  // drawn straight to the panel (or no panel): nothing to read back
@@ -106,7 +106,8 @@ void screenShot(void (*eachRow)(), const axis::bbs::AnsiTerm* wfc) {
     if (bands) {
         tft.waitDMA();
         for (int top = 0; top < 240; top += 40) {  // the WFC: its bands one after another
-            AnsiScreen::renderCellsBand(band, *wfc, top / 10, 4);
+            if (anim) AnsiScreen::renderAnimBand(band, *anim, top / 40, millis());  // (the frame of the moment each band is drawn)
+            else AnsiScreen::renderCellsBand(band, *wfc, top / 10, 4);
             shotRows((const uint8_t*)band.getBuffer(), 40, eachRow);
         }
     } else {

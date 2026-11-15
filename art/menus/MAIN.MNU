@@ -40,6 +40,7 @@ cmd=/W|RUN:WHOISONLINE|*|0|Viewing Who's Online
 cmd=P|RUN:PAGE|*|0|Paging SysOp
 cmd=/V CENTRAL|RUN:V3NETCENTRAL|*|0|Browsing V3Net Central
 cmd=/G|RUN:IMMEDIATELOGOFF|*|0|Logging Off
+cmd=~~|RUN:RANDOMRUMOR|*|0|
 bar=5,10,96,7,M, (M) Messages Menu 
 bar=5,11,96,7,T, (T) Transfer Menu 
 bar=5,12,96,7,D, (D) Doors Menu    

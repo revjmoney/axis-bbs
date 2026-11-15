@@ -10,6 +10,7 @@
 
 namespace axis::bbs {
 class AnsiTerm;
+class WfcAnim;
 }
 
 struct AnsiCell {
@@ -36,6 +37,8 @@ public:
     static void renderCells(LGFX_Sprite& dst, const axis::bbs::AnsiTerm& t);
     // the same, `rows` terminal rows from firstRow into a band (7x10 cells, so a 40 pixel band is 4 rows)
     static void renderCellsBand(LGFX_Sprite& band, const axis::bbs::AnsiTerm& t, int firstRow, int rows);
+    // band b (0..5, 40 px) of the moving WFC (bbs/wfcanim.h) at this time, in the same colours
+    static void renderAnimBand(LGFX_Sprite& band, const axis::bbs::WfcAnim& a, int b, uint32_t now);
 };
 
 // A 40-column grid of full-size 8x16 cells, for text that has to be easy to read (15 rows fill

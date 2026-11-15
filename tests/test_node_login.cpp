@@ -143,6 +143,7 @@ TEST_CASE("login sequence: one step never runs inside another (the board's loop 
                         "step=USERSTATS|0|0|0|\nstep=DISPLAYFILE|0|0|0|AFTER\n";
     r.fs["AFTER.ANS"] = "AFTER ART";
     std::string out = loginAll(r);
+    for (int i = 0; i < 10 && out.find("MAIN ->") == std::string::npos; i++) out += r.type(" ");  // each screen holds for a key
     CHECK(out.find("AFTER ART") != std::string::npos);
     CHECK(out.find("MAIN ->") != std::string::npos);
     CHECK(r.n.seqDepthPeak() == 1);
@@ -162,7 +163,7 @@ TEST_CASE("fast login: 2 jumps to MAIN and skips the rest; 1 continues the seque
     loginAll(s);
     std::string full = s.type("1");
     CHECK(full.find("LATER ART") != std::string::npos);
-    CHECK(full.find("MAIN ->") != std::string::npos);
+    CHECK(s.type(" ").find("MAIN ->") != std::string::npos);
 }
 
 TEST_CASE("login sequence: user stats and who's online are the existing screens") {
@@ -171,9 +172,11 @@ TEST_CASE("login sequence: user stats and who's online are the existing screens"
     r.fs["AFTER.ANS"] = "AFTER ART";
     std::string out = loginAll(r);
     CHECK(out.find("KB free") != std::string::npos);
-    CHECK(out.find("WHO'S ONLINE") != std::string::npos);
-    CHECK(out.find("AFTER ART") != std::string::npos);
-    CHECK(out.find("MAIN ->") != std::string::npos);
+    CHECK(out.find("WHO'S ONLINE") == std::string::npos);  // the stats stay up: who's online clears the screen
+    std::string next = r.type(" ");
+    CHECK(next.find("WHO'S ONLINE") != std::string::npos);
+    CHECK(next.find("AFTER ART") != std::string::npos);  // (no clear: on the same page)
+    CHECK(r.type(" ").find("MAIN ->") != std::string::npos);
 }
 
 TEST_CASE("the Saylor poster shows from the theme, then the rest of the sequence") {
@@ -230,7 +233,7 @@ TEST_CASE("sysop local logon runs the sequence, and fast login skips the bulleti
     CHECK(news.find("press a key") != std::string::npos);
     std::string later = full.type(" ");
     CHECK(later.find("LATER ART") != std::string::npos);
-    CHECK(later.find("MAIN ->") != std::string::npos);
+    CHECK(full.type(" ").find("MAIN ->") != std::string::npos);
 }
 
 TEST_CASE("an unknown login sequence step is skipped") {
@@ -239,5 +242,5 @@ TEST_CASE("an unknown login sequence step is skipped") {
     r.fs["X.ANS"] = "X ART";
     std::string out = loginAll(r);
     CHECK(out.find("X ART") != std::string::npos);
-    CHECK(out.find("MAIN ->") != std::string::npos);
+    CHECK(r.type(" ").find("MAIN ->") != std::string::npos);
 }

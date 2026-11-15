@@ -37,6 +37,8 @@ public:
     // caller's line takes it; what this runner writes after (the lightbar, the prompt) comes out behind the art. False: no
     // such art. Unset: drawn here, at once.
     std::function<bool(const std::string& file)> drawArt;
+    // Text drawn after the art and lightbar, just before the prompt, every time the menu draws (the main menu's rumor)
+    std::function<std::string()> beforePrompt;
     bool       enter(const std::string& name, const AcsUser& who);  // false: no such menu, or not allowed
     MenuAction key(char c, uint32_t nowMs = 0);                     // key(0): the next auto-run, if any
     void       tick(uint32_t nowMs);                                // a lone ESC becomes Esc after a pause

@@ -77,6 +77,7 @@ void MenuRunner::redraw() {
         artPiece(carry, "", 0, true, who_, value_, emit_);
     }
     if (bar_) emit(bar_->draw());
+    if (beforePrompt) emit(beforePrompt());
     prompt();
 }
 

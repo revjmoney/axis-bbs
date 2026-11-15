@@ -39,9 +39,9 @@ std::vector<LoginStep> parseLoginSeq(const std::string& text) {
              {"DISPLAYFILE", "SAYLOR", true, true},
              {"FASTLOGIN"},
              {"PRINTNEWS", "", true, true},
-             {"LASTCALLS"},
+             {"LASTCALLS", "", true, true},
              {"ONELINERS"},
-             {"USERSTATS"},
+             {"USERSTATS", "", true, true},
              {"INFOFORMREQUIRED"},
              {"NEWUSERVAL", "", false, false, 255},
              {"CHECKNUV"}};

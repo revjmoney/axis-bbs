@@ -292,6 +292,8 @@ private:
     std::vector<LoginStep>                         seq_;  // ViSiON/3's login sequence, running between login and MAIN
     size_t                                         seqAt_ = 0;
     bool                                           inSeq_ = false, seqFast_ = false, seqPauseNext_ = false;
+    bool seqUnheld_ = false;  // a login step's screen is up with no pause of its own: held for a key before the next clear
+    bool crLf_ = false;       // the last key was a CR: a LF or NUL right after it is the same Enter (input() drops it)
     void                                           startSequence();
     void                                           nextStep();
     void                                           seqResume();  // a step's screen is done: its pause, or the next step
@@ -341,6 +343,7 @@ private:
     void                      nuvKey(char c);
     void                      endNuv();
     void                      rumorLine();          // one random rumor, over the main menu
+    std::string               menuRumor() const;    // a menu file's ~~ RUN:RANDOMRUMOR: one rumor just above its prompt
     void                      extrasKey(char c);    // Rumors and BbsList states
     void                      showLastCallers();
     void                      showUserList();

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "bbs/ansiterm.h"
+#include "bbs/wfcanim.h"
 #include "platform/cyd/screen.h"
 
 #include "../../../third_party/vga_font/font8x16.h"  // IBM VGA 8x16 by VileR, CC BY-SA 4.0
@@ -126,6 +127,12 @@ void AnsiScreen::renderCellsBand(LGFX_Sprite& band, const axis::bbs::AnsiTerm& t
     uint8_t* fb = (uint8_t*)band.getBuffer();
     if (rows > band.height() / 10) rows = band.height() / 10;
     if (fb) cellRows(fb, t, firstRow, rows);
+}
+
+void AnsiScreen::renderAnimBand(LGFX_Sprite& band, const axis::bbs::WfcAnim& a, int b, uint32_t now) {
+    if (!ready) build();
+    uint8_t* fb = (uint8_t*)band.getBuffer();
+    if (fb && band.height() >= axis::bbs::WfcAnim::kBandH) a.renderBand(fb, b, now, lut);
 }
 
 void BigText::clear(uint8_t attr) {
