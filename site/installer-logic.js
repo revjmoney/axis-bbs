@@ -165,7 +165,7 @@
   }
 
   function refuse(code, reason) {
-    return { kind: "refuse", code: code, regions: [], reason: reason + " Nothing was written." };
+    return { kind: "refuse", code: code, erase: [], regions: [], reason: reason + " Nothing was written." };
   }
 
   function copyImage(img) {
@@ -174,14 +174,50 @@
     return o;
   }
 
+  var MB = 1048576;
+
+  /** Heltec radios share the chip and the table; the flash size tells them apart (V3 8 MB, V4 16 MB). */
+  function radioModel(bytes) {
+    if (bytes === 8 * MB) return "Heltec V3";
+    if (bytes === 16 * MB) return "Heltec V4";
+    return null;
+  }
+
+  function sizeText(bytes) {
+    return bytes ? (bytes / MB) + " MB" : "an unknown size";
+  }
+
+  function byLabel(entries, label) {
+    for (var i = 0; entries && i < entries.length; i++) if (entries[i].label === label) return entries[i];
+    return null;
+  }
+
+  function appImage(images) {
+    for (var i = 0; i < images.length; i++) if (images[i].role === "app") return images[i];
+    return null;
+  }
+
+  /** The data partitions of a table (NVS, otadata, file systems): what a first install erases. */
+  function dataPartitions(entries) {
+    var out = [];
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].type === 1) out.push({ label: entries[i].label, offset: entries[i].offset, size: entries[i].size });
+    }
+    return out;
+  }
+
   /**
    * planFlash(device, target)
-   *   device: { chip ("ESP32" | "ESP32-S3", as esptool names it), partTable (bytes read at 0x8000),
-   *             appHeader (first bytes read at the target's app offset), bootloaderSha256 (optional) }
+   *   device: { chip ("ESP32" | "ESP32-S3", as esptool names it), flashSize (bytes esptool detects, or null),
+   *             partTable (bytes read at 0x8000), appHeader (first bytes read at the target's app offset),
+   *             bootloaderSha256 (optional) }
    *   target: { kind "board" | "radio", chip, project (name in the app header), layout "single" | "multimode",
+   *             slot (multimode: the modem partition's label), flashSize (radios: the model's flash size),
    *             partTable (the image's own table, bytes), images [{ role, file, offset, size, sha256 }] }
-   * Returns { kind "update" | "first" | "refuse", code, regions [images to write, in order], reason }.
-   * An update writes the app image only. A multimode V4 only ever gets its modem slot.
+   * Returns { kind "update" | "first" | "refuse", code, erase [{ label, offset, size }],
+   *           regions [images to write, in order], reason }.
+   * An update writes the app image only and erases nothing. A multimode V4 only ever gets its modem slot.
+   * A first install erases the data partitions of the target's table, then writes the images.
    */
   function planFlash(device, target) {
     var name = target.kind === "radio" ? MODEM_NAME : BOARD_NAME;
@@ -189,14 +225,23 @@
       return refuse("chip", "This is an " + device.chip + " (" + chipWhat(device.chip) + "). The " + name +
         " image is for an " + target.chip + " (" + chipWhat(target.chip) + ").");
     }
+    if (target.flashSize && device.flashSize !== target.flashSize) {
+      var isModel = radioModel(device.flashSize), forModel = radioModel(target.flashSize) || sizeText(target.flashSize);
+      return refuse("flash-size", "This radio has " + sizeText(device.flashSize) + " of flash" +
+        (isModel ? ", so it is a " + isModel : "") + ". The image you picked is for the " + forModel +
+        " (" + sizeText(target.flashSize) + "). Pick " + (isModel || "the radio you have") +
+        " in step 1 (a Heltec V3 has 8 MB, a Heltec V4 has 16 MB).");
+    }
     var want = parseTable(target.partTable);
     if (!want) throw new Error("the image has no partition table");
-    var app = null, i;
-    for (i = 0; i < target.images.length; i++) if (target.images[i].role === "app") app = target.images[i];
+    var app = appImage(target.images), i;
     if (!app) throw new Error("the image has no app");
     var part = null;
     for (i = 0; i < want.length; i++) if (want[i].type === 0 && want[i].offset === app.offset) part = want[i];
     if (!part) throw new Error("the app offset is not an app partition in the image's table");
+    if (target.layout === "multimode" && (!target.slot || part.label !== target.slot)) {
+      throw new Error("the modem slot named by the image is not where its app goes");
+    }
     if (app.size > part.size) {
       return refuse("too-big", "The firmware is " + app.size + " bytes and its partition holds " + part.size + ".");
     }
@@ -205,7 +250,7 @@
 
     if (target.layout === "multimode") {
       if (same) {
-        return { kind: "update", code: "update", regions: [copyImage(app)],
+        return { kind: "update", code: "update", erase: [], regions: [copyImage(app)],
           reason: "This V4 has the multimode layout: only the modem slot is written. The picker, the other modes and the modem's settings stay." };
       }
       if (isMultimode(have)) {
@@ -220,7 +265,7 @@
 
     var hdr = parseAppHeader(device.appHeader);
     if (same && hdr && hdr.project === target.project) {
-      return { kind: "update", code: "update", regions: [copyImage(app)],
+      return { kind: "update", code: "update", erase: [], regions: [copyImage(app)],
         reason: "This board already runs " + name + " (" + (hdr.version || "unknown version") + ") with the same partition layout: only the firmware is written. " +
         (target.kind === "radio" ? "Its settings stay." : "Users, messages and settings stay.") };
     }
@@ -239,32 +284,74 @@
           String(device.bootloaderSha256).toLowerCase() === String(img.sha256).toLowerCase()) continue; // already this boot loader
       regions.push(copyImage(img));
     }
-    return { kind: "first", code: "first", regions: regions, reason: why + " " + FIRST_INSTALL_WARNING };
+    return { kind: "first", code: "first", erase: dataPartitions(want), regions: regions, reason: why + " " + FIRST_INSTALL_WARNING };
+  }
+
+  function refused(why) {
+    throw new Error("refused: " + why);
+  }
+
+  function inside(r, p) {
+    return r.offset >= p.offset && r.offset + r.size <= p.offset + p.size;
   }
 
   /**
-   * Last check right before anything is written. Throws "refused: ..." unless:
-   *   update: exactly one app image, at appOffset, inside an app partition of the board's own table;
-   *   first: only boot loader, partition table, otadata and app images.
-   * So an update can never touch NVS (0x9000), otadata, LittleFS (0x250000), or a multimode V4's other slots.
+   * Last check right before anything is erased or written, independent of planFlash. Throws "refused: ...".
+   *   update: no erase; exactly one app image at the target's app offset; single layout: inside an app partition
+   *     of the board's own table; multimode: exactly the partition labelled target.slot, identical in the target's
+   *     table and the board's. So an update never touches NVS (0x9000), otadata, LittleFS (0x250000) or another slot.
+   *   first: every erase is a data partition of the target's table; the boot loader sits below 0x8000, the table at
+   *     0x8000, otadata at the target's otadata partition, the app in the target's app partition.
    */
-  function guardRegions(plan, deviceTable, appOffset) {
-    if (!plan || (plan.kind !== "update" && plan.kind !== "first")) throw new Error("refused: nothing to write");
-    var r, i, j;
+  function guardRegions(plan, deviceTable, target) {
+    if (!plan || (plan.kind !== "update" && plan.kind !== "first")) refused("nothing to write");
+    var want = parseTable(target.partTable);
+    if (!want) refused("the image has no partition table");
+    var app = appImage(target.images);
+    if (!app) refused("the image has no app");
+    var appPart = null, i, j, r;
+    for (i = 0; i < want.length; i++) if (want[i].type === 0 && want[i].offset === app.offset) appPart = want[i];
+    if (!appPart) refused("the app is not in an app partition of the image's table");
+    var erase = plan.erase || [];
+
     if (plan.kind === "update") {
-      if (plan.regions.length !== 1) throw new Error("refused: an update writes one image");
+      if (erase.length) refused("an update never erases");
+      if (plan.regions.length !== 1) refused("an update writes one image");
       r = plan.regions[0];
-      if (r.role !== "app" || r.offset !== appOffset) throw new Error("refused: an update writes the app only, at its own offset");
+      if (r.role !== "app" || r.offset !== app.offset) refused("an update writes the app only, at its own offset");
+      if (target.layout === "multimode") {
+        var slot = byLabel(want, target.slot), mine = byLabel(deviceTable, target.slot);
+        if (!slot || slot !== appPart) refused("the modem slot is not the image's app partition");
+        if (!mine || mine.type !== 0 || mine.offset !== slot.offset || mine.size !== slot.size) refused("this board's modem slot differs from the image's");
+        if (!inside(r, slot)) refused("the modem does not fit its slot");
+        return true;
+      }
       var ok = false;
       for (j = 0; deviceTable && j < deviceTable.length; j++) {
-        var p = deviceTable[j];
-        if (p.type === 0 && p.offset === r.offset && r.size <= p.size) ok = true;
+        if (deviceTable[j].type === 0 && deviceTable[j].offset === r.offset && inside(r, deviceTable[j])) ok = true;
       }
-      if (!ok) throw new Error("refused: the app does not fit an app partition on this board");
+      if (!ok) refused("the app does not fit an app partition on this board");
       return true;
     }
+
+    if (target.layout === "multimode") refused("the multimode layout is never installed from here");
+    var data = dataPartitions(want);
+    for (i = 0; i < erase.length; i++) {
+      var hit = false;
+      for (j = 0; j < data.length; j++) {
+        if (data[j].offset === erase[i].offset && data[j].size === erase[i].size) hit = true;
+      }
+      if (!hit) refused("erase at 0x" + erase[i].offset.toString(16) + " is not a data partition of the image's table");
+    }
+    var ota = null;
+    for (i = 0; i < want.length; i++) if (want[i].type === 1 && want[i].subtype === 0) ota = want[i];
     for (i = 0; i < plan.regions.length; i++) {
-      if (FIRST_ROLES.indexOf(plan.regions[i].role) < 0) throw new Error("refused: unexpected image " + plan.regions[i].role);
+      r = plan.regions[i];
+      if (r.role === "bootloader" && r.offset + r.size <= 0x8000) continue;
+      if (r.role === "partitions" && r.offset === 0x8000 && r.size <= 0xc00) continue;
+      if (r.role === "otadata" && ota && r.offset === ota.offset && inside(r, ota)) continue;
+      if (r.role === "app" && r.offset === appPart.offset && inside(r, appPart)) continue;
+      refused(r.role + " at 0x" + r.offset.toString(16) + " is not where the image's table puts it");
     }
     return true;
   }

@@ -44,7 +44,7 @@
   <span class="dim" id="release-note"></span>
 </section>
 
-<section aria-labelledby="step1-head">
+<section aria-labelledby="step1-head" id="step1">
   <h2 class="step" id="step1-head"><img class="ico x2" src="icons/step1.svg" alt="" width="32" height="32">1. What are you flashing?</h2>
   <div class="targets" role="radiogroup" aria-labelledby="step1-head">
     <label class="card"><input type="radio" name="target" value="board" checked>
@@ -82,7 +82,7 @@
 
 <section aria-labelledby="step2-head" id="step2">
   <h2 class="step" id="step2-head"><img class="ico x2" src="icons/step2.svg" alt="" width="32" height="32">2. Pick a build <span class="dim">(for the AXIS Micro BBS board)</span></h2>
-  <p class="mem-note" id="mem-note">Leaving features out frees mostly <b>flash</b> (room for new features), not idle free memory: the board's own code holds only about 7 KB of static RAM, and most of the 47 KB that is always taken belongs to Wi-Fi and the network stack. What does go away are the <b>busy-time memory spikes</b> in the last column, so the board has more room while it is busy.</p>
+  <p class="mem-note" id="mem-note">Leaving features out frees mostly <b>flash</b> (room for new features), not idle free memory. What does go away are the <b>busy-time memory spikes</b> in the last column.</p>
   <div class="ptable" role="radiogroup" aria-label="Builds" id="ptable">
     <div class="prow phead"><div>Build</div><div>What's in it</div><div class="r">Flash used</div><div class="r">Flash freed</div><div>Memory spikes gone</div></div>
   </div>
@@ -91,7 +91,7 @@
     <button type="button" class="custom-btn" id="custom-btn" aria-expanded="false"><img class="ico x2" src="icons/custom.svg" alt="" width="32" height="32"> Custom build: tick your own features</button>
     <span class="dim">GitHub Actions builds it in a few minutes; asking needs a GitHub account.</span>
     <div class="custom-panel" id="custom-panel" hidden>
-      <p class="dim">Every feature starts on. Untick what you want left out.</p>
+      <p class="dim">Every feature starts on. Untick what you want left out. <span id="custom-release"></span></p>
       <div class="feature-grid" id="feature-grid"></div>
       <p class="custom-status" id="custom-status" aria-live="polite"></p>
       <div class="custom-actions" id="custom-actions"></div>
@@ -118,7 +118,7 @@
 
   <div class="next-box" id="next-box" hidden>
     <p>The board is done. Unplug it, plug in the <b>radio</b>, then press CONTINUE and pick its port.</p>
-    <button type="button" class="btn" id="next-go">CONTINUE WITH THE RADIO</button>
+    <button type="button" class="btn" id="next-go">CONTINUE WITH THE RADIO</button> <button type="button" class="btn-plain" id="next-cancel">Cancel, skip the radio</button>
   </div>
 
   <div class="flash" id="flash">

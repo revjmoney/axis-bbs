@@ -17,6 +17,7 @@ const hex = (s) => Uint8Array.from(Buffer.from(s, "hex"));
 function deviceFrom(c) {
   return {
     chip: c.chip,
+    flashSize: c.flash_size === undefined ? null : c.flash_size,
     partTable: hex(c.part_table_hex),
     appHeader: hex(c.app_header_hex),
     bootloaderSha256: c.bootloader_sha256 || null,
@@ -24,7 +25,10 @@ function deviceFrom(c) {
 }
 
 function targetFrom(t) {
-  return { kind: t.kind, chip: t.chip, project: t.project, layout: t.layout, partTable: hex(t.part_table_hex), images: t.images };
+  return {
+    kind: t.kind, chip: t.chip, project: t.project, layout: t.layout, slot: t.slot || null,
+    flashSize: t.flash_size || null, partTable: hex(t.part_table_hex), images: t.images,
+  };
 }
 
 test("selection: a preset gives its off list, sorted", () => {
@@ -118,6 +122,8 @@ test("planFlash matches every case in the shared fixture (same file as Task 9's 
     assert.equal(p.kind, c.expect.kind, c.name);
     assert.equal(p.code, c.expect.code, c.name);
     assert.deepEqual(p.regions.map((r) => ({ role: r.role, offset: r.offset })), c.expect.regions, c.name);
+    assert.deepEqual(p.erase.map((e) => ({ label: e.label, offset: e.offset, size: e.size })), c.expect.erase, c.name + " erase");
+    if (p.kind !== "refuse") assert.doesNotThrow(() => L.guardRegions(p, L.parseTable(hex(c.device.part_table_hex)), targetFrom(plans.targets[c.target])), c.name);
     if (p.kind === "refuse") assert.ok(p.reason, c.name);
   }
 });
@@ -126,10 +132,30 @@ test("the first-install warning is the shared text", () => {
   assert.equal(L.FIRST_INSTALL_WARNING, plans.first_install_warning);
 });
 
+test("planFlash: a first install erases the target's data partitions; an update erases nothing", () => {
+  const first = plans.cases.find((x) => x.name === "board-first-blank");
+  const p = L.planFlash(deviceFrom(first.device), targetFrom(plans.targets[first.target]));
+  assert.deepEqual(p.erase.map((e) => [e.label, e.offset]), [["nvs", 0x9000], ["otadata", 0xe000], ["spiffs", 0x250000]]);
+  const upd = plans.cases.find((x) => x.name === "board-update");
+  assert.deepEqual(L.planFlash(deviceFrom(upd.device), targetFrom(plans.targets[upd.target])).erase, []);
+});
+
+test("planFlash: a V3 image on a V4 and a V4 image on a V3 are refused by flash size", () => {
+  for (const name of ["v3-image-on-v4-single", "v4-image-on-v3-single"]) {
+    const c = plans.cases.find((x) => x.name === name);
+    const p = L.planFlash(deviceFrom(c.device), targetFrom(plans.targets[c.target]));
+    assert.equal(p.kind, "refuse", name);
+    assert.equal(p.code, "flash-size", name);
+    assert.match(p.reason, /Heltec V3/);
+    assert.match(p.reason, /Heltec V4/);
+  }
+});
+
 test("guardRegions refuses an update that would touch NVS, otadata, LittleFS or outside the slot", () => {
-  const axis = L.parseTable(hex(plans.targets["axis-board"].part_table_hex));
-  const ok = { kind: "update", regions: [{ role: "app", offset: 0x10000, size: 0x200000 }] };
-  assert.doesNotThrow(() => L.guardRegions(ok, axis, 0x10000));
+  const axisT = targetFrom(plans.targets["axis-board"]);
+  const axis = L.parseTable(axisT.partTable);
+  const upd = (r) => ({ kind: "update", erase: [], regions: [r] });
+  assert.doesNotThrow(() => L.guardRegions(upd({ role: "app", offset: 0x10000, size: 0x200000 }), axis, axisT));
   for (const bad of [
     { role: "app", offset: 0x9000, size: 0x1000 },
     { role: "otadata", offset: 0xe000, size: 0x2000 },
@@ -137,12 +163,34 @@ test("guardRegions refuses an update that would touch NVS, otadata, LittleFS or 
     { role: "app", offset: 0x10000, size: 0x240001 },
     { role: "partitions", offset: 0x8000, size: 0xc00 },
   ]) {
-    assert.throws(() => L.guardRegions({ kind: "update", regions: [bad] }, axis, 0x10000), /refused/, JSON.stringify(bad));
+    assert.throws(() => L.guardRegions(upd(bad), axis, axisT), /refused/, JSON.stringify(bad));
   }
-  const mm = L.parseTable(hex(plans.targets["radio-v4-multimode"].part_table_hex));
-  assert.doesNotThrow(() => L.guardRegions({ kind: "update", regions: [{ role: "app", offset: 0x4a0000, size: 1059504 }] }, mm, 0x4a0000));
-  assert.throws(() => L.guardRegions({ kind: "update", regions: [{ role: "app", offset: 0x20000, size: 1000 }] }, mm, 0x4a0000), /refused/);
-  assert.throws(() => L.guardRegions({ kind: "refuse", regions: [] }, axis, 0x10000), /refused/);
+  assert.throws(() => L.guardRegions({ kind: "update", erase: [{ label: "nvs", offset: 0x9000, size: 0x5000 }],
+    regions: [{ role: "app", offset: 0x10000, size: 1000 }] }, axis, axisT), /refused/);
+  const mmT = targetFrom(plans.targets["radio-v4-multimode"]);
+  const mm = L.parseTable(mmT.partTable);
+  assert.doesNotThrow(() => L.guardRegions(upd({ role: "app", offset: 0x4a0000, size: 1059504 }), mm, mmT));
+  assert.throws(() => L.guardRegions(upd({ role: "app", offset: 0x20000, size: 1000 }), mm, mmT), /refused/);
+  assert.throws(() => L.guardRegions(upd({ role: "app", offset: 0xa0000, size: 1000 }), mm, Object.assign({}, mmT, { images: [{ role: "app", offset: 0xa0000, size: 1000 }] })), /refused/);
+  const oldMm = L.parseTable(hex(plans.cases.find((x) => x.name === "v4-multimode-other-slot").device.part_table_hex));
+  assert.throws(() => L.guardRegions(upd({ role: "app", offset: 0x4a0000, size: 1000 }), oldMm, mmT), /refused/);
+  assert.throws(() => L.guardRegions({ kind: "refuse", erase: [], regions: [] }, axis, axisT), /refused/);
+});
+
+test("guardRegions checks a first install against the target table", () => {
+  const axisT = targetFrom(plans.targets["axis-board"]);
+  const c = plans.cases.find((x) => x.name === "board-first-blank");
+  const good = L.planFlash(deviceFrom(c.device), axisT);
+  assert.doesNotThrow(() => L.guardRegions(good, null, axisT));
+  const moved = JSON.parse(JSON.stringify(good));
+  moved.regions.find((r) => r.role === "app").offset = 0x20000;
+  assert.throws(() => L.guardRegions(moved, null, axisT), /refused/);
+  const badErase = JSON.parse(JSON.stringify(good));
+  badErase.erase.push({ label: "app0", offset: 0x10000, size: 0x240000 });
+  assert.throws(() => L.guardRegions(badErase, null, axisT), /refused/);
+  const badOta = JSON.parse(JSON.stringify(good));
+  badOta.regions.find((r) => r.role === "otadata").offset = 0xf000;
+  assert.throws(() => L.guardRegions(badOta, null, axisT), /refused/);
 });
 
 test("radioEnv picks the multimode slot only for a V4 that has the layout", () => {

@@ -77,7 +77,7 @@ function bstr(bytes) {
   return s;
 }
 
-const releaseBase = () => "releases/" + state.release + "/";
+const releaseBase = (release) => "releases/" + (release === undefined ? state.release : release) + "/";
 const featureById = (id) => state.features.find((f) => f.id === id);
 const selectable = () => state.features.filter((f) => !f.reserved);
 
@@ -226,12 +226,29 @@ function renderPresets() {
       el("div", { class: "r", text: c ? mb(c.flash) + " (" + c.flash_pct + "%)" : "not measured" }),
       el("div", { class: "r", text: c ? (c.flash_freed ? kb(c.flash_freed) : "none") : "" }),
       el("div", { text: spikes, title: spikeWhy }));
-    input.addEventListener("change", () => { state.build = { type: "preset", id: p.id }; update(); });
+    input.addEventListener("change", () => { if (!state.busy) state.build = { type: "preset", id: p.id }; update(); });
     table.append(row);
   }
+  renderMemNote();
   $("cost-note").textContent = state.costs
     ? "Measured by the release build of " + state.release + ". Flash used is the firmware's size in its 2.25 MB app partition. Static RAM changes by at most " + kb(maxRam) + " between builds."
     : state.release ? "The cost table for " + state.release + " is missing." : "";
+}
+
+// The honest memory note, with its numbers from this release's costs.json.
+function renderMemNote() {
+  const note = $("mem-note");
+  const rows = state.costs ? state.costs.presets : [];
+  const all = rows.find((r) => r.id === "everything");
+  note.textContent = "";
+  const b = (t) => el("b", { text: t });
+  note.append("Leaving features out frees mostly ", b("flash"), " (room for new features), not idle free memory. ");
+  if (all) {
+    const most = rows.reduce((m, r) => Math.max(m, r.dram_static_freed), 0);
+    note.append("Everything holds " + kb(all.dram_static) + " of static RAM at all times, most of it Wi-Fi and the network stack; no build here frees more than " +
+      kb(most) + " of it. ");
+  }
+  note.append("What does go away are the ", b("busy-time memory spikes"), " in the last column, so the board has more room while it is busy.");
 }
 
 function renderFeatures() {
@@ -277,6 +294,7 @@ async function customChanged() {
     return;
   }
   const latest = state.index && state.index.latest;
+  $("custom-release").textContent = latest ? "Custom builds are made for the latest release, " + latest + "." : "";
   if (!latest) {
     status.textContent = "Custom builds start once the first release is out.";
     return;
@@ -306,6 +324,7 @@ async function customChanged() {
 }
 
 function selectPreset(id) {
+  if (state.busy) return;
   state.build = { type: "preset", id };
   update();
 }
@@ -326,10 +345,36 @@ function bindInputs() {
   $("install-btn").addEventListener("click", () => install());
 }
 
-function buildLabel() {
-  if (state.build.type === "custom") return "custom " + state.custom.fp;
-  const p = state.presets.find((x) => x.id === state.build.id);
-  return '"' + (p ? p.label : state.build.id) + '"';
+function buildLabel(picks) {
+  const build = picks ? picks.build : state.build, custom = picks ? picks.custom : state.custom;
+  if (build.type === "custom") return "custom " + custom.fp;
+  const p = state.presets.find((x) => x.id === build.id);
+  return '"' + (p ? p.label : build.id) + '"';
+}
+
+// What INSTALL works from: taken once when it is pressed, so nothing clicked during a run changes it.
+function snapshot() {
+  return {
+    target: state.target, board: state.board, radioModel: state.radioModel, release: state.release,
+    build: Object.assign({}, state.build), custom: state.custom,
+    radio: { version: state.radio.version, site: state.radio.site },
+  };
+}
+
+// Steps 1 and 2 and the release picker cannot change while a run is going.
+function lockChoices(locked) {
+  document.querySelectorAll("#step1 input, #step2 input, #step2 button, #step2 a.btn-plain, #release").forEach((e) => {
+    if (locked) {
+      e.dataset.wasDisabled = String(!!e.disabled);
+      e.disabled = true;
+      if (e.tagName === "A") e.classList.add("locked");
+    } else if (e.dataset.wasDisabled !== undefined) {
+      e.disabled = e.dataset.wasDisabled === "true";
+      delete e.dataset.wasDisabled;
+      e.classList.remove("locked");
+    }
+  });
+  document.querySelectorAll("#step1 .card, #ptable .prow").forEach((c) => c.classList.toggle("locked", locked));
 }
 
 function readChoices() {
@@ -343,7 +388,7 @@ function readChoices() {
 }
 
 function update() {
-  readChoices();
+  if (!state.busy) readChoices();
   const wantsBoard = state.target !== "radio";
   const wantsRadio = state.target !== "board";
   $("board-pick").classList.toggle("off", !wantsBoard);
@@ -384,8 +429,8 @@ function update() {
 
 // == the device: esptool-js on a real port, or the local simulator ==
 
-async function openDevice(port, job) {
-  if (SIM) return simDevice(SIM, job);
+async function openDevice(port, job, picks) {
+  if (SIM) return simDevice(SIM, job, picks);
   log.line("Loading the flasher (esptool-js 0.5.7) ...");
   const esp = await import(ESPTOOL_URL);
   const info = port.getInfo ? port.getInfo() : {};
@@ -398,17 +443,19 @@ async function openDevice(port, job) {
   };
   const loader = new esp.ESPLoader({ transport, baudrate: FLASH_BAUD, romBaudrate: CONSOLE_BAUD, terminal, debugLogging: false });
   log.line("Connecting to the boot loader (hold BOOT if it does not answer) ...");
-  let desc, chip, mac;
+  let desc, chip, mac, flashSize;
   try {
     desc = await loader.main("default_reset");
     chip = loader.chip.CHIP_NAME;
     mac = await loader.chip.readMac(loader);
+    const k = await loader.getFlashSize(); // KB from the flash chip's id, or undefined
+    flashSize = k ? k * 1024 : null;
   } catch (e) {
     try { await transport.disconnect(); } catch (e2) { /* never opened */ }
     throw e;
   }
   return {
-    chip, mac, desc,
+    chip, mac, desc, flashSize,
     read: (addr, len) => loader.readFlash(addr, len),
     async write(files, onProgress) {
       await loader.writeFlash({
@@ -471,30 +518,32 @@ async function talk(port, line, expect, ms) {
   return answer;
 }
 
-// A pretend board for checking the page without hardware (?sim=update|first|wrongchip|multimode|fail, localhost only).
+// A pretend board for checking the page without hardware (?sim=..., localhost only).
 // update: the board already holds the picked image; first: blank; wrongchip: the other chip;
-// multimode: a V4 with the multimode layout and an empty modem slot; fail: the write stops halfway;
-// noconnect: the boot loader never answers.
-async function simDevice(scenario, job) {
+// wrongmodel: a radio of the other Heltec model (its flash size); multimode: a V4 with the multimode
+// layout and an empty modem slot; fail: the write stops halfway; noconnect: the boot loader never answers.
+async function simDevice(scenario, job, picks) {
   const radio = job === "radio";
   const chip = scenario === "wrongchip" ? (radio ? "ESP32" : "ESP32-S3") : radio ? "ESP32-S3" : "ESP32";
+  const isV3 = (picks.radioModel === "v3") !== (scenario === "wrongmodel") && scenario !== "multimode";
+  const flashSize = (radio ? (isV3 ? 8 : 16) : 4) * 1048576;
   const blank = (n) => new Uint8Array(n).fill(0xff);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   log.line("SIMULATED board (" + scenario + "): nothing real is written.", "note");
   await wait(300);
   if (scenario === "noconnect") throw new Error("Failed to connect with the device (simulated)");
   const flash = new Map(); // offset: bytes already on the pretend board
-  if (scenario === "update" || (scenario === "multimode" && radio)) {
-    const env = scenario === "multimode" ? "heltec_v4" : state.radioModel === "v3" ? "heltec_v3_single" : "heltec_v4_single";
-    const t = radio ? await radioTarget(env) : await boardTarget();
+  if (scenario === "update" || scenario === "wrongmodel" || (scenario === "multimode" && radio)) {
+    const env = scenario === "multimode" ? "heltec_v4" : picks.radioModel === "v3" ? "heltec_v3_single" : "heltec_v4_single";
+    const t = radio ? await radioTarget(picks, env) : await boardTarget(picks);
     flash.set(0x8000, await tableOf(t.manifest, t.base, []));
-    if (scenario === "update") {
+    if (scenario === "update" || scenario === "wrongmodel") {
       const app = t.manifest.images.find((i) => i.role === "app");
       flash.set(app.offset, await getBytes(t.base + app.file));
     }
   }
   return {
-    chip, mac: radio ? "88:56:a6:00:00:01" : "8c:94:df:00:00:01", desc: chip + " (simulated)",
+    chip, flashSize, mac: radio ? "88:56:a6:00:00:01" : "8c:94:df:00:00:01", desc: chip + " (simulated)",
     async read(addr, len) {
       await wait(150);
       return flash.has(addr) ? flash.get(addr).slice(0, len) : blank(len);
@@ -525,7 +574,8 @@ function confirmFirst(plan) {
     const box = $("warn-box"), check = $("warn-check"), go = $("warn-go"), cancel = $("warn-cancel");
     $("warn-text").textContent = L.FIRST_INSTALL_WARNING;
     $("warn-why").textContent = plan.reason.replace(L.FIRST_INSTALL_WARNING, "").trim() +
-      " It writes: " + plan.regions.map((r) => r.role + " at " + L.hexOffset(r.offset)).join(", ") + ".";
+      " It erases " + plan.erase.map((e) => e.label + " at " + L.hexOffset(e.offset)).join(", ") +
+      ", then writes " + plan.regions.map((r) => r.role + " at " + L.hexOffset(r.offset)).join(", ") + ".";
     $("warn-kit").textContent = "";
     if (plan.kit) {
       $("warn-kit").append("After it boots, the board runs its setup wizard. For full functions it needs an SD card: the ",
@@ -534,7 +584,7 @@ function confirmFirst(plan) {
     check.checked = false;
     go.disabled = true;
     box.hidden = false;
-    box.scrollIntoView({ block: "center", behavior: "smooth" });
+    box.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     const onCheck = () => { go.disabled = !check.checked; };
     const done = (ok) => {
       box.hidden = true;
@@ -551,15 +601,15 @@ function confirmFirst(plan) {
   });
 }
 
-async function boardTarget() {
-  if (state.build.type === "custom") return { manifest: state.custom.manifest, base: state.custom.base };
-  const base = releaseBase() + state.build.id + "/";
+async function boardTarget(picks) {
+  if (picks.build.type === "custom") return { manifest: picks.custom.manifest, base: picks.custom.base };
+  const base = releaseBase(picks.release) + picks.build.id + "/";
   return { manifest: await getJson(base + "manifest.json"), base };
 }
 
-async function radioTarget(env) {
-  const site = new URL(state.radio.site, location.href).href;
-  const base = site + state.radio.version + "/" + env + "/";
+async function radioTarget(picks, env) {
+  const site = new URL(picks.radio.site, location.href).href;
+  const base = site + picks.radio.version + "/" + env + "/";
   return { manifest: await getJson(base + "manifest.json"), base };
 }
 
@@ -584,31 +634,36 @@ async function tableOf(manifest, base, images) {
 }
 
 // One job: the board or the radio, on the port the visitor picked.
-async function flashJob(job, port) {
+async function flashJob(job, port, picks) {
   const name = job === "radio" ? L.MODEM_NAME : L.BOARD_NAME;
-  $("flash-title").textContent = "FLASHING: " + (job === "radio" ? name + ", Heltec " + state.radioModel.toUpperCase() : name + ", " + buildLabel());
+  const headless = job === "board" && picks.board === "esp32";
+  $("flash-title").textContent = "FLASHING: " + (job === "radio" ? name + ", Heltec " + picks.radioModel.toUpperCase() : name + ", " + buildLabel(picks));
   setBar(0);
   $("stage").textContent = "connecting";
   let dev = null, wrote = false, written = false;
   try {
-    dev = await openDevice(port, job);
-    log.line("Chip: " + dev.desc + ", MAC " + dev.mac);
+    dev = await openDevice(port, job, picks);
+    log.line("Chip: " + dev.desc + ", MAC " + dev.mac + ", flash " + (dev.flashSize ? dev.flashSize / 1048576 + " MB" : "size unknown"));
     log.line("Reading the partition table at 0x8000 ...");
     const devTable = await dev.read(0x8000, 0xc00);
 
     let t;
     if (job === "radio") {
-      const env = L.radioEnv(state.radioModel, devTable);
+      const env = L.radioEnv(picks.radioModel, devTable);
       log.line("Radio image: " + env + (env === "heltec_v4" ? " (this V4 has the multimode layout: the modem slot only)" : ""));
-      t = await radioTarget(env);
+      t = await radioTarget(picks, env);
     } else {
-      t = await boardTarget();
+      t = await boardTarget(picks);
     }
     const m = t.manifest;
-    const target = { kind: job, chip: m.chip, project: PROJECT[job], layout: m.layout || "single", partTable: null, images: m.images };
-    const device = { chip: dev.chip, partTable: devTable, appHeader: null, bootloaderSha256: null };
+    const target = {
+      kind: job, chip: m.chip, project: PROJECT[job], layout: m.layout || "single", slot: m.slot || null,
+      flashSize: m.flash_size || null, partTable: null, images: m.images,
+    };
+    const device = { chip: dev.chip, flashSize: dev.flashSize, partTable: devTable, appHeader: null, bootloaderSha256: null };
 
-    let plan = device.chip === target.chip ? null : L.planFlash(device, target);
+    // a wrong chip or radio model is refused before anything is downloaded
+    let plan = device.chip === target.chip && (!target.flashSize || device.flashSize === target.flashSize) ? null : L.planFlash(device, target);
     let images = [];
     if (!plan) {
       images = await fetchImages(m, t.base);
@@ -628,7 +683,7 @@ async function flashJob(job, port) {
       return false;
     }
     if (plan.kind === "first") {
-      if (job === "board" && state.release) plan.kit = releaseBase() + "sdcard-kit.zip";
+      if (job === "board" && picks.release) plan.kit = releaseBase(picks.release) + "sdcard-kit.zip";
       log.line("First install: waiting for your confirmation ...", "note");
       $("stage").textContent = "FIRST INSTALL: waiting for your confirmation";
       if (!(await confirmFirst(plan))) {
@@ -641,19 +696,23 @@ async function flashJob(job, port) {
     }
     const appOffset = m.images.find((i) => i.role === "app").offset;
     if (m.app_partition && m.app_partition.offset !== appOffset) throw new Error("the manifest's app offset and app partition disagree");
-    L.guardRegions(plan, L.parseTable(devTable), appOffset);
-    const files = plan.regions.map((r) => images.find((i) => i.role === r.role && i.offset === r.offset));
+    L.guardRegions(plan, L.parseTable(devTable), target);
+    // a first install erases the data partitions (written as 0xFF, checked like any image), then writes
+    const erases = plan.erase.map((e) => ({ role: "erase", file: e.label, offset: e.offset, data: new Uint8Array(e.size).fill(0xff) }));
+    const files = erases.concat(plan.regions.map((r) => images.find((i) => i.role === r.role && i.offset === r.offset)));
     const total = files.reduce((n, f) => n + f.data.length, 0);
     const before = [];
     let sum = 0;
     for (const f of files) { before.push(sum); sum += f.data.length; }
     let lastTenth = -1, current = -1;
-    state.busy = true;
     wrote = true;
     await dev.write(files, (i, written, size) => {
       if (i !== current) {
         current = i;
-        log.line("Writing " + files[i].role + " (" + files[i].file + ", " + kb(files[i].data.length) + ") at " + L.hexOffset(files[i].offset) + " ...");
+        const f = files[i];
+        log.line(f.role === "erase"
+          ? "Erasing " + f.file + " (" + kb(f.data.length) + ") at " + L.hexOffset(f.offset) + " ..."
+          : "Writing " + f.role + " (" + f.file + ", " + kb(f.data.length) + ") at " + L.hexOffset(f.offset) + " ...");
       }
       const done = before[i] + (size ? Math.round(files[i].data.length * written / size) : 0);
       const pct = total ? (100 * done) / total : 100;
@@ -665,7 +724,7 @@ async function flashJob(job, port) {
     written = true;
     log.line("Resetting the " + (job === "radio" ? "radio" : "board") + " ...");
     await dev.reset();
-    if (job === "board" && state.board === "esp32") {
+    if (headless) {
       await dev.close();
       log.line("Bare ESP32: sending @HEADLESS on at " + CONSOLE_BAUD + " baud once it boots ...");
       const answer = await dev.console("@HEADLESS on", /axis: (saved, restarting|headless SAVE FAILED)/, 45000);
@@ -685,7 +744,7 @@ async function flashJob(job, port) {
     log.line("STOPPED: " + e.message, "err");
     if (written) {
       log.line("The firmware was written and checked; only the step after it failed. Unplug the board and plug it back in to start it." +
-        (job === "board" && state.board === "esp32" ? " Then set headless in a serial terminal at 115200 baud: @HEADLESS on" : ""), "err");
+        (headless ? " Then set headless in a serial terminal at 115200 baud: @HEADLESS on" : ""), "err");
     } else {
       log.line(wrote
         ? "The write did not finish, so the board may not start. Unplug it, plug it back in and press INSTALL again."
@@ -694,7 +753,6 @@ async function flashJob(job, port) {
     $("stage").textContent = "STOPPED";
     return false;
   } finally {
-    state.busy = false;
     if (dev) await dev.close();
   }
 }
@@ -704,42 +762,58 @@ async function pickPort() {
   return navigator.serial.requestPort();
 }
 
+// install() owns the busy flag from the click to the end of the last job, the pause before the radio included.
 async function install() {
   if (state.busy) return;
+  update(); // read the choices once more, then freeze them
+  const picks = snapshot();
+  state.busy = true;
   let port;
   try {
     port = await pickPort(); // first, while the click still counts as a user gesture
   } catch (e) {
+    state.busy = false;
     log.line("No port picked. Plug the board in with a data USB cable and press INSTALL again.", "err");
     return;
   }
-  state.busy = true;
+  lockChoices(true);
   update();
   log.clear();
   try {
-    const jobs = state.target === "both" ? ["board", "radio"] : [state.target];
+    const jobs = picks.target === "both" ? ["board", "radio"] : [picks.target];
     for (let n = 0; n < jobs.length; n++) {
       if (n > 0) {
-        const ok = await waitNext();
-        if (!ok) break;
+        if (!(await waitNext())) {
+          log.line("Stopped before the radio. The board is done; the radio was not touched.", "note");
+          $("stage").textContent = "stopped before the radio";
+          break;
+        }
         try { port = await pickPort(); } catch (e) { log.line("No port picked for the radio.", "err"); break; }
       }
-      state.busy = true;
-      const ok = await flashJob(jobs[n], port);
+      const ok = await flashJob(jobs[n], port, picks);
       if (!ok) break;
     }
   } finally {
     state.busy = false;
+    lockChoices(false);
     update();
   }
 }
 
 function waitNext() {
   return new Promise((resolve) => {
-    const box = $("next-box"), go = $("next-go");
+    const box = $("next-box"), go = $("next-go"), stop = $("next-cancel");
     box.hidden = false;
-    const yes = () => { box.hidden = true; go.removeEventListener("click", yes); resolve(true); };
+    const done = (ok) => {
+      box.hidden = true;
+      go.removeEventListener("click", yes);
+      stop.removeEventListener("click", no);
+      resolve(ok);
+    };
+    const yes = () => done(true);
+    const no = () => done(false);
     go.addEventListener("click", yes);
+    stop.addEventListener("click", no);
   });
 }
 
