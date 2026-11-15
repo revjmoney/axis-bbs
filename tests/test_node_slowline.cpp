@@ -169,9 +169,12 @@ TEST_CASE("keys typed while a slow caller's next login step waits are dropped, n
         r.poll();
         all += r.read();
     }
+    // Screen one clears and has no pause, and screen two clears: screen one is held for a key. The caller answers the hold
+    // with its line full again, and types on: screen two waits for room, so the keys behind the answer are dropped.
+    REQUIRE(r.n.state() == Node::State::SeqPause);
+    REQUIRE(has(all, "press a key"));
     r.line = std::string(2000, '~');
-    REQUIRE(r.n.state() != Node::State::SeqPause);  // (not a hold: a g there would answer it, not be dropped)
-    r.type("gggg");  // (G is goodbye on most menus)
+    r.type(" gggg");  // (G is goodbye on most menus)
     CHECK(r.n.state() != Node::State::Done);
     r.read();
     all += r.drain();
