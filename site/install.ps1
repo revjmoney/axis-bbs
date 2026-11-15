@@ -196,6 +196,23 @@ function Find-Python {
     return $false
 }
 
+# On a dry run with no 3.12 or 3.13, any Python 3 still reads the source's lists (read only).
+function Find-ReadPython {
+    foreach ($cand in @(@("py", "-3"), @("python"), @("python3"))) {
+        $cmd = Get-Command $cand[0] -ErrorAction SilentlyContinue
+        if (-not $cmd) { continue }
+        if ($cmd.Source -like "*\WindowsApps\*") { continue }  # the Microsoft Store placeholder
+        $probe = @($cand | Select-Object -Skip 1) + @("-c", "import json, sys; print(sys.executable + '|%d.%d' % sys.version_info[:2]) if sys.version_info >= (3, 6) else sys.exit(1)")
+        $r = Get-Output $cand[0] $probe
+        if ($r.Code -eq 0 -and $r.Text -match '^(.+)\|(\d+\.\d+)$' -and (Test-Path $Matches[1])) {
+            $script:SysPy = $Matches[1]
+            Say ("DRY RUN: reading the source's lists with " + $script:SysPy + " (Python " + $Matches[2] + "); a real run uses 3.12 or 3.13.")
+            return
+        }
+    }
+    Say "DRY RUN: no Python found to read the source's lists."
+}
+
 # A private Python from nuget.org (the Python Software Foundation's package), checked against the
 # size and SHA512 that nuget.org publishes for it.
 function Get-NugetPython {
@@ -518,7 +535,7 @@ function Invoke-AxisInstall {
     if (-not (Test-Dry)) { New-Item -ItemType Directory -Force $script:Tools | Out-Null }
     Remove-Partials
     Initialize-Python
-    if ((Test-Dry) -and -not $script:SysPy) { Find-Python | Out-Null }
+    if ((Test-Dry) -and -not $script:SysPy) { Find-ReadPython }
     $script:ReleasePick = $Release
     Initialize-Source
     if ($script:DoBoard) { Test-Selection }

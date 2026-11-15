@@ -191,6 +191,19 @@ setup_python() {
     printf '%s' "$want" > "$TOOLS/venv/.axis-ok"
 }
 
+# find_read_python: on a dry run with no 3.12 or 3.13, any Python 3 still reads the source's lists (read only)
+find_read_python() {
+    for p in python3 python; do
+        command -v "$p" >/dev/null 2>&1 || continue
+        v=$("$p" -c 'import json, sys; sys.stdout.write("%d.%d" % sys.version_info[:2]) if sys.version_info >= (3, 6) else sys.exit(1)' 2>/dev/null) || continue
+        SYS_PY=$(command -v "$p")
+        say "DRY RUN: reading the source's lists with $SYS_PY (Python $v); a real run uses 3.12 or 3.13."
+        return 0
+    done
+    say "DRY RUN: no Python found to read the source's lists."
+    return 0
+}
+
 # py: the venv's Python, or on a dry run the system one (reading the source's lists only)
 py() {
     if [ -x "$VPY" ]; then "$VPY" "$@"; elif [ -n "$SYS_PY" ]; then "$SYS_PY" "$@"; else return 127; fi
@@ -412,7 +425,7 @@ main() {
     dry || mkdir -p "$TOOLS" || stop "cannot make $TOOLS"
     clean_partials
     setup_python
-    dry && [ -z "$SYS_PY" ] && find_python
+    dry && [ -z "$SYS_PY" ] && find_read_python
     setup_source
     [ "$DO_BOARD" = 1 ] && check_selection
     [ "$DO_RADIO" = 1 ] && check_radio_version

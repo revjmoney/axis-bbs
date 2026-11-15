@@ -670,8 +670,13 @@ class ScriptRunner(object):
                 fh.write('#!/bin/sh\nexec "%s" "$@"\n' % posix(sys.executable))
             for name in ("uname", "python3"):
                 os.chmod(os.path.join(fake, name), 0o755)
-        env = dict(os.environ, AXIS_BUILD_HOME=posix(home), PATH=fake + os.pathsep + os.environ.get("PATH", ""))
-        p = subprocess.run([sh, posix(os.path.join(ROOT, "site", "install.sh"))] + [posix(a) for a in args],
+        env = dict(os.environ, AXIS_BUILD_HOME=posix(home))
+        # The fake folder goes first in PATH inside sh itself: Git for Windows' sh.exe puts its own /usr/bin first
+        # when it starts, which would hide the fake uname and python3 (it did on the windows runner).
+        wrapper = ('d="$1"; shift; if command -v cygpath >/dev/null 2>&1; then d=$(cygpath -u "$d"); fi; '
+                   'PATH="$d:$PATH"; export PATH; exec sh "$@"')
+        p = subprocess.run([sh, "-c", wrapper, "sh", fake, posix(os.path.join(ROOT, "site", "install.sh"))] +
+                           [posix(a) for a in args],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
         return p.returncode, p.stdout.decode("utf-8", "replace")
 
@@ -890,7 +895,10 @@ class ScriptDryRunTest(unittest.TestCase):
         for shell, code, out in self.both(["--dry-run", "--source", self.radio_src, "--radio", "v4", "--flash",
                                            "--port", "COM7"]):
             self.assertEqual(code, 0, shell + out)
-            self.assertRegex(out, r"Using Python 3\.1[23]: ", shell)
+            # which Python is chosen depends on the runner; either way the dry run says what it used
+            self.assertRegex(out, r"Using Python 3\.1[23]: |DRY RUN: no Python 3\.12 or 3\.13 with venv found", shell)
+            if "Using Python" not in out:
+                self.assertIn("DRY RUN: reading the source's lists with ", out, shell)
             for want in ("--default-toolchain 1.100.0", "install espup --version 0.19.0 --locked",
                          "--toolchain-version 1.97.0.0", "+1.100.0"):
                 self.assertIn(want, out, shell)
