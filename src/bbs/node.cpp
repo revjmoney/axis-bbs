@@ -1572,8 +1572,9 @@ void Node::openWfc(uint32_t nowMs) {
     if (inSeq_ && (state_ == State::Poster || state_ == State::SeqPause) && seqAt_ > 0) {  // the WFC takes the screen mid login step
         seqAt_--;  // (beginLocal then openWfc): that step again once Space leaves the WFC, not skipped
         seqUnheld_ = seqPauseNext_ = false;
-        posterFile_.clear();
-        std::string().swap(posterCarry_);
+        drawings_.erase(std::remove_if(drawings_.begin(), drawings_.end(), [](const Drawing& d) { return d.poster; }),
+                        drawings_.end());  // the poster still drawing stops: it is drawn again with that step
+        posterStarting_ = false;
     }
     shell_.reset();
     wfcEsc_ = 0;
