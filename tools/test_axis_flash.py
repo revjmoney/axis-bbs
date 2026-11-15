@@ -772,8 +772,11 @@ class ScriptDryRunTest(unittest.TestCase):
             self.assertNotIn("platformio run", out, shell)
 
     def test_radio_waits_for_the_first_release(self):
-        for shell, code, out in self.both(["--dry-run", "--source", ROOT, "--board", "everything", "--radio", "v4",
-                                           "--release", "v0.61"]):
+        # a source whose installer/radio.json names no modem release yet (the repo's own names one now)
+        with open(os.path.join(self.radio_src, "installer", "radio.json"), "w", encoding="utf-8") as fh:
+            json.dump({"version": "", "site": "x"}, fh)
+        for shell, code, out in self.both(["--dry-run", "--source", self.radio_src, "--board", "everything",
+                                           "--radio", "v4", "--release", "v0.61"]):
             self.assertNotEqual(code, 0, shell)
             self.assertIn("STOPPED: " + RADIO_WAIT, out, shell)
             self.assertNotIn("platformio run", out, shell)  # nothing is built, the board neither
