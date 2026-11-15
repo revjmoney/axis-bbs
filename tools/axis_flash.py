@@ -519,6 +519,15 @@ def reset_mode(target, device):
     return "hard_reset"
 
 
+def leave_boot_loader(board, mode, out):
+    """After a refusal or a cancel: reset the board out of the boot loader. A failure here is only logged, so the
+    reason the run stopped stays the error the person sees."""
+    try:
+        board.reset(mode)
+    except Exception as e:  # the port may be gone; nothing was written either way
+        out.line("Could not reset the board (%s). Unplug it and plug it back in." % e)
+
+
 def read_device(board, target, out):
     """Read the chip, the table at 0x8000, the app header and the boot loader, as the page does.
     Returns (device, plan or None): a wrong chip or radio model is refused before reading more."""
@@ -733,7 +742,7 @@ def flash(kind, images_dir, port, out, headless=False, dry_run=False, device_inf
     if plan["kind"] == "refuse":
         out.line("REFUSED: nothing was written.")
         if not device_info:
-            board.reset(reset_mode({"kind": kind}, device))  # back to what it ran before
+            leave_boot_loader(board, reset_mode(target, device), out)  # back to what it ran before
         return 2
     if plan["kind"] == "first":
         if dry_run:
@@ -744,7 +753,7 @@ def flash(kind, images_dir, port, out, headless=False, dry_run=False, device_inf
         elif not confirm_first(plan, kind, out, ask):
             out.line("Cancelled. Nothing was written.")
             if not device_info:
-                board.reset(reset_mode({"kind": kind}, device))
+                leave_boot_loader(board, reset_mode(target, device), out)
             return 2
         else:
             out.line("Confirmed: replacing everything on this board.")
@@ -752,7 +761,7 @@ def flash(kind, images_dir, port, out, headless=False, dry_run=False, device_inf
         guard_regions(plan, parse_table(device.get("part_table")), target)
     except (Refused, ValueError):
         if not device_info and not dry_run:
-            board.reset(reset_mode({"kind": kind}, device))  # out of the boot loader, as after a declined confirm
+            leave_boot_loader(board, reset_mode(target, device), out)  # as after a declined confirm
         raise
     by_key = {(i["role"], i["offset"]): i for i in target["images"]}
     files = [by_key[(r["role"], r["offset"])] for r in plan["regions"]]
@@ -830,7 +839,11 @@ def probe(kind, port, out, radio=None, dry_run=False, device_info=None, runner=N
     else:
         state["env"] = "cyd"
     if not device_info and not dry_run:
-        board.reset(reset_mode({"kind": kind}, device))
+        # a multimode V4 (its table has the picker) is left in the boot loader, never reset into the picker
+        layout = "multimode" if kind == "radio" and is_multimode(parse_table(device.get("part_table"))) else "single"
+        leave_boot_loader(board, reset_mode({"kind": kind, "layout": layout}, device), out)
+        if layout == "multimode":
+            out.line("Unplug the radio and plug it back in before the flash step.")
     return code, state
 
 

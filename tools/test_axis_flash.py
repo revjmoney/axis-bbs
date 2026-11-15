@@ -431,6 +431,52 @@ class FlashPathTest(unittest.TestCase):
         self.assertNotIn("write_flash", fake.commands())
         self.assertEqual(fake.commands()[-1], "read_mac")
 
+    def test_a_refused_multimode_v4_gets_no_watchdog_reset(self):
+        # the multimode slot image refused on a V4 whose multimode layout puts the slot elsewhere
+        code, fake, text, asked = self.run_flash("v4-multimode-other-slot", "radio-v4-multimode", S3_FLASH_ID)
+        self.assertEqual(code, 2, text)
+        self.assertNotIn("write_flash", fake.commands())
+        self.assertFalse(any("watchdog_reset" in argv for argv in fake.calls), fake.calls)
+        # and a guard refusal on a multimode V4 that planned an update
+        real = F.guard_regions
+
+        def refuse(*a):
+            raise F.Refused("refused: test")
+        F.guard_regions = refuse
+        try:
+            c = case("v4-multimode-update")
+            images = make_images(os.path.join(self.tmp, "img2"), PLANS["targets"]["radio-v4-multimode"])
+            fake = FakeBoard(c["device"], S3_FLASH_ID)
+            with self.assertRaises(F.Refused):
+                F.flash("radio", images, "COM99", Capture(), runner=fake, ask=lambda p: "")
+        finally:
+            F.guard_regions = real
+        self.assertFalse(any("watchdog_reset" in argv for argv in fake.calls), fake.calls)
+        self.assertNotIn("write_flash", fake.commands())
+
+    def test_a_failed_reset_keeps_the_refusal_as_the_error(self):
+        real = F.guard_regions
+
+        def refuse(*a):
+            raise F.Refused("refused: the guard said no")
+        F.guard_regions = refuse
+        c = case("board-update")
+        images = make_images(os.path.join(self.tmp, "img"), PLANS["targets"]["axis-board"])
+        fake = FakeBoard(c["device"], ESP32_FLASH_ID)
+
+        def runner(argv, on_line):
+            if "read_mac" in argv:
+                return 1, "A fatal error occurred: port gone"
+            return fake(argv, on_line)
+        out = Capture()
+        try:
+            with self.assertRaises(F.Refused) as ctx:
+                F.flash("board", images, "COM99", out, runner=runner, ask=lambda p: "")
+        finally:
+            F.guard_regions = real
+        self.assertIn("the guard said no", str(ctx.exception))
+        self.assertIn("Could not reset the board", out.text)
+
     def test_never_erases_the_chip(self):
         for name, tname, fid, ans in (("board-first-blank", "axis-board", ESP32_FLASH_ID, "REPLACE"),
                                       ("v3-first-blank", "radio-v3-single", S3_FLASH_ID.replace("16MB", "8MB"), "REPLACE")):
