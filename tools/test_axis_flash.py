@@ -549,6 +549,18 @@ class CliTest(unittest.TestCase):
                                    r"\S+ota_data_initial.bin 0x10000 \S+firmware.bin")
         self.assertIn("DRY RUN: nothing was written.", out.text)
 
+    def test_a_pretend_board_never_drives_a_real_write(self):
+        images = make_images(os.path.join(self.tmp, "img"), PLANS["targets"]["axis-board"])
+        info = os.path.join(self.tmp, "device.json")
+        with open(info, "w", encoding="utf-8") as fh:
+            json.dump(case("board-update")["device"], fh)
+        for argv in (["flash", "--kind", "board", "--images", images, "--port", "COM99", "--device-info", info],
+                     ["probe", "--kind", "board", "--port", "COM99", "--state", os.path.join(self.tmp, "s"),
+                      "--device-info", info]):
+            out = Capture()
+            self.assertEqual(F.main(argv, out=out, runner=self.no_esptool, ask=lambda p: "REPLACE"), 1, out.text)
+            self.assertIn("works with a dry run only", out.text)
+
     def test_dry_run_without_a_board_lists_the_steps(self):
         state = os.path.join(self.tmp, "state.txt")
         out = Capture()

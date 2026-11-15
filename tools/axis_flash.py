@@ -708,6 +708,8 @@ def flash(kind, images_dir, port, out, headless=False, dry_run=False, device_inf
     out.line("FLASHING: %s%s" % (name, (", " + target["env"]) if target.get("env") else ""))
     for img in target["images"]:
         out.line("Image %s (%s) at %s, sha256 checked" % (img["file"], kb(img["size"]), hex_offset(img["offset"])))
+    if device_info and not dry_run:
+        raise Stopped("a pretend board (the device-info option) works with a dry run only")
     board = Board(port or "PORT", out, runner=runner, dry_run=dry_run)
     if device_info:
         device = device_from_info(device_info)
@@ -792,6 +794,8 @@ def probe(kind, port, out, radio=None, dry_run=False, device_info=None, runner=N
     """Before a build: the right chip (and for a radio the right model)? Returns (code, state dict).
     The state holds the port and, for a radio, which image it gets (radio_env)."""
     want = {"kind": kind, "chip": CHIP[kind], "flash_size": RADIO_FLASH.get(radio) if kind == "radio" else None}
+    if device_info and not dry_run:
+        raise Stopped("a pretend board (the device-info option) works with a dry run only")
     board = Board(port or "PORT", out, runner=runner, dry_run=dry_run)
     if device_info:
         device = device_from_info(device_info)
@@ -903,7 +907,10 @@ def main(argv=None, out=None, runner=None, ask=ask_terminal):
                                                       ", ".join("%s at %s" % (i["file"], hex_offset(i["offset"]))
                                                                 for i in got["images"])))
             return 0
-        live = not args.dry_run and not args.device_info
+        if args.device_info and not args.dry_run:
+            # a pretend board must never decide what is written to a real one
+            raise Stopped("a pretend board (the device-info option) works with a dry run only")
+        live = not args.dry_run
         if live:
             _check_esptool(out)
         port = args.port
