@@ -97,7 +97,7 @@ TEST_CASE("features: a menu file line for a door or script this build leaves out
     n.setMenus([&fs](const std::string& f) { return fs.count(f) ? fs[f] : std::string(); });
     n.begin(0);
     n.input((const uint8_t*)"Rev\r", 4, 1000);
-    if (n.state() == axis::bbs::Node::State::SeqPause) n.input((const uint8_t*)" ", 1, 1000);
+    while (n.state() == axis::bbs::Node::State::SeqPause) n.input((const uint8_t*)" ", 1, 1000);  // the login sequence's pauses (last callers, stats), then MAIN
     std::string out = n.takeOutput();
     CHECK((out.find("Red Dragon") != std::string::npos) == (AXIS_LORD == 1));
     CHECK((out.find("Hello Script") != std::string::npos) == (AXIS_SCRIPTS == 1));
@@ -158,7 +158,7 @@ TEST_CASE("features: a menu file's file commands are not shown when the file are
     n.setMenus([&fs](const std::string& f) { return fs.count(f) ? fs[f] : std::string(); });
     n.begin(0);
     typeIn(n, "Rev\r");
-    if (n.state() == axis::bbs::Node::State::SeqPause) typeIn(n, " ");
+    while (n.state() == axis::bbs::Node::State::SeqPause) typeIn(n, " ");  // the login sequence's pauses, then MAIN
     std::string out = n.takeOutput();
     CHECK((out.find("File Listing") != std::string::npos) == (AXIS_FILES == 1));
     CHECK(out.find("Oneliners") != std::string::npos);
