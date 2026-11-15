@@ -77,14 +77,27 @@ struct Rig {
         s.swap(line);
         return s;
     }
-    // the caller reads, the board takes a turn, until nothing more comes; each turn's bytes in turns (when given)
+    // The login sequence holds a screen left up with no pause of its own for a key before the next clear and before MAIN
+    // (every screen here clears, none pauses): the caller answers each "(press a key)" once it has read it.
+    void keysToMenu() {  // a caller whose line keeps up: the hold is out at once
+        while (n.state() == Node::State::SeqPause) type(" ");
+    }
+    // the caller reads (answering a hold it has read), the board takes a turn, until nothing more comes; each turn's bytes
+    // in turns (when given)
     std::string drain(std::vector<size_t>* turns = nullptr) {
         std::string all;
+        size_t      answered = 0;  // the holds in all before here are answered
         for (int quiet = 0, i = 0; quiet < 3 && i < 500; i++) {
             std::string got = read();
             all += got;
             if (turns && !got.empty()) turns->push_back(got.size());
             quiet = got.empty() ? quiet + 1 : 0;
+            if (n.state() == Node::State::SeqPause && all.find("press a key", answered) != std::string::npos) {
+                answered = all.size();
+                type(" ");
+                quiet = 0;
+                continue;
+            }
             poll();
         }
         return all + read();
@@ -97,6 +110,7 @@ TEST_CASE("a caller whose line keeps up gets the whole login sequence and the me
     Rig r;
     r.slow = false;
     r.type("pass1234\r");
+    r.keysToMenu();  // (a key at each hold: the screens clear and have no pause of their own)
     std::string out = r.read();
     CHECK(has(out, "SCREEN ONE"));
     CHECK(has(out, "SCREEN TWO"));
@@ -121,6 +135,8 @@ TEST_CASE("a slow caller's screens come a piece a turn, in order, and nothing mo
     std::string         all = first + r.drain(&turns);
     for (size_t t : turns) CHECK(t < 4096);
     CHECK(all.find("SCREEN ONE") < all.find("SCREEN TWO"));
+    CHECK(all.find("SCREEN ONE") < all.find("press a key"));  // the hold comes out behind screen one, ahead of screen two
+    CHECK(all.find("press a key") < all.find("SCREEN TWO"));
     CHECK(all.find("SCREEN TWO") < all.find("SCREEN THREE"));
     CHECK(all.find("SCREEN THREE") < all.find("MAIN PROMPT ->"));
     CHECK(r.n.state() == Node::State::Menu);
@@ -136,7 +152,9 @@ TEST_CASE("a slow caller's whole sequence matches what a fast caller gets, byte 
     Rig fast;
     fast.slow = false;
     fast.type("pass1234\r");
+    fast.keysToMenu();
     std::string want = fast.read();
+    CHECK(has(want, "MAIN PROMPT ->"));
     Rig slow;
     slow.type("pass1234\r");
     std::string got = slow.read() + slow.drain();
@@ -152,6 +170,7 @@ TEST_CASE("keys typed while a slow caller's next login step waits are dropped, n
         all += r.read();
     }
     r.line = std::string(2000, '~');
+    REQUIRE(r.n.state() != Node::State::SeqPause);  // (not a hold: a g there would answer it, not be dropped)
     r.type("gggg");  // (G is goodbye on most menus)
     CHECK(r.n.state() != Node::State::Done);
     r.read();
