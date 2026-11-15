@@ -33,6 +33,10 @@ public:
     // true for a command this board can't run (a DOS door with no runtime): it and its lightbar line are left
     // out, and the lines below it in that column move up so the menu has no hole
     std::function<bool(const MenuCmd&)> cantRun;
+    // The board's art drawer (Node's): the menu's art is handed to it by name, and it draws it a piece at a time as the
+    // caller's line takes it; what this runner writes after (the lightbar, the prompt) comes out behind the art. False: no
+    // such art. Unset: drawn here, at once.
+    std::function<bool(const std::string& file)> drawArt;
     bool       enter(const std::string& name, const AcsUser& who);  // false: no such menu, or not allowed
     MenuAction key(char c, uint32_t nowMs = 0);                     // key(0): the next auto-run, if any
     void       tick(uint32_t nowMs);                                // a lone ESC becomes Esc after a pause

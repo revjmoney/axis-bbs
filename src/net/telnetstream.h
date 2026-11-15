@@ -10,6 +10,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "door/bytestream.h"
 #include "net/telnet.h"
@@ -45,6 +46,16 @@ public:
     uint32_t    bytesIn() const { return bytesIn_; }    // raw bytes from and to the caller this call
     uint32_t    bytesOut() const { return bytesOut_; }
     uint32_t    sendTimeoutMs = 10000;
+    // Hold mode (off by default): flush() sends what the socket takes right now and keeps the rest for drain(), so a slow
+    // caller (a LoRa radio call at a few hundred bytes a second) never stops the board's loop. What waits is kept in pieces of
+    // about 1 KB (never one big block: the heap is fragmented). Above kHoldMax waiting, flush() waits it down to kHoldMax as
+    // before. Off: flush() waits until everything is out (transfers need that).
+    static constexpr size_t kHoldMax = 16384;
+    static constexpr size_t kHoldLow = 1024;  // the board waits with the next screen or step until less than this is waiting
+    void        setHold(bool on) { hold_ = on; }
+    size_t      backlog() const { return queued_; }  // bytes waiting to go (batched or held)
+    bool        drain();  // send what the socket takes now, never waits; false once the line is gone (10 s no progress: hung up)
+    static size_t holdPeak();  // the most bytes any line has held so far (for @STATUS)
 
 protected:
     virtual int      rawRead(uint8_t* buf, size_t n) = 0;         // bytes read, 0 if none waiting
@@ -56,11 +67,17 @@ protected:
 
 private:
     void         pump();
-    bool         sendAll(const char* p, size_t n);
+    bool         push(size_t leave, bool wait);  // send until `leave` bytes wait; false: gone (hung up)
+    void         queue(std::string piece);       // onto the end, joined to the last piece while that stays under 1 KB
+    void         drop();                          // forget everything waiting and give the memory back
     TelnetFilter telnet_;
-    std::string  in_, out_;
+    std::string  in_;
+    std::vector<std::string> out_;  // the bytes still to go, in pieces; the first one is sent from sent_
     size_t       inPos_ = 0;  // next unread byte of in_
-    bool         up_ = true;
+    size_t       sent_ = 0, queued_ = 0;
+    size_t       batch_ = 0;      // bytes written since the last flush (a flush per 1 KB, as before hold mode)
+    uint32_t     waitSince_ = 0;  // when the socket started taking nothing (the 10 s rule)
+    bool         up_ = true, hold_ = false, blocked_ = false;
     uint32_t     linkTaken_ = 0, linkTakenMs_ = 0, bytesIn_ = 0, bytesOut_ = 0;
 };
 

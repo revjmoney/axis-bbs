@@ -193,6 +193,20 @@ void expandArt(const std::string& in, const AcsUser& who, const ArtValue& value,
     expand(in, who, value, out);
 }
 
+void artPiece(std::string& carry, const char* raw, size_t n, bool last, const AcsUser& who, const ArtValue& value, const ArtEmit& emit) {
+    carry.append(raw, n);
+    size_t cut = carry.size();
+    if (!last) {
+        cut = carry.rfind('\n');
+        cut = cut != std::string::npos ? cut + 1 : carry.size() > 1024 ? carry.size() - 32 : 0;
+    }
+    if (cut) {
+        expandArt(carry.substr(0, cut), who, value, emit);
+        carry.erase(0, cut);
+    }
+    if (last) std::string().swap(carry);
+}
+
 std::string expandArt(const std::string& in, const AcsUser& who, const ArtValue& value) {
     std::string s;
     expandArt(in, who, value, [&s](const char* d, size_t n) { s.append(d, n); });
