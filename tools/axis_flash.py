@@ -334,7 +334,7 @@ def stage_name(percent):
 
 def block_bar(percent, width=30, ascii_only=False):
     p = max(0, min(100, int(percent)))
-    full = int(round(p * width / 100.0))
+    full = int(p * width / 100.0 + 0.5)  # halves round up, as Math.round does on the page
     on, off = ("#", ".") if ascii_only else (u"█", u"░")
     return "[" + on * full + off * (width - full) + "] %3d%%" % p
 
@@ -748,7 +748,12 @@ def flash(kind, images_dir, port, out, headless=False, dry_run=False, device_inf
             return 2
         else:
             out.line("Confirmed: replacing everything on this board.")
-    guard_regions(plan, parse_table(device.get("part_table")), target)
+    try:
+        guard_regions(plan, parse_table(device.get("part_table")), target)
+    except (Refused, ValueError):
+        if not device_info and not dry_run:
+            board.reset(reset_mode({"kind": kind}, device))  # out of the boot loader, as after a declined confirm
+        raise
     by_key = {(i["role"], i["offset"]): i for i in target["images"]}
     files = [by_key[(r["role"], r["offset"])] for r in plan["regions"]]
     wrote = False

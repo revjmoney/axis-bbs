@@ -43,10 +43,16 @@ $EsptoolPin = "esptool==4.9.0"
 $NugetPython = "3.12.10"
 $ModemName = "LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM"
 $RadioWait = "Radio images come with the first LFD3K-SM release."
+# Tool versions: one place (install.sh holds the same values)
+$PyVersions = @("3.12", "3.13")
+$EspupVersion = "0.19.0"
+$RustVersion = "1.100.0"
+$EspToolchainVersion = "1.97.0.0"
 
 $script:StepNo = 0
 $script:Py = ""
 $script:SysPy = ""
+$script:SysPyVersion = ""
 $script:Src = ""
 $script:Tools = ""
 $script:AxisOffValue = ""
@@ -173,15 +179,19 @@ function Test-Hash([string]$File, [string]$Algorithm, [string]$Want) {
     Say ($Algorithm + " checked: " + $File)
 }
 
+# Python 3.12, else 3.13 (never a newer one: CI and the releases build with 3.12).
 function Find-Python {
-    foreach ($cand in @(@("py", "-3"), @("python"))) {
-        $exe = $cand[0]
-        $cmd = Get-Command $exe -ErrorAction SilentlyContinue
-        if (-not $cmd) { continue }
-        if ($cmd.Source -like "*\WindowsApps\*") { continue }  # the Microsoft Store placeholder
-        $probe = @($cand | Select-Object -Skip 1) + @("-c", "import sys, venv, ensurepip; print(sys.executable) if sys.version_info >= (3, 9) else sys.exit(1)")
-        $r = Get-Output $exe $probe
-        if ($r.Code -eq 0 -and $r.Text -and (Test-Path $r.Text)) { $script:SysPy = $r.Text; return $true }
+    foreach ($v in $PyVersions) {
+        foreach ($cand in @(@("py", ("-" + $v)), @("python"))) {
+            $exe = $cand[0]
+            $cmd = Get-Command $exe -ErrorAction SilentlyContinue
+            if (-not $cmd) { continue }
+            if ($cmd.Source -like "*\WindowsApps\*") { continue }  # the Microsoft Store placeholder
+            $check = "import sys, venv, ensurepip; print(sys.executable) if '%d.%d' % sys.version_info[:2] == '" + $v + "' else sys.exit(1)"
+            $probe = @($cand | Select-Object -Skip 1) + @("-c", $check)
+            $r = Get-Output $exe $probe
+            if ($r.Code -eq 0 -and $r.Text -and (Test-Path $r.Text)) { $script:SysPy = $r.Text; $script:SysPyVersion = $v; return $true }
+        }
     }
     return $false
 }
@@ -225,12 +235,12 @@ function Initialize-Python {
         Say ("Reusing " + $venv + " (" + $want + ")"); return
     }
     if (Find-Python) {
-        Say ("Using " + $script:SysPy)
+        Say ("Using Python " + $script:SysPyVersion + ": " + $script:SysPy)
         if (Test-Dry) { Say ("DRY RUN, would create the venv " + $venv + " and install " + $want); return }
         if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }
         Invoke-Native $script:SysPy @("-m", "venv", $venv) | Out-Null
     } else {
-        Say "No Python 3.9 or newer here: using a private copy in the tool folder."
+        Say ("No Python 3.12 or 3.13 here: using Python " + $NugetPython + " from nuget.org, a private copy in the tool folder.")
         $private = Get-NugetPython
         if (Test-Dry) { Say ("DRY RUN, would create the venv " + $venv + " with it and install " + $want); return }
         if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }
@@ -274,6 +284,7 @@ function Initialize-Source {
         Step ("AXIS Micro BBS source: " + $Source)
         if (-not (Test-Path (Join-Path $Source "installer\presets.json"))) { Stop-Axis ($Source + " is not an AXIS Micro BBS source folder") }
         $script:Src = (Resolve-Path $Source).Path
+        Test-SourceFiles
         return
     }
     $rel = $Release
@@ -291,14 +302,27 @@ function Initialize-Source {
     Step ("AXIS Micro BBS source at release " + $rel)
     $script:Src = Join-Path $script:Tools ("src\axis-bbs-" + $rel)
     Get-Source "AXIS Micro BBS" ($AxisRepo + "/archive/refs/tags/" + $rel + ".tar.gz") $script:Src
+    if (-not (Test-Dry)) { Test-SourceFiles }
 }
 
-function Test-HaveSource { return [bool]($script:Src -and (Test-Path (Join-Path $script:Src "installer\presets.json"))) }
+# A release older than these scripts has no lists or flasher to build and flash with.
+function Test-SourceFiles {
+    foreach ($f in @("installer\presets.json", "installer\features.json", "installer\radio.json", "tools\buildopts.py", "tools\axis_flash.py")) {
+        if (-not (Test-Path (Join-Path $script:Src $f))) {
+            $rel = $script:ReleasePick
+            if (-not $rel) { $rel = "here" }
+            Stop-Axis ("This AXIS Micro BBS source has no " + $f + ": release " + $rel + " predates the build-it-yourself scripts. Pick a newer release.")
+        }
+    }
+}
+
+# The source is here (always on a real run; a dry run without a source only prints).
+function Test-HaveSource { return [bool]($script:Src -and (Test-Path (Join-Path $script:Src "tools\axis_flash.py"))) }
 
 function Test-Selection {
     Step "Checking the feature selection"
     if ($script:BoardPick) { $sel = @("--preset", $script:BoardPick) } else { $sel = @("--off", $script:OffList) }
-    if (-not (Test-HaveSource)) {
+    if ((Test-Dry) -and -not (Test-HaveSource)) {
         Say ("DRY RUN, would check " + ($sel -join " ") + " with tools/buildopts.py from the source")
         $script:AxisOffValue = "(from tools/buildopts.py)"; return
     }
@@ -310,12 +334,12 @@ function Test-Selection {
 
 function Test-RadioVersion {
     Step ("Which " + $ModemName + " release goes with it")
-    if (-not (Test-HaveSource)) { Say "DRY RUN, would read installer/radio.json from the source"; $script:RadioVersion = "RADIO"; return }
+    if ((Test-Dry) -and -not (Test-HaveSource)) { Say "DRY RUN, would read installer/radio.json from the source"; $script:RadioVersion = "RADIO"; return }
     $j = Get-Content -Raw (Join-Path $script:Src "installer\radio.json") | ConvertFrom-Json
     $script:RadioVersion = [string]$j.version
     if (-not $script:RadioVersion) { Stop-Axis $RadioWait }
     if ($script:RadioVersion -match '[^A-Za-z0-9._-]') { Stop-Axis "installer/radio.json names an odd tag" }
-    Say ("LFD3K-SM release " + $script:RadioVersion + " (from installer/radio.json)")
+    Say ($ModemName + " release " + $script:RadioVersion + " (from installer/radio.json)")
 }
 
 # == the jobs ==
@@ -324,7 +348,7 @@ function Get-FlashTool { return (Join-Path $script:Src "tools\axis_flash.py") }
 
 # The right chip (and radio model) before a build; sets JobPort and JobEnv.
 function Invoke-Probe([string]$Kind, [string]$PortName, [string]$Model) {
-    $state = [System.IO.Path]::GetTempFileName()
+    $state = Join-Path ([System.IO.Path]::GetTempPath()) ("axis-probe-" + [guid]::NewGuid().ToString("N") + ".txt")
     $a = @("-I", (Get-FlashTool), "probe", "--kind", $Kind, "--state", $state)
     if ($Model) { $a += @("--radio", $Model) }
     if ($PortName) { $a += @("--port", $PortName) }
@@ -345,10 +369,10 @@ function Invoke-Probe([string]$Kind, [string]$PortName, [string]$Model) {
         & $script:Py @a | Out-Host
         $code = $LASTEXITCODE
     }
+    $lines = @()
+    if (Test-Path $state) { $lines = Get-Content $state; Remove-Item -Force $state }
     if ($code -eq 2) { Stop-Axis "refused before the build (the reason is above)" }
     if ($code -ne 0) { Stop-Axis "could not read the board" }
-    $lines = Get-Content $state
-    Remove-Item -Force $state
     foreach ($l in $lines) {
         if ($l -like "port=*") { $script:JobPort = $l.Substring(5) }
         if ($l -like "env=*") { $script:JobEnv = $l.Substring(4) }
@@ -362,6 +386,12 @@ function Invoke-Flash([string]$Kind, [string]$Images, [string]$PortName, [switch
     if ($code -eq 2) { Stop-Axis "nothing was written (see above)" }
 }
 
+# PowerShell 5.1 drops an empty string argument, so the release is passed only when there is one.
+function Get-ReleaseArg {
+    if ($script:ReleasePick) { return @("--release", [string]$script:ReleasePick) }
+    return @()
+}
+
 function Invoke-BoardJob {
     if ($script:TargetPick -eq "esp32") { Step "AXIS Micro BBS for a bare ESP32" } else { Step "AXIS Micro BBS for a CYD" }
     if ($Flash) { Invoke-Probe "board" $Port "" }
@@ -370,8 +400,8 @@ function Invoke-BoardJob {
         PLATFORMIO_CORE_DIR = (Join-Path $script:Tools "platformio"); AXIS_OFF = $script:AxisOffValue } | Out-Null
     $out = Join-Path $script:Tools "out\board"
     if (-not (Test-Dry) -and (Test-Path $out)) { Remove-Item -Recurse -Force $out }
-    Invoke-Native $script:Py @("-I", (Get-FlashTool), "manifest", "--kind", "board", "--build",
-        (Join-Path $script:Src ".pio\build\cyd"), "--out", $out, "--release", [string]$script:ReleasePick) | Out-Null
+    Invoke-Native $script:Py (@("-I", (Get-FlashTool), "manifest", "--kind", "board", "--build",
+        (Join-Path $script:Src ".pio\build\cyd"), "--out", $out) + @(Get-ReleaseArg)) | Out-Null
     if ($Flash) {
         Invoke-Flash "board" $out $script:JobPort -Headless:($script:TargetPick -eq "esp32")
     } else {
@@ -395,25 +425,30 @@ function Initialize-Rust {
         Stop-Axis "The radio build needs the Visual Studio Build Tools with the C++ workload (the linker Rust uses on Windows). Install them, then run this again."
     }
     $export = Join-Path $script:Tools "export-esp.ps1"
-    if ((Test-Path (Join-Path $script:Tools ".rust-ok")) -and (Test-Path (Join-Path $bin "espup.exe")) -and (Test-Path $export)) {
-        Say ("Reusing rustup, espup and the esp toolchain in " + $script:Tools); return
+    $rustPins = "rust $RustVersion espup $EspupVersion esp $EspToolchainVersion"
+    $rustOk = Join-Path $script:Tools ".rust-ok"
+    if ((Test-Path $rustOk) -and ((Get-Content -Raw $rustOk).Trim() -eq $rustPins) -and (Test-Path (Join-Path $bin "espup.exe")) -and (Test-Path $export)) {
+        Say ("Reusing rustup, espup and the esp toolchain in " + $script:Tools + " (" + $rustPins + ")"); return
     }
     $url = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
     if (-not (Test-Path (Join-Path $bin "rustup.exe"))) {
         $init = Join-Path $script:Tools "rustup-init.exe"
         if (Test-Dry) { Say ("DRY RUN, would download " + $url + ".sha256"); Get-Download $url $init }
         else {
-            $sha = ((Invoke-WebRequest -Uri ($url + ".sha256") -UseBasicParsing).Content -split "\s+")[0]
+            $body = (Invoke-WebRequest -Uri ($url + ".sha256") -UseBasicParsing).Content
+            if ($body -is [byte[]]) { $body = [System.Text.Encoding]::ASCII.GetString($body) }
+            $sha = ([string]$body).Trim() -split "\s+" | Select-Object -First 1
             if ($sha -notmatch '^[0-9a-fA-F]{64}$') { Stop-Axis "rustup publishes no sha256 we can read" }
             Get-Download $url $init
             Test-Hash $init "SHA256" $sha
         }
-        Invoke-Native $init @("-y", "--no-modify-path", "--profile", "minimal", "--default-toolchain", "stable") | Out-Null
+        Invoke-Native $init @("-y", "--no-modify-path", "--profile", "minimal", "--default-toolchain", $RustVersion) | Out-Null
         if (-not (Test-Dry)) { Remove-Item -Force $init }
     }
-    Invoke-Native (Join-Path $bin "cargo.exe") @("install", "espup", "--locked") | Out-Null
-    Invoke-Native (Join-Path $bin "espup.exe") @("install", "--targets", "esp32s3", "--export-file", $export) | Out-Null
-    if (-not (Test-Dry)) { Set-Content -Path (Join-Path $script:Tools ".rust-ok") -Value "ok" -Encoding ASCII }
+    Invoke-Native (Join-Path $bin "rustup.exe") @("toolchain", "install", $RustVersion, "--profile", "minimal") | Out-Null
+    Invoke-Native (Join-Path $bin "cargo.exe") @(("+" + $RustVersion), "install", "espup", "--version", $EspupVersion, "--locked") | Out-Null
+    Invoke-Native (Join-Path $bin "espup.exe") @("install", "--targets", "esp32s3", "--toolchain-version", $EspToolchainVersion, "--export-file", $export) | Out-Null
+    if (-not (Test-Dry)) { Set-Content -Path $rustOk -Value $rustPins -Encoding ASCII }
 }
 
 function Invoke-RadioEnvBuild([string]$EnvName) {
@@ -435,9 +470,9 @@ function Invoke-RadioJob {
     }
     if ($Flash) { Invoke-Probe "radio" $rport $Radio }
     Initialize-Rust
-    Step ("LFD3K-SM source at " + $script:RadioVersion)
+    Step ($ModemName + " source at " + $script:RadioVersion)
     $script:LSrc = Join-Path $script:Tools ("src\lfd3k-sm-" + $script:RadioVersion)
-    Get-Source "LFD3K-SM" ($LfdRepo + "/archive/refs/tags/" + $script:RadioVersion + ".tar.gz") $script:LSrc
+    Get-Source $ModemName ($LfdRepo + "/archive/refs/tags/" + $script:RadioVersion + ".tar.gz") $script:LSrc
     Step "Building the modem's Rust core"
     $cargoArgs = @("+esp", "build", "-p", "lfd3k-ffi", "--release", "--target", "xtensa-esp32s3-none-elf", "-Zbuild-std=core")
     $export = Join-Path $script:Tools "export-esp.ps1"

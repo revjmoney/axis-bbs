@@ -112,6 +112,9 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(F.stage_name(100), "DATAMASTER WRITING")
         self.assertEqual(F.block_bar(50, 10), u"[█████░░░░░]  50%")
         self.assertEqual(F.block_bar(100, 4, ascii_only=True), "[####] 100%")
+        # halves round up like the page's Math.round (Python's round would give 2 here)
+        self.assertEqual(F.block_bar(50, 5, ascii_only=True), "[###..]  50%")
+        self.assertEqual(F.block_bar(10, 5, ascii_only=True), "[#....]  10%")
 
 
 class GuardTest(unittest.TestCase):
@@ -409,6 +412,24 @@ class FlashPathTest(unittest.TestCase):
         self.assertEqual([a for a in write if a.startswith("0x")], ["0x4a0000"])
         self.assertEqual(write[write.index("--after") + 1], "no_reset")
         self.assertIn("Unplug the radio and plug it back in", text)
+
+    def test_a_guard_refusal_after_the_confirm_resets_and_writes_nothing(self):
+        real = F.guard_regions
+
+        def refuse(*a):
+            raise F.Refused("refused: test")
+        F.guard_regions = refuse
+        try:
+            c = case("board-first-blank")
+            images = make_images(os.path.join(self.tmp, "img"), PLANS["targets"]["axis-board"])
+            fake = FakeBoard(c["device"], ESP32_FLASH_ID)
+            with self.assertRaises(F.Refused):
+                F.flash("board", images, "COM99", Capture(), runner=fake, ask=lambda p: "REPLACE")
+        finally:
+            F.guard_regions = real
+        self.assertNotIn("erase_region", fake.commands())
+        self.assertNotIn("write_flash", fake.commands())
+        self.assertEqual(fake.commands()[-1], "read_mac")
 
     def test_never_erases_the_chip(self):
         for name, tname, fid, ans in (("board-first-blank", "axis-board", ESP32_FLASH_ID, "REPLACE"),
@@ -738,6 +759,110 @@ class ScriptDryRunTest(unittest.TestCase):
             self.assertIn("would download https://github.com/revjmoney/axis-bbs/archive/refs/tags/v0.61.tar.gz", out, shell)
             self.assertTrue(os.path.exists(part), shell)  # a dry run deletes nothing
 
+    def test_a_tool_folder_with_spaces(self):
+        """The partial-download cleanup stays inside the folder: a dry run names only paths in it, and a real run
+        (stopped early by a source folder that is not AXIS) deletes the partial file and nothing beside the folder."""
+        for shell in ("sh", "ps"):
+            base = os.path.join(self.tmp, "my tools " + shell)
+            home = os.path.join(base, ".axis-build")
+            os.makedirs(os.path.join(home, "src"))
+            os.makedirs(os.path.join(self.tmp, "my"), exist_ok=True)  # what a split path would have hit
+            keep = os.path.join(base, "keep.txt")
+            with open(keep, "w") as fh:
+                fh.write("keep")
+            part = os.path.join(home, "src", "axis bbs.tar.gz.part")
+            with open(part, "w") as fh:
+                fh.write("half")
+            empty = os.path.join(self.tmp, "not axis")
+            os.makedirs(empty, exist_ok=True)
+            try:
+                if shell == "sh":
+                    code, out = self.run_.sh(["--dry-run", "--board", "everything", "--release", "v0.61"], home)
+                else:
+                    code, out = self.run_.ps(["-DryRun", "-Board", "everything", "-Release", "v0.61"], home)
+            except unittest.SkipTest:
+                continue
+            self.assertEqual(code, 0, shell + out)
+            lines = [l for l in out.splitlines() if "partial download" in l]
+            self.assertEqual(len(lines), 1, shell + out)
+            self.assertIn("axis bbs.tar.gz.part", lines[0], shell)
+            self.assertIn(".axis-build", lines[0], shell)
+            # a real run: it deletes the partial file, then stops at the source check before any download
+            self.make_venv(shell, home)
+            if shell == "sh":
+                code, out = self.run_.sh(["--source", empty, "--board", "everything"], home)
+            else:
+                code, out = self.run_.ps(["-Source", empty, "-Board", "everything"], home)
+            self.assertNotEqual(code, 0, shell + out)
+            self.assertIn("is not an AXIS Micro BBS source folder", out, shell)
+            self.assertFalse(os.path.exists(part), shell)
+            self.assertTrue(os.path.exists(keep), shell)
+            self.assertTrue(os.path.isdir(os.path.join(self.tmp, "my")), shell)
+            self.assertTrue(os.path.isdir(os.path.join(home, "src")), shell)
+
+    def make_venv(self, shell, home):
+        """The venv a first run left (a shim to this Python), so a real run reuses it and downloads nothing."""
+        venv_py = os.path.join(home, "venv", "Scripts" if shell == "ps" else "bin",
+                               "python.exe" if shell == "ps" else "python")
+        os.makedirs(os.path.dirname(venv_py), exist_ok=True)
+        if shell == "ps":
+            shutil.copy(sys.executable, venv_py)
+        else:
+            with open(venv_py, "w", newline="\n") as fh:
+                fh.write('#!/bin/sh\nexec "%s" "$@"\n' % posix(sys.executable))
+            os.chmod(venv_py, 0o755)
+        with open(os.path.join(home, "venv", ".axis-ok"), "w") as fh:
+            fh.write("platformio==6.1.18 esptool==4.9.0")
+
+    def test_a_release_older_than_the_scripts_stops_a_real_run(self):
+        old = os.path.join(self.tmp, "old-release")
+        os.makedirs(os.path.join(old, "installer"))
+        shutil.copy(os.path.join(ROOT, "installer", "presets.json"), os.path.join(old, "installer", "presets.json"))
+        for shell in ("sh", "ps"):
+            home = self.home()
+            self.make_venv(shell, home)
+            try:
+                if shell == "sh":
+                    code, out = self.run_.sh(["--source", old, "--board", "no-doors", "--radio", "v4"], home)
+                else:
+                    code, out = self.run_.ps(["-Source", old, "-Board", "no-doors", "-Radio", "v4"], home)
+            except unittest.SkipTest:
+                continue
+            self.assertNotEqual(code, 0, shell + out)
+            self.assertIn("predates the build-it-yourself scripts", out, shell)
+            self.assertNotIn("(from tools/buildopts.py)", out, shell)
+            self.assertNotIn("DRY RUN", out, shell)
+
+    def test_radio_json_null_version_waits_for_the_first_release(self):
+        with open(os.path.join(self.radio_src, "installer", "radio.json"), "w", encoding="utf-8") as fh:
+            json.dump({"version": None, "site": "x"}, fh)
+        for shell, code, out in self.both(["--dry-run", "--source", self.radio_src, "--radio", "v3"]):
+            self.assertNotEqual(code, 0, shell)
+            self.assertIn("STOPPED: " + RADIO_WAIT, out, shell)
+
+    def test_python_choice_and_pins(self):
+        for shell, code, out in self.both(["--dry-run", "--source", self.radio_src, "--radio", "v4", "--flash",
+                                           "--port", "COM7"]):
+            self.assertEqual(code, 0, shell + out)
+            self.assertRegex(out, r"Using Python 3\.1[23]: ", shell)
+            for want in ("--default-toolchain 1.100.0", "install espup --version 0.19.0 --locked",
+                         "--toolchain-version 1.97.0.0", "+1.100.0"):
+                self.assertIn(want, out, shell)
+            for line in out.splitlines():
+                if "LFD3K-SM" in line and RADIO_WAIT not in line:
+                    self.assertIn("LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM", line, shell)
+
+    def test_ps_source_without_release(self):
+        if os.name != "nt" or not shutil.which("powershell"):
+            self.skipTest("no Windows PowerShell")
+        code, out = self.run_.ps(["-DryRun", "-Source", ROOT, "-Board", "everything"], self.home())
+        self.assertEqual(code, 0, out)
+        manifest = [l for l in out.replace("\r", "").split("\n") if "manifest" in l and "kind board" in l]
+        self.assertEqual(len(manifest), 1, out)
+        self.assertNotIn("--release", manifest[0])
+        code, out = self.run_.ps(["-DryRun", "-Source", ROOT, "-Board", "everything", "-Release", "v0.61"], self.home())
+        self.assertIn("--release v0.61", out)
+
     def test_sh_refuses_macos(self):
         code, out = self.run_.sh(["--board", "everything"], self.home(), system="Darwin")
         self.assertNotEqual(code, 0)
@@ -775,7 +900,7 @@ class TextTest(unittest.TestCase):
             for n, line in enumerate(text.splitlines(), 1):
                 # a flag (--port, --dry-run) or the end of sh's options in "sh -s -- --board"
                 rest = re.sub(r"--[a-z][a-z0-9_-]*", "", line)
-                rest = rest.replace("sh -s -- ", "")
+                rest = rest.replace("sh -s -- ", "").replace("set -- ", "")  # sh's end of options
                 self.assertNotIn("--", rest, "%s:%d: %s" % (path, n, line))
 
     def test_full_names_and_no_old_spelling(self):

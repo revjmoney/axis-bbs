@@ -30,6 +30,11 @@ PIO_PIN="platformio==6.1.18"
 ESPTOOL_PIN="esptool==4.9.0"
 MODEM_NAME="LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM"
 RADIO_WAIT="Radio images come with the first LFD3K-SM release."
+# Tool versions: one place (install.ps1 holds the same values)
+PY_VERSIONS="3.12 3.13"
+ESPUP_VERSION="0.19.0"
+RUST_VERSION="1.100.0"
+ESP_TOOLCHAIN_VERSION="1.97.0.0"
 
 say() { printf '%s\n' "$*"; }
 step() { STEP=$((STEP + 1)); say ""; say ">> STEP $STEP: $*"; }
@@ -120,7 +125,9 @@ check_picks() {
 
 clean_partials() {
     [ -d "$TOOLS" ] || return 0
-    for f in $(find "$TOOLS" -maxdepth 3 \( -name '*.part' -o -name '*.tmp' \) 2>/dev/null); do
+    # one path per line, never split on spaces; only paths inside the tool folder
+    find "$TOOLS" -maxdepth 3 \( -name '*.part' -o -name '*.tmp' \) -print 2>/dev/null | while IFS= read -r f; do
+        case "$f" in "$TOOLS"/*) ;; *) continue ;; esac
         if dry; then say "DRY RUN, would delete the partial download $f"
         else say "Deleting the partial download $f"; rm -rf "$f"; fi
     done
@@ -149,11 +156,15 @@ sha256_ok() {
     say "sha256 checked: $1"
 }
 
+# find_python: Python 3.12, else 3.13 (never a newer one: CI and the releases build with 3.12)
 find_python() {
-    for p in python3 python; do
-        if command -v "$p" >/dev/null 2>&1 && "$p" -c 'import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
-            SYS_PY=$(command -v "$p"); return 0
-        fi
+    for v in $PY_VERSIONS; do
+        for p in "python$v" python3 python; do
+            command -v "$p" >/dev/null 2>&1 || continue
+            if "$p" -c "import sys, venv, ensurepip; sys.exit(sys.version_info[:2] != tuple(map(int, '$v'.split('.'))))" >/dev/null 2>&1; then
+                SYS_PY=$(command -v "$p"); SYS_PY_VERSION="$v"; return 0
+            fi
+        done
     done
     return 1
 }
@@ -166,10 +177,10 @@ setup_python() {
         say "Reusing $TOOLS/venv ($want)"; return 0
     fi
     if ! find_python; then
-        if dry; then say "DRY RUN: no Python 3.9 or newer with venv found; a real run stops here."; return 0; fi
-        stop "This needs Python 3.9 or newer with venv. For example: sudo apt install python3 python3-venv"
+        if dry; then say "DRY RUN: no Python 3.12 or 3.13 with venv found; a real run stops here."; return 0; fi
+        stop "This needs Python 3.12 (or 3.13) with venv. For example: sudo apt install python3.12 python3.12-venv"
     fi
-    say "Using $SYS_PY"
+    say "Using Python $SYS_PY_VERSION: $SYS_PY"
     if dry; then
         say "DRY RUN, would create the venv $TOOLS/venv and install $want"
         return 0
@@ -215,20 +226,30 @@ setup_source() {
         step "AXIS Micro BBS source: $SOURCE"
         SRC=$(cd "$SOURCE" 2>/dev/null && pwd) || stop "no folder $SOURCE"
         [ -f "$SRC/installer/presets.json" ] || stop "$SRC is not an AXIS Micro BBS source folder"
+        check_source_files
         return 0
     fi
     [ -n "$RELEASE" ] || latest_release
     step "AXIS Micro BBS source at release $RELEASE"
     SRC="$TOOLS/src/axis-bbs-$RELEASE"
     get_source "AXIS Micro BBS" "$AXIS_REPO/archive/refs/tags/$RELEASE.tar.gz" "$SRC"
+    dry || check_source_files
 }
 
-have_source() { [ -f "$SRC/installer/presets.json" ]; }
+# A release older than these scripts has no lists or flasher to build and flash with.
+check_source_files() {
+    for f in installer/presets.json installer/features.json installer/radio.json tools/buildopts.py tools/axis_flash.py; do
+        [ -f "$SRC/$f" ] || stop "This AXIS Micro BBS source has no $f: release ${RELEASE:-here} predates the build-it-yourself scripts. Pick a newer release."
+    done
+}
+
+# have_source: the source is here (always on a real run; a dry run without a source only prints)
+have_source() { [ -f "$SRC/tools/axis_flash.py" ]; }
 
 check_selection() {
     step "Checking the feature selection"
     if [ -n "$BOARD" ]; then sel="--preset $BOARD"; else sel="--off $OFF_LIST"; fi
-    if ! have_source; then
+    if dry && ! have_source; then
         say "DRY RUN, would check $sel with tools/buildopts.py from the source"
         AXIS_OFF_VALUE="(from tools/buildopts.py)"; return 0
     fi
@@ -240,33 +261,34 @@ check_selection() {
 
 check_radio_version() {
     step "Which $MODEM_NAME release goes with it"
-    if ! have_source; then
+    if dry && ! have_source; then
         say "DRY RUN, would read installer/radio.json from the source"; RADIO_VERSION=RADIO; return 0
     fi
-    RADIO_VERSION=$(py -I -c 'import json, sys; sys.stdout.write(json.load(open(sys.argv[1]))["version"])' "$SRC/installer/radio.json") \
+    RADIO_VERSION=$(py -I -c 'import json, sys; sys.stdout.write(json.load(open(sys.argv[1])).get("version") or "")' "$SRC/installer/radio.json") \
         || stop "cannot read installer/radio.json"
     [ -n "$RADIO_VERSION" ] || stop "$RADIO_WAIT"
     printf '%s' "$RADIO_VERSION" | grep -q '[^A-Za-z0-9._-]' && stop "installer/radio.json names an odd tag"
-    say "LFD3K-SM release $RADIO_VERSION (from installer/radio.json)"
+    say "$MODEM_NAME release $RADIO_VERSION (from installer/radio.json)"
 }
 
 # == the jobs ==
 
 # probe: the right chip (and radio model) before a build; sets JOB_PORT and JOB_ENV
 probe() { # KIND PORT [MODEL]
-    state=$(mktemp 2>/dev/null) || state="$TOOLS/probe-$1.txt"
-    pargs="probe --kind $1 --state $state"
-    [ -n "$3" ] && pargs="$pargs --radio $3"
-    [ -n "$2" ] && pargs="$pargs --port $2"
-    dry && pargs="$pargs --dry-run"
+    p_kind="$1"; p_port="$2"; p_model="${3:-}"
     if dry && ! have_source; then
-        say "DRY RUN, would run: $VPY -I $SRC/tools/axis_flash.py $pargs"
-        JOB_PORT=${2:-PORT}; JOB_ENV=$( [ "$1" = radio ] && echo heltec_v4_single || echo cyd ); return 0
+        say "DRY RUN, would run: $VPY -I $SRC/tools/axis_flash.py probe --kind $p_kind${p_model:+ --radio $p_model}${p_port:+ --port \"$p_port\"}"
+        JOB_PORT=${p_port:-PORT}; JOB_ENV=$( [ "$p_kind" = radio ] && echo heltec_v4_single || echo cyd ); return 0
     fi
-    # shellcheck disable=SC2086
-    py -I "$SRC/tools/axis_flash.py" $pargs </dev/null
+    state=$(mktemp 2>/dev/null) || state="$TOOLS/probe-$p_kind.txt"
+    # the argv is built with set, so a port or path with spaces stays one argument
+    set -- -I "$SRC/tools/axis_flash.py" probe --kind "$p_kind" --state "$state"
+    [ -n "$p_model" ] && set -- "$@" --radio "$p_model"
+    [ -n "$p_port" ] && set -- "$@" --port "$p_port"
+    dry && set -- "$@" --dry-run
+    py "$@" </dev/null
     code=$?
-    [ "$code" = 0 ] || { [ "$code" = 2 ] && stop "refused before the build (the reason is above)"; stop "could not read the board"; }
+    [ "$code" = 0 ] || { rm -f "$state"; [ "$code" = 2 ] && stop "refused before the build (the reason is above)"; stop "could not read the board"; }
     JOB_PORT=$(sed -n 's/^port=//p' "$state")
     JOB_ENV=$(sed -n 's/^env=//p' "$state")
     rm -f "$state"
@@ -274,11 +296,9 @@ probe() { # KIND PORT [MODEL]
 }
 
 flash_images() { # KIND IMAGES PORT [--headless]
-    fargs="flash --kind $1 --images $2 --port $3"
-    [ -n "${4:-}" ] && fargs="$fargs $4"
-    if dry; then say "DRY RUN, would run: $VPY -I $SRC/tools/axis_flash.py $fargs"; return 0; fi
-    # shellcheck disable=SC2086
-    run_tty "$VPY" -I "$SRC/tools/axis_flash.py" $fargs
+    set -- -I "$SRC/tools/axis_flash.py" flash --kind "$1" --images "$2" --port "$3" ${4:+"$4"}
+    if dry; then say "DRY RUN, would run: $VPY $*"; return 0; fi
+    run_tty "$VPY" "$@"
     code=$?
     [ "$code" = 2 ] && stop "nothing was written (see above)"
     [ "$code" = 0 ] || stop "the flash did not finish (see above)"
@@ -305,8 +325,9 @@ setup_rust() {
     export RUSTUP_HOME="$TOOLS/rustup" CARGO_HOME="$TOOLS/cargo"
     PATH="$CARGO_HOME/bin:$PATH"; export PATH
     command -v cc >/dev/null 2>&1 || dry || stop "The radio build needs a C compiler and linker. For example: sudo apt install build-essential pkg-config"
-    if [ -f "$TOOLS/.rust-ok" ] && [ -x "$CARGO_HOME/bin/espup" ] && [ -f "$TOOLS/export-esp.sh" ]; then
-        say "Reusing rustup, espup and the esp toolchain in $TOOLS"; return 0
+    rust_pins="rust $RUST_VERSION espup $ESPUP_VERSION esp $ESP_TOOLCHAIN_VERSION"
+    if [ -f "$TOOLS/.rust-ok" ] && [ "$(cat "$TOOLS/.rust-ok")" = "$rust_pins" ] && [ -x "$CARGO_HOME/bin/espup" ] && [ -f "$TOOLS/export-esp.sh" ]; then
+        say "Reusing rustup, espup and the esp toolchain in $TOOLS ($rust_pins)"; return 0
     fi
     case "$(uname -m)" in
         x86_64) triple=x86_64-unknown-linux-gnu ;;
@@ -322,12 +343,13 @@ setup_rust() {
             sha256_ok "$TOOLS/rustup-init" "$(cut -d ' ' -f 1 "$TOOLS/rustup-init.sha256")"
             chmod +x "$TOOLS/rustup-init"
         fi
-        run "$TOOLS/rustup-init" -y --no-modify-path --profile minimal --default-toolchain stable
+        run "$TOOLS/rustup-init" -y --no-modify-path --profile minimal --default-toolchain "$RUST_VERSION"
         dry || rm -f "$TOOLS/rustup-init" "$TOOLS/rustup-init.sha256"
     fi
-    run "$CARGO_HOME/bin/cargo" install espup --locked
-    run "$CARGO_HOME/bin/espup" install --targets esp32s3 --export-file "$TOOLS/export-esp.sh"
-    dry || : > "$TOOLS/.rust-ok"
+    run "$CARGO_HOME/bin/rustup" toolchain install "$RUST_VERSION" --profile minimal
+    run "$CARGO_HOME/bin/cargo" "+$RUST_VERSION" install espup --version "$ESPUP_VERSION" --locked
+    run "$CARGO_HOME/bin/espup" install --targets esp32s3 --toolchain-version "$ESP_TOOLCHAIN_VERSION" --export-file "$TOOLS/export-esp.sh"
+    dry || printf '%s' "$rust_pins" > "$TOOLS/.rust-ok"
 }
 
 build_radio_env() { # ENV
@@ -348,9 +370,9 @@ radio_job() {
     fi
     if [ -n "$FLASH" ]; then probe radio "$rport" "$RADIO"; fi
     setup_rust
-    step "LFD3K-SM source at $RADIO_VERSION"
+    step "$MODEM_NAME source at $RADIO_VERSION"
     LSRC="$TOOLS/src/lfd3k-sm-$RADIO_VERSION"
-    get_source "LFD3K-SM" "$LFD_REPO/archive/refs/tags/$RADIO_VERSION.tar.gz" "$LSRC"
+    get_source "$MODEM_NAME" "$LFD_REPO/archive/refs/tags/$RADIO_VERSION.tar.gz" "$LSRC"
     step "Building the modem's Rust core"
     if dry; then
         say "DRY RUN, would run: . $TOOLS/export-esp.sh; cd $LSRC; RUSTFLAGS='-C panic=abort' cargo +esp build -p lfd3k-ffi --release --target xtensa-esp32s3-none-elf -Zbuild-std=core"
@@ -378,13 +400,14 @@ radio_job() {
 
 main() {
     STEP=0; BOARD=""; OFF_LIST=""; TARGET=""; RADIO=""; FLASH=""; PORT=""; RADIO_PORT=""; RELEASE=""
-    SOURCE=""; DRY=0; DO_BOARD=0; DO_RADIO=0; SYS_PY=""; VPY=""; SRC=""; AXIS_OFF_VALUE=""; RADIO_VERSION=""
+    SOURCE=""; DRY=0; DO_BOARD=0; DO_RADIO=0; SYS_PY=""; SYS_PY_VERSION=""; VPY=""; SRC=""; AXIS_OFF_VALUE=""; RADIO_VERSION=""
     banner
     parse_args "$@"
     check_system
     check_picks
     dry && say "DRY RUN: every step is printed; nothing is downloaded, built or flashed."
     TOOLS="${AXIS_BUILD_HOME:-$HOME/.axis-build}"
+    case "$TOOLS" in /*|?:/*) ;; *) TOOLS="$(pwd)/$TOOLS" ;; esac
     step "Tool folder $TOOLS"
     dry || mkdir -p "$TOOLS" || stop "cannot make $TOOLS"
     clean_partials
