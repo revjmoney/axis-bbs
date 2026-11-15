@@ -93,7 +93,7 @@ Living record of every feature and setting, updated as the project goes. Status:
 | Cluster heartbeat / failover | 1 s / 5 s | config file | |
 | WiFi networks | none | NVS `net` s0..s4 / p0..p4 | Same format as the CYD Demoscene firmware, so a board that ran it joins automatically; never in code or the repo |
 | Idle logoff | 5 minutes | fixed (for now) | |
-| Partition table | app 1.5 MB, door 768 KB, LittleFS ~1.7 MB | firmware | Same on every board |
+| Partition table | app 2.25 MB, LittleFS 1.69 MB | firmware | Same on every board |
 | Data store | SD if present, else LittleFS | automatic | |
 | WFC skin (`wfc`) | blank (follows `theme`) | config file, Look | A look id such as `crt` or `haunted`, or `classic` for the built-in screen; anything unknown is ignored |
 | Sysop account (`sysop_real_name`, `sysop_location`, `sysop_email`, `sysop_tagline`) | blank | `U` for the sysop, config file | The tagline signs the sysop's posts |

@@ -761,7 +761,7 @@ build/axis_tests</code></pre>
   <p>The same host runs other EXEs this runtime already knows, such as BBS Black Jack (<code>BLKJK.EXE</code>, with its <code>BJ.CFG</code>). <code>tools/door_prepare.py</code> calls <code>doorhost</code> once, to let LORDCFG write a fresh <code>lord.dat</code>, before you copy the data folder to the board for <a href="#lord">native LORD</a>.</p></div></details>
 <details class="sub" id="dosemu-layout"><summary>What is in dosemu/</summary><div class="sub-body"><ul>
     <li><code>dosemu/door/</code> is the CPU, guest memory, DOS, BIOS, FOSSIL, drop files, and the session that runs one EXE. The PC build compiles these.</li>
-    <li><code>dosemu/cyd/</code> is the old flash cache that served a relocated EXE from the <code>door</code> partition. The current ESP32 image does not compile it. The partition is still in <code>partitions.csv</code> so a flash does not move LittleFS.</li>
+    <li><code>dosemu/cyd/</code> is the old flash cache that served a relocated EXE from a <code>door</code> partition. The current ESP32 image does not compile it.</li>
     <li><code>third_party/i8086/</code> is the MIT FabGL core the PC build links. It is not part of the board image.</li>
   </ul></div></details></div>
 <nav class="pager" aria-label="Previous and next topic"><a class="pager-prev" href="#lord" data-key="p"><small><span class="hk">P</span>rev</small>Native LORD</a><a class="pager-quit" href="#hub" data-key="q"><small><span class="hk">Q</span>uit</small>to areas</a><a class="pager-next" href="#ansi-viewer" data-key="n"><small><span class="hk">N</span>ext</small>ANSI Pack Viewer</a></nav>
@@ -1153,8 +1153,7 @@ setup_done=1</code></pre></details>
     <tbody>
       <tr><td><code>nvs</code></td><td>data, nvs</td><td><code>0x9000</code></td><td>20 KB</td><td>WiFi networks, web secrets</td></tr>
       <tr><td><code>otadata</code></td><td>data, ota</td><td><code>0xE000</code></td><td>8 KB</td><td>Boot selection</td></tr>
-      <tr><td><code>app0</code></td><td>app, ota_0</td><td><code>0x10000</code></td><td>1.875 MB</td><td>The firmware, including native LORD</td></tr>
-      <tr><td><code>door</code></td><td>data, 0x41</td><td><code>0x1F0000</code></td><td>384 KB</td><td>Old EXE cache. Native LORD does not use it. Left in place so LittleFS is not moved.</td></tr>
+      <tr><td><code>app0</code></td><td>app, ota_0</td><td><code>0x10000</code></td><td>2.25 MB</td><td>The firmware, including native LORD</td></tr>
       <tr><td><code>spiffs</code></td><td>data, spiffs (LittleFS)</td><td><code>0x250000</code></td><td>1.69 MB</td><td><code>/axis.ini</code>, <code>/users.dat</code>, event log, lists, and everything when there is no SD card</td></tr>
     </tbody>
   </table></div></details>
