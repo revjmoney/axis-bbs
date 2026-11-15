@@ -100,6 +100,18 @@ class BuildOptsTest(unittest.TestCase):
         self.assertEqual(buildopts.main(["check", "--off", "lord"]), 0)
         self.assertEqual(buildopts.main(["flags", "--preset", "nope"]), 1)
 
+    def test_off_prints_the_axis_off_value(self):
+        import contextlib
+        import io
+        for argv, want in ((["off", "--preset", "no-doors"], "dosprompt,lord,scripts"),
+                           (["off", "--preset", "everything"], ""), (["off", "--off", "web,lord"], "lord,web")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(buildopts.main(argv), 0)
+            self.assertEqual(buf.getvalue().strip(), want, argv)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(buildopts.main(["off", "--off", "files"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

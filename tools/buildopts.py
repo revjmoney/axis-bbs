@@ -74,7 +74,7 @@ def _selection(args, features, presets):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="buildopts")
-    ap.add_argument("cmd", choices=["flags", "fingerprint", "check"])
+    ap.add_argument("cmd", choices=["flags", "fingerprint", "check", "off"])
     ap.add_argument("--preset")
     ap.add_argument("--off")
     ap.add_argument("--release", default="")
@@ -89,6 +89,8 @@ def main(argv=None):
         print(" ".join(build_flags(off, features)))
     elif args.cmd == "fingerprint":
         print(fingerprint(off, args.release))
+    elif args.cmd == "off":
+        print(",".join(sorted(off)))  # the AXIS_OFF value (empty for Everything)
     return 0
 
 
