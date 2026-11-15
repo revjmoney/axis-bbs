@@ -177,7 +177,11 @@ setup_python() {
         say "Reusing $TOOLS/venv ($want)"; return 0
     fi
     if ! find_python; then
-        if dry; then say "DRY RUN: no Python 3.12 or 3.13 with venv found; a real run stops here."; return 0; fi
+        if dry; then
+            say "DRY RUN: no Python 3.12 or 3.13 with venv found; a real run stops here."
+            say "DRY RUN: with one, it would create the venv $TOOLS/venv and install $want"
+            return 0
+        fi
         stop "This needs Python 3.12 (or 3.13) with venv. For example: sudo apt install python3.12 python3.12-venv"
     fi
     say "Using Python $SYS_PY_VERSION: $SYS_PY"
