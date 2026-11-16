@@ -826,3 +826,61 @@ TEST_CASE("art cache: bytes always the sum, an oversized entry is not kept and d
     CHECK(c.bytes == 0);
     CHECK(c.v.empty());
 }
+
+TEST_CASE("a header's top rows are read from the file in one exact block, the rest never held") {
+    // line-ended art: 40 rows of 70 cells
+    std::string art;
+    for (int r = 1; r <= 40; r++) art += "\x1b[1;3" + std::to_string(r % 8) + "mROW" + std::to_string(r) + std::string(64, '#') + "\r\n";
+    const std::string p = tempPath("axis_toprows.ans");
+    saveFile(p, art + std::string(1, (char)0x1a) + "SAUCE00");
+    FILE* f = std::fopen(p.c_str(), "rb");
+    REQUIRE(f);
+    std::string out;
+    readTopRowsAppend(f, 3, 12288, out);
+    CHECK(out.find("ROW3#") != std::string::npos);
+    CHECK(out.find("ROW4") == std::string::npos);
+    CHECK(out.size() > 2);
+    CHECK(out.substr(out.size() - 2) == "\r\n");
+    CHECK(out.capacity() < out.size() + 32);  // one exact block, not grown by doubling
+    std::fclose(f);
+    // rows past the end of the art: the whole art up to the SAUCE record, no further
+    f = std::fopen(p.c_str(), "rb");
+    std::string all;
+    readTopRowsAppend(f, 100, 12288, all);
+    CHECK(all == art);
+    CHECK(all.capacity() < all.size() + 32);
+    std::fclose(f);
+    // the cap still holds
+    f = std::fopen(p.c_str(), "rb");
+    std::string capped;
+    readTopRowsAppend(f, 100, 1000, capped);
+    CHECK(capped.size() == 1000);
+    std::fclose(f);
+    // the theme packs' header art: no line ends at all, one run that wraps at column 80, with colour and cursor-forward codes
+    std::string wraps;
+    for (int r = 1; r <= 24; r++) wraps += "\x1b[0;3" + std::to_string(r % 8) + "mR" + std::to_string(r % 10) + "\x1b[8C" + std::string(70, '\xdb');
+    saveFile(p, wraps);
+    f = std::fopen(p.c_str(), "rb");
+    std::string top;
+    readTopRowsAppend(f, 3, 12288, top);
+    CHECK(top.find("R3") != std::string::npos);
+    CHECK(top.find("R4") == std::string::npos);
+    CHECK(top.size() < wraps.size() / 6);
+    std::fclose(f);
+    std::remove(p.c_str());
+}
+TEST_CASE("art rows follow the terminal: line ends, the column-80 wrap and cursor moves") {
+    auto rowsAt = [](const std::string& s) {
+        ArtRows a;
+        for (unsigned char c : s) a.feed(c, 0);
+        return std::make_pair(a.row, a.col);
+    };
+    CHECK(rowsAt(std::string(80, 'x')) == std::make_pair(1, 0));
+    CHECK(rowsAt(std::string(79, 'x')) == std::make_pair(0, 79));
+    CHECK(rowsAt("ab\r\ncd") == std::make_pair(1, 2));
+    CHECK(rowsAt("\x1b[0;1;33mab") == std::make_pair(0, 2));  // colours draw nothing
+    CHECK(rowsAt("\x1b[10Cx") == std::make_pair(0, 11));
+    CHECK(rowsAt("\x1b[5;20H") == std::make_pair(4, 19));
+    CHECK(rowsAt("\x1b[Hx") == std::make_pair(0, 1));
+    CHECK(rowsAt("\x1b[3Bx\x1b[2A") == std::make_pair(1, 1));
+}

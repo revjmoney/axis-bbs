@@ -596,6 +596,26 @@ static std::string themeArt(const std::string& name) {
     if (!poster && answered) artCache.put(name, art);  // (the poster is one login screen, then it can go; a failed ask is asked again)
     return art;
 }
+// A theme file's first `rows` lines, read from the card and stopped there (the list screens keep only a header's top rows:
+// MSGS.ANS read whole for them was 8 KB held, the slow call's lowest heap on board 1). Elsewhere the whole-file reader.
+static std::string readThemeTop(const char* folder, const std::string& name, int rows) {
+    if (!folder || !folder[0]) return "";
+    FILE* f = fopen((std::string("/sd/themes/") + folder + "/" + name).c_str(), "rb");
+    if (!f) return "";
+    std::string s;
+    axis::bbs::readTopRowsAppend(f, rows, kThemeArtCap, s);
+    fclose(f);
+    if (s.size() > artMax) artMax = s.size();
+    return s;
+}
+static std::string themeArtTop(const std::string& name, int rows) {
+    // a follower's art comes whole from the main (and its cache); previews, the poster and the waiting screens keep their own reader
+    if (asFollower() || name.find(':') != std::string::npos || posterName(name) || wfcScreen(name)) return themeArt(name);
+    if (!storageHasSd() || name.find('/') != std::string::npos) return "";
+    std::string s = readThemeTop(boardCfg->theme.c_str(), name, rows);
+    if (s.empty()) s = readThemeTop(axis::bbs::theme::legacyThemeFolder(boardCfg->theme), name, rows);
+    return s;
+}
 // The cleaned WFC.ANS every WFC screen (telnet, serial, local) draws: read once, shared, and read again only when something may have
 // changed. wfcAnsKey says what it was read from: the WFC folder plus (here on a board with the card) the file's size and time in the
 // folder and its legacy folder, so a new WFC.ANS from any writer (the sysop's @PUT, the web, a theme install) is seen on the next draw,
@@ -945,7 +965,7 @@ static void countCall() {
         statsSave();
     } else statsShare.call(), statsSendNow = true;
 }
-static void countUpload() {
+__attribute__((noinline)) static void countUpload() {
     if (statsOwner()) {
         rollDayCounters();
         dayStats.upload();
@@ -1761,7 +1781,7 @@ static void drawShell() {
 }
 
 // The sysop panel while a caller downloads or uploads: a drippy window with a live progress bar.
-static void drawTransfer() {
+__attribute__((noinline)) static void drawTransfer() {
     wfcOnPanel = false;  // (called from the sessions too: the panel no longer shows the WFC, so @SHOT must not dump it)
     static BigText t;
     const auto&    r = job->request();
@@ -2045,7 +2065,8 @@ static void drainParkedLines() {
     }
 }
 
-static void hangUp() {
+__attribute__((noinline)) static void hangUp() {
+    HeapScope scope("hangUp");
     noteDoing("idle");
     viewer.reset();
     job.reset();  // a viewer or job gives the board's inflate window back as it goes
@@ -2171,6 +2192,7 @@ struct AxisBridge {
 static AxisBridge axisBridge;
 
 static void answer(WiFiClient incoming);
+static void viewCacheDrop();
 
 static void axisAccept() {
     if (server.hasClient()) answer(server.available());
@@ -4091,7 +4113,7 @@ static bool axisEscape(std::string& held, char c, std::string& forward) {
 }
 
 // One slice of a call to another board. True: still on that call, the BBS should not take keys.
-static bool axisPump(int i) {
+__attribute__((noinline)) static bool axisPump(int i) {
     if (!axisBridge.on || axisBridge.session != i || !line || !node) return false;
     bool        timed = millis() - axisBridge.start > 600000;
     bool        gone = !line->carrier() || !axisBridge.remote.connected() || timed;
@@ -4132,7 +4154,7 @@ static bool axisPump(int i) {
     return true;
 }
 
-static void axisStart(int i) {
+__attribute__((noinline)) static void axisStart(int i) {
     if (!node) return;
     if (axisBridge.on) {
         node->axisCallDone(false, "This board is already on a call.");
@@ -4176,6 +4198,7 @@ static void answer(WiFiClient incoming) {
     for (size_t i = 0; i < sessions.size() && free < 0; i++)
         if (!sessionLine(i) && (i == 0 || (boardCfg->setupDone && mode == Mode::Normal))) free = (int)i;
     if (free >= 0) {
+        viewCacheDrop();  // a caller gets a session here: the pass steps aside first (not for board probes or net peers above)
         bindSession(free);
         answerIn(incoming, giveBack);
         unbindSession();
@@ -4341,6 +4364,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setExists(menuExists);
         wireScripts(node.get());
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
+        axis::bbs::theme::setArtTop(themeArtTop);  // (a list screen's header: its top rows only)
         node->setOneLiners(
             [] {  // the wall: here on the main, over the link on a follower
                 if (!asFollower()) return oneLiners;
@@ -4654,7 +4678,7 @@ static void startDoorInner() {
     abortDoor(axis::bbs::Node::DoorEnd::LoadError);
 }
 
-static void startDoor() {
+__attribute__((noinline)) static void startDoor() {
     bool lord = node && node->door().exe == "*LORD";
     if (node) noteDoing(String("door ") + node->door().name.c_str() + " by " + node->handle().c_str());
     noteDoor(axis::bbs::DoorDiag::Running, 0);
@@ -4676,7 +4700,7 @@ static void startDoor() {
     noteZipHeap();
 }
 
-static void finishLord() {
+__attribute__((noinline)) static void finishLord() {
     bool drop = !line || !line->carrier();
     noteDoor(drop ? axis::bbs::DoorDiag::Hangup : axis::bbs::DoorDiag::Quit, 0);
     dropLord();
@@ -4690,7 +4714,7 @@ static void finishLord() {
     sendApp(node->takeOutput());
 }
 
-static void finishViewer() {
+__attribute__((noinline)) static void finishViewer() {
     noteDoor(line && line->carrier() ? axis::bbs::DoorDiag::Quit : axis::bbs::DoorDiag::Hangup, 0);
     releaseDoorSlot();
     logEvent(String("door ") + node->door().id.c_str() + " ended after " + String((millis() - doorStartMs) / 1000) + "s");
@@ -4710,7 +4734,7 @@ static const char* nodeScopeName(const char* what) {
 }
 
 // keystrokes from the caller, already through the telnet filter
-static void callerInput(const std::string& app) {
+__attribute__((noinline)) static void callerInput(const std::string& app) {
     const uint8_t* p = (const uint8_t*)app.data();
     if (node) {
         std::string before = node->handle();
@@ -6383,7 +6407,7 @@ static void ledUpdate() {
 // turn, so a retrain during one still counts).
 #if AXIS_MODEMLINK
 static uint32_t lastRadioMs = 0;
-static void takeLinkReport() {
+__attribute__((noinline)) static void takeLinkReport() {
     axis::net::LinkInfo li;
     if (line && node && boardCfg->modemLink && line->takeLink(li)) {  // (at most one a second per line: TelnetStream::takeLink)
         bool first = !node->viaModem();
@@ -6402,30 +6426,81 @@ static void takeLinkReport() {
     if (node && node->linkRedrawDue(millis())) screenDirty = true;  // the tier changed (at most every 5 s), not every report
 }
 #else
-static void takeLinkReport() {}  // built without the modem link: a radio caller is a plain telnet caller
+__attribute__((noinline)) static void takeLinkReport() {}  // built without the modem link: a radio caller is a plain telnet caller
 #endif
+
+// The caller's line in the cluster's node list (handle and what they are doing). Its own frame: serviceSession is on the
+// stack under every key a caller types (and the screen code below it), so it stays small (2026-11-16: 1.9 KB a turn
+// with these inlined, and a slow call took the loop stack to 284 bytes free).
+__attribute__((noinline)) static void postStatus(int i) {
+    std::string handle = node ? node->handle() : "", activity;
+    if (node) {
+        using S = axis::bbs::Node::State;
+        S st = node->state();
+        activity = (nativeLord || viewer || st == S::Script) ? "Doors" : job ? "Transfer" : st == S::Files ? "Files"
+                 : st == S::Applying ? "Applying" : st == S::Chat ? "Chat" : st == S::Messages ? "Messages" : st == S::Menu ? "Menu"
+                 : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : st == S::Split ? "Split chat"
+                 : st == S::AxisNet ? "Axis Net" : st == S::AxisCall ? "Remote board" : "Online";
+        if (!node->available()) activity += " (DND)";
+        if (!node->linkShown().empty()) activity += "  " + node->linkShown();  // (tier only, at most every 5 s: not a status per report)
+    }
+    Session& me = sessions[(size_t)i];
+    if (handle + "|" + activity != me.lastStatus) {
+        me.lastStatus = handle + "|" + activity;
+        cluster->setStatus(i, handle, activity);
+    }
+}
+// This caller's download or upload, one step (its own frame, as above).
+__attribute__((noinline)) static void serviceJob() {
+    if (job->needsWorkspace()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait up to 60 s)
+        bool busy = axis::bbs::inflate::busy();
+        if (busy && (!line || !line->carrier())) {  // hung up while waiting
+            hangUp();
+            return;
+        }
+        if (busy && !job->waiting) {
+            job->waiting = true;
+            job->waitSince = millis();
+            sendApp("\r\n  Checking your upload, waiting for the ZIP checker...\r\n");
+        }
+        bool late = busy && millis() - job->waitSince >= 60000u;
+        if (!busy || late) {
+            uint8_t *w = nullptr, *st = nullptr;  // late: today's short-memory path (no window)
+            drawTransfer();
+            if (late) logEvent("upload: ZIP window busy");
+            else if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
+            job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
+            noteZipHeap();
+        }
+    }
+    bool running = job->step(millis());
+    if (line) line->flush();
+    if (millis() - jobDrawnMs > 500) {
+        jobDrawnMs = millis();
+        drawTransfer();
+    }
+    if (!running) {
+        const auto& r = job->request();
+        if (r.upload && job->ok()) countUpload();
+        logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
+                 (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
+        noteDoing("idle");
+        if (line && line->carrier()) {
+            node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
+            job.reset();  // gives the inflate window back
+            noteZipHeap();
+            sendApp(node->takeOutput());
+        } else {
+            hangUp();
+        }
+        screenDirty = true;
+    }
+}
 
 // One session's turn: its caller, and its own movie or transfer when it has one.
 static void serviceSession(int i) {
     takeLinkReport();
-    if (cluster) {
-        std::string handle = node ? node->handle() : "", activity;
-        if (node) {
-            using S = axis::bbs::Node::State;
-            S st = node->state();
-            activity = (nativeLord || viewer || st == S::Script) ? "Doors" : job ? "Transfer" : st == S::Files ? "Files"
-                     : st == S::Applying ? "Applying" : st == S::Chat ? "Chat" : st == S::Messages ? "Messages" : st == S::Menu ? "Menu"
-                     : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : st == S::Split ? "Split chat"
-                     : st == S::AxisNet ? "Axis Net" : st == S::AxisCall ? "Remote board" : "Online";
-            if (!node->available()) activity += " (DND)";
-            if (!node->linkShown().empty()) activity += "  " + node->linkShown();  // (tier only, at most every 5 s: not a status per report)
-        }
-        Session& me = sessions[(size_t)i];
-        if (handle + "|" + activity != me.lastStatus) {
-            me.lastStatus = handle + "|" + activity;
-            cluster->setStatus(i, handle, activity);
-        }
-    }
+    if (cluster) postStatus(i);
     if (line) {  // a slow caller (a LoRa radio call): what its line still holds goes out first, and the next screen piece,
                  // movie frame or LORD step waits for room, so the board's loop never waits on one caller's socket
         line->setHold(!job);  // (a transfer's protocol needs each block out before it waits for the answer)
@@ -6436,49 +6511,7 @@ static void serviceSession(int i) {
         if (!job && line->backlog() >= axis::net::TelnetStream::kHoldLow) return;
     }
     if (job) {  // this caller's download or upload
-        if (job->needsWorkspace()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait up to 60 s)
-            bool busy = axis::bbs::inflate::busy();
-            if (busy && (!line || !line->carrier())) {  // hung up while waiting
-                hangUp();
-                return;
-            }
-            if (busy && !job->waiting) {
-                job->waiting = true;
-                job->waitSince = millis();
-                sendApp("\r\n  Checking your upload, waiting for the ZIP checker...\r\n");
-            }
-            bool late = busy && millis() - job->waitSince >= 60000u;
-            if (!busy || late) {
-                uint8_t *w = nullptr, *st = nullptr;  // late: today's short-memory path (no window)
-                drawTransfer();
-                if (late) logEvent("upload: ZIP window busy");
-                else if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
-                job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
-                noteZipHeap();
-            }
-        }
-        bool running = job->step(millis());
-        if (line) line->flush();
-        if (millis() - jobDrawnMs > 500) {
-            jobDrawnMs = millis();
-            drawTransfer();
-        }
-        if (!running) {
-            const auto& r = job->request();
-            if (r.upload && job->ok()) countUpload();
-            logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
-                     (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
-            noteDoing("idle");
-            if (line && line->carrier()) {
-                node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
-                job.reset();  // gives the inflate window back
-                noteZipHeap();
-                sendApp(node->takeOutput());
-            } else {
-                hangUp();
-            }
-            screenDirty = true;
-        }
+        serviceJob();
         return;
     }
     if (nativeLord) {  // this caller is in LORD
@@ -6549,10 +6582,22 @@ static void serviceSession(int i) {
 // loop turn: a pack looked at, or 16 KB of one copied; the inflate window only for a deflated piece and only above the fill floor).
 // A pass goes through every *ANSIVIEW door's areas, then deletes copies no pack matches; the next starts 30 minutes after one ends,
 // so new uploads get copied too. A caller arriving drops the pass (and a copy part way); the next idle restarts it.
+#if AXIS_ANSIVIEW
+static std::unique_ptr<axis::bbs::viewcache::Filler> viewFill;
+static uint32_t viewFillNext = 300000;  // the first pass five minutes after boot (after the boot DNS check, which needs TLS room)
+#endif
+// A caller is coming in: the pass gives its memory back now, before the session is made (not a loop turn later), and waits
+// until the board has been idle a while again.
+static void viewCacheDrop() {
+#if AXIS_ANSIVIEW
+    viewFill.reset();
+    viewFillNext = axis::bbs::viewcache::holdForCallers(viewFillNext, millis());
+#endif
+}
 static void viewCacheTick() {
 #if AXIS_ANSIVIEW  // (a build without the viewer has no cache to fill)
-    static std::unique_ptr<axis::bbs::viewcache::Filler> fill;
-    static uint32_t nextMs = 300000;  // the first pass five minutes after boot (after the boot DNS check, which needs TLS room)
+    std::unique_ptr<axis::bbs::viewcache::Filler>& fill = viewFill;
+    uint32_t&       nextMs = viewFillNext;
     uint32_t        now = millis();
     bool            anyone = false;
     for (size_t i = 0; i < sessions.size() && !anyone; i++) anyone = sessionLine(i) != nullptr;
@@ -6561,15 +6606,16 @@ static void viewCacheTick() {
     // The web task (a DNS check, a Discord line) needs the heap the window would hold: the pass steps aside for it too.
     bool webWork = web::working();
     if (anyone || webWork || asFollower() || !storageHasSd() || !boardCfg) {
-        if (fill) {  // dropped (a copy part way is thrown away, the window given back); not back for two minutes
-            fill.reset();
-            if ((int32_t)(nextMs - (now + 120000u)) < 0) nextMs = now + 120000u;
+        if (fill || anyone) {  // dropped (a copy part way is thrown away, the window given back); not back for two minutes,
+            fill.reset();      // and never the moment the last caller hangs up
+            nextMs = axis::bbs::viewcache::holdForCallers(nextMs, now);
         }
         return;
     }
     // (The first try, a file per piece in /sd/files/viewcache, is left alone: deleting thousands of files one by one in a FAT
     // folder that big stalls the loop for seconds a file. It is only card space; the sysop can delete it from a PC.)
     if (!fill && (int32_t)(now - nextMs) < 0) return;
+    HeapScope scope("viewcache");  // (its pack directories and the inflate window: the deepest idle use of the heap)
     try {
         if (!fill) {
             std::vector<std::string> areas;

@@ -11,6 +11,7 @@
 #include "bbs/wfc80_art.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <cctype>
 #include <cstdio>
@@ -2450,6 +2451,7 @@ void Node::key(char c) {
                                           [this] { return info_().timeText; }));
             msgs_->setTagline(tagline());
             msgs_->setHidden([this](const std::string& from) { return hiddenWriter(from); });
+            msgs_->setSpill([this] { spill(); });
             msgs_->begin();
             break;
         }
@@ -2528,6 +2530,7 @@ void Node::key(char c) {
                                           [this] { return info_().timeText; }));
             msgs_->setTagline(tagline());
             msgs_->setHidden([this](const std::string& from) { return hiddenWriter(from); });
+            msgs_->setSpill([this] { spill(); });
             msgs_->beginScan();
             break;
         }
@@ -2943,7 +2946,11 @@ std::string Node::menuRumor() const {
     if (r.compare(0, 7, "rumor: ") == 0) r.erase(0, 7);  // (some were added with the word already on them)
     int         col = 0, row = 0;
     size_t      at = menu_->def().prompt1.find("|XY");
-    if (at != std::string::npos) std::sscanf(menu_->def().prompt1.c_str() + at + 3, "%d,%d", &col, &row);
+    if (at != std::string::npos) {  // |XYcc,rr (strtol, not sscanf: sscanf alone pulls about 18 KB of scanf into the image)
+        char* end = nullptr;
+        col = (int)std::strtol(menu_->def().prompt1.c_str() + at + 3, &end, 10);
+        if (end && *end == ',') row = (int)std::strtol(end + 1, nullptr, 10);
+    }
     std::string head = "rumor: ";
     size_t      room = row > 1 && col >= 1 && col < 44 ? (size_t)(45 - col) : 72;
     room = room > head.size() + 8 ? room - head.size() : 8;

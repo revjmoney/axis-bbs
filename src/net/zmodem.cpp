@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#pragma GCC optimize("O2")  // the byte paths of every call and transfer keep full speed (the board builds for size, -Os)
 #include "net/zmodem.h"
 #include "bbs/features.h"
 #if AXIS_TRANSFERS

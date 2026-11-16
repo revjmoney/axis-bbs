@@ -27,6 +27,8 @@ public:
     // posts by these writers don't show (a twit's, to everyone but them and the sysop)
     void        setHidden(std::function<bool(const std::string& from)> h) { hidden_ = std::move(h); }
     void        setLightbars(bool on) { bars_ = on; }  // false: numbered text prompts
+    // called as list screens are built, so a long one leaves a piece at a time (Node::spill) instead of sitting in out whole
+    void        setSpill(std::function<void()> s) { spill_ = std::move(s); }
     void        begin();
     // the new scan: every area's new messages one after another ([N] moves on, across areas)
     void        beginScan();
@@ -53,6 +55,12 @@ private:
     bool                         scanning_ = false;
     std::function<bool(const std::string&)> hidden_;
     std::vector<Message>         headersOf(const std::string& area);
+    // an area's message count and how many are newer than `last`, streamed (headersOf held up to 200 headers an area just to
+    // count them); as headersOf would give them: the newest MessageStore::kMaxHeaders, hidden writers left out
+    static void tally(MessageStore& store, const std::string& area, int last, const std::function<bool(const std::string&)>& hidden,
+                      unsigned& total, unsigned& fresh);
+    std::function<void()>        spill_;
+    void                         spill() { if (spill_) spill_(); }
     std::string&                 out_;
     std::string                  handle_;
     std::map<std::string, int>&  lastRead_;
