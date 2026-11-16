@@ -2042,6 +2042,7 @@ static void drainParkedLines() {
 }
 
 __attribute__((noinline)) static void hangUp() {
+    HeapScope scope("hangUp");
     noteDoing("idle");
     viewer.reset();
     job.reset();  // a viewer or job gives the board's inflate window back as it goes
@@ -6197,6 +6198,7 @@ static void viewCacheTick() {
     // (The first try, a file per piece in /sd/files/viewcache, is left alone: deleting thousands of files one by one in a FAT
     // folder that big stalls the loop for seconds a file. It is only card space; the sysop can delete it from a PC.)
     if (!fill && (int32_t)(now - nextMs) < 0) return;
+    HeapScope scope("viewcache");  // (its pack directories and the inflate window: the deepest idle use of the heap)
     try {
         if (!fill) {
             std::vector<std::string> areas;
