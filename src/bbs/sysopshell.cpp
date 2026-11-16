@@ -272,8 +272,9 @@ bool SysopShell::key(char c) {
         if (c == '\r' || c == '\n') {
             asking_ = false;
             std::string a = line_;
+            size_t      depth = layers_.size();
             if (!a.empty()) answer_(a);
-            if (!layers_.empty()) refresh();
+            if (!layers_.empty() && layers_.size() == depth) refresh();  // (an answer that opened a layer has drawn it)
         } else if (c == 0x1b) {
             asking_ = false;
             refresh();
@@ -715,6 +716,7 @@ void SysopShell::system(Layer& l) {
 #endif
 #if AXIS_NETS
     Item netPage{"Sysop Net", "board to board net", [this] { push("SYSOP NET", [this](Layer& x) { sysopNet(x); }); }};  // after Modem: no key moves
+    Item userPage{"User Net", "the member boards' net", [this] { push("USER NET", [this](Layer& x) { userNet(x); }); }};
 #endif
     if (!local_) {  // the rest is for the sysop at the board: never over telnet
 #if AXIS_MODEMLINK
@@ -722,6 +724,7 @@ void SysopShell::system(Layer& l) {
 #endif
 #if AXIS_NETS
         l.items.push_back(netPage);
+        l.items.push_back(userPage);
 #endif
         return;
     }
@@ -742,6 +745,7 @@ void SysopShell::system(Layer& l) {
 #endif
 #if AXIS_NETS
     l.items.push_back(netPage);
+    l.items.push_back(userPage);
 #endif
 }
 
@@ -875,7 +879,7 @@ void SysopShell::sysopNet(Layer& l) {
         {"S", "  Keep days", "net_keep_days"},
         {"S", "  First peer", "net_first_peer"},
         {"T", "  Sync now", "@NET SYNC"},
-        {"T", "Traffic and logs", "@NET RECORD 60"},
+        {"B", "Traffic and logs", ""},
         {"H", "Moderation", ""},
         {"T", "  Hidden and blocked here", "@NET LOCAL"},
         {"A", "  Hide a post here", "@NETHIDE "},
@@ -901,6 +905,7 @@ void SysopShell::sysopNet(Layer& l) {
         if (k == 'H') l.items.push_back({r[1], "", nullptr});
         else if (k == 'V') l.items.push_back({r[1], after(d, arg), nullptr});
         else if (k == 'T') l.items.push_back(netShow(r[1], arg));
+        else if (k == 'B') l.items.push_back({r[1], "", [this] { push("TRAFFIC AND LOGS", [this](Layer& x) { records(x); }); }});
         else if (k == 'A' || (k == 'R' && rev)) l.items.push_back(netAsk(r[1], "", arg));
         else if (k == 'S') {
             std::string v = setting(arg);
@@ -908,6 +913,121 @@ void SysopShell::sysopNet(Layer& l) {
             l.items.push_back(netAsk(r[1], v, "@SET " + arg + "="));
         }
     }
+}
+
+// ---- Traffic and logs: the net record browser. Lists come from @NET RECORD KIND / FIND (each line "<index> <date> <who>
+// <what>", newest first, then "older from <index>" if there is more); picking a line opens @NET RECORD SHOW <index>.
+namespace {
+std::string wrap74(const std::string& s) {  // text pages cut lines at 74 columns: a record's fields are folded instead
+    std::string o;
+    size_t      col = 0;
+    for (char c : s) {
+        if (c == '\n') col = 0;
+        else if (col++ == 74) o += '\n', col = 1;
+        o += c;
+    }
+    return o;
+}
+}  // namespace
+
+void SysopShell::records(Layer& l) {
+    static const char* const kLists[][2] = {{"All", "all"}, {"Votes", "votes"}, {"Members", "members"}, {"Actions", "actions"}};
+    for (const auto& r : kLists) {
+        std::string title = r[0], cmd = std::string("@NET RECORD KIND ") + r[1] + " 20 ";
+        l.items.push_back({title, "", [this, title, cmd] { push(title, [this, title, cmd](Layer& x) { recordList(x, title, cmd, 0); }); }});
+    }
+    l.items.push_back({"Search", "", [this] {
+                           ask("Search the record for", false, [this](const std::string& v) {
+                               std::string cmd = "@NET RECORD FIND " + v + " 20 ";
+                               push("SEARCH", [this, cmd](Layer& x) { recordList(x, "SEARCH", cmd, 0); });
+                           });
+                       }});
+    l.items.push_back(netShow("Months", "@NET RECORD MONTHS"));
+}
+
+void SysopShell::recordList(Layer& l, const std::string& title, const std::string& cmd, size_t skip) {
+    std::string older;
+    for (auto& line : lines(cmd + std::to_string(skip))) {
+        size_t a = line.find(' '), d = a == std::string::npos ? a : line.find(' ', a + 1);
+        size_t t = d == std::string::npos ? d : line.find(' ', d + 1), w = t == std::string::npos ? t : line.find(' ', t + 1);
+        if (line.rfind("axis: older from ", 0) == 0) older = line.substr(17);
+        else if (w == std::string::npos || t < a + 6 || !std::isdigit((unsigned char)line[0]))
+            l.items.push_back({line.rfind("axis: ", 0) == 0 ? line.substr(6) : line, "", nullptr});
+        else {
+            std::string n = line.substr(0, a);  // "MM-DD HH:MM who", then what
+            l.items.push_back({line.substr(a + 6, t - a - 6) + " " + line.substr(t + 1, w - t - 1), line.substr(w + 1), [this, n] {
+                                   pushText("RECORD " + n, wrap74(run_("@NET RECORD SHOW " + n)));
+                               }});
+        }
+    }
+    if (!older.empty()) {
+        size_t from = (size_t)std::strtoul(older.c_str(), nullptr, 10);
+        l.items.push_back({"Older", "", [this, title, cmd, from] { push(title, [this, title, cmd, from](Layer& x) { recordList(x, title, cmd, from); }); }});
+    }
+    if (skip) l.items.push_back({"Newer", "", [this] { pop(); }});
+}
+
+// ---- User Net (System > User Net, after Sysop Net): this board's standing, its settings, applying, New Board Voting,
+// the members, and on Rev's board admit, deny, veto and the vote counts. All through @NET, @SET and the User Net commands.
+void SysopShell::userNet(Layer& l) {
+    auto        d = lines("@NET");
+    std::string st = after(d, "user net"), areas = setting("net_user_areas");
+    std::string said = d.empty() ? std::string("(no answer)") : d[0].rfind("axis: ", 0) == 0 ? d[0].substr(6) : d[0];
+    l.items.push_back({"Status", st.empty() ? said : st, nullptr});
+    l.items.push_back(netAsk("User Net (1 on, 0 off)", setting("net_user") == "1" ? "on" : "off", "@SET net_user="));
+    l.items.push_back({"Areas carried", areas.empty() ? "none" : areas, [this] {
+                           push("AREAS CARRIED", [this](Layer& x) {
+                               uint8_t m = userNetMask(setting("net_user_areas"));
+                               for (unsigned i = 0; i < 4; i++)
+                                   x.items.push_back({userNetList((uint8_t)(1u << i)), m >> i & 1 ? "on" : "off", [this, m, i] {
+                                                          did(run_("@SET net_user_areas=" + userNetList((uint8_t)(m ^ (1u << i)))));
+                                                      }});
+                           });
+                       }});
+    l.items.push_back(netAsk("Caller level", setting("net_user_level"), "@SET net_user_level="));
+    if (st.empty() || st == "loading") return;  // not running here, or the applications are still loading
+    if (st == "member") {
+        size_t n = lines("@NET WAITING").size();
+        l.items.push_back({"New Board Voting", std::to_string(n) + " waiting", [this] { push("NEW BOARD VOTING", [this](Layer& x) { userVoting(x); }); }});
+    } else {
+        l.items.push_back(netAsk("Apply (a short blurb)", "", "@NETAPPLY "));
+    }
+    l.items.push_back(netShow("Members", "@NET MEMBERS"));
+    if (after(d, "rev board") != "yes") return;
+    l.items.push_back(netShow("Applications", "@NET APPS"));
+    l.items.push_back(netAsk("Admit a board", "", "@NETADMIT "));
+    l.items.push_back(netAsk("Deny a board", "", "@NETDENY "));
+    l.items.push_back(netAsk("Veto a board: id YES", "", "@NETVETO "));
+    l.items.push_back(netAsk("Vote counts: yes=3,no=3", "", "@NETVOTES "));
+}
+
+// One row per applicant this board has not voted on: "<board> <yes> <no> <name>, <location>" from @NET WAITING.
+void SysopShell::userVoting(Layer& l) {
+    for (auto& line : lines("@NET WAITING")) {
+        auto f = split(line, ' ');
+        if (f.size() < 4 || f[0].size() != 16) {
+            l.items.push_back({line.rfind("axis: ", 0) == 0 ? line.substr(6) : line, "", nullptr});
+            continue;
+        }
+        std::string board = f[0];
+        l.items.push_back({line.substr(f[0].size() + f[1].size() + f[2].size() + 3), "yes " + f[1] + " no " + f[2], [this, board] {
+                               push("APPLICATION", [this, board, c = std::make_shared<std::string>()](Layer& x) { userApp(x, board, c); });
+                           }});
+    }
+    if (l.items.empty()) l.items.push_back({"Nobody is waiting for this board's vote", "", nullptr});
+}
+
+// The application (@NET APP <board>: its fields, the counts, each member's vote and comment), then the vote.
+void SysopShell::userApp(Layer& l, const std::string& board, std::shared_ptr<std::string> comment) {
+    std::string cmd = "@NET APP " + board;
+    for (auto& line : lines(cmd)) {
+        size_t sp = line.find(' ');
+        l.items.push_back({line.substr(0, sp), sp == std::string::npos ? "" : line.substr(sp + 1), nullptr});
+    }
+    l.items.push_back({"Read it all", "", [this, cmd] { pushText("APPLICATION", wrap74(run_(cmd))); }});
+    l.items.push_back({"Comment", *comment, [this, comment] { ask("Comment for your vote", false, [comment](const std::string& v) { *comment = v; }); }});
+    for (const char* yn : {"Y", "N"})
+        l.items.push_back({*yn == 'Y' ? "Vote yes" : "Vote no", "", [this, board, comment, yn] { did(run_("@NETVOTE " + board + " " + yn + " " + *comment)); }});
 }
 #endif
 

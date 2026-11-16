@@ -100,6 +100,7 @@
 #include "net/outlog.h"
 #include "net/netrecord.h"
 #include "net/record.h"
+#include "net/recordview.h"
 #include "net/revkeys.h"
 #include "net/session.h"
 #include "net/sign.h"
@@ -3247,6 +3248,145 @@ static void netRecordTail(size_t skip, size_t count, std::vector<std::string>& o
     std::fclose(f);
 }
 
+// ---- The record browser (@NET RECORD FIND, KIND, MONTHS, SHOW; the sysop menu's Traffic and logs)
+
+using axis::net::netSafe;  // a field from another board, safe for a terminal (net/recordview.h)
+static constexpr size_t kNetRecordScan = 2000;  // lines looked at by one command, so a search never holds the loop long
+
+// The record files, newest first: on the SD card the month being written, then /net/record/<yyyymm>.log newest to
+// oldest, nodate.log (lines from before the clock was set) last; without a card the one /net/record.log.
+static std::vector<std::string> netRecordFiles() {
+    std::vector<std::string> v;
+    std::string              cur = netRecordFile(), dir = std::string(storageRoot()) + "/net/record";
+    if (!storageHasSd()) v.push_back(cur);
+    else if (DIR* d = opendir(dir.c_str())) {
+        while (dirent* e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n == "nodate.log" || (n.size() == 10 && n.find_first_not_of("0123456789") == 6 && n.compare(6, 4, ".log") == 0)) v.push_back(dir + "/" + n);
+        }
+        closedir(d);
+    }
+    auto rank = [&cur](const std::string& p) { return p == cur ? 0 : p.compare(p.size() - 10, 6, "nodate") == 0 ? 2 : 1; };
+    std::sort(v.begin(), v.end(), [&rank](const std::string& a, const std::string& b) { return rank(a) != rank(b) ? rank(a) < rank(b) : a > b; });
+    return v;
+}
+
+// Walks the record newest first across every file, from index skip on (index 0 is the newest line): each(index, line)
+// gets the line, only its first 255 bytes (the head) unless whole. Each file is read from its end in 512-byte pieces and
+// one line is held at a time. Stops when each says false or after kNetRecordScan lines; returns the next index to look
+// at then, or -1 at the record's end.
+static long netRecordWalk(size_t skip, bool whole, const std::function<bool(size_t, std::string&)>& each) {
+    std::unique_ptr<char[]> buf(new (std::nothrow) char[512]);
+    std::string             line;
+    size_t                  idx = 0, looked = 0;
+    if (!buf) return -1;
+    for (const std::string& path : netRecordFiles()) {
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) continue;
+        bool stop = false;
+        auto emit = [&](long s, long e) {  // the line [s, e); false to stop
+            if (e <= s) return true;
+            if (idx < skip || (size_t)(e - s) > axis::net::kNetRecordMaxLine) return ++idx, true;  // (a broken line is passed over)
+            if (looked++ >= kNetRecordScan) return !(stop = true);
+            size_t n = whole ? (size_t)(e - s) : std::min<size_t>((size_t)(e - s), 255);
+            line.resize(n);
+            if (std::fseek(f, s, SEEK_SET) != 0 || std::fread(&line[0], 1, n, f) != n) line.clear();
+            return !(stop = !each(idx++, line));
+        };
+        std::fseek(f, 0, SEEK_END);
+        long lineEnd = std::ftell(f), p;
+        if (lineEnd > 0 && std::fseek(f, lineEnd - 1, SEEK_SET) == 0 && std::fgetc(f) == '\n') lineEnd--;
+        bool more = true;
+        for (p = lineEnd; more && p > 0;) {
+            long from = p > 512 ? p - 512 : 0;
+            if (std::fseek(f, from, SEEK_SET) != 0 || std::fread(buf.get(), 1, (size_t)(p - from), f) != (size_t)(p - from)) break;
+            for (long i = p - 1; more && i >= from; i--)
+                if (buf[i - from] == '\n') {
+                    more = emit(i + 1, lineEnd);
+                    lineEnd = i;
+                }
+            p = from;
+        }
+        if (more && p == 0) emit(0, lineEnd);
+        std::fclose(f);
+        if (stop) return (long)idx;
+    }
+    return -1;
+}
+
+// "@NET RECORD FIND <text> [n [skip]]", "KIND votes|members|actions|all [n [skip]]", "MONTHS", "SHOW <index>" (args
+// lowercase, after RECORD). FIND and KIND print "<index> <date> <who> <what>" newest first, at most n (20, up to 100)
+// from the record's index skip on, then "older from <index>" if they stopped before its end; SHOW takes that index.
+// Trailing numbers after FIND's text are n and skip. False if args are none of these (the plain RECORD [n [skip]]).
+static bool netRecordBrowse(const NetHost& h, const std::string& args, Print& out) {
+    std::vector<std::string> w;
+    for (size_t at = 0, e; at < args.size(); at = e + 1) {
+        e = std::min(args.find(' ', at), args.size());
+        if (e > at) w.push_back(args.substr(at, e - at));
+    }
+    auto digits = [](const std::string& s) { return s.find_first_not_of("0123456789") == std::string::npos; };
+    if (w.empty()) return false;
+    const std::string& sub = w[0];
+    bool               find = sub == "find", show = sub == "show";
+    if (sub == "months") {
+        bool any = false;
+        for (const std::string& p : netRecordFiles()) {
+            struct stat st;
+            size_t      sl = p.rfind('/') + 1;
+            if (::stat(p.c_str(), &st) == 0) out.printf("%s %ld bytes\n", p.substr(sl, p.size() - sl - 4).c_str(), (long)st.st_size), any = true;
+        }
+        if (!any) out.println("axis: the record is empty");
+        return true;
+    }
+    if (!find && !show && sub != "kind") return false;
+    if ((find || show) && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) {
+        out.println("@ERR low on memory just now, try again");
+        return true;
+    }
+    if (show) {
+        std::string line;
+        if (w.size() == 2 && digits(w[1]))
+            netRecordWalk((size_t)std::strtoul(w[1].c_str(), nullptr, 10), true, [&line](size_t, std::string& l) { return line.swap(l), false; });
+        if (line.empty()) {
+            out.println(w.size() == 2 && digits(w[1]) ? "axis: no such line" : "@ERR @NET RECORD SHOW <index>");
+            return true;
+        }
+        size_t      us = std::min(line.find('\x1f'), line.size());
+        std::string head = line.substr(0, us);
+        line.erase(0, us + 1);  // the signed line
+        size_t s1 = std::min(head.find(' '), head.size()), s2 = std::min(head.find(' ', s1 + 1), head.size());
+        out.printf("date %s\n", axis::net::netDateText((uint32_t)std::strtoul(head.c_str(), nullptr, 10)).c_str());
+        out.printf("who %s\n", netSafe(head.substr(std::min(s1 + 1, s2), s2 - std::min(s1 + 1, s2))).c_str());
+        out.printf("what %s\n", netSafe(head.substr(std::min(s2 + 1, head.size()))).c_str());
+        axis::net::recordFields(line, [&out](const std::string& f) { out.printf("%s\n", f.c_str()); });
+        out.printf("check %s\n", axis::net::recordCheck(line, h.core->state()).c_str());
+        return true;
+    }
+    size_t nums = 0;  // after the word and the text or kind
+    while (nums < 2 && w.size() > 2 + nums && digits(w[w.size() - 1 - nums])) nums++;
+    using K = axis::net::RecordKind;
+    std::string kind = w.size() > 1 ? w[1] : "", text;
+    K           k = kind == "votes" ? K::Votes : kind == "members" ? K::Members : kind == "actions" ? K::Actions : K::All;
+    for (size_t i = 1; find && i + nums < w.size(); i++) text += (text.empty() ? "" : " ") + w[i];
+    if (find ? text.empty() : k == K::All && kind != "all") {
+        out.println("@ERR @NET RECORD FIND <text> [n [skip]], KIND votes|members|actions [n [skip]]");
+        return true;
+    }
+    unsigned long n = nums ? std::strtoul(w[w.size() - nums].c_str(), nullptr, 10) : 20, shown = 0;
+    n = std::min<unsigned long>(n ? n : 20, 100);
+    long more = netRecordWalk(nums == 2 ? (size_t)std::strtoul(w.back().c_str(), nullptr, 10) : 0, find, [&](size_t i, std::string& l) {
+        if (!axis::net::recordMatches(l, find ? K::All : k, text)) return true;
+        std::string head = axis::net::recordHead(l);
+        size_t      sp = std::min(head.find(' '), head.size());
+        out.printf("%u %s %s\n", (unsigned)i, axis::net::netDateText((uint32_t)std::strtoul(head.c_str(), nullptr, 10)).c_str(),
+                   netSafe(head.substr(std::min(sp + 1, head.size()))).c_str());
+        return ++shown < n;
+    });
+    if (!shown) out.println("axis: nothing found");
+    if (more >= 0) out.printf("axis: older from %ld\n", more);
+    return true;
+}
+
 static void netNote(const std::string& what) {
     if (netHost && netHost->record) netHost->record->note("sysop", what, "");
 }
@@ -3340,15 +3480,18 @@ static void netStatus(NetHost& h, Print& out) {
     }
     int hist = core.historyState();
     out.printf("history %s\n", hist > 0 ? "done" : hist == 0 ? "not done" : "not asked yet");
+    using S = axis::net::NetMembers::Status;
+    S us = h.appsLoaded ? core.members().status(core.board()) : S::None;
+    out.printf("user net %s", !h.appsLoaded ? "loading" : us == S::Member ? "member" : us == S::Pending ? "pending" : us == S::Denied ? "denied" :
+                              us == S::Vetoed ? "vetoed" : boardCfg->netUser ? "not applied" : "off");
+    if (us == S::Pending) {
+        axis::net::NetMembers::Tally t = core.members().tally(core.board());
+        out.printf(", yes %u of %u, no %u of %u", (unsigned)t.yes, (unsigned)core.state().votesYes(), (unsigned)t.no, (unsigned)core.state().votesNo());
+    }
+    out.print("\n");
     if (h.record && h.record->failures()) out.printf("record writes failed %u\n", (unsigned)h.record->failures());
 }
 
-// A card field from another board, safe for a terminal: control bytes become '?'.
-static std::string netSafe(std::string s) {
-    for (char& c : s)
-        if ((unsigned char)c < 0x20 || c == 0x7f) c = '?';
-    return s;
-}
 
 static void netPeers(NetHost& h, Print& out) {
     const axis::net::NetState& st = h.core->state();
@@ -3401,6 +3544,41 @@ static void netApps(const NetHost& h, Print& out) {
         any = true;
     }
     if (!any) out.println("axis: no applications held");
+}
+
+// "@NET WAITING": the applicants this board has not voted on (waitingFor), one a line: "<board> <yes> <no> <name>, <location>".
+static void netWaiting(const NetHost& h, Print& out) {
+    const axis::net::NetMembers& mem = h.core->members();
+    std::string                  line;
+    for (const std::string& b : mem.waitingFor(h.core->board())) {
+        axis::net::NetApp            a;
+        axis::net::NetMembers::Tally t = mem.tally(b);
+        uint32_t                     off;
+        if (mem.heldApp(b, off) && netAppsReadAt(off, line)) axis::net::decode(line, a);
+        out.printf("%s %u %u %s, %s\n", b.c_str(), (unsigned)t.yes, (unsigned)t.no, a.name.empty() ? "?" : netSafe(a.name).c_str(), netSafe(a.location).c_str());
+    }
+}
+
+// "@NET APP <board>": the board's application held now, field by field, its counts, then each member's vote on it:
+// "vote yes|no, <name or board>: <comment>".
+static void netAppShow(const NetHost& h, const std::string& board, Print& out) {
+    const axis::net::NetMembers& mem = h.core->members();
+    const axis::net::NetState&   st = h.core->state();
+    uint32_t                     off, seq = 0;
+    std::string                  line;
+    if (!mem.heldApp(board, off, &seq) || !netAppsReadAt(off, line) || line[0] != 'A') {
+        out.println("axis: no application held from that board");
+        return;
+    }
+    axis::net::recordFields(line, [&out](const std::string& f) { out.printf("%s\n", f.c_str()); });
+    axis::net::NetMembers::Tally t = mem.tally(board);
+    out.printf("counts yes %u of %u, no %u of %u\n", (unsigned)t.yes, (unsigned)st.votesYes(), (unsigned)t.no, (unsigned)st.votesNo());
+    for (const std::string& m : mem.members()) {
+        axis::net::NetVote        v;
+        const axis::net::NetCard* c = st.card(m);
+        if (mem.heldVote(m, board, off) && netAppsReadAt(off, line) && axis::net::decode(line, v) && v.appSeq == seq)
+            out.printf("vote %s, %s: %s\n", v.yes ? "yes" : "no", c ? netSafe(c->name).c_str() : m.c_str(), netSafe(v.comment).c_str());
+    }
 }
 
 // APPS, MEMBERS (from @NET), @NETAPPLY, @NETVOTE (this board), @NETADMIT, @NETDENY, @NETVETO, @NETVOTES (Rev's board).
@@ -3597,6 +3775,7 @@ static void netCommand(const String& cmd, Print& out) {
             for (const std::string& s : h.hides) out.printf("hide %s\n", s.c_str());
             for (const std::string& s : h.blocks) out.printf("block %s\n", s.c_str());
         } else if (up.compare(0, 6, "RECORD") == 0) {
+            if (netRecordBrowse(h, a.substr(6), out)) return;  // FIND, KIND, MONTHS, SHOW
             char*         e = nullptr;
             unsigned long n = std::strtoul(up.c_str() + 6, &e, 10), skip = std::strtoul(e, nullptr, 10);
             if (!n) n = 20;
@@ -3608,7 +3787,11 @@ static void netCommand(const String& cmd, Print& out) {
                            s1 == std::string::npos ? "" : l.c_str() + s1 + 1);
             }
             if (v.empty()) out.println("axis: the record is empty");
-        } else if (!netUserCommand(h, up, arg, a, t, rest, out)) out.println("axis: @NET, @NET SYNC, @NET PEERS, @NET RECORD [n], @NET LOCAL, @NET APPS, @NET MEMBERS");
+        } else if (up == "APPS" || up == "MEMBERS") netUserCommand(h, up, arg, a, t, rest, out);  // (only its own words: never "@NET @NETAPPLY")
+        else if ((up == "WAITING" || t == "app") && !h.appsLoaded) out.println("axis: User Net is still loading");
+        else if (up == "WAITING") netWaiting(h, out);
+        else if (t == "app") netAppShow(h, a.size() > 4 ? a.substr(4) : std::string(), out);
+        else out.println("axis: @NET, SYNC, PEERS, LOCAL, APPS, MEMBERS, WAITING, APP <board>, RECORD [n [skip]], RECORD FIND|KIND|MONTHS|SHOW");
         return;
     }
     // local moderation: this board only
