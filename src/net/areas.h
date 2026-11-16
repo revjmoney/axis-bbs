@@ -127,14 +127,20 @@ public:
     bool carries(const std::string& area) const;
     // This board is a User Net member by its own tally.
     bool selfMember() const { return members_.status(myBoard_) == NetMembers::Status::Member; }
-    // /net/apps.txt: append adds one line (false on failure); scan calls each on the file's lines in
-    // order until it returns false. The file is never read whole.
+    // /net/apps.txt: append adds one line and gives the byte offset it starts at (false on failure);
+    // scan calls each on the file's lines in order until it returns false (for the host's load and
+    // compaction); readAt reads the one line starting at a byte offset. The file is never read whole.
+    // NetCore keeps each held record's offset in members() and reads a record back only when RAM says it
+    // is held.
     using AppsLineFn = std::function<bool(const std::string& line)>;
-    void setAppsFile(std::function<bool(const std::string& line)> append,
-                     std::function<void(const AppsLineFn& each)> scan) {
+    void setAppsFile(std::function<bool(const std::string& line, uint32_t& off)> append,
+                     std::function<void(const AppsLineFn& each)> scan,
+                     std::function<bool(uint32_t off, std::string& line)> readAt) {
         appsAppend_ = std::move(append);
         appsScan_ = std::move(scan);
+        appsReadAt_ = std::move(readAt);
     }
+    const std::function<void(const AppsLineFn& each)>& appsScan() const { return appsScan_; }
 
     // A post from a peer (fromPeer may be empty). Stores it and logs it to pass on. Taken by value
     // so the caller can move it in and the body is held once. With the clock set, a post dated
@@ -182,7 +188,9 @@ public:
     // lines reach kNetPendingBytes (at least one is returned if any is ready). Entries excluded for
     // it or confirmed gone (killed, banned origin, card or notice no longer held, post not in the
     // area) are skipped. A read failure stops the list there; it is tried again next time.
-    std::vector<std::pair<uint32_t, std::string>> pendingFor(const std::string& peer, size_t max);
+    // peerUserNet false (a peer whose card lacks net2): applications, votes and User Net posts are
+    // skipped with no read, since such a peer would only refuse them.
+    std::vector<std::pair<uint32_t, std::string>> pendingFor(const std::string& peer, size_t max, bool peerUserNet = true);
     // The peer has the entry at index: its cursor moves past it (acks come in order).
     void acked(const std::string& peer, uint32_t index);
     // The peer answered the entry at index with a transient NAK: the cursor stays, unless that entry
@@ -219,11 +227,9 @@ public:
     bool needUserHistory() const { return !userHistory_; }
     void userHistoryGot() { userHistory_ = true; }
     void resetUserHistory() { userHistory_ = false; }
-    // For a User Net pull: the held application and vote lines of the apps file, from line index pos on,
-    // added to out until their size reaches maxBytes; pos moves past the lines looked at. sent holds the
-    // CRC-32 of each line already given out, so a line the file holds twice goes once. False once the
-    // file has no more lines.
-    bool userRecordsNext(size_t& pos, std::vector<uint32_t>& sent, std::vector<std::string>& out, size_t maxBytes);
+    // The apps file line at off, if it is a record held now (members().holds). For a User Net pull, which
+    // walks members().offsets().
+    bool userRecord(uint32_t off, std::string& line);
     // For a User Net pull: like historyNext, over the User Net areas this board carries whose bit is set
     // in areaMask (bit i: userNetAreas()[i]), the newest kNetUserHistoryPerArea per area.
     bool userHistoryNext(HistoryCursor& c, uint32_t sinceUnix, uint8_t areaMask, std::string& line);
@@ -285,11 +291,16 @@ private:
     void log(const std::string& entry);
     enum class Res { Ready, Skip, Retry };  // send it; excluded or gone for good; try again later
     int storePost(NetPost& p, std::string& line);
-    Res resolve(const std::string& entry, const std::string& peer, std::string& line);
-    // The last apps file line held now (members().holds) that starts with prefix and, if app is not
-    // empty, names that applicant (a vote).
-    std::string heldRecord(const std::string& prefix, const std::string& app);
-    void noteMember(const std::string& who, const std::string& board, NetMembers::Status before);
+    Res resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet);
+    Res readRecord(bool held, uint32_t off, std::string& line);
+    // Who is a member and who is denied, before a change, to note what the change did (empty without a
+    // record callback).
+    struct Roll {
+        std::vector<std::string> in, denied;
+    };
+    Roll roll() const;
+    void noteRoll(const std::string& who, const Roll& before);
+    bool appended(const std::string& line);
     bool walk(HistoryCursor& c, uint32_t sinceUnix, const std::vector<const NetArea*>& areas, size_t perArea,
               std::string& line);
     bool clockSet() const { return now_() > kNetClockSet; }
@@ -315,8 +326,9 @@ private:
     int8_t history_ = -1;  // see historyState
     bool userHistory_ = false;  // a User Net pull reached UEND
     std::vector<std::string> userAreas_;
-    std::function<bool(const std::string&)> appsAppend_;
+    std::function<bool(const std::string&, uint32_t&)> appsAppend_;
     std::function<void(const AppsLineFn&)> appsScan_;
+    std::function<bool(uint32_t, std::string&)> appsReadAt_;
     uint32_t appendFailures_ = 0, appsFailures_ = 0;
     EventFn onEvent_;
     std::function<bool(const std::string&)> blocked_, hidden_;

@@ -229,8 +229,9 @@ bool NetMembers::takeApp(const NetApp& a, std::string& line) {
         held->seq = a.seq;
         held->date = a.date;
         held->crc = crc;
+        held->off = kNoOffset;
     } else {
-        apps_.push_back(App{board, a.seq, a.date, crc});
+        apps_.push_back(App{board, a.seq, a.date, crc, kNoOffset});
     }
     // Votes on this board's older apps no longer count for anything.
     auto stale = [&](std::vector<Vote>& pool) {
@@ -251,10 +252,10 @@ std::tuple<uint32_t, uint64_t, uint64_t, uint32_t, uint32_t, uint32_t> NetMember
 }
 
 // The checks before the signature: ids, not on itself, not on an app already replaced, encodable.
-bool NetMembers::makeVote(const NetVote& v, Vote& nv, std::string& enc) const {
+bool NetMembers::makeVote(const NetVote& v, Vote& nv, std::string& enc, bool checkApp) const {
     uint64_t voter, app;
     if (!parseId(v.voter, voter) || !parseId(v.app, app) || voter == app || v.appSeq == 0) return false;
-    if (const App* a = findApp(app))
+    if (const App* a = checkApp ? findApp(app) : nullptr)
         if (a->seq > v.appSeq) return false;  // on an app this board has already replaced
     enc = encode(v);
     if (enc.empty()) return false;
@@ -266,6 +267,7 @@ bool NetMembers::makeVote(const NetVote& v, Vote& nv, std::string& enc) const {
     nv.date = v.date;
     nv.crc = lineCrc(enc) & 0x7FFFFFFFu;
     nv.yes = v.yes ? 1u : 0u;
+    nv.off = kNoOffset;
     return true;
 }
 
@@ -461,9 +463,67 @@ bool NetMembers::holds(const std::string& line) const {
     return locate(line, pool, index);
 }
 
+void NetMembers::setOffset(const std::string& line, uint32_t off) {
+    int pool;
+    size_t index;
+    if (!locate(line, pool, index)) return;
+    if (pool == 0)
+        apps_[index].off = off;
+    else
+        (pool == 1 ? votes_ : outsiders_)[index].off = off;
+}
+
+bool NetMembers::heldApp(const std::string& board, uint32_t& off) const {
+    uint64_t b;
+    const App* a = parseId(board, b) ? findApp(b) : nullptr;
+    if (!a) return false;
+    off = a->off;
+    return true;
+}
+
+bool NetMembers::heldVote(const std::string& voter, const std::string& app, uint32_t& off) const {
+    uint64_t v, a;
+    if (!parseId(voter, v) || !parseId(app, a)) return false;
+    const App* held = findApp(a);
+    const Vote* best = nullptr;
+    for (const auto* pool : {&votes_, &outsiders_})
+        for (const auto& x : *pool) {
+            if (x.voter != v || x.app != a) continue;
+            if (held && x.appSeq == held->seq) {
+                off = x.off;
+                return true;
+            }
+            if (!best || x.appSeq > best->appSeq) best = &x;
+        }
+    if (!best) return false;
+    off = best->off;
+    return true;
+}
+
+std::vector<uint32_t> NetMembers::offsets() const {
+    std::vector<uint32_t> out;
+    out.reserve(apps_.size() + votes_.size() + outsiders_.size());
+    for (const auto& a : apps_)
+        if (a.off != kNoOffset) out.push_back(a.off);
+    for (const auto* pool : {&votes_, &outsiders_})
+        for (const auto& v : *pool)
+            if (v.off != kNoOffset) out.push_back(v.off);
+    return out;
+}
+
+std::vector<std::string> NetMembers::denied() const {
+    std::vector<std::string> out;
+    if (apps_.empty()) return out;
+    const std::vector<uint64_t> m = grow();
+    for (const auto& a : apps_)
+        if (statusIn(m, a.board) == Status::Denied) out.push_back(hex16(a.board));
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 namespace {
 
-// Calls f on each line of text, without a trailing carriage return.
+// Calls f on each line of text, without a trailing carriage return, with the offset it starts at.
 template <typename F>
 void eachLine(const std::string& text, F f) {
     size_t pos = 0;
@@ -472,7 +532,7 @@ void eachLine(const std::string& text, F f) {
         if (end == std::string::npos) end = text.size();
         size_t len = end - pos;
         if (len && text[pos + len - 1] == '\r') len--;
-        if (len) f(text.substr(pos, len));
+        if (len) f(text.substr(pos, len), static_cast<uint32_t>(pos));
         pos = end + 1;
     }
 }
@@ -483,7 +543,7 @@ std::string NetMembers::save(const std::string& oldText) const {
     std::string out;
     std::vector<bool> done[3] = {std::vector<bool>(apps_.size()), std::vector<bool>(votes_.size()),
                                  std::vector<bool>(outsiders_.size())};
-    eachLine(oldText, [&](const std::string& line) {
+    eachLine(oldText, [&](const std::string& line, uint32_t) {
         int pool;
         size_t index;
         if (!locate(line, pool, index) || done[pool][index]) return;
@@ -495,36 +555,61 @@ std::string NetMembers::save(const std::string& oldText) const {
 }
 
 void NetMembers::load(const std::string& text) {
+    beginLoad();
+    eachLine(text, [&](const std::string& l, uint32_t off) { loadLine(l, off); });
+    endLoad();
+}
+
+void NetMembers::beginLoad() {
     apps_.clear();
     votes_.clear();
     outsiders_.clear();
-    std::string line;
-    // Applications first, then votes, so a vote never waits on an app later in the file.
-    eachLine(text, [&](const std::string& l) {
+    staged_.clear();
+}
+
+// Applications are taken as they come (takeApp keeps the latest per board whatever the order). Every vote
+// is checked into one staged list with no caps (the best one per voter, app and app seq); endLoad splits
+// them by the tally over the whole set and applies the caps last, so line order does not change what is kept.
+void NetMembers::loadLine(const std::string& l, uint32_t off) {
+    if (l.empty()) return;
+    if (l[0] == static_cast<char>(NetKind::App)) {
         NetApp a;
-        if (l[0] == static_cast<char>(NetKind::App) && decode(l, a)) takeApp(a, line);
-    });
-    // Every vote is checked into one list with no caps (the best one per voter, app and app seq),
-    // split by the tally over the whole set, and the caps are applied last, so line order in the file
-    // does not change what is kept.
-    std::vector<Vote> staged;
-    eachLine(text, [&](const std::string& l) {
-        NetVote v;
-        Vote nv;
         std::string enc;
-        if (l[0] != static_cast<char>(NetKind::Vote) || !decode(l, v) || !makeVote(v, nv, enc)) return;
-        size_t at = staged.size();
-        for (size_t i = 0; i < staged.size(); i++)
-            if (staged[i].voter == nv.voter && staged[i].app == nv.app && staged[i].appSeq == nv.appSeq) at = i;
-        if (at < staged.size() &&
-            (nv.seq < staged[at].seq || (nv.seq == staged[at].seq && nv.crc <= staged[at].crc)))
-            return;
-        if (!verifyVote(v)) return;
-        if (at < staged.size())
-            staged[at] = nv;
-        else
-            staged.push_back(nv);
-    });
+        uint64_t board;
+        if (!decode(l, a) || !takeApp(a, enc) || !parseId(a.board, board)) return;
+        for (auto& x : apps_)
+            if (x.board == board) x.off = off;
+        return;
+    }
+    NetVote v;
+    Vote nv;
+    std::string enc;
+    // The app check waits for endLoad: the vote's app may come later in the file.
+    if (l[0] != static_cast<char>(NetKind::Vote) || !decode(l, v) || !makeVote(v, nv, enc, false)) return;
+    nv.off = off;
+    size_t at = staged_.size();
+    for (size_t i = 0; i < staged_.size(); i++)
+        if (staged_[i].voter == nv.voter && staged_[i].app == nv.app && staged_[i].appSeq == nv.appSeq) at = i;
+    if (at < staged_.size() &&
+        (nv.seq < staged_[at].seq || (nv.seq == staged_[at].seq && nv.crc <= staged_[at].crc)))
+        return;
+    if (!verifyVote(v)) return;
+    if (at < staged_.size())
+        staged_[at] = nv;
+    else
+        staged_.push_back(nv);
+}
+
+void NetMembers::endLoad() {
+    std::vector<Vote> staged;
+    staged.swap(staged_);
+    // A vote on an app this board has since replaced (the held app is newer) is refused, as at run time.
+    staged.erase(std::remove_if(staged.begin(), staged.end(),
+                                [&](const Vote& v) {
+                                    const App* a = findApp(v.app);
+                                    return a && a->seq > v.appSeq;
+                                }),
+                 staged.end());
     std::sort(staged.begin(), staged.end(), [](const Vote& x, const Vote& y) { return age(x) < age(y); });
     votes_ = std::move(staged);
     const std::vector<uint64_t> m = grow();

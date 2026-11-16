@@ -10,7 +10,6 @@
 #include <ctime>
 #include <initializer_list>
 
-#include "net/crc.h"
 #include "net/revkeys.h"
 
 namespace axis::net {
@@ -321,50 +320,80 @@ bool NetCore::takeCard(const NetCard& c, const std::string& fromPeer) {
 }
 
 bool NetCore::takeNotice(const NetNotice& n, const std::string& fromPeer) {
+    std::string group = noticeGroup(n);
+    // Notices that can change who is a User Net member: the roll before, to note what changed.
+    bool roster = onEvent_ && (group == "member" || group == "votes" || group == "board");
+    Roll before = roster ? roll() : Roll();
     bool changed = state_.applyNotice(n, day());
     syncLimits();
     if (!changed) return false;
-    std::string group = noticeGroup(n);
     if (group == "rotate") log("N R " + std::to_string(n.seq) + " " + excludeList({fromPeer}));
     else if (plainToken(n.target)) log("N " + group + " " + n.target + " " + excludeList({fromPeer}));
     if (n.kind == "kill") dropPost(n.target);
     if (onEvent_) onEvent_(fromPeer, "notice " + n.kind + " " + n.target + " seq " + std::to_string(n.seq), encode(n));
+    if (roster) noteRoll(fromPeer, before);
     return true;
 }
 
-// Only the boards the record names are looked at, before and after: a cheap note, not a full scan.
-void NetCore::noteMember(const std::string& who, const std::string& board, NetMembers::Status before) {
-    using S = NetMembers::Status;
-    S after = members_.status(board);
-    if (after == before) return;
-    const char* what = after == S::Member ? "admitted" : after == S::Denied ? "denied" : before == S::Member ? "removed" : nullptr;
-    if (what) onEvent_(who, "member " + board + " " + what, std::string());
+NetCore::Roll NetCore::roll() const {
+    Roll r;
+    if (onEvent_) {
+        r.in = members_.members();
+        r.denied = members_.denied();
+    }
+    return r;
+}
+
+// Every board that entered or left the members, and every applicant newly denied (both lists sorted the
+// same way before and after, so a merge finds the differences).
+void NetCore::noteRoll(const std::string& who, const Roll& before) {
+    if (!onEvent_) return;
+    Roll after = roll();
+    auto note = [&](const std::vector<std::string>& now, const std::vector<std::string>& was, const char* what) {
+        for (const std::string& b : now)
+            if (std::find(was.begin(), was.end(), b) == was.end()) onEvent_(who, "member " + b + " " + what, std::string());
+    };
+    note(after.in, before.in, "admitted");
+    note(before.in, after.in, "removed");
+    note(after.denied, before.denied, "denied");
+}
+
+// The line goes to the apps file and its offset to members(); false if it could not (the record is held,
+// but never passed on: resolve reads it back from the file).
+bool NetCore::appended(const std::string& line) {
+    uint32_t off = kNoOffset;
+    if (!appsAppend_ || !appsAppend_(line, off)) {
+        appsFailures_++;
+        return false;
+    }
+    members_.setOffset(line, off);
+    return true;
 }
 
 // A banned board's records are still held and passed on: the tally makes them count for nothing, and a
 // lift brings them back the same way on every board, whenever the ban reached it.
 bool NetCore::takeApp(const NetApp& a, const std::string& fromPeer) {
-    NetMembers::Status before = onEvent_ ? members_.status(a.board) : NetMembers::Status::None;
+    Roll before = roll();
     std::string line;
     if (!members_.takeApp(a, line)) return false;
-    if (!appsAppend_ || !appsAppend_(line)) appsFailures_++;  // held, but not passed on (resolve reads the file)
+    appended(line);
     log("A " + a.board + " " + excludeList({fromPeer, a.board}));
     if (onEvent_) {
         onEvent_(fromPeer, "app " + a.board + " " + std::to_string(a.seq), line);
-        noteMember(fromPeer, a.board, before);
+        noteRoll(fromPeer, before);
     }
     return true;
 }
 
 bool NetCore::takeVote(const NetVote& v, const std::string& fromPeer) {
-    NetMembers::Status before = onEvent_ ? members_.status(v.app) : NetMembers::Status::None;
+    Roll before = roll();
     std::string line;
     if (!members_.takeVote(v, line)) return false;
-    if (!appsAppend_ || !appsAppend_(line)) appsFailures_++;
+    appended(line);
     log("V " + v.app + " " + v.voter + " " + excludeList({fromPeer, v.voter}));
     if (onEvent_) {
         onEvent_(fromPeer, "vote " + v.voter + " on " + v.app + (v.yes ? " yes" : " no"), line);
-        noteMember(fromPeer, v.app, before);
+        noteRoll(fromPeer, before);
     }
     return true;
 }
@@ -472,10 +501,13 @@ void NetCore::setFirstPeer(const std::string& board) {
 
 // What to send for a log entry. Skip only when it is excluded for this peer or confirmed gone;
 // Retry when the post could not be read (the caller stops there and tries again later).
-NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer, std::string& line) {
+NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet) {
     line.clear();
     std::vector<std::string> t = tokens(entry);
     if (t.empty() || inList(t.back(), peer)) return Res::Skip;
+    // Applications, votes and User Net posts never go to a peer that would only refuse them: no read.
+    if (!peerUserNet && (t[0] == "A" || t[0] == "V" || (t[0] == "P" && t.size() > 1 && isUserNetArea(t[1]))))
+        return Res::Skip;
     if (t[0] == "P" && t.size() == 5) {
         const std::string& id = t[3];
         if (id.size() < 17 || state_.killed(id) || state_.banned(id.substr(0, 16)) || !netArea(t[1]))
@@ -494,56 +526,36 @@ NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer,
         if (t[1] != "R") line = state_.noticeLine(t[1], t[2]);
         else if (parseSeq(t[2], seq)) line = state_.rotateLine(seq);
     } else if (t[0] == "A" && t.size() == 3) {
-        if (isHex16(t[1])) line = heldRecord(std::string("A") + kSep + t[1] + kSep, "");
+        uint32_t off = kNoOffset;
+        return readRecord(members_.heldApp(t[1], off), off, line);
     } else if (t[0] == "V" && t.size() == 4) {
-        if (isHex16(t[1]) && isHex16(t[2])) line = heldRecord(std::string("V") + kSep + t[2] + kSep, t[1]);
+        uint32_t off = kNoOffset;
+        return readRecord(members_.heldVote(t[2], t[1], off), off, line);
     }
     return line.empty() ? Res::Skip : Res::Ready;  // not held any more (or not an entry): gone
 }
 
-// A scan of the apps file, one line at a time: the cheap prefix test first, then members().holds (which
-// decodes the line). app (a vote's applicant) is checked where it sits in a vote line, after the voter's pub.
-std::string NetCore::heldRecord(const std::string& prefix, const std::string& app) {
-    std::string found;
-    if (!appsScan_) return found;
-    const size_t at = prefix.size() + 64 + 1;
-    appsScan_([&](const std::string& l) {
-        if (l.compare(0, prefix.size(), prefix) != 0) return true;
-        if (!app.empty() &&
-            (l.size() <= at + app.size() || l.compare(at, app.size(), app) != 0 || l[at + app.size()] != kSep))
-            return true;
-        if (members_.holds(l)) found = l;  // the last one held wins
-        return true;
-    });
-    return found;
+// An application or vote entry: RAM says first whether it is held (no read when not); then the one line
+// at its offset, which must still be the record held (else it is gone). A failed read is tried again.
+NetCore::Res NetCore::readRecord(bool held, uint32_t off, std::string& line) {
+    if (!held || off == kNoOffset || !appsReadAt_) return Res::Skip;
+    if (!appsReadAt_(off, line)) {
+        line.clear();
+        return Res::Retry;
+    }
+    if (members_.holds(line)) return Res::Ready;
+    line.clear();
+    return Res::Skip;
 }
 
-bool NetCore::userRecordsNext(size_t& pos, std::vector<uint32_t>& sent, std::vector<std::string>& out, size_t maxBytes) {
-    if (!appsScan_) return false;
-    size_t i = 0, bytes = 0;
-    bool more = false;
-    appsScan_([&](const std::string& l) {
-        if (i < pos) {
-            i++;
-            return true;
-        }
-        if (bytes >= maxBytes) {
-            more = true;
-            return false;
-        }
-        pos = ++i;
-        if (l.empty() || (l[0] != (char)NetKind::App && l[0] != (char)NetKind::Vote) || !members_.holds(l)) return true;
-        uint32_t crc = crc32((const uint8_t*)l.data(), l.size());
-        if (std::find(sent.begin(), sent.end(), crc) != sent.end()) return true;
-        sent.push_back(crc);
-        bytes += l.size();
-        out.push_back(l);
-        return true;
-    });
-    return more;
+bool NetCore::userRecord(uint32_t off, std::string& line) {
+    line.clear();
+    if (readRecord(true, off, line) == Res::Ready) return true;
+    line.clear();
+    return false;
 }
 
-std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::string& peer, size_t max) {
+std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::string& peer, size_t max, bool peerUserNet) {
     std::vector<std::pair<uint32_t, std::string>> out;
     auto it = links_.find(peer);
     if (it == links_.end() || !log_.ok()) return out;  // a log not open yet leaves cursors alone
@@ -554,7 +566,7 @@ std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::str
     size_t bytes = 0;
     for (uint32_t i = link.cursor; i < log_.next() && out.size() < max; i++) {
         if (!log_.read(i, entry)) break;  // try again next time
-        Res r = resolve(entry, peer, line);
+        Res r = resolve(entry, peer, line, peerUserNet);
         if (r == Res::Retry) {
             // A post that cannot be read. Usually a short failure; but a post trimmed away from its
             // area reads the same, so after kNetReadStrikes calls stuck on it, it counts as gone.

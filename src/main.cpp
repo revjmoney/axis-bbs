@@ -2300,13 +2300,37 @@ static bool netFileWrite(const std::string& name, const std::string& text) {
     return ::rename(tmp.c_str(), path.c_str()) == 0;
 }
 
-// /net/apps.txt, the signed User Net applications and votes (net/members.h holds only their compact fields): one
-// line appended per record taken, read back a line at a time and never whole (it can reach about 140 KB).
-static bool netAppsAppend(const std::string& line) {
+// /net/apps.txt, the signed User Net applications and votes (net/members.h holds only their compact fields and each
+// line's byte offset): one line appended per record taken, read back a line at a time and never whole (it can reach
+// about 140 KB).
+static bool netAppsAppend(const std::string& line, uint32_t& off) {
     FILE* f = std::fopen(netPath("apps.txt").c_str(), "ab");
     if (!f) return false;
-    bool ok = std::fwrite(line.data(), 1, line.size(), f) == line.size() && std::fputc('\n', f) != EOF;
-    return std::fclose(f) == 0 && ok;
+    long at = std::fseek(f, 0, SEEK_END) == 0 ? std::ftell(f) : -1;
+    bool ok = at >= 0 && std::fwrite(line.data(), 1, line.size(), f) == line.size() && std::fputc('\n', f) != EOF;
+    ok = std::fclose(f) == 0 && ok;
+    if (ok) off = (uint32_t)at;
+    return ok;
+}
+
+// The one line starting at byte off (without its line break); false if it cannot be read or is longer than a frame.
+static bool netAppsReadAt(uint32_t off, std::string& line) {
+    line.clear();
+    FILE* f = std::fopen(netPath("apps.txt").c_str(), "rb");
+    if (!f) return false;
+    bool   ok = std::fseek(f, (long)off, SEEK_SET) == 0, end = false;
+    char   buf[256];
+    size_t r;
+    while (ok && !end && (r = std::fread(buf, 1, sizeof buf, f)) > 0) {
+        const char* nl = (const char*)std::memchr(buf, '\n', r);
+        size_t      n = nl ? (size_t)(nl - buf) : r;
+        if (line.size() + n > axis::net::kNetMaxFrame + 1) ok = false;
+        else line.append(buf, n);
+        end = nl != nullptr;
+    }
+    std::fclose(f);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    return ok && !line.empty();
 }
 
 // Each line in order (no line break, no empty lines) until each returns false. A line longer than a frame is passed
@@ -3524,7 +3548,7 @@ static bool netStart() {
             });
         core.setLocalFilter([hp](const std::string& b) { return netHas(hp->blocks, b); },
                             [hp](const std::string& id) { return netHas(hp->hides, id); });
-        core.setAppsFile(netAppsAppend, netAppsScan);
+        core.setAppsFile(netAppsAppend, netAppsScan, netAppsReadAt);
     }
     core.state().load(netFileRead("state.txt"), day);
     core.seen().load(netFileRead("seen.txt"));

@@ -42,6 +42,7 @@ constexpr uint32_t kSyncHistoryMax = 800;             // H lines taken per sessi
 constexpr size_t kSyncCardsAhead = 64;                // origins whose card went ahead of their posts, remembered
 constexpr uint32_t kSyncUserHistoryMax = 400;         // U post lines taken per session (4 areas x 100)
 constexpr uint32_t kSyncUserRecordsMax = 512;         // U application and vote lines taken per session
+constexpr uint32_t kSyncUserEMax = 64;                // E application and vote lines taken per session; then NAK store
 
 class NetSession {
 public:
@@ -96,6 +97,8 @@ private:
     void takeState(std::string_view rec);
     void takeHistory(std::string_view rec, std::string& line);
     void takeUser(std::string_view rec, std::string& line);
+    bool takeRecord(std::string_view rec);
+    bool sendWalk(size_t& budget, bool& streamed, bool user);
     void ack(std::string_view idx, bool nak, std::string_view reason);
     bool cardAhead(const std::string& postLine);
     void countDone();
@@ -136,13 +139,13 @@ private:
     uint32_t histDays_ = 0;
     HistoryCursor hist_;  // the one walk at a time: history (H), then the User Net pull's posts (U)
     // The User Net pull this side gives (the peer sent UWANT): the asked areas (bit i: userNetAreas()[i]),
-    // where it is in the apps file, the CRCs of the lines given, a batch of held lines read but not sent
-    // yet, and whether the posts (after the applications and votes) or UEND have started or gone.
+    // the apps file offsets of the records held when it started (4 bytes each, at most about 300) and how
+    // far it is through them, and whether the posts (after the applications and votes) or UEND have
+    // started or gone.
     uint8_t uMask_ = 0;
-    size_t uPos_ = 0, uBatchPos_ = 0;
-    std::vector<uint32_t> uSent_;
-    std::vector<std::string> uBatch_;
-    bool uMore_ = true, uPosts_ = false, uDone_ = false;
+    std::vector<uint32_t> uOffs_;
+    size_t uAt_ = 0;
+    bool uListed_ = false, uPosts_ = false, uDone_ = false;
     std::deque<std::pair<uint32_t, std::string>> fetched_;
     // Log index, and whether a nocard NAK for it can be cured: a post whose origin's card the peer has
     // from the handshake or got ahead of it this session. Without one, nocard is final for that entry.
@@ -161,6 +164,7 @@ private:
 
     uint32_t histTaken_ = 0;  // H lines passed to take this session
     uint32_t userPostsTaken_ = 0, userRecsTaken_ = 0;  // U lines taken this session (posts; applications and votes)
+    uint32_t userETaken_ = 0;                          // E application and vote lines taken this session
     uint32_t postsSent_ = 0, postsTaken_ = 0, naks_ = 0, naksSent_ = 0;
 };
 

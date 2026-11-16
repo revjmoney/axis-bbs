@@ -30,7 +30,8 @@
 // comma list of the un_ areas this board carries while it is a member, or "-". The peer answers with U
 // lines: every application and vote it holds, then up to 100 posts per asked area it carries from the
 // last 30 days, oldest first, then UEND, which marks the pull done. A and V records go out only on E
-// and U lines, never on S or H lines.
+// and U lines, never on S or H lines, and E lines with A, V or un_ posts go only to a net2 peer. At
+// most kSyncUserEMax A and V E lines are taken per session; past that they are answered NAK store.
 // BYE <reason> ends the session at any point.
 #include "net/session.h"
 
@@ -136,8 +137,7 @@ void NetSession::fail(const char* why, const char* bye) {
     std::deque<std::pair<uint32_t, bool>>().swap(inFlight_);
     std::vector<std::string>().swap(cardsSent_);
     hist_ = HistoryCursor();
-    std::vector<std::string>().swap(uBatch_);
-    std::vector<uint32_t>().swap(uSent_);
+    std::vector<uint32_t>().swap(uOffs_);
     peerCard_ = NetCard();
 }
 
@@ -428,14 +428,15 @@ void NetSession::takeEntry(std::string_view idx, std::string_view rec, std::stri
         NetNotice nn;
         if (!decode(rec, nn)) reason = kNakBad;
         else core_.takeNotice(nn, peer_);  // a stale notice is still handled
-    } else if (rec[0] == (char)NetKind::App) {
-        NetApp a;
-        if (!decode(rec, a)) reason = kNakBad;
-        else core_.takeApp(a, peer_);  // one already held (or refused by the tally) is still answered ACK
-    } else if (rec[0] == (char)NetKind::Vote) {
-        NetVote v;
-        if (!decode(rec, v)) reason = kNakBad;
-        else core_.takeVote(v, peer_);
+    } else if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {
+        // Capped per session (each costs a check, an append and a log entry): past it the transient
+        // "store" stops the sender, which goes on from there next session.
+        if (userETaken_ >= kSyncUserEMax) {
+            reason = kNakStore;
+        } else {
+            userETaken_++;
+            if (!takeRecord(rec)) reason = kNakBad;  // one held already (or refused by the tally) is ACKed
+        }
     } else {
         reason = kNakBad;
     }
@@ -474,21 +475,30 @@ void NetSession::takeHistory(std::string_view rec, std::string& line) {
     if (t == NetCore::Took::Stored) postsTaken_++;
 }
 
-// A U line: an application or vote (checked by NetCore through the tally), or a post in a User Net area,
-// taken as history (the ingress limit skipped, every other check kept). Each kind is capped per session,
-// like H lines; past the cap the rest are read and dropped.
+// An application or vote record (E or U line), to NetCore, which checks it through the tally. False if
+// it does not decode.
+bool NetSession::takeRecord(std::string_view rec) {
+    if (rec[0] == (char)NetKind::App) {
+        NetApp a;
+        if (!decode(rec, a)) return false;
+        core_.takeApp(a, peer_);
+        return true;
+    }
+    NetVote v;
+    if (!decode(rec, v)) return false;
+    core_.takeVote(v, peer_);
+    return true;
+}
+
+// A U line: an application or vote, or a post in a User Net area, taken as history (the ingress limit
+// skipped, every other check kept). Each kind is capped per session, like H lines; past the cap the
+// rest are read and dropped.
 void NetSession::takeUser(std::string_view rec, std::string& line) {
     if (rec.empty()) return;
     if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {
         if (userRecsTaken_ >= kSyncUserRecordsMax) return;
         userRecsTaken_++;
-        if (rec[0] == (char)NetKind::App) {
-            NetApp a;
-            if (decode(rec, a)) core_.takeApp(a, peer_);
-        } else {
-            NetVote v;
-            if (decode(rec, v)) core_.takeVote(v, peer_);
-        }
+        takeRecord(rec);
         return;
     }
     if (rec[0] != (char)NetKind::Post || userPostsTaken_ >= kSyncUserHistoryMax) return;
@@ -498,6 +508,28 @@ void NetSession::takeUser(std::string_view rec, std::string& line) {
     NetCore::Took t = core_.take(std::move(p), peer_, true);
     if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userPostsTaken_++;
     if (t == NetCore::Took::Stored) postsTaken_++;
+}
+
+// One history walk out, as far as budget and room allow: Sysop Net posts on H lines then HEND, or (user)
+// the User Net pull's posts on U lines then UEND. True once the end line went.
+bool NetSession::sendWalk(size_t& budget, bool& streamed, bool user) {
+    uint32_t now = core_.nowUnix();
+    uint64_t span = (uint64_t)(user ? kSyncHistoryDays : histDays_) * 86400;
+    uint32_t since = now > kNetClockSet && now > span ? (uint32_t)(now - span) : 0;
+    std::string l;
+    while (budget && roomForData()) {
+        if (!(user ? core_.userHistoryNext(hist_, since, uMask_, l) : core_.historyNext(hist_, since, l))) {
+            hist_ = HistoryCursor();
+            send(user ? "UEND" : "HEND");
+            return true;
+        }
+        if (!fits(l)) continue;
+        send(user ? "U " : "H ", l);
+        postsSent_++;
+        budget--;
+        streamed = true;
+    }
+    return false;
 }
 
 void NetSession::tick(uint32_t nowMs, bool heapOk) {
@@ -571,68 +603,34 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
 
     // 2. History, if the peer asked for it, then HEND.
     if (peerWant_ && !histDone_) {
-        uint32_t now = core_.nowUnix();
-        uint64_t span = (uint64_t)histDays_ * 86400;
-        uint32_t since = now > kNetClockSet && now > span ? (uint32_t)(now - span) : 0;
-        std::string l;
-        while (budget && roomForData()) {
-            if (!core_.historyNext(hist_, since, l)) {
-                hist_ = HistoryCursor();
-                send("HEND");
-                histDone_ = true;
-                break;
-            }
-            if (!fits(l)) continue;
-            send("H ", l);
-            postsSent_++;
-            budget--;
-            streamed = true;
-        }
+        histDone_ = sendWalk(budget, streamed, false);
         if (streamed) lastRxMs_ = nowMs;
         if (!histDone_) return;
     }
 
-    // 2b. The User Net pull, if the peer asked for it: the held applications and votes (read from the
-    // apps file in batches), then the posts of the asked areas this board carries, then UEND. It runs
-    // after the history walk, with the same cursor, so a session never runs two walks at once.
+    // 2b. The User Net pull, if the peer asked for it: the held applications and votes (the offsets of
+    // the held ones, listed from RAM once, each line read back and checked), then the posts of the asked
+    // areas this board carries, then UEND. It runs after the history walk, with the same cursor, so a
+    // session never runs two walks at once.
     if (peerUwant_ && !uDone_) {
-        uint32_t now = core_.nowUnix();
-        uint64_t span = (uint64_t)kSyncHistoryDays * 86400;
-        uint32_t since = now > kNetClockSet && now > span ? (uint32_t)(now - span) : 0;
-        std::string l;
-        while (budget && roomForData()) {
-            if (!uPosts_) {
-                if (uBatchPos_ >= uBatch_.size()) {
-                    std::vector<std::string>().swap(uBatch_);
-                    uBatchPos_ = 0;
-                    if (uMore_) uMore_ = core_.userRecordsNext(uPos_, uSent_, uBatch_, kNetPendingBytes);
-                    if (uBatch_.empty() && !uMore_) {
-                        std::vector<uint32_t>().swap(uSent_);
-                        uPosts_ = true;
-                    }
-                    continue;
-                }
-                std::string& r = uBatch_[uBatchPos_++];
-                if (fits(r)) {
-                    send("U ", r);
-                    budget--;
-                    streamed = true;
-                }
-                std::string().swap(r);
-                continue;
+        if (!uPosts_) {
+            if (!uListed_) {
+                uOffs_ = core_.members().offsets();
+                uListed_ = true;
             }
-            if (!core_.userHistoryNext(hist_, since, uMask_, l)) {
-                hist_ = HistoryCursor();
-                send("UEND");
-                uDone_ = true;
-                break;
+            std::string l;
+            while (budget && roomForData() && uAt_ < uOffs_.size()) {
+                if (!core_.userRecord(uOffs_[uAt_++], l) || !fits(l)) continue;  // not held any more
+                send("U ", l);
+                budget--;
+                streamed = true;
             }
-            if (!fits(l)) continue;
-            send("U ", l);
-            postsSent_++;
-            budget--;
-            streamed = true;
+            if (uAt_ >= uOffs_.size()) {
+                std::vector<uint32_t>().swap(uOffs_);
+                uPosts_ = true;
+            }
         }
+        if (uPosts_) uDone_ = sendWalk(budget, streamed, true);
         if (streamed) lastRxMs_ = nowMs;
         if (!uDone_) return;
     }
@@ -643,7 +641,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
     bool nothingPending = held_;  // held by a transient NAK: nothing more this session
     if (!held_ && fetched_.empty() && inFlight_.empty()) {
         // The cursor only moves on acks, so fetching with lines in flight would fetch them again.
-        auto got = core_.pendingFor(peer_, kSyncInFlight);
+        auto got = core_.pendingFor(peer_, kSyncInFlight, peerNet2_);
         nothingPending = got.empty();
         for (auto& e : got) fetched_.emplace_back(e.first, std::move(e.second));
     }
