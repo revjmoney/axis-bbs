@@ -536,15 +536,29 @@ void NetMembers::load(const std::string& text) {
             votes_.erase(votes_.begin() + static_cast<std::ptrdiff_t>(i));
         }
     }
-    // Member pool: votes on sealed apps go first, oldest first. With none sealed left, the newest goes,
-    // as a full table refuses a new vote. Both pools stay sorted oldest first.
+    // Member pool: votes on sealed apps go first, oldest first (no vote on a sealed app counts toward
+    // M, so M stays the same). With none sealed left, the newest member votes move to the outsider
+    // pool, where they still count, as they would have stayed there at run time once votes_ was full.
     while (votes_.size() > kMaxVotes) {
-        size_t victim = sealedVictim();
-        if (victim == votes_.size()) victim = votes_.size() - 1;
-        votes_.erase(votes_.begin() + static_cast<std::ptrdiff_t>(victim));
+        const size_t victim = sealedVictim();
+        if (victim < votes_.size()) {
+            votes_.erase(votes_.begin() + static_cast<std::ptrdiff_t>(victim));
+        } else {
+            outsiders_.push_back(votes_.back());
+            votes_.pop_back();  // sorted oldest first, so this is the newest
+        }
     }
-    // Outsider pool: the oldest goes (none of these voters is in M).
-    while (outsiders_.size() > kMaxOutsiderVotes) outsiders_.erase(outsiders_.begin());
+    // Outsider pool: the oldest vote from a voter outside M goes; votes the tally counts (voter in M)
+    // are never dropped, so the pool may stay over its cap by those alone.
+    while (outsiders_.size() > kMaxOutsiderVotes) {
+        size_t victim = outsiders_.size();
+        for (size_t i = 0; i < outsiders_.size(); i++)
+            if (!inM(m, outsiders_[i].voter) &&
+                (victim == outsiders_.size() || age(outsiders_[i]) < age(outsiders_[victim])))
+                victim = i;
+        if (victim == outsiders_.size()) break;
+        outsiders_.erase(outsiders_.begin() + static_cast<std::ptrdiff_t>(victim));
+    }
     votes_.shrink_to_fit();
 }
 
