@@ -2168,6 +2168,7 @@ struct AxisBridge {
 static AxisBridge axisBridge;
 
 static void answer(WiFiClient incoming);
+static void viewCacheDrop();
 
 static void axisAccept() {
     if (server.hasClient()) answer(server.available());
@@ -3789,6 +3790,7 @@ __attribute__((noinline)) static void axisStart(int i) {
 static void answerIn(WiFiClient incoming, const std::string& giveBack = {});
 
 static void answer(WiFiClient incoming) {
+    viewCacheDrop();  // (any knock on the door: the pass steps aside before a session is made)
     std::string giveBack;
     if (axisServe(incoming, giveBack)) return;
     if (!loginGuard.allowed((uint32_t)incoming.remoteIP(), millis())) {  // too many failed logins from there lately
@@ -6177,10 +6179,22 @@ static void serviceSession(int i) {
 // loop turn: a pack looked at, or 16 KB of one copied; the inflate window only for a deflated piece and only above the fill floor).
 // A pass goes through every *ANSIVIEW door's areas, then deletes copies no pack matches; the next starts 30 minutes after one ends,
 // so new uploads get copied too. A caller arriving drops the pass (and a copy part way); the next idle restarts it.
+#if AXIS_ANSIVIEW
+static std::unique_ptr<axis::bbs::viewcache::Filler> viewFill;
+static uint32_t viewFillNext = 300000;  // the first pass five minutes after boot (after the boot DNS check, which needs TLS room)
+#endif
+// A caller is coming in: the pass gives its memory back now, before the session is made (not a loop turn later), and waits
+// until the board has been idle a while again.
+static void viewCacheDrop() {
+#if AXIS_ANSIVIEW
+    viewFill.reset();
+    viewFillNext = axis::bbs::viewcache::holdForCallers(viewFillNext, millis());
+#endif
+}
 static void viewCacheTick() {
 #if AXIS_ANSIVIEW  // (a build without the viewer has no cache to fill)
-    static std::unique_ptr<axis::bbs::viewcache::Filler> fill;
-    static uint32_t nextMs = 300000;  // the first pass five minutes after boot (after the boot DNS check, which needs TLS room)
+    std::unique_ptr<axis::bbs::viewcache::Filler>& fill = viewFill;
+    uint32_t&       nextMs = viewFillNext;
     uint32_t        now = millis();
     bool            anyone = false;
     for (size_t i = 0; i < sessions.size() && !anyone; i++) anyone = sessionLine(i) != nullptr;
@@ -6189,9 +6203,9 @@ static void viewCacheTick() {
     // The web task (a DNS check, a Discord line) needs the heap the window would hold: the pass steps aside for it too.
     bool webWork = web::working();
     if (anyone || webWork || asFollower() || !storageHasSd() || !boardCfg) {
-        if (fill) {  // dropped (a copy part way is thrown away, the window given back); not back for two minutes
-            fill.reset();
-            if ((int32_t)(nextMs - (now + 120000u)) < 0) nextMs = now + 120000u;
+        if (fill || anyone) {  // dropped (a copy part way is thrown away, the window given back); not back for two minutes,
+            fill.reset();      // and never the moment the last caller hangs up
+            nextMs = axis::bbs::viewcache::holdForCallers(nextMs, now);
         }
         return;
     }
