@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// Encoding, decoding, signing and checking of net records (posts, cards, notices).
+// Encoding, decoding, signing and checking of net records (posts, cards, notices, applications, votes).
 #include "net/record.h"
 
 #include <vector>
@@ -102,7 +102,23 @@ size_t split(std::string_view line, std::string_view* f, size_t max) {
 }
 
 bool validNoticeKind(const std::string& k) {
-    return k == "hold" || k == "kill" || k == "ban" || k == "lift" || k == "limits" || k == "rotate";
+    return k == "hold" || k == "kill" || k == "ban" || k == "lift" || k == "limits" || k == "rotate" ||
+           k == "admit" || k == "deny" || k == "veto" || k == "votes";
+}
+
+// "xx:xx:xx:xx:xx:xx" with hex digits in either case, or empty.
+bool validMac(const std::string& m) {
+    if (m.empty()) return true;
+    if (m.size() != 17) return false;
+    for (size_t i = 0; i < 17; i++) {
+        char c = m[i];
+        if (i % 3 == 2) {
+            if (c != ':') return false;
+        } else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool validPath(const std::string& p) {
@@ -135,6 +151,17 @@ bool validFields(const NetCard& c) {
 
 bool validFields(const NetNotice& n) {
     return validNoticeKind(n.kind) && cleanField(n.target, 40) && cleanField(n.value, 64) && (n.key == 0 || n.key == 1);
+}
+
+bool validFields(const NetApp& a) {
+    return isLowerHex(a.board, 16) && isLowerHex(a.pub, 64) && cleanField(a.name, 36) && cleanField(a.sysop, 36) &&
+           cleanField(a.location, 36) && validMac(a.mac) && a.blurb.size() <= kNetMaxBlurb && noSep(a.blurb) &&
+           a.seq >= 1;
+}
+
+bool validFields(const NetVote& v) {
+    return isLowerHex(v.voter, 16) && isLowerHex(v.pub, 64) && isLowerHex(v.app, 16) && v.appSeq >= 1 &&
+           v.seq >= 1 && v.comment.size() <= kNetMaxComment && noSep(v.comment);
 }
 
 bool sigOk(const std::string& s) { return isLowerHex(s, 128); }
@@ -189,6 +216,42 @@ std::string signedPart(const NetNotice& n) {
     return s;
 }
 
+std::string appId(const NetApp& a) { return a.board + "-a" + u(a.seq); }
+
+std::string signedPart(const NetApp& a) {
+    std::string s(1, (char)NetKind::App);
+    for (const std::string* f : {&a.board, &a.pub, &a.name, &a.sysop, &a.location, &a.mac}) {
+        s += kSep;
+        s += *f;
+    }
+    s += kSep;
+    escapeBody(a.blurb, s);
+    s += kSep;
+    s += u(a.seq);
+    s += kSep;
+    s += u(a.date);
+    return s;
+}
+
+std::string signedPart(const NetVote& v) {
+    std::string s(1, (char)NetKind::Vote);
+    for (const std::string* f : {&v.voter, &v.pub, &v.app}) {
+        s += kSep;
+        s += *f;
+    }
+    s += kSep;
+    s += u(v.appSeq);
+    s += kSep;
+    s += u(v.seq);
+    s += kSep;
+    s += u(v.date);
+    s += kSep;
+    s += v.yes ? 'y' : 'n';
+    s += kSep;
+    escapeBody(v.comment, s);
+    return s;
+}
+
 // ---- encode ----------------------------------------------------------------------------
 
 std::string encode(const NetPost& p) {
@@ -213,6 +276,20 @@ std::string encode(const NetNotice& n) {
     if (!validFields(n)) return "";
     if (!n.sig.empty() && !sigOk(n.sig)) return "";
     std::string line = signedPart(n) + kSep + n.sig;
+    return line.size() > kNetMaxFrame ? std::string() : line;
+}
+
+std::string encode(const NetApp& a) {
+    if (!validFields(a)) return "";
+    if (!a.sig.empty() && !sigOk(a.sig)) return "";
+    std::string line = signedPart(a) + kSep + a.sig;
+    return line.size() > kNetMaxFrame ? std::string() : line;
+}
+
+std::string encode(const NetVote& v) {
+    if (!validFields(v)) return "";
+    if (!v.sig.empty() && !sigOk(v.sig)) return "";
+    std::string line = signedPart(v) + kSep + v.sig;
     return line.size() > kNetMaxFrame ? std::string() : line;
 }
 
@@ -280,6 +357,46 @@ bool decode(std::string_view line, NetNotice& out) {
     return true;
 }
 
+bool decode(std::string_view line, NetApp& out) {
+    if (line.size() > kNetMaxFrame) return false;
+    std::string_view f[11];
+    if (split(line, f, 11) != 11 || f[0] != "A") return false;
+    if (f[7].size() > kNetMaxBlurb * 2) return false;
+    NetApp a;
+    a.board = f[1];
+    a.pub = f[2];
+    a.name = f[3];
+    a.sysop = f[4];
+    a.location = f[5];
+    a.mac = f[6];
+    if (!unescapeBody(f[7], a.blurb)) return false;
+    if (!parseU32(f[8], a.seq) || !parseU32(f[9], a.date)) return false;
+    a.sig = f[10];
+    if (!validFields(a) || !sigOk(a.sig)) return false;
+    out = std::move(a);
+    return true;
+}
+
+bool decode(std::string_view line, NetVote& out) {
+    if (line.size() > kNetMaxFrame) return false;
+    std::string_view f[10];
+    if (split(line, f, 10) != 10 || f[0] != "V") return false;
+    if (f[8].size() > kNetMaxComment * 2) return false;
+    NetVote v;
+    v.voter = f[1];
+    v.pub = f[2];
+    v.app = f[3];
+    if (!parseU32(f[4], v.appSeq) || !parseU32(f[5], v.seq) || !parseU32(f[6], v.date)) return false;
+    if (f[7] == "y") v.yes = true;
+    else if (f[7] == "n") v.yes = false;
+    else return false;
+    if (!unescapeBody(f[8], v.comment)) return false;
+    v.sig = f[9];
+    if (!validFields(v) || !sigOk(v.sig)) return false;
+    out = std::move(v);
+    return true;
+}
+
 // ---- sign / verify ---------------------------------------------------------------------
 
 bool validPost(const NetPost& p) { return validFields(p) && sigOk(p.sig); }
@@ -339,6 +456,40 @@ bool verifyNotice(const NetNotice& n) {
     const std::string& key = revKey(n.key);
     if (!isLowerHex(key, 64) || allZero(key)) return false;
     return verifyHex(key, signedPart(n), n.sig);
+}
+
+bool signApp(NetApp& a, const KeyPair& k) {
+    if (toHex(k.pub, 32) != a.pub || boardId(a.pub) != a.board || !validFields(a)) return false;
+    a.sig.assign(128, '0');  // final length, to check the frame cap before signing
+    if (encode(a).empty()) {
+        a.sig.clear();
+        return false;
+    }
+    a.sig = signHex(k, signedPart(a));
+    return !a.sig.empty();
+}
+
+bool verifyApp(const NetApp& a) {
+    if (!validFields(a) || !sigOk(a.sig)) return false;
+    if (boardId(a.pub) != a.board) return false;
+    return verifyHex(a.pub, signedPart(a), a.sig);
+}
+
+bool signVote(NetVote& v, const KeyPair& k) {
+    if (toHex(k.pub, 32) != v.pub || boardId(v.pub) != v.voter || !validFields(v)) return false;
+    v.sig.assign(128, '0');  // final length, to check the frame cap before signing
+    if (encode(v).empty()) {
+        v.sig.clear();
+        return false;
+    }
+    v.sig = signHex(k, signedPart(v));
+    return !v.sig.empty();
+}
+
+bool verifyVote(const NetVote& v) {
+    if (!validFields(v) || !sigOk(v.sig)) return false;
+    if (boardId(v.pub) != v.voter) return false;
+    return verifyHex(v.pub, signedPart(v), v.sig);
 }
 
 }  // namespace axis::net
