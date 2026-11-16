@@ -10,9 +10,21 @@ CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_ESP32_DEFAULT_CPU_FREQ_240=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_COMPILER_CXX_EXCEPTIONS=y
-CONFIG_COMPILER_CXX_RTTI=y
+
+# Flash space (2026-11-16, measured on the i5 build, app slot 2,359,296 B): ESP-IDF built for size (about 5 KB),
+# no RTTI (nothing uses dynamic_cast or typeid; exceptions stay: 39 KB), log text up to WARN only (the INFO lines
+# are Wi-Fi chatter on serial), no esp_err name table, TLS client only (AXIS never serves TLS): 24 KB together.
+# Rev's picks for margin: silent asserts (a failed check still panics with a backtrace, without the file and line
+# text: 46 KB) and no WPA3 (WPA2 and WPA2/WPA3 mixed networks still work, WPA3-only ones don't: 13.5 KB).
+# A local sdkconfig.<env> made before this keeps the old values: delete it so it is made again from this file.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+# CONFIG_COMPILER_CXX_RTTI is not set
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+# CONFIG_ESP_ERR_TO_NAME_LOOKUP is not set
+CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
+# CONFIG_ESP32_WIFI_ENABLE_WPA3_SAE is not set
 
 # no Bluetooth, no PSRAM (the CYD has none), no core dump (no partition for it)
 # CONFIG_BT_ENABLED is not set
