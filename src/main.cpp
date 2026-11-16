@@ -3790,7 +3790,6 @@ __attribute__((noinline)) static void axisStart(int i) {
 static void answerIn(WiFiClient incoming, const std::string& giveBack = {});
 
 static void answer(WiFiClient incoming) {
-    viewCacheDrop();  // (any knock on the door: the pass steps aside before a session is made)
     std::string giveBack;
     if (axisServe(incoming, giveBack)) return;
     if (!loginGuard.allowed((uint32_t)incoming.remoteIP(), millis())) {  // too many failed logins from there lately
@@ -3804,6 +3803,7 @@ static void answer(WiFiClient incoming) {
     for (size_t i = 0; i < sessions.size() && free < 0; i++)
         if (!sessionLine(i) && (i == 0 || (boardCfg->setupDone && mode == Mode::Normal))) free = (int)i;
     if (free >= 0) {
+        viewCacheDrop();  // a caller gets a session here: the pass steps aside first (not for board probes or net peers above)
         bindSession(free);
         answerIn(incoming, giveBack);
         unbindSession();
