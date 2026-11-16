@@ -945,7 +945,7 @@ static void countCall() {
         statsSave();
     } else statsShare.call(), statsSendNow = true;
 }
-static void countUpload() {
+__attribute__((noinline)) static void countUpload() {
     if (statsOwner()) {
         rollDayCounters();
         dayStats.upload();
@@ -1757,7 +1757,7 @@ static void drawShell() {
 }
 
 // The sysop panel while a caller downloads or uploads: a drippy window with a live progress bar.
-static void drawTransfer() {
+__attribute__((noinline)) static void drawTransfer() {
     wfcOnPanel = false;  // (called from the sessions too: the panel no longer shows the WFC, so @SHOT must not dump it)
     static BigText t;
     const auto&    r = job->request();
@@ -2041,7 +2041,7 @@ static void drainParkedLines() {
     }
 }
 
-static void hangUp() {
+__attribute__((noinline)) static void hangUp() {
     noteDoing("idle");
     viewer.reset();
     job.reset();  // a viewer or job gives the board's inflate window back as it goes
@@ -3716,7 +3716,7 @@ static bool axisEscape(std::string& held, char c, std::string& forward) {
 }
 
 // One slice of a call to another board. True: still on that call, the BBS should not take keys.
-static bool axisPump(int i) {
+__attribute__((noinline)) static bool axisPump(int i) {
     if (!axisBridge.on || axisBridge.session != i || !line || !node) return false;
     bool        timed = millis() - axisBridge.start > 600000;
     bool        gone = !line->carrier() || !axisBridge.remote.connected() || timed;
@@ -3757,7 +3757,7 @@ static bool axisPump(int i) {
     return true;
 }
 
-static void axisStart(int i) {
+__attribute__((noinline)) static void axisStart(int i) {
     if (!node) return;
     if (axisBridge.on) {
         node->axisCallDone(false, "This board is already on a call.");
@@ -4279,7 +4279,7 @@ static void startDoorInner() {
     abortDoor(axis::bbs::Node::DoorEnd::LoadError);
 }
 
-static void startDoor() {
+__attribute__((noinline)) static void startDoor() {
     bool lord = node && node->door().exe == "*LORD";
     if (node) noteDoing(String("door ") + node->door().name.c_str() + " by " + node->handle().c_str());
     noteDoor(axis::bbs::DoorDiag::Running, 0);
@@ -4301,7 +4301,7 @@ static void startDoor() {
     noteZipHeap();
 }
 
-static void finishLord() {
+__attribute__((noinline)) static void finishLord() {
     bool drop = !line || !line->carrier();
     noteDoor(drop ? axis::bbs::DoorDiag::Hangup : axis::bbs::DoorDiag::Quit, 0);
     dropLord();
@@ -4315,7 +4315,7 @@ static void finishLord() {
     sendApp(node->takeOutput());
 }
 
-static void finishViewer() {
+__attribute__((noinline)) static void finishViewer() {
     noteDoor(line && line->carrier() ? axis::bbs::DoorDiag::Quit : axis::bbs::DoorDiag::Hangup, 0);
     releaseDoorSlot();
     logEvent(String("door ") + node->door().id.c_str() + " ended after " + String((millis() - doorStartMs) / 1000) + "s");
@@ -4335,7 +4335,7 @@ static const char* nodeScopeName(const char* what) {
 }
 
 // keystrokes from the caller, already through the telnet filter
-static void callerInput(const std::string& app) {
+__attribute__((noinline)) static void callerInput(const std::string& app) {
     const uint8_t* p = (const uint8_t*)app.data();
     if (node) {
         std::string before = node->handle();
@@ -6001,7 +6001,7 @@ static void ledUpdate() {
 // turn, so a retrain during one still counts).
 #if AXIS_MODEMLINK
 static uint32_t lastRadioMs = 0;
-static void takeLinkReport() {
+__attribute__((noinline)) static void takeLinkReport() {
     axis::net::LinkInfo li;
     if (line && node && boardCfg->modemLink && line->takeLink(li)) {  // (at most one a second per line: TelnetStream::takeLink)
         bool first = !node->viaModem();
@@ -6020,30 +6020,81 @@ static void takeLinkReport() {
     if (node && node->linkRedrawDue(millis())) screenDirty = true;  // the tier changed (at most every 5 s), not every report
 }
 #else
-static void takeLinkReport() {}  // built without the modem link: a radio caller is a plain telnet caller
+__attribute__((noinline)) static void takeLinkReport() {}  // built without the modem link: a radio caller is a plain telnet caller
 #endif
+
+// The caller's line in the cluster's node list (handle and what they are doing). Its own frame: serviceSession is on the
+// stack under every key a caller types (and the screen code below it), so it stays small (2026-11-16: 1.9 KB a turn
+// with these inlined, and a slow call took the loop stack to 284 bytes free).
+__attribute__((noinline)) static void postStatus(int i) {
+    std::string handle = node ? node->handle() : "", activity;
+    if (node) {
+        using S = axis::bbs::Node::State;
+        S st = node->state();
+        activity = (nativeLord || viewer || st == S::Script) ? "Doors" : job ? "Transfer" : st == S::Files ? "Files"
+                 : st == S::Applying ? "Applying" : st == S::Chat ? "Chat" : st == S::Messages ? "Messages" : st == S::Menu ? "Menu"
+                 : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : st == S::Split ? "Split chat"
+                 : st == S::AxisNet ? "Axis Net" : st == S::AxisCall ? "Remote board" : "Online";
+        if (!node->available()) activity += " (DND)";
+        if (!node->linkShown().empty()) activity += "  " + node->linkShown();  // (tier only, at most every 5 s: not a status per report)
+    }
+    Session& me = sessions[(size_t)i];
+    if (handle + "|" + activity != me.lastStatus) {
+        me.lastStatus = handle + "|" + activity;
+        cluster->setStatus(i, handle, activity);
+    }
+}
+// This caller's download or upload, one step (its own frame, as above).
+__attribute__((noinline)) static void serviceJob() {
+    if (job->needsWorkspace()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait up to 60 s)
+        bool busy = axis::bbs::inflate::busy();
+        if (busy && (!line || !line->carrier())) {  // hung up while waiting
+            hangUp();
+            return;
+        }
+        if (busy && !job->waiting) {
+            job->waiting = true;
+            job->waitSince = millis();
+            sendApp("\r\n  Checking your upload, waiting for the ZIP checker...\r\n");
+        }
+        bool late = busy && millis() - job->waitSince >= 60000u;
+        if (!busy || late) {
+            uint8_t *w = nullptr, *st = nullptr;  // late: today's short-memory path (no window)
+            drawTransfer();
+            if (late) logEvent("upload: ZIP window busy");
+            else if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
+            job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
+            noteZipHeap();
+        }
+    }
+    bool running = job->step(millis());
+    if (line) line->flush();
+    if (millis() - jobDrawnMs > 500) {
+        jobDrawnMs = millis();
+        drawTransfer();
+    }
+    if (!running) {
+        const auto& r = job->request();
+        if (r.upload && job->ok()) countUpload();
+        logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
+                 (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
+        noteDoing("idle");
+        if (line && line->carrier()) {
+            node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
+            job.reset();  // gives the inflate window back
+            noteZipHeap();
+            sendApp(node->takeOutput());
+        } else {
+            hangUp();
+        }
+        screenDirty = true;
+    }
+}
 
 // One session's turn: its caller, and its own movie or transfer when it has one.
 static void serviceSession(int i) {
     takeLinkReport();
-    if (cluster) {
-        std::string handle = node ? node->handle() : "", activity;
-        if (node) {
-            using S = axis::bbs::Node::State;
-            S st = node->state();
-            activity = (nativeLord || viewer || st == S::Script) ? "Doors" : job ? "Transfer" : st == S::Files ? "Files"
-                     : st == S::Applying ? "Applying" : st == S::Chat ? "Chat" : st == S::Messages ? "Messages" : st == S::Menu ? "Menu"
-                     : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : st == S::Split ? "Split chat"
-                     : st == S::AxisNet ? "Axis Net" : st == S::AxisCall ? "Remote board" : "Online";
-            if (!node->available()) activity += " (DND)";
-            if (!node->linkShown().empty()) activity += "  " + node->linkShown();  // (tier only, at most every 5 s: not a status per report)
-        }
-        Session& me = sessions[(size_t)i];
-        if (handle + "|" + activity != me.lastStatus) {
-            me.lastStatus = handle + "|" + activity;
-            cluster->setStatus(i, handle, activity);
-        }
-    }
+    if (cluster) postStatus(i);
     if (line) {  // a slow caller (a LoRa radio call): what its line still holds goes out first, and the next screen piece,
                  // movie frame or LORD step waits for room, so the board's loop never waits on one caller's socket
         line->setHold(!job);  // (a transfer's protocol needs each block out before it waits for the answer)
@@ -6054,49 +6105,7 @@ static void serviceSession(int i) {
         if (!job && line->backlog() >= axis::net::TelnetStream::kHoldLow) return;
     }
     if (job) {  // this caller's download or upload
-        if (job->needsWorkspace()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait up to 60 s)
-            bool busy = axis::bbs::inflate::busy();
-            if (busy && (!line || !line->carrier())) {  // hung up while waiting
-                hangUp();
-                return;
-            }
-            if (busy && !job->waiting) {
-                job->waiting = true;
-                job->waitSince = millis();
-                sendApp("\r\n  Checking your upload, waiting for the ZIP checker...\r\n");
-            }
-            bool late = busy && millis() - job->waitSince >= 60000u;
-            if (!busy || late) {
-                uint8_t *w = nullptr, *st = nullptr;  // late: today's short-memory path (no window)
-                drawTransfer();
-                if (late) logEvent("upload: ZIP window busy");
-                else if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
-                job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
-                noteZipHeap();
-            }
-        }
-        bool running = job->step(millis());
-        if (line) line->flush();
-        if (millis() - jobDrawnMs > 500) {
-            jobDrawnMs = millis();
-            drawTransfer();
-        }
-        if (!running) {
-            const auto& r = job->request();
-            if (r.upload && job->ok()) countUpload();
-            logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
-                     (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
-            noteDoing("idle");
-            if (line && line->carrier()) {
-                node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
-                job.reset();  // gives the inflate window back
-                noteZipHeap();
-                sendApp(node->takeOutput());
-            } else {
-                hangUp();
-            }
-            screenDirty = true;
-        }
+        serviceJob();
         return;
     }
     if (nativeLord) {  // this caller is in LORD
