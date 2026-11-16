@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -86,6 +87,10 @@ private:
     Tally count(const std::vector<uint64_t>& m, const App& a) const;
     Status statusIn(const std::vector<uint64_t>& m, uint64_t board) const;
     bool locate(const std::string& line, int& pool, size_t& index) const;
+    bool makeVote(const NetVote& v, Vote& nv, std::string& enc) const;
+    size_t sealedVictim() const;
+    void migrate();
+    static std::tuple<uint32_t, uint64_t, uint64_t, uint32_t, uint32_t, uint32_t> age(const Vote& x);
 
     const NetState& st_;
     std::function<bool(const std::string&)> isRev_;

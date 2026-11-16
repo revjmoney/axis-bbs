@@ -240,85 +240,113 @@ bool NetMembers::takeApp(const NetApp& a, std::string& line) {
     };
     stale(votes_);
     stale(outsiders_);
+    migrate();
     line = std::move(enc);
     return true;
 }
 
-bool NetMembers::takeVote(const NetVote& v, std::string& line) {
-    line.clear();
+std::tuple<uint32_t, uint64_t, uint64_t, uint32_t, uint32_t, uint32_t> NetMembers::age(const Vote& x) {
+    // Oldest first, by date then the fields (the CRC last, so no two held votes tie).
+    return std::make_tuple(x.date, x.voter, x.app, x.appSeq, x.seq, static_cast<uint32_t>(x.crc));
+}
+
+// The checks before the signature: ids, not on itself, not on an app already replaced, encodable.
+bool NetMembers::makeVote(const NetVote& v, Vote& nv, std::string& enc) const {
     uint64_t voter, app;
     if (!parseId(v.voter, voter) || !parseId(v.app, app) || voter == app || v.appSeq == 0) return false;
     if (const App* a = findApp(app))
         if (a->seq > v.appSeq) return false;  // on an app this board has already replaced
-    std::string enc = encode(v);
+    enc = encode(v);
     if (enc.empty()) return false;
-    const uint32_t crc = lineCrc(enc) & 0x7FFFFFFFu;
-
-    auto findIn = [&](std::vector<Vote>& pool) -> Vote* {
-        for (auto& x : pool)
-            if (x.voter == voter && x.app == app && x.appSeq == v.appSeq) return &x;
-        return nullptr;
-    };
-    Vote* inMembers = findIn(votes_);
-    Vote* inOutsiders = findIn(outsiders_);
-    const Vote* old = inMembers ? inMembers : inOutsiders;
-    if (old && (v.seq < old->seq || (v.seq == old->seq && crc <= old->crc))) return false;
-    if (!verifyVote(v)) return false;
-
-    Vote nv{};
+    nv = Vote{};
     nv.voter = voter;
     nv.app = app;
     nv.appSeq = v.appSeq;
     nv.seq = v.seq;
     nv.date = v.date;
-    nv.crc = crc;
+    nv.crc = lineCrc(enc) & 0x7FFFFFFFu;
     nv.yes = v.yes ? 1u : 0u;
+    return true;
+}
 
-    const bool member = statusIn(grow(), voter) == Status::Member;
+// The oldest member-pool vote on an app Rev has sealed, or the pool size if none.
+size_t NetMembers::sealedVictim() const {
+    size_t victim = votes_.size();
+    for (size_t i = 0; i < votes_.size(); i++)
+        if (sealed(votes_[i].app, votes_[i].appSeq) &&
+            (victim == votes_.size() || age(votes_[i]) < age(votes_[victim])))
+            victim = i;
+    return victim;
+}
+
+// Outsider votes whose voter is now a member by the tally move to the member pool while it has room,
+// oldest first. Any left behind still count, and outsider eviction never drops them.
+void NetMembers::migrate() {
+    if (outsiders_.empty() || votes_.size() >= kMaxVotes) return;
+    const std::vector<uint64_t> m = grow();
+    while (votes_.size() < kMaxVotes) {
+        size_t pick = outsiders_.size();
+        for (size_t i = 0; i < outsiders_.size(); i++)
+            if (inM(m, outsiders_[i].voter) &&
+                (pick == outsiders_.size() || age(outsiders_[i]) < age(outsiders_[pick])))
+                pick = i;
+        if (pick == outsiders_.size()) return;
+        votes_.push_back(outsiders_[pick]);
+        outsiders_.erase(outsiders_.begin() + static_cast<std::ptrdiff_t>(pick));
+    }
+}
+
+bool NetMembers::takeVote(const NetVote& v, std::string& line) {
+    line.clear();
+    Vote nv;
+    std::string enc;
+    if (!makeVote(v, nv, enc)) return false;
+
+    auto findIn = [&](std::vector<Vote>& pool) -> Vote* {
+        for (auto& x : pool)
+            if (x.voter == nv.voter && x.app == nv.app && x.appSeq == nv.appSeq) return &x;
+        return nullptr;
+    };
+    Vote* inMembers = findIn(votes_);
+    Vote* inOutsiders = findIn(outsiders_);
+    const Vote* old = inMembers ? inMembers : inOutsiders;
+    if (old && (nv.seq < old->seq || (nv.seq == old->seq && nv.crc <= old->crc))) return false;
+    if (!verifyVote(v)) return false;
+
+    const std::vector<uint64_t> m = grow();
+    const bool member = statusIn(m, nv.voter) == Status::Member;
     std::vector<Vote>& pool = member ? votes_ : outsiders_;
     Vote* same = member ? inMembers : inOutsiders;
     if (same) {
         *same = nv;
-        line = std::move(enc);
-        return true;
-    }
-    if (member && pool.size() >= kMaxVotes) {
-        // Only votes on apps Rev has sealed make room, the oldest first.
-        size_t victim = pool.size();
-        for (size_t i = 0; i < pool.size(); i++) {
-            const Vote& x = pool[i];
-            if (!sealed(x.app, x.appSeq)) continue;
-            if (victim == pool.size()) {
-                victim = i;
-                continue;
-            }
-            const Vote& y = pool[victim];
-            if (std::make_tuple(x.date, x.voter, x.app, x.appSeq) < std::make_tuple(y.date, y.voter, y.app, y.appSeq))
-                victim = i;
+    } else {
+        if (member && pool.size() >= kMaxVotes) {
+            // Only votes on apps Rev has sealed make room, the oldest first.
+            const size_t victim = sealedVictim();
+            if (victim == pool.size()) return false;
+            pool.erase(pool.begin() + static_cast<std::ptrdiff_t>(victim));
+        } else if (!member && pool.size() >= kMaxOutsiderVotes) {
+            // The oldest outsider vote goes, but never one the tally counts (its voter is a member by
+            // now). If none may go, or the new one is the oldest, the new one is refused.
+            size_t victim = pool.size();
+            for (size_t i = 0; i < pool.size(); i++)
+                if (!inM(m, pool[i].voter) && (victim == pool.size() || age(pool[i]) < age(pool[victim])))
+                    victim = i;
+            if (victim == pool.size() || age(nv) < age(pool[victim])) return false;
+            pool.erase(pool.begin() + static_cast<std::ptrdiff_t>(victim));
         }
-        if (victim == pool.size()) return false;
-        pool.erase(pool.begin() + static_cast<std::ptrdiff_t>(victim));
-    } else if (!member && pool.size() >= kMaxOutsiderVotes) {
-        // The oldest outsider vote goes, by date then fields; if that is the new one, it is refused.
-        auto key = [](const Vote& x) {
-            return std::make_tuple(x.date, x.voter, x.app, x.appSeq, x.seq, static_cast<uint32_t>(x.crc));
-        };
-        size_t victim = 0;
-        for (size_t i = 1; i < pool.size(); i++)
-            if (key(pool[i]) < key(pool[victim])) victim = i;
-        if (key(nv) < key(pool[victim])) return false;
-        pool.erase(pool.begin() + static_cast<std::ptrdiff_t>(victim));
+        // The old vote, if any, sits in the other pool: drop it now that the new one has room.
+        if (old) {
+            std::vector<Vote>& other = member ? outsiders_ : votes_;
+            for (size_t i = 0; i < other.size(); i++)
+                if (other[i].voter == nv.voter && other[i].app == nv.app && other[i].appSeq == nv.appSeq) {
+                    other.erase(other.begin() + static_cast<std::ptrdiff_t>(i));
+                    break;
+                }
+        }
+        pool.push_back(nv);
     }
-    // The old vote, if any, sits in the other pool: drop it now that the new one has room.
-    if (old) {
-        std::vector<Vote>& other = member ? outsiders_ : votes_;
-        for (size_t i = 0; i < other.size(); i++)
-            if (other[i].voter == voter && other[i].app == app && other[i].appSeq == v.appSeq) {
-                other.erase(other.begin() + static_cast<std::ptrdiff_t>(i));
-                break;
-            }
-    }
-    pool.push_back(nv);
+    migrate();
     line = std::move(enc);
     return true;
 }
@@ -476,20 +504,48 @@ void NetMembers::load(const std::string& text) {
         NetApp a;
         if (l[0] == static_cast<char>(NetKind::App) && decode(l, a)) takeApp(a, line);
     });
+    // Every vote is checked into one list with no caps (the best one per voter, app and app seq),
+    // split by the tally over the whole set, and the caps are applied last, so line order in the file
+    // does not change what is kept.
+    std::vector<Vote> staged;
     eachLine(text, [&](const std::string& l) {
         NetVote v;
-        if (l[0] == static_cast<char>(NetKind::Vote) && decode(l, v)) takeVote(v, line);
+        Vote nv;
+        std::string enc;
+        if (l[0] != static_cast<char>(NetKind::Vote) || !decode(l, v) || !makeVote(v, nv, enc)) return;
+        size_t at = staged.size();
+        for (size_t i = 0; i < staged.size(); i++)
+            if (staged[i].voter == nv.voter && staged[i].app == nv.app && staged[i].appSeq == nv.appSeq) at = i;
+        if (at < staged.size() &&
+            (nv.seq < staged[at].seq || (nv.seq == staged[at].seq && nv.crc <= staged[at].crc)))
+            return;
+        if (!verifyVote(v)) return;
+        if (at < staged.size())
+            staged[at] = nv;
+        else
+            staged.push_back(nv);
     });
-    // A voter can turn out a member only after its own app's votes are in: move its votes over.
+    std::sort(staged.begin(), staged.end(), [](const Vote& x, const Vote& y) { return age(x) < age(y); });
+    votes_ = std::move(staged);
     const std::vector<uint64_t> m = grow();
-    for (size_t i = 0; i < outsiders_.size() && votes_.size() < kMaxVotes;) {
-        if (inM(m, outsiders_[i].voter)) {
-            votes_.push_back(outsiders_[i]);
-            outsiders_.erase(outsiders_.begin() + static_cast<std::ptrdiff_t>(i));
-        } else {
+    for (size_t i = 0; i < votes_.size();) {
+        if (inM(m, votes_[i].voter)) {
             i++;
+        } else {
+            outsiders_.push_back(votes_[i]);
+            votes_.erase(votes_.begin() + static_cast<std::ptrdiff_t>(i));
         }
     }
+    // Member pool: votes on sealed apps go first, oldest first. With none sealed left, the newest goes,
+    // as a full table refuses a new vote. Both pools stay sorted oldest first.
+    while (votes_.size() > kMaxVotes) {
+        size_t victim = sealedVictim();
+        if (victim == votes_.size()) victim = votes_.size() - 1;
+        votes_.erase(votes_.begin() + static_cast<std::ptrdiff_t>(victim));
+    }
+    // Outsider pool: the oldest goes (none of these voters is in M).
+    while (outsiders_.size() > kMaxOutsiderVotes) outsiders_.erase(outsiders_.begin());
+    votes_.shrink_to_fit();
 }
 
 }  // namespace axis::net
