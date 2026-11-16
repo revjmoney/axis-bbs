@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// Sysop Net areas, NetCore (taking, making, storing and logging net records) and the posting store.
+// Sysop Net and User Net areas, NetCore (taking, making, storing and logging net records) and the
+// posting store.
 #include "net/areas.h"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <ctime>
 #include <initializer_list>
 
+#include "net/crc.h"
 #include "net/revkeys.h"
 
 namespace axis::net {
@@ -129,7 +131,30 @@ const NetArea* sysopNetArea(const std::string& id) {
     return i < 0 ? nullptr : &sysopNetAreas()[(size_t)i];
 }
 
-bool isNetAreaId(const std::string& area) { return area.compare(0, 3, "sn_") == 0; }
+const std::vector<NetArea>& userNetAreas() {
+    static const std::vector<NetArea> areas = {
+        {"un_chat", "User Net: General Chat", false},
+        {"un_tech", "User Net: Tech Help", false},
+        {"un_games", "User Net: Games", false},
+        {"un_files", "User Net: Files", false},
+    };
+    return areas;
+}
+
+bool isUserNetArea(const std::string& id) {
+    for (const NetArea& a : userNetAreas())
+        if (a.id == id) return true;
+    return false;
+}
+
+const NetArea* netArea(const std::string& id) {
+    if (const NetArea* a = sysopNetArea(id)) return a;
+    for (const NetArea& a : userNetAreas())
+        if (a.id == id) return &a;
+    return nullptr;
+}
+
+bool isNetAreaId(const std::string& area) { return area.compare(0, 3, "sn_") == 0 || area.compare(0, 3, "un_") == 0; }
 
 std::string netPostId(const std::string& net) {
     if (net.size() < 3 || net[0] != (char)NetKind::Post || net[1] != kSep) return "";
@@ -180,7 +205,8 @@ uint32_t netSeqStart(uint32_t saved, bool found, uint32_t nowUnix) {
 // ---- NetCore ----
 
 NetCore::NetCore(MessageStore& store, const KeyPair& me, std::function<uint32_t()> nowUnix, OutLog& log)
-    : store_(store), me_(me), now_(std::move(nowUnix)), log_(log) {
+    : store_(store), me_(me), now_(std::move(nowUnix)), log_(log),
+      members_(state_, [this](const std::string& b) { return isRevBoard(b); }) {
     myBoard_ = boardId(toHex(me_.pub, 32));
     // This board's own card and its link peers' cards are never evicted for room.
     state_.setPinned([this](const std::string& b) { return b == myBoard_ || links_.count(b) > 0; });
@@ -203,7 +229,7 @@ void NetCore::log(const std::string& entry) {
 // Moves the body and the line into the stored message, so the post is held once. The line comes
 // back after the store (for the net record); the body does not.
 int NetCore::storePost(NetPost& p, std::string& line) {
-    if (areaIndex(p.area) < 0) return 0;
+    if (!netArea(p.area)) return 0;
     Message m;
     m.from = p.from;
     m.to = p.to;
@@ -247,10 +273,16 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
     // No card is transient (the peer sends it, or it comes later): the sender keeps the post for another session.
     if (!c) return res(Took::Rejected, "rejected signature", kNakNoCard);
     if (!verifyPost(p, c->pub)) return res(Took::Rejected, "rejected signature", kNakSig);
-    // 4. a Sysop Net area, and Rev's board only for the revOnly ones
-    const NetArea* area = sysopNetArea(p.area);
+    // 4. a net area, and Rev's board only for the revOnly ones. A User Net area only while this board
+    // carries it and is a member, from a board that is a member by this board's tally. Both refusals
+    // are permanent: a transient one would hold the sender's whole cursor, Sysop Net posts included.
+    const NetArea* area = netArea(p.area);
     if (!area) return res(Took::Rejected, "rejected area", kNakBad);
     if (area->revOnly && !isRevBoard(p.board)) return res(Took::Rejected, "rejected area", kNakRevOnly);
+    if (isUserNetArea(p.area)) {
+        if (!carries(p.area) || !selfMember()) return res(Took::Rejected, "rejected area", kNakArea);
+        if (members_.status(p.board) != NetMembers::Status::Member) return res(Took::Rejected, "rejected member", kNakMember);
+    }
     // 5. killed
     if (state_.killed(p.id)) return res(Took::Rejected, "rejected killed", kNakKilled);
     // 6. dedupe (it is marked seen only once stored, below). A history post below the seen window
@@ -300,6 +332,53 @@ bool NetCore::takeNotice(const NetNotice& n, const std::string& fromPeer) {
     return true;
 }
 
+// Only the boards the record names are looked at, before and after: a cheap note, not a full scan.
+void NetCore::noteMember(const std::string& who, const std::string& board, NetMembers::Status before) {
+    using S = NetMembers::Status;
+    S after = members_.status(board);
+    if (after == before) return;
+    const char* what = after == S::Member ? "admitted" : after == S::Denied ? "denied" : before == S::Member ? "removed" : nullptr;
+    if (what) onEvent_(who, "member " + board + " " + what, std::string());
+}
+
+// A banned board's records are still held and passed on: the tally makes them count for nothing, and a
+// lift brings them back the same way on every board, whenever the ban reached it.
+bool NetCore::takeApp(const NetApp& a, const std::string& fromPeer) {
+    NetMembers::Status before = onEvent_ ? members_.status(a.board) : NetMembers::Status::None;
+    std::string line;
+    if (!members_.takeApp(a, line)) return false;
+    if (!appsAppend_ || !appsAppend_(line)) appsFailures_++;  // held, but not passed on (resolve reads the file)
+    log("A " + a.board + " " + excludeList({fromPeer, a.board}));
+    if (onEvent_) {
+        onEvent_(fromPeer, "app " + a.board + " " + std::to_string(a.seq), line);
+        noteMember(fromPeer, a.board, before);
+    }
+    return true;
+}
+
+bool NetCore::takeVote(const NetVote& v, const std::string& fromPeer) {
+    NetMembers::Status before = onEvent_ ? members_.status(v.app) : NetMembers::Status::None;
+    std::string line;
+    if (!members_.takeVote(v, line)) return false;
+    if (!appsAppend_ || !appsAppend_(line)) appsFailures_++;
+    log("V " + v.app + " " + v.voter + " " + excludeList({fromPeer, v.voter}));
+    if (onEvent_) {
+        onEvent_(fromPeer, "vote " + v.voter + " on " + v.app + (v.yes ? " yes" : " no"), line);
+        noteMember(fromPeer, v.app, before);
+    }
+    return true;
+}
+
+void NetCore::setUserAreas(std::vector<std::string> carried) {
+    userAreas_.clear();
+    for (std::string& id : carried)
+        if (isUserNetArea(id) && !carries(id)) userAreas_.push_back(std::move(id));
+}
+
+bool NetCore::carries(const std::string& area) const {
+    return std::find(userAreas_.begin(), userAreas_.end(), area) != userAreas_.end();
+}
+
 bool NetCore::setOwnCard(const NetCard& c) {
     if (c.board != myBoard_) return false;
     return takeCard(c, "");
@@ -309,8 +388,9 @@ bool NetCore::originateNotice(const NetNotice& n) { return takeNotice(n, ""); }
 
 std::string NetCore::originate(const std::string& area, const Message& m, int* num) {
     if (num) *num = 0;
-    const NetArea* a = sysopNetArea(area);
+    const NetArea* a = netArea(area);
     if (!a) return "";
+    if (isUserNetArea(area) && (!carries(area) || !selfMember())) return "";
     const NetCard* own = state_.card(myBoard_);
     if (!own) return "";
     if (a->revOnly && !isRevBoard(myBoard_)) return "";
@@ -398,7 +478,7 @@ NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer,
     if (t.empty() || inList(t.back(), peer)) return Res::Skip;
     if (t[0] == "P" && t.size() == 5) {
         const std::string& id = t[3];
-        if (id.size() < 17 || state_.killed(id) || state_.banned(id.substr(0, 16)) || !sysopNetArea(t[1]))
+        if (id.size() < 17 || state_.killed(id) || state_.banned(id.substr(0, 16)) || !netArea(t[1]))
             return Res::Skip;
         Message m;
         if (!store_.read(t[1], std::atoi(t[2].c_str()), m)) return Res::Retry;
@@ -413,8 +493,54 @@ NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer,
         uint32_t seq;
         if (t[1] != "R") line = state_.noticeLine(t[1], t[2]);
         else if (parseSeq(t[2], seq)) line = state_.rotateLine(seq);
+    } else if (t[0] == "A" && t.size() == 3) {
+        if (isHex16(t[1])) line = heldRecord(std::string("A") + kSep + t[1] + kSep, "");
+    } else if (t[0] == "V" && t.size() == 4) {
+        if (isHex16(t[1]) && isHex16(t[2])) line = heldRecord(std::string("V") + kSep + t[2] + kSep, t[1]);
     }
     return line.empty() ? Res::Skip : Res::Ready;  // not held any more (or not an entry): gone
+}
+
+// A scan of the apps file, one line at a time: the cheap prefix test first, then members().holds (which
+// decodes the line). app (a vote's applicant) is checked where it sits in a vote line, after the voter's pub.
+std::string NetCore::heldRecord(const std::string& prefix, const std::string& app) {
+    std::string found;
+    if (!appsScan_) return found;
+    const size_t at = prefix.size() + 64 + 1;
+    appsScan_([&](const std::string& l) {
+        if (l.compare(0, prefix.size(), prefix) != 0) return true;
+        if (!app.empty() &&
+            (l.size() <= at + app.size() || l.compare(at, app.size(), app) != 0 || l[at + app.size()] != kSep))
+            return true;
+        if (members_.holds(l)) found = l;  // the last one held wins
+        return true;
+    });
+    return found;
+}
+
+bool NetCore::userRecordsNext(size_t& pos, std::vector<uint32_t>& sent, std::vector<std::string>& out, size_t maxBytes) {
+    if (!appsScan_) return false;
+    size_t i = 0, bytes = 0;
+    bool more = false;
+    appsScan_([&](const std::string& l) {
+        if (i < pos) {
+            i++;
+            return true;
+        }
+        if (bytes >= maxBytes) {
+            more = true;
+            return false;
+        }
+        pos = ++i;
+        if (l.empty() || (l[0] != (char)NetKind::App && l[0] != (char)NetKind::Vote) || !members_.holds(l)) return true;
+        uint32_t crc = crc32((const uint8_t*)l.data(), l.size());
+        if (std::find(sent.begin(), sent.end(), crc) != sent.end()) return true;
+        sent.push_back(crc);
+        bytes += l.size();
+        out.push_back(l);
+        return true;
+    });
+    return more;
 }
 
 std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::string& peer, size_t max) {
@@ -492,12 +618,14 @@ std::string NetCore::saveCursors() const {
         out += kv.first + " " + std::to_string(kv.second.cursor) + " " + std::to_string(kv.second.lastSync) +
                (kv.second.outbound ? " out " : " in ") + std::to_string(kv.second.sessions) + "\n";
     if (history_ >= 0) out += history_ ? "history 1\n" : "history 0\n";
+    out += userHistory_ ? "uhistory 1\n" : "uhistory 0\n";
     return out;
 }
 
 void NetCore::loadCursors(const std::string& text) {
     links_.clear();
     history_ = -1;
+    userHistory_ = false;
     size_t pos = 0;
     while (pos < text.size()) {
         size_t e = text.find('\n', pos);
@@ -508,6 +636,10 @@ void NetCore::loadCursors(const std::string& text) {
         std::vector<std::string> t = tokens(line);
         if (t.size() == 2 && t[0] == "history" && (t[1] == "0" || t[1] == "1")) {
             history_ = t[1] == "1" ? 1 : 0;
+            continue;
+        }
+        if (t.size() == 2 && t[0] == "uhistory" && (t[1] == "0" || t[1] == "1")) {
+            userHistory_ = t[1] == "1";
             continue;
         }
         Link l;
@@ -529,18 +661,19 @@ void NetCore::loadCursors(const std::string& text) {
 }
 
 void NetCore::dropPost(const std::string& id) {
-    for (const NetArea& a : sysopNetAreas()) {  // each area's headers, one at a time, up to the first hit
-        int num = 0;
-        store_.scanHeaders(a.id, [&](const Message& m) {
-            if (netPostId(m.net) != id) return true;
-            num = m.num;
-            return false;
-        });
-        if (num) {
-            store_.drop(a.id, [&](const Message& m) { return m.num == num && netPostId(m.net) == id; });
-            return;
+    for (const std::vector<NetArea>* family : {&sysopNetAreas(), &userNetAreas()})
+        for (const NetArea& a : *family) {  // each area's headers, one at a time, up to the first hit
+            int num = 0;
+            store_.scanHeaders(a.id, [&](const Message& m) {
+                if (netPostId(m.net) != id) return true;
+                num = m.num;
+                return false;
+            });
+            if (num) {
+                store_.drop(a.id, [&](const Message& m) { return m.num == num && netPostId(m.net) == id; });
+                return;
+            }
         }
-    }
     // Not found (a store whose scan sees only the newest headers): the next trim drops it.
 }
 
@@ -579,22 +712,40 @@ void NetCore::trim(uint32_t nowUnix) {
     seen_.prune(nowDay);
     log_.trimTo(kOutLogKeep);
     for (const NetArea& a : sysopNetAreas()) trimArea(a.id, nowDay, clock);
+    for (const NetArea& a : userNetAreas()) trimArea(a.id, nowDay, clock);
 }
 
 bool NetCore::historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& line) {
+    std::vector<const NetArea*> areas;
+    for (const NetArea& a : sysopNetAreas()) areas.push_back(&a);
+    return walk(c, sinceUnix, areas, kNetHistoryPerArea, line);
+}
+
+// The areas list keeps every User Net area at its own index (nullptr when not walked), so a pick's index
+// means the same area on every call even if what this board carries changes during the walk.
+bool NetCore::userHistoryNext(HistoryCursor& c, uint32_t sinceUnix, uint8_t areaMask, std::string& line) {
+    std::vector<const NetArea*> areas;
+    const std::vector<NetArea>& all = userNetAreas();
+    for (size_t i = 0; i < all.size(); i++) areas.push_back(((areaMask >> i) & 1) && carries(all[i].id) ? &all[i] : nullptr);
+    return walk(c, sinceUnix, areas, kNetUserHistoryPerArea, line);
+}
+
+// One history walk over areas (nullptr entries are skipped), at most perArea posts per area.
+bool NetCore::walk(HistoryCursor& c, uint32_t sinceUnix, const std::vector<const NetArea*>& areas, size_t perArea,
+                   std::string& line) {
     line.clear();
-    const std::vector<NetArea>& areas = sysopNetAreas();
     if (!c.loaded) {
-        // Each area's newest kNetHistoryPerArea net posts by a header scan, as (date, seq, area, number):
-        // 16 bytes each, at most 800 (about 13 KB) for a moment, sorted, then cut to 4 bytes each.
+        // Each area's newest perArea net posts by a header scan, as (date, seq, area, number): 16 bytes
+        // each, at most 800 (about 13 KB) for a moment, sorted, then cut to 4 bytes each.
         struct Pick {
             uint32_t date, seq, area;
             int num;
         };
         std::vector<Pick> all;
         for (size_t a = 0; a < areas.size(); a++) {
+            if (!areas[a]) continue;
             size_t from = all.size();
-            store_.scanHeaders(areas[a].id, [&](const Message& m) {
+            store_.scanHeaders(areas[a]->id, [&](const Message& m) {
                 std::string id = netPostId(m.net);
                 uint32_t seq = 0;
                 if (id.size() < 18 || !parseSeq(id.substr(17), seq) || m.num <= 0 || m.num >= (1 << 28)) return true;
@@ -602,7 +753,7 @@ bool NetCore::historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& lin
                 // minute of slack keeps posts from the edge of the window.
                 uint32_t date = netDateUnix(m.date);
                 if (sinceUnix && date + 60 < sinceUnix) return true;
-                if (all.size() - from == kNetHistoryPerArea) all.erase(all.begin() + (long)from);  // keep the newest
+                if (all.size() - from == perArea) all.erase(all.begin() + (long)from);  // keep the newest
                 all.push_back(Pick{date, seq, (uint32_t)a, m.num});
                 return true;
             });
@@ -628,7 +779,7 @@ bool NetCore::historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& lin
         uint32_t pick = c.picks[c.pos++];
         size_t a = pick >> 28;
         Message m;
-        if (a >= areas.size() || !store_.read(areas[a].id, (int)(pick & 0x0FFFFFFFu), m)) continue;
+        if (a >= areas.size() || !areas[a] || !store_.read(areas[a]->id, (int)(pick & 0x0FFFFFFFu), m)) continue;
         std::string id = netPostId(m.net);
         if (id.size() < 17 || state_.held(id) || state_.killed(id) || state_.banned(id.substr(0, 16))) continue;
         line = std::move(m.net);

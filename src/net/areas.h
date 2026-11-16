@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The Sysop Net message areas and NetCore, each board's share of the net: it takes posts, cards
-// and Rev's notices from peers, makes this board's own posts, stores them in the message base and
-// logs what to pass on for its link peers. NetPostingStore wraps the board's message store so
-// posting into a Sysop Net area goes out on the net and held or killed posts stay hidden.
+// The Sysop Net and User Net message areas and NetCore, each board's share of the net: it takes
+// posts, cards, Rev's notices, User Net applications and votes from peers, makes this board's own
+// posts, stores them in the message base and logs what to pass on for its link peers.
+// NetPostingStore wraps the board's message store so posting into a net area goes out on the net
+// and held or killed posts stay hidden.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include "bbs/msgbase.h"
+#include "net/members.h"
 #include "net/record.h"
 #include "net/outlog.h"
 #include "net/sign.h"
@@ -29,7 +31,11 @@ struct NetArea {
 // The four Sysop Net areas, in menu order.
 const std::vector<NetArea>& sysopNetAreas();
 const NetArea* sysopNetArea(const std::string& id);  // nullptr when id is not one of them
-bool isNetAreaId(const std::string& area);           // starts with "sn_"
+// The four User Net areas, in menu order (none Rev-only).
+const std::vector<NetArea>& userNetAreas();
+bool isUserNetArea(const std::string& id);      // one of userNetAreas
+const NetArea* netArea(const std::string& id);  // either family; nullptr when id is neither
+bool isNetAreaId(const std::string& area);      // starts with "sn_" or "un_"
 
 // The post id held in a Message's net field (the whole line or the headers-only start). "" if none.
 std::string netPostId(const std::string& net);
@@ -53,13 +59,14 @@ constexpr size_t kNetPendingBytes = 12 * 1024;  // pendingFor stops once its lin
 constexpr uint32_t kNetClockSet = 1700000000;   // below this the board's clock is not set
 constexpr uint8_t kNetReadStrikes = 3;          // pendingFor calls stuck on an unreadable post before it is gone
 constexpr size_t kNetHistoryPerArea = 200;      // posts per area a new board's history pull gets at most
+constexpr size_t kNetUserHistoryPerArea = 100;  // posts per User Net area a User Net pull gets at most
 constexpr uint8_t kNetNakStrikes = 3;           // sessions in a row a transient NAK may hold an entry
 constexpr uint8_t kNetTrustSessions = 2;        // completed sessions before an inbound-only link peer is trusted
 
 // The words a receiver puts after NAK <index>. Permanent ones move the sender's cursor past the entry;
 // transient ones (nocard, store) do not: the sender sends nothing more that session and tries the
 // entry again next time. Any other word (an older board's) counts as permanent.
-constexpr const char* kNakBad = "bad";          // not a valid record, a bad path, not a Sysop Net area
+constexpr const char* kNakBad = "bad";          // not a valid record, a bad path, not a net area
 constexpr const char* kNakDate = "date";        // dated outside the keep window (with a clock)
 constexpr const char* kNakBanned = "banned";    // its board is banned
 constexpr const char* kNakRejected = "rejected";  // refused by this board's own block list
@@ -69,11 +76,14 @@ constexpr const char* kNakKilled = "killed";    // killed by Rev
 constexpr const char* kNakLimited = "limited";  // over the origin's daily ingress limit
 constexpr const char* kNakNoCard = "nocard";    // transient: the origin's card is not held here
 constexpr const char* kNakStore = "store";      // transient: the message base did not take it
+constexpr const char* kNakArea = "area";        // a User Net area this board does not carry, or it is no member
+constexpr const char* kNakMember = "member";    // a User Net post from a board that is no member by the tally here
 bool netNakTransient(std::string_view word);
 
-// Where a history walk is: the posts to send, merged across every Sysop Net area oldest first, as
+// Where a history walk is: the posts to send, merged across the walked areas oldest first, as
 // (area index << 28 | message number), and how many went. Only these numbers are kept (at most
-// kNetHistoryPerArea per area, 4 bytes each), never whole messages.
+// kNetHistoryPerArea per Sysop Net area, kNetUserHistoryPerArea per User Net area, 4 bytes each),
+// never whole messages. A session runs one walk at a time, with one cursor.
 struct HistoryCursor {
     bool loaded = false;  // picks holds the walk
     size_t pos = 0;
@@ -88,6 +98,9 @@ struct HistoryCursor {
 //   C <board> <exclude>                    the board's current card
 //   N <group> <target> <exclude>           the notice stored now for that target
 //   N R <seq> <exclude>                    a rotate notice from the chain
+//   A <board> <exclude>                    the board's User Net application held now
+//   V <app> <voter> <exclude>              the voter's vote on that applicant held now
+// Applications and votes are read back from the apps file (setAppsFile), never held whole in RAM.
 // exclude is a comma list of boards not to send it to, or "-". Each link peer reads the log from
 // its own cursor; RAM stays small whatever the number of posts or boards.
 class NetCore {
@@ -105,10 +118,28 @@ public:
     const NetSeen& seen() const { return seen_; }
     const std::string& board() const { return myBoard_; }
     bool isRevBoard(const std::string& board) const;  // its card's pub is one of Rev's keys
+    // The User Net tally (applications, votes and Rev's member notices).
+    NetMembers& members() { return members_; }
+    const NetMembers& members() const { return members_; }
+    // The User Net areas this board carries (ids from userNetAreas; others are dropped). Empty: User Net off.
+    void setUserAreas(std::vector<std::string> carried);
+    const std::vector<std::string>& userAreas() const { return userAreas_; }
+    bool carries(const std::string& area) const;
+    // This board is a User Net member by its own tally.
+    bool selfMember() const { return members_.status(myBoard_) == NetMembers::Status::Member; }
+    // /net/apps.txt: append adds one line (false on failure); scan calls each on the file's lines in
+    // order until it returns false. The file is never read whole.
+    using AppsLineFn = std::function<bool(const std::string& line)>;
+    void setAppsFile(std::function<bool(const std::string& line)> append,
+                     std::function<void(const AppsLineFn& each)> scan) {
+        appsAppend_ = std::move(append);
+        appsScan_ = std::move(scan);
+    }
 
     // A post from a peer (fromPeer may be empty). Stores it and logs it to pass on. Taken by value
     // so the caller can move it in and the body is held once. With the clock set, a post dated
-    // more than keepDays ago or more than a day ahead is Rejected.
+    // more than keepDays ago or more than a day ahead is Rejected. A User Net post is refused (area)
+    // unless this board carries its area and is a member, and (member) unless its board is a member.
     // history: a post from a new board's history pull; it skips the ingress limit (the session
     // caps how many it takes), every other check still runs.
     // nak, if given, gets the NAK word for a refusal (kNak*), or nullptr when Stored or Duplicate.
@@ -116,11 +147,18 @@ public:
     // A card or notice from a peer. True if it changed the state (then it is logged to pass on).
     bool takeCard(const NetCard& c, const std::string& fromPeer);
     bool takeNotice(const NetNotice& n, const std::string& fromPeer);
+    // A User Net application or vote, from a peer or made here (fromPeer ""). Verified and counted by
+    // members(); when it changed something its line is appended to the apps file, logged to pass on and
+    // noted (then "member <board> admitted|denied|removed" when the board it names changed status).
+    // True if it changed something.
+    bool takeApp(const NetApp& a, const std::string& fromPeer);
+    bool takeVote(const NetVote& v, const std::string& fromPeer);
     // This board's own card and Rev's notices made here; both already signed by the caller.
     bool setOwnCard(const NetCard& c);
     bool originateNotice(const NetNotice& n);
     // Builds, signs, stores and logs a post from this board. Returns its id, or "" on failure.
-    // num, if given, gets the stored message number.
+    // num, if given, gets the stored message number. A User Net area only while this board is a
+    // member and carries it.
     std::string originate(const std::string& area, const bbs::Message& m, int* num = nullptr);
 
     // A board we sync with, in one of two pools. Outbound (kMaxOutboundPeers): boards this board
@@ -151,8 +189,8 @@ public:
     // has now held it kNetNakStrikes sessions in a row (the sender cannot fix it, say it lacks the
     // origin's card too), then it moves past. True if the cursor moved.
     bool nakedTransient(const std::string& peer, uint32_t index);
-    // "<peer> <index> <last sync unix> <out|in> <completed sessions>" per line, and "history <0|1>"
-    // once whether the history pull is done is known. On load the pool field is optional: without it a
+    // "<peer> <index> <last sync unix> <out|in> <completed sessions>" per line, "history <0|1>" once
+    // whether the history pull is done is known, and "uhistory <0|1>" (the User Net pull). On load the pool field is optional: without it a
     // peer goes to the outbound pool while it has room, else the inbound one. Without the sessions
     // field (an older file) a peer counts as trusted: it was a link peer before this build.
     std::string saveCursors() const;
@@ -174,11 +212,28 @@ public:
     void historyGot() { history_ = 1; }
     // -1: not known yet (nothing saved), 0: not done, 1: done.
     int historyState() const { return history_; }
+
+    // The User Net pull (UWANT, U, UEND), its own flag: asked until a pull reaches UEND. Not done on a
+    // board with nothing saved, so a board upgraded from v0.53 asks once. The host resets it when this
+    // board becomes a member or starts carrying another area.
+    bool needUserHistory() const { return !userHistory_; }
+    void userHistoryGot() { userHistory_ = true; }
+    void resetUserHistory() { userHistory_ = false; }
+    // For a User Net pull: the held application and vote lines of the apps file, from line index pos on,
+    // added to out until their size reaches maxBytes; pos moves past the lines looked at. sent holds the
+    // CRC-32 of each line already given out, so a line the file holds twice goes once. False once the
+    // file has no more lines.
+    bool userRecordsNext(size_t& pos, std::vector<uint32_t>& sent, std::vector<std::string>& out, size_t maxBytes);
+    // For a User Net pull: like historyNext, over the User Net areas this board carries whose bit is set
+    // in areaMask (bit i: userNetAreas()[i]), the newest kNetUserHistoryPerArea per area.
+    bool userHistoryNext(HistoryCursor& c, uint32_t sinceUnix, uint8_t areaMask, std::string& line);
     // The clock NetCore was given (unix time); below kNetClockSet it is not set.
     uint32_t nowUnix() const { return now_(); }
 
     // Log appends that failed (the entry is then never passed on), for the host to report.
     uint32_t appendFailures() const { return appendFailures_; }
+    // Applications and votes taken whose line could not be added to the apps file (held, never passed on).
+    uint32_t appsFailures() const { return appsFailures_; }
 
     // The net record (net/netrecord.h): called for every take result, card or notice applied and post made here.
     // who is the peer it came from ("" for this board), what says what happened, signedLine is the record's encoded
@@ -231,6 +286,12 @@ private:
     enum class Res { Ready, Skip, Retry };  // send it; excluded or gone for good; try again later
     int storePost(NetPost& p, std::string& line);
     Res resolve(const std::string& entry, const std::string& peer, std::string& line);
+    // The last apps file line held now (members().holds) that starts with prefix and, if app is not
+    // empty, names that applicant (a vote).
+    std::string heldRecord(const std::string& prefix, const std::string& app);
+    void noteMember(const std::string& who, const std::string& board, NetMembers::Status before);
+    bool walk(HistoryCursor& c, uint32_t sinceUnix, const std::vector<const NetArea*>& areas, size_t perArea,
+              std::string& line);
     bool clockSet() const { return now_() > kNetClockSet; }
     void dropPost(const std::string& id);
     bool stored(const std::string& area, const std::string& id);  // the post is in that area (a header scan)
@@ -242,6 +303,7 @@ private:
     OutLog& log_;
     std::string myBoard_;
     NetState state_;
+    NetMembers members_;  // after state_: it reads the state
     NetSeen seen_;
     Ingress ingress_;
     uint32_t seq_ = 1;
@@ -251,13 +313,17 @@ private:
     std::map<std::string, Link> links_;
     std::string firstPeer_;
     int8_t history_ = -1;  // see historyState
-    uint32_t appendFailures_ = 0;
+    bool userHistory_ = false;  // a User Net pull reached UEND
+    std::vector<std::string> userAreas_;
+    std::function<bool(const std::string&)> appsAppend_;
+    std::function<void(const AppsLineFn&)> appsScan_;
+    uint32_t appendFailures_ = 0, appsFailures_ = 0;
     EventFn onEvent_;
     std::function<bool(const std::string&)> blocked_, hidden_;
 };
 
-// The board's message store with the net on top: a post into an sn_ area goes through
-// NetCore::originate, and held, killed or locally hidden posts in sn_ areas are hidden. Everything else passes through.
+// The board's message store with the net on top: a post into an sn_ or un_ area goes through
+// NetCore::originate, and held, killed or locally hidden posts in those areas are hidden. Everything else passes through.
 class NetPostingStore : public bbs::MessageStore {
 public:
     NetPostingStore(bbs::MessageStore& inner, NetCore& core) : inner_(inner), core_(core) {}

@@ -1204,7 +1204,11 @@ struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for
     using axis::bbs::FileMessageStore::FileMessageStore;
     int post(const std::string& area, const axis::bbs::Message& m) override {
         int n = axis::bbs::FileMessageStore::post(area, m);
-        if (n && area != "email" && area.compare(0, 3, "sn_") != 0) countPost();  // net posts are not this board's
+#if AXIS_NETS
+        if (n && area != "email" && !axis::net::isNetAreaId(area)) countPost();  // net posts are not this board's
+#else
+        if (n && area != "email") countPost();
+#endif
         return n;
     }
 };
@@ -1214,13 +1218,13 @@ static axis::bbs::RemoteMessageStore remoteMsgs([](const std::string& req, std::
 });
 #if AXIS_NETS
 static axis::bbs::MessageStore* netMessages();  // the store with Sysop Net on top, once the net runs (main only)
-// The board's store while Sysop Net is not on top of it: a post into a Sysop Net area (sn_) is refused, so none is
+// The board's store while the net is not on top of it: a post into a net area (sn_ or un_) is refused, so none is
 // ever stored unsigned. NetCore itself writes to localMsgs, never through this.
 struct NoNetMsgs : axis::bbs::MessageStore {
     std::vector<axis::bbs::Message> headers(const std::string& area) override { return localMsgs->headers(area); }
     bool read(const std::string& area, int num, axis::bbs::Message& out) override { return localMsgs->read(area, num, out); }
     int  post(const std::string& area, const axis::bbs::Message& m) override {
-        return area.compare(0, 3, "sn_") == 0 ? 0 : localMsgs->post(area, m);
+        return axis::net::isNetAreaId(area) ? 0 : localMsgs->post(area, m);
     }
     int drop(const std::string& area, const std::function<bool(const axis::bbs::Message&)>& gone) override {
         return localMsgs->drop(area, gone);
@@ -2296,6 +2300,50 @@ static bool netFileWrite(const std::string& name, const std::string& text) {
     return ::rename(tmp.c_str(), path.c_str()) == 0;
 }
 
+// /net/apps.txt, the signed User Net applications and votes (net/members.h holds only their compact fields): one
+// line appended per record taken, read back a line at a time and never whole (it can reach about 140 KB).
+static bool netAppsAppend(const std::string& line) {
+    FILE* f = std::fopen(netPath("apps.txt").c_str(), "ab");
+    if (!f) return false;
+    bool ok = std::fwrite(line.data(), 1, line.size(), f) == line.size() && std::fputc('\n', f) != EOF;
+    return std::fclose(f) == 0 && ok;
+}
+
+// Each line in order (no line break, no empty lines) until each returns false. A line longer than a frame is passed
+// over; so is nothing else, so the same file always gives the same lines at the same places.
+static void netAppsScan(const axis::net::NetCore::AppsLineFn& each) {
+    FILE* f = std::fopen(netPath("apps.txt").c_str(), "rb");
+    if (!f) return;
+    std::string line;
+    char        buf[256];
+    size_t      r;
+    bool        skip = false, go = true;
+    auto        done = [&] {
+        if (!skip && !line.empty() && line.back() == '\r') line.pop_back();
+        if (!skip && !line.empty()) go = each(line);
+        skip = false;
+        line.clear();
+    };
+    while (go && (r = std::fread(buf, 1, sizeof buf, f)) > 0) {
+        size_t i = 0;
+        while (go && i < r) {
+            const char* nl = (const char*)std::memchr(buf + i, '\n', r - i);
+            size_t      seg = nl ? (size_t)(nl - (buf + i)) : r - i;
+            if (!skip && line.size() + seg > axis::net::kNetMaxFrame + 1) {
+                skip = true;
+                std::string().swap(line);
+            }
+            if (!skip) line.append(buf + i, seg);
+            i += seg;
+            if (!nl) break;
+            i++;
+            done();
+        }
+    }
+    if (go) done();  // a last line without its line break
+    std::fclose(f);
+}
+
 // /net/outlog.txt for FileOutLog (net/outlog.h). Reads are mostly in order, so the line and byte offset the last
 // read ended at are kept and the next read starts there. No file stays open between calls.
 struct NetLogFile {
@@ -2664,7 +2712,7 @@ static axis::net::NetCard netCardNow(const NetHost& h) {
     c.mac = netField(WiFi.macAddress().c_str(), 17);
     c.sysop = netField(boardCfg->netSysopName.empty() ? boardCfg->sysopHandle : boardCfg->netSysopName, 40);
     c.location = netField(boardCfg->netLocation, 40);
-    c.links = "internet";
+    c.links = "internet,net2";  // net2: a Phase 2 board (User Net); peers send it UWANT
     return c;
 }
 
@@ -2997,7 +3045,7 @@ static void netPosted(NetHost& h) {
 struct NetStore : axis::net::NetPostingStore {
     using axis::net::NetPostingStore::NetPostingStore;
     int post(const std::string& area, const axis::bbs::Message& m) override {
-        if (netHost && area.compare(0, 3, "sn_") == 0) netSeqFloor(*netHost);
+        if (netHost && axis::net::isNetAreaId(area)) netSeqFloor(*netHost);
         int n = axis::net::NetPostingStore::post(area, m);
         if (netHost) netPosted(*netHost);
         return n;
@@ -3476,6 +3524,7 @@ static bool netStart() {
             });
         core.setLocalFilter([hp](const std::string& b) { return netHas(hp->blocks, b); },
                             [hp](const std::string& id) { return netHas(hp->hides, id); });
+        core.setAppsFile(netAppsAppend, netAppsScan);
     }
     core.state().load(netFileRead("state.txt"), day);
     core.seen().load(netFileRead("seen.txt"));

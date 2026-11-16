@@ -10,9 +10,10 @@
 //   answerer -> PROOF <sig of transcript A>           (only once the dialer's proof checks out)
 // where transcript R = "AXISNET2|R|<dialer nonce>|<answerer nonce>|<dialer board>|<answerer board>".
 // Then in each direction, in this order:
-//   SEQ <highSeq> [WANT 30]
+//   SEQ <highSeq> [WANT 30] [UWANT <areas>]
 //   S <record>* SEND           (the snapshot, maybe empty)
 //   H <post>* HEND             (only if the peer sent WANT)
+//   U <record>* UEND           (only if the peer sent UWANT)
 //   E <index> <record>*        (answered by ACK <index> or NAK <index> <reason>)
 //   DONE
 // Before the first E post of an origin board in a session, the sender puts that board's card on an
@@ -23,6 +24,13 @@
 // so the cursor moves past it at once.
 // WANT goes out until a history pull has finished (NetCore::needHistory); HEND after at least one H
 // line marks it finished, so a pull cut short is asked for again next session (dedupe drops repeats).
+// H lines carry Sysop Net posts only, exactly as in v0.53.
+// The User Net pull has its own flag (NetCore::needUserHistory): UWANT goes out, before SEND, only to a
+// peer whose card has the token net2 in its links (a v0.53 board never sees UWANT or U). <areas> is a
+// comma list of the un_ areas this board carries while it is a member, or "-". The peer answers with U
+// lines: every application and vote it holds, then up to 100 posts per asked area it carries from the
+// last 30 days, oldest first, then UEND, which marks the pull done. A and V records go out only on E
+// and U lines, never on S or H lines.
 // BYE <reason> ends the session at any point.
 #include "net/session.h"
 
@@ -64,6 +72,18 @@ void verbOf(std::string_view l, std::string_view& verb, std::string_view& rest) 
 // A record this side may put on the wire: with any prefix (at most 32 characters) it stays within
 // what a receiver takes.
 bool fits(const std::string& rec) { return !rec.empty() && rec.size() <= kNetMaxFrame; }
+
+// tok is one of the comma separated entries of list (a card's links).
+bool hasToken(const std::string& list, std::string_view tok) {
+    size_t pos = 0;
+    while (pos <= list.size()) {
+        size_t e = list.find(',', pos);
+        if (e == std::string::npos) e = list.size();
+        if (std::string_view(list).substr(pos, e - pos) == tok) return true;
+        pos = e + 1;
+    }
+    return false;
+}
 
 }  // namespace
 
@@ -116,6 +136,8 @@ void NetSession::fail(const char* why, const char* bye) {
     std::deque<std::pair<uint32_t, bool>>().swap(inFlight_);
     std::vector<std::string>().swap(cardsSent_);
     hist_ = HistoryCursor();
+    std::vector<std::string>().swap(uBatch_);
+    std::vector<uint32_t>().swap(uSent_);
     peerCard_ = NetCard();
 }
 
@@ -213,6 +235,7 @@ bool NetSession::hello(const std::string& l) {
     wasLink_ = core_.isLinkPeer(peer_);
     trusted_ = core_.trustedPeer(peer_);
     peerNonce_ = nonce;
+    peerNet2_ = hasToken(c.links, "net2");  // a Phase 2 board: it gets UWANT (the card is let go at enterSync)
     peerCard_ = std::move(c);
     return true;
 }
@@ -287,6 +310,28 @@ void NetSession::syncLine(std::string& l) {
         deadline_ = kSyncDeadlineMs;  // a history pull; a stranger's address still cools down afterwards
         return;
     }
+    if (verb == "U") {
+        if (!sentUwant_ || peerUend_) return fail("bad line", "bad");  // only when asked for
+        return takeUser(rest, l);
+    }
+    if (verb == "UWANT") {
+        if (peerUwant_ || peerSend_ || rest.empty()) return fail("bad line", "bad");
+        peerUwant_ = true;
+        uMask_ = 0;
+        if (rest != "-") {  // area ids this side does not know are passed over
+            const std::vector<NetArea>& areas = userNetAreas();
+            std::string_view list = rest;
+            while (!list.empty()) {
+                size_t c = list.find(',');
+                std::string_view id = list.substr(0, c);
+                list = c == std::string_view::npos ? std::string_view() : list.substr(c + 1);
+                for (size_t i = 0; i < areas.size(); i++)
+                    if (id == areas[i].id) uMask_ |= (uint8_t)(1u << i);
+            }
+        }
+        deadline_ = kSyncDeadlineMs;  // a pull, as for WANT
+        return;
+    }
     if (!rest.empty()) return fail("bad line", "bad");
     if (verb == "SEND") {
         if (peerSend_) return fail("bad line", "bad");
@@ -298,6 +343,12 @@ void NetSession::syncLine(std::string& l) {
         peerHend_ = true;
         // The whole pull came. With no H line at all the peer had nothing to give: ask the next one.
         if (histTaken_ > 0) core_.historyGot();
+        return;
+    }
+    if (verb == "UEND") {
+        if (!sentUwant_ || peerUend_) return fail("bad line", "bad");
+        peerUend_ = true;
+        core_.userHistoryGot();  // the pull reached its end: done, whatever it held
         return;
     }
     if (verb == "DONE") {
@@ -377,6 +428,14 @@ void NetSession::takeEntry(std::string_view idx, std::string_view rec, std::stri
         NetNotice nn;
         if (!decode(rec, nn)) reason = kNakBad;
         else core_.takeNotice(nn, peer_);  // a stale notice is still handled
+    } else if (rec[0] == (char)NetKind::App) {
+        NetApp a;
+        if (!decode(rec, a)) reason = kNakBad;
+        else core_.takeApp(a, peer_);  // one already held (or refused by the tally) is still answered ACK
+    } else if (rec[0] == (char)NetKind::Vote) {
+        NetVote v;
+        if (!decode(rec, v)) reason = kNakBad;
+        else core_.takeVote(v, peer_);
     } else {
         reason = kNakBad;
     }
@@ -415,6 +474,32 @@ void NetSession::takeHistory(std::string_view rec, std::string& line) {
     if (t == NetCore::Took::Stored) postsTaken_++;
 }
 
+// A U line: an application or vote (checked by NetCore through the tally), or a post in a User Net area,
+// taken as history (the ingress limit skipped, every other check kept). Each kind is capped per session,
+// like H lines; past the cap the rest are read and dropped.
+void NetSession::takeUser(std::string_view rec, std::string& line) {
+    if (rec.empty()) return;
+    if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {
+        if (userRecsTaken_ >= kSyncUserRecordsMax) return;
+        userRecsTaken_++;
+        if (rec[0] == (char)NetKind::App) {
+            NetApp a;
+            if (decode(rec, a)) core_.takeApp(a, peer_);
+        } else {
+            NetVote v;
+            if (decode(rec, v)) core_.takeVote(v, peer_);
+        }
+        return;
+    }
+    if (rec[0] != (char)NetKind::Post || userPostsTaken_ >= kSyncUserHistoryMax) return;
+    NetPost p;
+    if (!decode(rec, p) || !isUserNetArea(p.area)) return;
+    std::string().swap(line);  // rec is no longer looked at
+    NetCore::Took t = core_.take(std::move(p), peer_, true);
+    if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userPostsTaken_++;
+    if (t == NetCore::Took::Stored) postsTaken_++;
+}
+
 void NetSession::tick(uint32_t nowMs, bool heapOk) {
     if (failed_ || done()) return;
     if (!started_) {
@@ -440,6 +525,18 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
             send("WANT " + std::to_string(kSyncHistoryDays));
             sentWant_ = true;
             deadline_ = kSyncDeadlineMs;  // a history pull may take the full deadline
+        }
+        // The User Net pull, only from a Phase 2 peer. Posts are asked for only while this board is a
+        // member (a board that is not would refuse them); applications and votes always.
+        if (peerNet2_ && core_.needUserHistory()) {
+            std::string l = "UWANT ";
+            size_t at = l.size();
+            if (!core_.userAreas().empty() && core_.selfMember())
+                for (const std::string& a : core_.userAreas()) l += (l.size() > at ? "," : "") + a;
+            if (l.size() == at) l += "-";
+            send(l);
+            sentUwant_ = true;
+            deadline_ = kSyncDeadlineMs;
         }
     }
     if (!peerSeq_) return;
@@ -493,6 +590,51 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         }
         if (streamed) lastRxMs_ = nowMs;
         if (!histDone_) return;
+    }
+
+    // 2b. The User Net pull, if the peer asked for it: the held applications and votes (read from the
+    // apps file in batches), then the posts of the asked areas this board carries, then UEND. It runs
+    // after the history walk, with the same cursor, so a session never runs two walks at once.
+    if (peerUwant_ && !uDone_) {
+        uint32_t now = core_.nowUnix();
+        uint64_t span = (uint64_t)kSyncHistoryDays * 86400;
+        uint32_t since = now > kNetClockSet && now > span ? (uint32_t)(now - span) : 0;
+        std::string l;
+        while (budget && roomForData()) {
+            if (!uPosts_) {
+                if (uBatchPos_ >= uBatch_.size()) {
+                    std::vector<std::string>().swap(uBatch_);
+                    uBatchPos_ = 0;
+                    if (uMore_) uMore_ = core_.userRecordsNext(uPos_, uSent_, uBatch_, kNetPendingBytes);
+                    if (uBatch_.empty() && !uMore_) {
+                        std::vector<uint32_t>().swap(uSent_);
+                        uPosts_ = true;
+                    }
+                    continue;
+                }
+                std::string& r = uBatch_[uBatchPos_++];
+                if (fits(r)) {
+                    send("U ", r);
+                    budget--;
+                    streamed = true;
+                }
+                std::string().swap(r);
+                continue;
+            }
+            if (!core_.userHistoryNext(hist_, since, uMask_, l)) {
+                hist_ = HistoryCursor();
+                send("UEND");
+                uDone_ = true;
+                break;
+            }
+            if (!fits(l)) continue;
+            send("U ", l);
+            postsSent_++;
+            budget--;
+            streamed = true;
+        }
+        if (streamed) lastRxMs_ = nowMs;
+        if (!uDone_) return;
     }
 
     // 3. Outbound log entries. Nothing new is fetched after DONE (the next session takes them), so
