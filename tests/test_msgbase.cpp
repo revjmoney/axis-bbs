@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
+#include <algorithm>
 #include <filesystem>
 #include <map>
 #include <regex>
@@ -251,4 +252,43 @@ TEST_CASE("message lightbar: page up reaches an older header, Q returns, text mo
     plain.begin();
     CHECK(text.find("Area number") != std::string::npos);
     CHECK_FALSE(plain.key('\r'));
+}
+
+TEST_CASE("message areas: counts are streamed (hidden writers left out, newest 200 at most) and long lists leave in pieces") {
+    Dir              d;
+    FileMessageStore st(d.p.string());
+    st.post("general", msg("Spindle Kid", "All", "welcome", "glad the board is up"));
+    st.post("general", msg("Troll", "All", "noise", "ignore me"));
+    st.post("general", msg("Rev", "All", "chips", "flying"));
+    for (int i = 0; i < MessageStore::kMaxHeaders + 5; i++) st.post("big", msg("Rev", "All", "n", "b"));
+    std::map<std::string, int> last{{"general", 1}};
+    std::vector<FileArea>      areas{{"general", "General Chatter"}, {"big", "Big Area"}};
+    CHECK(MessageReader::countNew(areas, st, last) == 2 + (int)MessageStore::kMaxHeaders);  // Troll counts here, as before
+
+    std::vector<FileArea> many;
+    for (int i = 0; i < 40; i++) many.push_back({i == 0 ? "general" : "a" + std::to_string(i), i == 0 ? "General Chatter" : "Area number " + std::to_string(i)});
+    many.push_back({"big", "Big Area"});
+    for (bool bars : {false, true}) {
+        std::string                out, sent;
+        std::map<std::string, int> lr{{"general", 1}};
+        MessageReader              r(bars ? areas : many, st, out, "Rev", lr, [] { return std::string("now"); });
+        r.setHidden([](const std::string& from) { return from == "Troll"; });
+        r.setLightbars(bars);
+        size_t most = 0;
+        int    calls = 0;
+        r.setSpill([&] {  // as Node::spill would: what is there goes to the line
+            most = std::max(most, out.size());
+            sent += out;
+            out.clear();
+            calls++;
+        });
+        r.begin();
+        sent += out;
+        std::string p = plain(sent);
+        CHECK(calls > 1);
+        if (!bars) CHECK(most < 512);  // a row at a time, never the whole list
+        // general: 2 of 3 shown (Troll hidden), 1 new; big: capped at the newest 200
+        CHECK(std::regex_search(p, std::regex("General Chatter +2 msgs +1 new")));
+        CHECK(std::regex_search(p, std::regex("Big Area +" + std::to_string(MessageStore::kMaxHeaders) + " msgs")));
+    }
 }

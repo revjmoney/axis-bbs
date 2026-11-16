@@ -2451,6 +2451,7 @@ void Node::key(char c) {
                                           [this] { return info_().timeText; }));
             msgs_->setTagline(tagline());
             msgs_->setHidden([this](const std::string& from) { return hiddenWriter(from); });
+            msgs_->setSpill([this] { spill(); });
             msgs_->begin();
             break;
         }
@@ -2529,6 +2530,7 @@ void Node::key(char c) {
                                           [this] { return info_().timeText; }));
             msgs_->setTagline(tagline());
             msgs_->setHidden([this](const std::string& from) { return hiddenWriter(from); });
+            msgs_->setSpill([this] { spill(); });
             msgs_->beginScan();
             break;
         }

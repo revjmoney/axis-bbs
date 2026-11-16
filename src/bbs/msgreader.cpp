@@ -45,12 +45,27 @@ std::vector<Message> MessageReader::headersOf(const std::string& area) {
     return h;
 }
 
+void MessageReader::tally(MessageStore& store, const std::string& area, int last, const std::function<bool(const std::string&)>& hidden,
+                          unsigned& total, unsigned& fresh) {
+    total = fresh = 0;
+    store.scanHeaders(area, [&](const Message& m) {
+        if (hidden && hidden(m.from)) return true;
+        total++;
+        fresh += m.num > last;
+        return true;
+    });
+    // headers() keeps the newest kMaxHeaders; posts are numbered as they are added, so the new ones are the newest
+    if (total > MessageStore::kMaxHeaders) total = (unsigned)MessageStore::kMaxHeaders;
+    if (fresh > total) fresh = total;
+}
+
 int MessageReader::countNew(const std::vector<FileArea>& areas, MessageStore& store, const std::map<std::string, int>& lastRead) {
     int n = 0;
     for (const FileArea& a : areas) {
-        auto it = lastRead.find(a.id);
-        int  last = it == lastRead.end() ? 0 : it->second;
-        for (const Message& m : store.headers(a.id)) n += m.num > last;
+        auto     it = lastRead.find(a.id);
+        unsigned total = 0, fresh = 0;
+        tally(store, a.id, it == lastRead.end() ? 0 : it->second, nullptr, total, fresh);
+        n += (int)fresh;
     }
     return n;
 }
@@ -74,33 +89,34 @@ void MessageReader::showAreas() {
                 std::string(70, '\xcd') + "\r\n";
         usingList_ = false;
         for (size_t i = 0; i < areas_.size(); i++) {
-            auto h = headersOf(areas_[i].id);
-            int  last = lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, fresh = 0;
-            for (auto& m : h) fresh += m.num > last;
+            unsigned total = 0, fresh = 0;
+            tally(st_, areas_[i].id, lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, hidden_, total, fresh);
             char b[160];
             std::snprintf(b, sizeof b, "   %s[%2u] %s%-34s %s%4u %s%s", ORANGE, (unsigned)(i + 1), WHITE, areas_[i].name.c_str(), TEXT,
-                          (unsigned)h.size(), h.size() == 1 ? "msg " : "msgs", fresh ? "" : "\r\n");
+                          total, total == 1 ? "msg " : "msgs", fresh ? "" : "\r\n");
             out_ += b;
             if (fresh) out_ += std::string("  ") + ORANGE + std::to_string(fresh) + " new" + TEXT + "\r\n";
+            spill();
         }
         out_ += std::string("\r\n   ") + TEXT + "Area number (Enter for the main menu): " + WHITE;
         return;
     }
     std::vector<std::string> rows;
     rows.reserve(areas_.size());
-    for (size_t i = 0; i < areas_.size(); i++) {  // headers only (the store already omits bodies)
-        auto h = headersOf(areas_[i].id);
-        int  last = lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, fresh = 0;
-        for (auto& m : h) fresh += m.num > last;
+    for (size_t i = 0; i < areas_.size(); i++) {  // counted a header at a time (none kept)
+        unsigned total = 0, fresh = 0;
+        tally(st_, areas_[i].id, lastRead_.count(areas_[i].id) ? lastRead_[areas_[i].id] : 0, hidden_, total, fresh);
         char b[80];
-        std::snprintf(b, sizeof b, "%-32.32s %4u %s%s", areas_[i].name.c_str(), (unsigned)h.size(), h.size() == 1 ? "msg " : "msgs",
+        std::snprintf(b, sizeof b, "%-32.32s %4u %s%s", areas_[i].name.c_str(), total, total == 1 ? "msg " : "msgs",
                       fresh ? (std::string("  ") + std::to_string(fresh) + " new").c_str() : "");
         rows.emplace_back(b);
     }
     list_.setItems(std::move(rows));
     usingList_ = true;
     out_ += listScreenTop("MESSAGE AREAS", "Area                              Messages");
+    spill();
     out_ += list_.draw();
+    spill();
     out_ += listScreenStatus(areas_.empty() ? "" : areas_[0].name);
     out_ += listScreenKeys("arrows move   Enter opens   number+Enter   " + theme::key("Q", "uit") + " or Esc");
 }
@@ -127,6 +143,7 @@ void MessageReader::showList() {
             std::snprintf(b, sizeof b, "   %s%c%s%4d %s%-14.14s %s%-14.14s %s%-26.26s\r\n", ORANGE, m.num > last ? '*' : ' ', DGREY, m.num, WHITE,
                           m.from.c_str(), TEXT, m.to.c_str(), WHITE, m.subject.c_str());
             out_ += b;
+            spill();
         }
         listPrompt();
         return;
@@ -154,7 +171,9 @@ void MessageReader::showList() {
     char cap[80];
     std::snprintf(cap, sizeof cap, "  #  From          To            Subject          %u %s", (unsigned)heads_.size(), heads_.size() == 1 ? "msg" : "msgs");
     out_ += listScreenTop(areas_[area_].name, cap);
+    spill();
     out_ += list_.draw();
+    spill();
     out_ += listScreenStatus(heads_[listFrom_ + (size_t)list_.current()].subject);
     out_ += listScreenKeys(theme::key("R", "ead #  ") + theme::key("N", "ext new  ") + theme::key("P", "ost  ") + theme::key("Q", "uit") +
                            "   Enter reads");
