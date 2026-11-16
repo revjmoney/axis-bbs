@@ -5,6 +5,8 @@
 
 #include <cctype>
 
+#include "bbs/artfetch.h"
+
 namespace axis::bbs::theme {
 
 const char* TEXT = "\x1b[0;37m";
@@ -125,27 +127,30 @@ void use(Look l) {
 }
 
 static std::function<std::string(const std::string&)> art_, mci_;
+static std::function<std::string(const std::string&, int)> artTop_;
 static bool lite_ = false;
 void        setLite(bool on) { lite_ = on; }
 void setMci(std::function<std::string(const std::string&)> fill) { mci_ = std::move(fill); }
 void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
+void        setArtTop(std::function<std::string(const std::string&, int)> top) { artTop_ = std::move(top); }
 std::string artFor(const std::string& title, int rows) {
     if (!art_) return "";
     std::string name;  // "BBS LIST" -> BBSLIST.ANS (letters only, 8 at most)
     for (char c : title)
         if (std::isalnum((unsigned char)c) && name.size() < 8) name += (char)std::toupper((unsigned char)c);
     if (name.empty()) return "";
-    std::string a = lite_ ? art_(name + ".LITE.ANS") : std::string();
-    if (a.empty()) a = art_(name + ".ANS");
-    for (size_t at = 0, r = 0; rows > 0 && !a.empty(); r++) {  // the top rows only, cut before the codes are filled (one copy less)
-        if (r == (size_t)rows) {
-            a.resize(at);
-            a.shrink_to_fit();
-            break;
-        }
-        size_t nl = a.find('\n', at);
-        if (nl == std::string::npos) break;  // (art that wraps at column 80 with no line ends: kept whole)
-        at = nl + 1;
+    // only the top rows wanted: the board's reader that stops there, when it gave one (the whole file is never held)
+    auto        read = [rows](const std::string& file) { return rows > 0 && artTop_ ? artTop_(file, rows) : art_(file); };
+    std::string a = lite_ ? read(name + ".LITE.ANS") : std::string();
+    if (a.empty()) a = read(name + ".ANS");
+    if (rows > 0) {  // the top rows only (as the terminal wraps it), cut before the codes are filled (one copy less)
+        ArtRows at;
+        for (size_t i = 0; i < a.size(); i++)
+            if (at.feed((unsigned char)a[i], rows)) {
+                a.resize(i + 1);
+                a.shrink_to_fit();
+                break;
+            }
     }
     if (!a.empty() && mci_) a = mci_(a);
     if (!a.empty() && a.back() != '\n') a += "\r\n";

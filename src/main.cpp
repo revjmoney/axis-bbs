@@ -596,6 +596,26 @@ static std::string themeArt(const std::string& name) {
     if (!poster && answered) artCache.put(name, art);  // (the poster is one login screen, then it can go; a failed ask is asked again)
     return art;
 }
+// A theme file's first `rows` lines, read from the card and stopped there (the list screens keep only a header's top rows:
+// MSGS.ANS read whole for them was 8 KB held, the slow call's lowest heap on board 1). Elsewhere the whole-file reader.
+static std::string readThemeTop(const char* folder, const std::string& name, int rows) {
+    if (!folder || !folder[0]) return "";
+    FILE* f = fopen((std::string("/sd/themes/") + folder + "/" + name).c_str(), "rb");
+    if (!f) return "";
+    std::string s;
+    axis::bbs::readTopRowsAppend(f, rows, kThemeArtCap, s);
+    fclose(f);
+    if (s.size() > artMax) artMax = s.size();
+    return s;
+}
+static std::string themeArtTop(const std::string& name, int rows) {
+    // a follower's art comes whole from the main (and its cache); previews, the poster and the waiting screens keep their own reader
+    if (asFollower() || name.find(':') != std::string::npos || posterName(name) || wfcScreen(name)) return themeArt(name);
+    if (!storageHasSd() || name.find('/') != std::string::npos) return "";
+    std::string s = readThemeTop(boardCfg->theme.c_str(), name, rows);
+    if (s.empty()) s = readThemeTop(axis::bbs::theme::legacyThemeFolder(boardCfg->theme), name, rows);
+    return s;
+}
 // The cleaned WFC.ANS every WFC screen (telnet, serial, local) draws: read once, shared, and read again only when something may have
 // changed. wfcAnsKey says what it was read from: the WFC folder plus (here on a board with the card) the file's size and time in the
 // folder and its legacy folder, so a new WFC.ANS from any writer (the sysop's @PUT, the web, a theme install) is seen on the next draw,
@@ -3969,6 +3989,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         node->setExists(menuExists);
         wireScripts(node.get());
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
+        axis::bbs::theme::setArtTop(themeArtTop);  // (a list screen's header: its top rows only)
         node->setOneLiners(
             [] {  // the wall: here on the main, over the link on a follower
                 if (!asFollower()) return oneLiners;

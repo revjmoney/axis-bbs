@@ -36,6 +36,73 @@ inline bool readFileAppend(FILE* f, size_t cap, size_t offset, std::string& out)
     return true;
 }
 
+// Where an ANSI art's screen rows end, as an 80-column terminal draws it: a byte at a time, it follows line ends, the wrap
+// after column 80 and the cursor codes (CUP, up/down/forward/back). The theme packs' header art has no line ends at all (every
+// MSGS.ANS is one 80-column wrapped run), so counting '\n' alone never found its rows.
+struct ArtRows {
+    int  row = 0, col = 0;
+    int  esc = 0;  // 0 text, 1 after ESC, 2 inside ESC [
+    int  p[2] = {0, 0};
+    int  np = 0;
+    bool feed(unsigned char c, int rows) {  // true once the art has reached row `rows` (the byte just fed ends the top)
+        if (esc == 1) {
+            esc = c == '[' ? 2 : 0;
+            p[0] = p[1] = np = 0;
+        } else if (esc == 2) {
+            if (c >= '0' && c <= '9') {
+                if (np < 2 && p[np] < 1000) p[np] = p[np] * 10 + (c - '0');
+            } else if (c == ';') {
+                np++;
+            } else if (c >= 0x40 && c <= 0x7e) {
+                esc = 0;
+                const int n = p[0] ? p[0] : 1;
+                if (c == 'H' || c == 'f') row = (p[0] ? p[0] : 1) - 1, col = (p[1] ? p[1] : 1) - 1;
+                else if (c == 'A') row = row > n ? row - n : 0;
+                else if (c == 'B') row += n;
+                else if (c == 'C') col = col + n < 79 ? col + n : 79;
+                else if (c == 'D') col = col > n ? col - n : 0;
+            }
+        } else if (c == 0x1b) {
+            esc = 1;
+        } else if (c == '\r') {
+            col = 0;
+        } else if (c == '\n') {
+            row++;
+        } else if (c >= 0x20 || c == 0x0e || c == 0x0f) {  // (CP437 art: every byte from space up draws a cell)
+            if (++col >= 80) row++, col = 0;
+        }
+        return rows > 0 && row >= rows;
+    }
+};
+
+// Append the top `rows` screen rows of f (from where f is now) to out, cut at the first 0x1a, at most cap bytes. For a screen
+// that keeps only a header's top rows (board 1, 2026-11-16: the theme's 7.7 KB MSGS.ANS was read whole, copied by the code fill
+// and sent, for 3 rows that the clear under them kept): the rows are found through a 128-byte buffer on the stack, then that
+// many bytes are read in one exact block, so the rest of the file is never held and nothing grows by doubling.
+// rows <= 0, or art that never reaches `rows`: the whole file up to cap, still one exact block.
+inline void readTopRowsAppend(FILE* f, int rows, size_t cap, std::string& out) {
+    const long start = std::ftell(f);
+    if (start < 0) return;
+    ArtRows       at;
+    size_t        len = 0;
+    unsigned char b[128];
+    for (bool done = false; !done && len < cap;) {
+        const size_t n = std::fread(b, 1, std::min(sizeof b, cap - len), f);
+        if (!n) break;
+        for (size_t i = 0; i < n && !done; i++) {
+            if (b[i] == 0x1a) done = true;  // (the SAUCE record: the art has ended)
+            else {
+                len++;
+                done = at.feed(b[i], rows);
+            }
+        }
+    }
+    if (!len || std::fseek(f, start, SEEK_SET) != 0) return;
+    const size_t old = out.size();
+    out.resize(old + len);
+    out.resize(old + std::fread(&out[old], 1, len, f));
+}
+
 // A follower pulls a file from the main in pieces of `want` bytes, up to cap. ask(offset, reply) sends one "T" request and
 // fills reply ('1' then the piece, or '0' for none); false when it went unanswered. *answered: every request was answered
 // (an empty file is a real "none"). reserve: the whole cap is reserved up front (one block: the pieces do not double it).

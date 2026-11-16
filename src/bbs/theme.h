@@ -68,6 +68,9 @@ std::string pipes(const std::string& text);
 std::string drip(const std::string& text);
 // The theme's header screens from the card: drip("DOORS") shows DOORS.ANS when the theme folder has it
 void setArt(std::function<std::string(const std::string&)> art);
+// Optional: a file's first `rows` lines only (the board reads them from the card and stops there). Unset: artFor reads the
+// whole file through setArt's reader and cuts it.
+void setArtTop(std::function<std::string(const std::string&, int rows)> top);
 std::string artFor(const std::string& title, int rows = 0);  // "" when there is none; rows > 0: only its first rows
 // a lite caller (a slow radio tier) is being served: artFor tries NAME.LITE.ANS first (a Node sets it while it works)
 void setLite(bool on);
