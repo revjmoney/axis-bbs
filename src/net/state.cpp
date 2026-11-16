@@ -325,6 +325,11 @@ const NetNotice* NetState::memberNotice(const std::string& board) const {
     auto it = notices_.find(std::make_pair(std::string("member"), board));
     return it == notices_.end() ? nullptr : &it->second.n;
 }
+void NetState::forEachMemberNotice(const std::function<void(const std::string& board, const NetNotice&)>& f) const {
+    for (auto i = notices_.lower_bound(std::make_pair(std::string("member"), std::string()));
+         i != notices_.end() && i->first.first == "member"; ++i)
+        f(i->first.second, i->second.n);
+}
 bool NetState::held(const std::string& postId) const {
     auto it = notices_.find(std::make_pair(std::string("post"), postId));
     return it != notices_.end() && it->second.n.kind == "hold";

@@ -65,6 +65,8 @@ public:
     uint32_t votesNo() const { return votesNo_; }
     // Rev's current admit, deny or veto for this board, or nullptr if none.
     const NetNotice* memberNotice(const std::string& board) const;
+    // Visits every current admit, deny and veto (no copies), in board id order.
+    void forEachMemberNotice(const std::function<void(const std::string& board, const NetNotice&)>& f) const;
     size_t cardCount() const { return cards_.size(); }
     const NetCard* card(const std::string& board) const;
     // Visits every current card (no copies), for callers that need the list of known boards.
