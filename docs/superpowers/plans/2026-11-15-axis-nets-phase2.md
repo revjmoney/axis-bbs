@@ -32,7 +32,8 @@
 
 **Memory**
 - Net work never starts a piece while the largest free block is under `kNetHeapFloor` (40 KB), as in Phase 1. No frame over `kNetMaxFrame` (9 KB). No TLS.
-- Caps: `kMaxOpenApps = 16` and `kMaxVotes = 256` (all applications together) in `src/net/members.h`; `kMaxMemberNotices = 64` in `src/net/state.h`. Full signed application and vote lines live on the storage root in `/net/apps.txt`, never all in RAM: RAM holds only the compact fields below.
+- Caps: `kMaxOpenApps = 16` and `kMaxVotes = 256` (all applications together) in `src/net/members.h`; `kMaxMemberNotices = 64` in `src/net/state.h`.
+- **64 member seals is the hard User Net size for this phase.** A cap is never met by evicting something the tally depends on: a full table refuses the new record instead, and `@NETADMIT` says so. Full signed application and vote lines live on the storage root in `/net/apps.txt`, never all in RAM: RAM holds only the compact fields below.
 
 **Security**
 - Signed only, never encrypted. Every application, vote and notice is verified before it is stored, counted or passed on.
@@ -44,6 +45,7 @@
 - The tally never reads a clock. The 30-day wait before re-applying is enforced only when the clock is set.
 
 **Compatibility with v0.53 boards in the field**
+- **Every Phase 2 board stores and relays A and V records, whatever `net_user` is,** so applications and votes cross boards that carry no User Net areas.
 - They NAK `A` and `V` E lines and posts to `un_` areas as permanent `bad`, and ignore unknown kinds in snapshot (S before SEND) and history (H) lines. That is fine: they neither store nor relay User Net. Rev's hub must run Phase 2.
 - Never send an `A` or `V` record as an S line after SEND (a v0.53 board fails the session on that).
 
@@ -70,7 +72,7 @@
 1. **The tally depends on arrival order.** The same set of applications, votes and notices must give the same members on every board whatever order they came in, including a vote that arrives before its application and a voter admitted after it voted. Test: `tally is the same in any order`.
 2. **A voter loses membership (vetoed or banned).** Their votes stop counting at once, and a board they voted in that Rev has not sealed may fall back to pending. Test: `removed voter's votes stop counting`.
 3. **Rev's veto after a board was voted in.** The board leaves User Net, its new posts are refused with `member`, and a later Rev admit (higher seq) brings it back. Test: `veto after admit removes, later admit restores`.
-4. **A v0.53 peer.** A session that meets a record kind it does not know answers NAK `bad` and goes on, and A and V records go out only as E or H lines. Test: `unknown record kind is NAKed and the session goes on`.
+4. **A v0.53 peer.** A session that meets a record kind it does not know answers NAK `bad` and goes on, and A and V records go out only as E or U lines (U only to a peer whose card says `net2`). Test: `unknown record kind is NAKed and the session goes on`.
 5. **A local caller blocked from the nets, or a twit.** Their post to a `sn_` or `un_` area is refused before it is signed; local areas still work. Test: `no-net caller cannot post to net areas`.
 
 ---
@@ -85,14 +87,15 @@
 - `struct NetApp { std::string board, pub, name, sysop, location, mac, blurb; uint32_t seq = 0, date = 0; std::string sig; };`
   - `pub` lets a board check an application before it holds the applicant's card. `boardId(pub) == board` is required.
   - Limits: name, sysop and location 36 bytes, `blurb` 240 bytes, mac `xx:xx:xx:xx:xx:xx` or empty. `seq` is the applicant's application counter (starts at 1).
-- `struct NetVote { std::string voter, app; uint32_t appSeq = 0, seq = 0, date = 0; bool yes = false; std::string comment; std::string sig; };`
+- `struct NetVote { std::string voter, pub, app; uint32_t appSeq = 0, seq = 0, date = 0; bool yes = false; std::string comment; std::string sig; };`
+  - `pub` is the voter's public key and `boardId(pub) == voter` is required, so a vote checks by itself: no card is needed to take, relay or reload it (only 32 cards are held). Whether it counts is decided by the voter's board id being a member.
   - `app` is the applicant's board id. `seq` is the voter's vote counter; a higher one replaces a lower one for the same `(voter, app, appSeq)`. `comment` at most 72 bytes.
-- `signedPart`, `encode`, `decode`, `signApp`/`verifyApp` (against its own `pub`), `signVote`/`verifyVote(const NetVote&, const std::string& pubHex)`, the same canonical form as Phase 1 (0x1F fields, kind letter first, `\n` and `\\` escaped).
+- `signedPart`, `encode`, `decode`, `signApp`/`verifyApp` (against its own `pub`), `signVote`/`verifyVote` (against its own `pub`), the same canonical form as Phase 1 (0x1F fields, kind letter first, `\n` and `\\` escaped).
 - `std::string appId(const NetApp&)` returns `<board>-a<seq>`.
 - New notice kinds in `groupOf`:
   - `admit`, `deny`, `veto` with a 16 hex board target go to group **member** (`"member"`). `admit` and `deny` carry the application seq in `value` (decimal); `veto` has an empty value. Highest seq per target wins, as for other groups.
   - `votes` with target `net` and value `yes=<1..20>,no=<1..20>` goes to group **votes** (`"votes"`).
-- `NetState`: `uint32_t votesYes() const; uint32_t votesNo() const;` (defaults 3 and 3); `const NetNotice* memberNotice(const std::string& board) const;`. The member group is capped at `kMaxMemberNotices` (64): the oldest applied deny goes first, then the oldest admit; a veto is kept longest.
+- `NetState`: `uint32_t votesYes() const; uint32_t votesNo() const;` (defaults 3 and 3); `const NetNotice* memberNotice(const std::string& board) const;`. The member group holds at most `kMaxMemberNotices` (64) targets: a notice for a new target past that is refused (never evicts); a notice for a target already held replaces it by seq as usual.
 
 - [ ] **Step 1: Implement** as above. Reuse `cleanLine` and the Phase 1 field checks; a decode that fails any limit returns false.
 - [ ] **Step 2: Build** firmware and host on the i5.
@@ -109,13 +112,13 @@
   - `enum class Status { None, Pending, Member, Denied, Vetoed };`
   - `NetMembers(const NetState& st, std::function<bool(const std::string& board)> isRev)`
   - `bool takeApp(const NetApp& a, std::string& line)`: verifies; keeps only the latest seq per board; refuses a board already a member or vetoed, and one with a newer app held. `line` gets the encoded record for the caller to store. False if nothing changed.
-  - `bool takeVote(const NetVote& v, const std::string& voterPub, std::string& line)`: verifies against the voter's pub; keeps the highest `seq` per `(voter, app, appSeq)`. A vote for an app not held yet is kept (it may come first) and counts once the app arrives. A voter may not vote on itself.
+  - `bool takeVote(const NetVote& v, std::string& line)`: verifies against its own `pub`; keeps the highest `seq` per `(voter, app, appSeq)`. A vote for an app not held yet is kept (it may come first) and counts once the app arrives. A voter may not vote on itself.
   - `Status status(const std::string& board) const;` and `struct Tally { uint32_t yes, no; };` `Tally tally(const std::string& board) const;` (counting only member voters).
   - `std::vector<std::string> members() const;` (board ids, Rev's boards first).
   - `std::vector<std::string> waitingFor(const std::string& voter) const;` applicants still pending that this voter has not voted on, oldest app seq first.
   - `std::vector<std::pair<std::string, Status>> sealsDue() const;` on Rev's board only: applicants whose tally says Member or Denied but who have no member notice for that app seq yet. The host makes and floods `admit` or `deny` for each (auto seal).
   - `std::string save() const; void load(const std::string& text);` the full signed lines, one per line, for `/net/apps.txt`. RAM holds only `(board, seq, date)` per app and `(voter u64, app u64, appSeq, seq, yes)` per vote; `load` reads them back from the lines.
-  - Caps `kMaxOpenApps = 16`, `kMaxVotes = 256`. A full app table drops the oldest app that is not pending; when all are pending a new one is refused. A full vote table drops votes for decided apps first, then refuses.
+  - Caps `kMaxOpenApps = 16`, `kMaxVotes = 256`. A full app table drops only an app that Rev has sealed (a member notice for that board and app seq), oldest first, together with its votes; with none sealed the new app is refused. A full vote table drops only votes on sealed apps, then refuses. Nothing the unsealed tally depends on is ever dropped, so every board with room gets the same result.
 - The rule, written into `status` (one function, no order dependence):
 
 ```
@@ -158,12 +161,14 @@ Yes wins when both counts are reached; it keeps step 4 growing only, so the loop
     - `un_files` "User Net: Files"
   - `const NetArea* netArea(const std::string& id);` finds either family. `isNetAreaId` is true for `sn_` and `un_`. `bool isUserNetArea(const std::string& id);`.
   - `NetCore` owns a `NetMembers` (`members()` accessor) and `void setUserAreas(std::vector<std::string> carried);` (empty: User Net off).
-  - `take` adds, after the signature check: for an `un_` area, NAK `area` (`kNakArea`, permanent) when this board does not carry it or is not a member itself, and NAK `member` (`kNakMember`, **transient**: `netNakTransient` returns true for it, and the 3-strike rule of `nocard` applies) when the posting board is not a member by this board's tally.
+  - `take` adds, after the signature check: for an `un_` area, NAK `area` (`kNakArea`, permanent) when this board does not carry it or is not a member itself, and NAK `member` (`kNakMember`, permanent: a transient NAK would hold the whole cursor, Sysop Net included, and Rev's seals arrive in the snapshot before any E line) when the posting board is not a member by this board's tally.
   - `originate` refuses an `un_` area unless this board is a member and carries it.
   - `NetCore::takeApp(const NetApp&, const std::string& fromPeer)` and `takeVote(const NetVote&, const std::string& fromPeer)`: through `NetMembers`, append the line to `/net/apps.txt` via a host callback `setAppsSave(std::function<void(const std::string& text)>)`, log `A <board> <exclude>` or `V <app> <voter> <exclude>`, and note the record (`app <board> <seq>`, `vote <voter> on <app> yes|no`, then `member <board> admitted|denied` when the status changes).
   - `resolve` reads `A` and `V` entries back from the members table; an entry whose record is gone is skipped.
-  - History: the walk covers every carried net area, with at most **800 posts in all**, shared evenly across the carried areas (200 each with Sysop Net alone, 100 each with all eight). After the posts it sends every held application and vote as H lines. `kSyncHistoryMax` stays 800 for posts; A and V H lines are counted apart and capped at `kMaxOpenApps + kMaxVotes`.
-  - The session takes A and V on E and H lines (`takeEntry`, `takeHistory`). It never puts them on S lines.
+  - Sysop Net history stays exactly as Phase 1 (`WANT`, 200 per `sn_` area, 800 in all).
+  - **User Net pull, its own flag.** Boards upgraded from v0.53 already have the Sysop Net pull marked done, so User Net needs its own. Each board's own card gains the token `net2` in `links`. After `SEQ`, a Phase 2 board sends `UWANT <comma list of carried un_ areas, or ->` only to a peer whose card has `net2` (a v0.53 board never sees the line). The peer answers with `U <record>*` lines and `UEND`: first every held application and vote, then up to 100 posts per asked area from the last 30 days (400 in all, one walk at a time, never alongside the Sysop Net walk). The flag `uhistory <0|1>` lives in `/net/cursors.txt` beside `history`; it is asked until a pull reaches `UEND`, and set back to 0 when this board becomes a member or starts carrying another area.
+  - Before an A or V line goes out (E or U) nothing extra is needed: both check by themselves.
+  - The session takes A and V on E and U lines. It never puts them on S or H lines.
   - `NetPostingStore` covers `un_` areas the same way as `sn_` (held, killed and hidden posts stay hidden).
 
 - [ ] **Step 1: Implement.**
@@ -181,7 +186,7 @@ Yes wins when both counts are reached; it keeps step 4 growing only, so the loop
 - `net_user_level` (int, default 20): the lowest security that may read and post in User Net areas.
 
 **Caller areas**
-- `nodeCfg()` adds the carried `un_` areas, at `net_user_level`, after the Sysop Net ones, under a group headed "User Net", only while this board is a member (status Member) and `net_user` is on.
+- `nodeCfg()` caches on `boardCfg` and on a new `static uint32_t netAreasGen`, bumped whenever this board's member status, `net_user`, `net_user_areas` or `net_user_level` changes; it adds the carried `un_` areas, at `net_user_level`, after the Sysop Net ones, under a group headed "User Net", only while this board is a member (status Member) and `net_user` is on.
 - Followers: the main's settings frame gains `net_un=<comma list>` beside `net_up=1` (the areas callers get right now; empty when none). A follower adds those areas; an old main never sends it, so a follower then shows none.
 
 **Who may post to the nets**
@@ -190,7 +195,7 @@ Yes wins when both counts are reached; it keeps step 4 growing only, so the loop
 
 **Commands** (in `netCommand`, main only, the follower forwards as Phase 1 does):
 - `@NETAPPLY <blurb>`: builds and signs this board's application (name, sysop, location from the `net_*` settings, MAC from `WiFi.macAddress()`), takes and floods it. Refused while `net_user` is 0, while already a member or pending, and with the clock set within 30 days of a deny of this board.
-- `@NETVOTE <board id> Y|N [comment]`: only while this board is a member; signs with the board key and a vote seq kept in `/netseq.txt` as a third number (`netSeqStart` rules).
+- `@NETVOTE <board id> Y|N [comment]`: only while this board is a member; signs with the board key and a vote seq. `/netseq.txt` grows from two numbers to four: next post seq, card seq, vote seq, application seq (a missing third or fourth number starts by the `netSeqStart` rules). `@NETAPPLY` takes the next application seq the same way, written before the application is signed, so a reset never reuses one (a reused seq would inherit an old deny).
 - `@NET APPS`: one line per held application: board id, name, sysop, location, MAC, status, `yes/no` counts, and this board's own vote if any.
 - `@NET MEMBERS`: member board ids with names (from cards when held), Rev's boards marked.
 - Rev's board only: `@NETADMIT <board>`, `@NETDENY <board>`, `@NETVETO <board> YES` (without `YES` it explains), `@NETVOTES yes=<n>,no=<n>`. Each makes, signs and applies a notice with `usedSeq()+1`, as Phase 1's `@NETBAN` does.
@@ -253,7 +258,7 @@ Yes wins when both counts are reached; it keeps step 4 growing only, so the loop
 - `app and vote round trip`: encode then decode gives equal fields; a 241-byte blurb, a 73-byte comment, a bad MAC and an app whose `boardId(pub) != board` each fail.
 - `tampered app or vote fails verify`.
 - `member and votes notices group`: admit/deny/veto on a board id are group `member`; `votes yes=4,no=2` sets `votesYes()==4`, `votesNo()==2`; `votes yes=0,no=3` is rejected.
-- `tally is the same in any order` (Review Focus 1): Rev board R, boards A B C D; votes R,A,B yes on C; R admits A and B; then every permutation of those 5 records (120) gives C Member and D None.
+- `tally is the same in any order` (Review Focus 1): Rev board R, boards A B C D; C's application, votes R,A,B yes on C, and R's admits of A and B: every permutation of those 6 records (720) gives C Member and D None. The same holds with the app and vote tables filled to their caps by sealed apps first.
 - `vote before its app counts once the app comes`.
 - `second vote replaces the first`: A votes yes seq 1 then no seq 2 on C: tally yes 0, no 1; replaying seq 1 changes nothing.
 - `yes wins when both counts are reached`.
@@ -263,9 +268,11 @@ Yes wins when both counts are reached; it keeps step 4 growing only, so the loop
 - `bootstrap with Rev alone`: votesYes 1, Rev votes yes, C becomes Member; with votesYes 3 Rev's admit is needed.
 - `seals due on Rev's board`: after C reaches Member by votes, `sealsDue()` lists C Member; after the admit notice it is empty.
 - `caps hold`: 17th open app refused while all 16 are pending; vote 257 refused when no decided app frees room.
-- `un_ post rules`: a non-carrier NAKs `area`; a non-member origin is NAKed `member` and retried next session, passed over after 3.
-- `history shares 800 posts across carried areas, then apps and votes`.
-- `unknown record kind is NAKed and the session goes on` (Review Focus 4): feed `E 0 Z...`: NAK `0 bad`, the session is not failed; A and V never appear on S lines after SEND.
+- `un_ post rules`: a non-carrier NAKs `area`; a non-member origin is NAKed `member` and the cursor moves past it.
+- `caps never evict what the tally needs`: with 16 unsealed pending apps a 17th is refused; with one of them sealed, the sealed one goes and the new one is taken; a 65th member seal target is refused.
+- `votes check without cards`: a vote whose voter's card is not held is taken and counted once the voter is a member; it survives `save`/`load`.
+- `User Net pull`: a peer without `net2` in its card never gets `UWANT`; a board marked `history 1, uhistory 0` gets every app, vote and up to 100 posts per asked area; `uhistory` resets on becoming a member.
+- `unknown record kind is NAKed and the session goes on` (Review Focus 4): feed `E 0 Z...`: NAK `0 bad`, the session is not failed; A and V never appear on S or H lines, and a peer without `net2` never gets a U or UWANT line.
 - `no-net caller cannot post to net areas` (Review Focus 5): `mayPostToNets` is false for `permNets` off, for a twit and for no user, true otherwise; a `NetPostingStore` test double that applies it as main's `NetStore` does refuses `sn_` and `un_` posts and still saves a local one.
 - `record filters and search`: kinds and text match as specified; `recordCheck` gives `checks` for a good post, `does NOT check` after one changed byte, `no card held` without the card.
 - `users keep nonet`: `nonet=1` round trips; absent means true.
