@@ -68,7 +68,7 @@ std::string pipes(const std::string& text);
 std::string drip(const std::string& text);
 // The theme's header screens from the card: drip("DOORS") shows DOORS.ANS when the theme folder has it
 void setArt(std::function<std::string(const std::string&)> art);
-std::string artFor(const std::string& title);  // "" when there is none
+std::string artFor(const std::string& title, int rows = 0);  // "" when there is none; rows > 0: only its first rows
 // a lite caller (a slow radio tier) is being served: artFor tries NAME.LITE.ANS first (a Node sets it while it works)
 void setLite(bool on);
 // fills a header screen's codes (%BN, %NN, %UN...) for the caller being served; a Node sets it while it works

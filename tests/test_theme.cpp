@@ -238,3 +238,19 @@ TEST_CASE("a look:FILE name asks for one look's screen (the sysop's preview)") {
     CHECK_FALSE(theme::splitLookFile("crt:", look, file));
     CHECK_FALSE(theme::splitLookFile("crt:a:b", look, file));
 }
+TEST_CASE("list screens take only the top rows of the theme's header art (the rest was wiped by the clear under it)") {
+    using namespace axis::bbs;
+    std::string art;
+    for (int r = 1; r <= 24; r++) art += "\x1b[1;3" + std::to_string(r % 8) + "mROW" + std::to_string(r) + std::string(70, '\xdb') + "\r\n";
+    theme::setArt([&](const std::string& name) { return name == "MSGS.ANS" ? art : std::string(); });
+    std::string top = listScreenTop("MESSAGE AREAS", "Area");
+    CHECK(top.find("ROW1") != std::string::npos);
+    CHECK(top.find("ROW3") != std::string::npos);
+    CHECK(top.find("ROW4") == std::string::npos);
+    CHECK(top.size() < 600);  // three rows of 24, not 2 KB
+    CHECK(listScreenHead("MSGS", "MESSAGE AREAS").find("ROW24") != std::string::npos);  // the text screens still get it whole
+    std::string wraps(24 * 80, '\xdb');  // art that wraps at column 80 with no line ends: whole, as before
+    theme::setArt([&](const std::string& name) { return name == "MSGS.ANS" ? wraps : std::string(); });
+    CHECK(listScreenTop("MESSAGE AREAS", "Area").size() > wraps.size());
+    theme::setArt(nullptr);
+}

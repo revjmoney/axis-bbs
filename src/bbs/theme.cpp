@@ -129,7 +129,7 @@ static bool lite_ = false;
 void        setLite(bool on) { lite_ = on; }
 void setMci(std::function<std::string(const std::string&)> fill) { mci_ = std::move(fill); }
 void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
-std::string artFor(const std::string& title) {
+std::string artFor(const std::string& title, int rows) {
     if (!art_) return "";
     std::string name;  // "BBS LIST" -> BBSLIST.ANS (letters only, 8 at most)
     for (char c : title)
@@ -137,6 +137,16 @@ std::string artFor(const std::string& title) {
     if (name.empty()) return "";
     std::string a = lite_ ? art_(name + ".LITE.ANS") : std::string();
     if (a.empty()) a = art_(name + ".ANS");
+    for (size_t at = 0, r = 0; rows > 0 && !a.empty(); r++) {  // the top rows only, cut before the codes are filled (one copy less)
+        if (r == (size_t)rows) {
+            a.resize(at);
+            a.shrink_to_fit();
+            break;
+        }
+        size_t nl = a.find('\n', at);
+        if (nl == std::string::npos) break;  // (art that wraps at column 80 with no line ends: kept whole)
+        at = nl + 1;
+    }
     if (!a.empty() && mci_) a = mci_(a);
     if (!a.empty() && a.back() != '\n') a += "\r\n";
     return a;

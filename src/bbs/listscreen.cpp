@@ -20,9 +20,9 @@ std::string clip(const std::string& s, size_t n) {
 }
 }  // namespace
 
-std::string listScreenHead(const std::string& artKey, const std::string& title) {
-    std::string art = theme::artFor(artKey);  // FILES.ANS / MSGS.ANS when the theme pack is on the card
-    if (art.empty() && artKey != title) art = theme::artFor(title);
+std::string listScreenHead(const std::string& artKey, const std::string& title, int rows) {
+    std::string art = theme::artFor(artKey, rows);  // FILES.ANS / MSGS.ANS when the theme pack is on the card
+    if (art.empty() && artKey != title) art = theme::artFor(title, rows);
     if (!art.empty()) return art;
     return theme::banner(title);
 }
@@ -31,8 +31,10 @@ std::string listScreenTop(const std::string& title, const std::string& columns) 
     // The lightbar is pinned at row 6. A header .ANS is taller than that, so keep its top
     // (the block title) and park the column line on row 4.
     std::string key = title == "FILE AREAS" ? "FILES" : title == "MESSAGE AREAS" ? "MSGS" : title;
+    // Only the art's top 3 rows: the rest was read, kept and sent (a theme's MSGS.ANS is 8 KB, 17 s for an SF10 radio caller)
+    // just to be wiped by the clear below. 2026-11-16 board 1: the message areas screen took the heap 11 KB under the call's low.
     std::string s = theme::CLS;
-    s += listScreenHead(key, title);
+    s += listScreenHead(key, title, 3);
     s += "\x1b[4;1H\x1b[J";
     s += std::string("  ") + theme::DGREY + columns + "\r\n";
     s += std::string("  ") + theme::ORANGE + std::string(74, '\xcd') + theme::RESET + "\r\n";
