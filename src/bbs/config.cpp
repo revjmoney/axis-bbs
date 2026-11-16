@@ -119,8 +119,8 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "net_sysop_name") c.netSysopName = v;
         else if (k == "net_location") c.netLocation = v;
         else if (k == "net_user") c.netUser = n != 0;
-        else if (k == "net_user_areas") c.netUserAreas = v;
-        else if (k == "net_user_level") c.netUserLevel = (int)n;
+        else if (k == "net_user_areas") c.netUserAreas = userNetMask(v);
+        else if (k == "net_user_level") c.netUserLevel = n < 1 ? 1 : n > 255 ? 255 : n;
         else if (k == "net_up" || k == "net_un") {}  // the main's settings frame: its Sysop Net runs, its User Net areas (main.cpp); never kept
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "nuv_yes") c.nuvYes = (int)n;
@@ -216,6 +216,28 @@ bool areaFrom(const std::string& v, FileArea& a) {  // "id|name", "id|name|level
 }
 }  // namespace
 
+static const char* const kUserNetIds[4] = {"un_chat", "un_tech", "un_games", "un_files"};
+uint8_t userNetMask(const std::string& list) {
+    uint8_t     m = 0;
+    std::string id;
+    for (char ch : list + ",") {
+        if (ch != ',') {
+            if (ch != ' ') id += ch;
+            continue;
+        }
+        for (int i = 0; i < 4; i++)
+            if (id == kUserNetIds[i]) m |= (uint8_t)(1u << i);
+        id.clear();
+    }
+    return m;
+}
+std::string userNetList(uint8_t mask) {
+    std::string s;
+    for (int i = 0; i < 4; i++)
+        if (mask >> i & 1) s += std::string(s.empty() ? "" : ",") + kUserNetIds[i];
+    return s;
+}
+
 std::string areaText(const FileArea& a) {
     if (a.mirror) return a.id + "|" + a.name + "|" + std::to_string(a.minSecurity) + "|m";
     return a.id + "|" + a.name + (a.minSecurity ? "|" + std::to_string(a.minSecurity) : "");
@@ -272,7 +294,7 @@ std::string formatConfig(const BbsConfig& c) {
     kv("net_sysop_name", c.netSysopName);
     kv("net_location", c.netLocation);
     kv("net_user", c.netUser ? "1" : "0");
-    kv("net_user_areas", c.netUserAreas);
+    kv("net_user_areas", userNetList(c.netUserAreas));
     kv("net_user_level", std::to_string(c.netUserLevel));
     kv("theme", c.theme);
     kv("wfc", c.wfc);

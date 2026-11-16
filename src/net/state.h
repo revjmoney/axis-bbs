@@ -67,6 +67,8 @@ public:
     const NetNotice* memberNotice(const std::string& board) const;
     // The local day that notice was applied (0 if none).
     uint32_t memberNoticeDay(const std::string& board) const;
+    // How many admit, deny and veto notices are held (at most kMaxMemberNotices).
+    size_t memberNoticeCount() const;
     // Visits every current admit, deny and veto (no copies), in board id order.
     void forEachMemberNotice(const std::function<void(const std::string& board, const NetNotice&)>& f) const;
     size_t cardCount() const { return cards_.size(); }

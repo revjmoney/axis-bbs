@@ -2526,9 +2526,9 @@ struct NetHost {
     // few lines a pass, appsLines lines of appsBytes bytes); appsHeld, about the bytes of held lines (compaction).
     uint32_t                                voteSeq = 1, appSeq = 1, appsPos = 0, appsLines = 0, appsBytes = 0, appsHeld = 0;
     bool                                    appsLoaded = false;
-    bool                                    unDirty = false, unMember = false;  // an app, vote, card or notice taken; this board a member
+    bool                                    unDirty = false, unMember = false, sealSaid = false;  // an app, vote, card or notice taken; this board a member
     bool                                    cfgUser = false;  // net_user, net_user_areas and net_user_level as last applied
-    std::string                             cfgAreas;
+    uint8_t                                 cfgAreas = 0, carried = 0;  // (masks: userNetMask) the setting, what core carries
     int                                     cfgLevel = 0;
     NetHost() = default;
     NetHost(const NetHost&) = delete;
@@ -2548,9 +2548,9 @@ static bool                     netStartSaid = false;
 static axis::bbs::MessageStore* netMessages() { return netHost ? netHost->store.get() : nullptr; }
 static bool netMainUp = false;  // a follower: the main's settings frame said its net is up ("net_up=1")
 static bool netSharedUp = false;  // the main: what the last settings frame said
-// The User Net areas callers get now (comma list): on the main while this board is a member with net_user on, on a
+// The User Net areas callers get now: on the main while this board is a member with net_user on, on a
 // follower what the main's settings frame said ("net_un="). netAreasGen moves whenever they or net_user_level may have.
-static std::string netUnNow;
+static uint8_t     netUnMask = 0;  // (bbs/config.h userNetMask)
 static uint32_t    netAreasGen = 0;
 
 // Proof back-off: an address whose AXISNET 2 session failed before it proved who it is is refused for 60 s,
@@ -3081,9 +3081,10 @@ struct NetStore : axis::net::NetPostingStore {
     int post(const std::string& area, const axis::bbs::Message& m) override {
         if (netHost && axis::net::isNetAreaId(area)) {
             // A caller with net posts off, or a twit, is refused before anything is signed. The board's own sysop is
-            // no account in the user store: let through by handle.
+            // no account in the user store: let through by handle, only when no account has that handle.
             const std::string& sysop = boardCfg->sysopHandle.empty() ? std::string("Sysop") : boardCfg->sysopHandle;
-            if (strcasecmp(m.from.c_str(), sysop.c_str()) != 0 && !axis::net::mayPostToNets(users.find(m.from))) return 0;
+            const axis::bbs::User* u = users.find(m.from);
+            if (u ? !axis::net::mayPostToNets(u) : strcasecmp(m.from.c_str(), sysop.c_str()) != 0) return 0;
             netSeqFloor(*netHost);
         }
         int n = axis::net::NetPostingStore::post(area, m);
@@ -3347,14 +3348,15 @@ static void netPeers(NetHost& h, Print& out) {
 
 // ---- User Net (net/members.h): applying, voting, the lists, and Rev's admit, deny, veto and votes
 
-// The board's application held now, read back from /net/apps.txt. False if none is held or it cannot be read.
-static bool netHeldApp(const NetHost& h, const std::string& board, axis::net::NetApp& a) {
-    uint32_t    off;
-    std::string line;
-    return h.core->members().heldApp(board, off) && netAppsReadAt(off, line) && axis::net::decode(line, a);
+// The seq of the board's application held now, as admit and deny name it ("1" when none is held).
+static std::string netAppSeq(const NetHost& h, const std::string& board) {
+    uint32_t off, seq = 1;
+    h.core->members().heldApp(board, off, &seq);
+    return std::to_string(seq);
 }
 
-// "@NET APPS": one line per held application, the status from one tally for them all (members(), denied()).
+// "@NET APPS": one line per held application, the status from one tally for them all (members(), denied()). The
+// fields come from other boards: control bytes are shown as '?'.
 static void netApps(const NetHost& h, Print& out) {
     const axis::net::NetMembers& mem = h.core->members();
     const axis::net::NetState&   st = h.core->state();
@@ -3372,44 +3374,45 @@ static void netApps(const NetHost& h, Print& out) {
         axis::net::NetMembers::Tally t = mem.tally(a.board);
         const char* is = st.banned(a.board) ? "banned" : netHas(in, a.board) ? "member" : netHas(dn, a.board) ? "denied" : n && n->kind == "veto" ? "vetoed" : "pending";
         const char* mine = mem.heldVote(h.core->board(), a.board, vo) && netAppsReadAt(vo, line) && axis::net::decode(line, v) && v.appSeq == a.seq ? (v.yes ? "yes" : "no") : "-";
-        out.printf("%s | %s | %s | %s | %s | %s | yes %u no %u | you %s\n", a.board.c_str(), a.name.c_str(), a.sysop.c_str(), a.location.c_str(),
-                   a.mac.c_str(), is, (unsigned)t.yes, (unsigned)t.no, mine);
+        out.printf("%s | %s | %s | %s | %s | %s | yes %u no %u | you %s\n", a.board.c_str(), netSafe(a.name).c_str(), netSafe(a.sysop).c_str(),
+                   netSafe(a.location).c_str(), netSafe(a.mac).c_str(), is, (unsigned)t.yes, (unsigned)t.no, mine);
         any = true;
     }
     if (!any) out.println("axis: no applications held");
 }
 
-// @NETAPPLY, @NETVOTE (this board), @NETADMIT, @NETDENY, @NETVETO, @NETVOTES (Rev's board). False if word is none of them.
-static bool netUserCommand(NetHost& h, const std::string& word, const std::string& arg, const std::string& a, Print& out) {
-    bool apply = word == "@NETAPPLY", vote = word == "@NETVOTE", veto = word == "@NETVETO";
+// APPS, MEMBERS (from @NET), @NETAPPLY, @NETVOTE (this board), @NETADMIT, @NETDENY, @NETVETO, @NETVOTES (Rev's board).
+// t is the first word of the arguments (lowercase), rest what follows it as typed. False if word is none of them.
+static bool netUserCommand(NetHost& h, const std::string& word, const std::string& arg, const std::string& a, const std::string& t,
+                           const std::string& rest, Print& out) {
+    bool apply = word == "@NETAPPLY", vote = word == "@NETVOTE", veto = word == "@NETVETO", list = word == "APPS" || word == "MEMBERS";
     bool rev = word == "@NETADMIT" || word == "@NETDENY" || veto, votes = word == "@NETVOTES";
-    if (!apply && !vote && !rev && !votes) return false;
+    if (!apply && !vote && !rev && !votes && !list) return false;
     axis::net::NetCore&    core = *h.core;
     axis::net::NetMembers& mem = core.members();
     using S = axis::net::NetMembers::Status;
-    std::string t = a.substr(0, a.find(' ')), rest;  // the board id, then the rest as typed
-    size_t      sp = arg.find(' ');
-    if (sp != std::string::npos) rest = arg.substr(sp + 1);
-    while (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
-    uint32_t          now = unixNow();
-    axis::net::NetApp ap;
-    const char*       no = !h.appsLoaded ? "User Net is still loading" : (rev || votes) && netRevSlot(h) < 0 ? "not Rev's board" : nullptr;
-    bool              ok = false;
+    uint32_t    now = unixNow(), off, appSeq = 0;
+    const char* no = !h.appsLoaded ? "User Net is still loading" : (rev || votes) && netRevSlot(h) < 0 ? "not Rev's board" : nullptr;
+    bool        ok = false;
+    if (!no && word == "APPS") netApps(h, out);
+    else if (!no && list)
+        for (const std::string& b : mem.members()) {
+            const axis::net::NetCard* c = core.state().card(b);
+            out.printf("%s %s%s\n", b.c_str(), c ? netSafe(c->name).c_str() : "-", core.isRevBoard(b) ? " (Rev)" : "");
+        }
+    if (!no && list) return true;
     if (!no && votes) {  // "yes=<n>,no=<n>", each 1 to 20: NetState refuses any other value, and then no seq is used
         if (a.compare(0, 4, "yes=") != 0 || !netNotice(h, "votes", "net", a, &out)) out.println("axis: @NETVOTES yes=<1-20>,no=<1-20>");
         return true;
     }
     if (!no && rev) {
-        size_t held = 0;
-        core.state().forEachMemberNotice([&held](const std::string&, const axis::net::NetNotice&) { held++; });
         if (!netIsBoard(t) || t == core.board() || core.isRevBoard(t)) no = "bad board id (never this board or Rev's)";
-        else if (held >= axis::net::kMaxMemberNotices && !core.state().memberNotice(t)) no = "the member table is full (64 boards)";
+        else if (core.state().memberNoticeCount() >= axis::net::kMaxMemberNotices && !core.state().memberNotice(t)) no = "the member table is full (64 boards)";
         else if (veto && rest != "YES") {
             out.printf("axis: a veto keeps %s out of User Net for good; to send: @NETVETO %s YES\n", t.c_str(), t.c_str());
             return true;
         } else {  // admit and deny name the application they decide (none held: 1)
-            netNotice(h, veto ? "veto" : word == "@NETADMIT" ? "admit" : "deny", t,
-                      veto ? std::string() : netHeldApp(h, t, ap) ? std::to_string(ap.seq) : std::string("1"), &out);
+            netNotice(h, veto ? "veto" : word == "@NETADMIT" ? "admit" : "deny", t, veto ? std::string() : netAppSeq(h, t), &out);
             return true;
         }
     } else if (!no && apply) {
@@ -3422,6 +3425,7 @@ static bool netUserCommand(NetHost& h, const std::string& word, const std::strin
             if (now / 86400 < d + 30) no = "denied less than 30 days ago";
         }
         if (!no) {
+            axis::net::NetApp ap;
             ap.pub = axis::net::toHex(h.key.pub, 32);
             ap.board = core.board();
             ap.name = netField(boardCfg->netName.empty() ? boardCfg->bbsName : boardCfg->netName, 36);
@@ -3440,13 +3444,14 @@ static bool netUserCommand(NetHost& h, const std::string& word, const std::strin
         std::string yn = rest.substr(0, rest.find(' ')), comment = yn.size() < rest.size() ? rest.substr(yn.size() + 1) : "";
         for (char& ch : yn) ch = (char)std::toupper((unsigned char)ch);
         no = !h.unMember ? "this board is not a member" : !netIsBoard(t) || (yn != "Y" && yn != "N") ? "@NETVOTE <board id> Y|N [comment]" :
-             !netHeldApp(h, t, ap) ? "no application held from that board" : h.seqFloorDue ? "waiting for the clock" : nullptr;
+             t == core.board() ? "not on this board's own application" : !mem.heldApp(t, off, &appSeq) ? "no application held from that board" :
+             h.seqFloorDue ? "waiting for the clock" : nullptr;
         if (!no) {
             axis::net::NetVote v;
             v.voter = core.board();
             v.pub = axis::net::toHex(h.key.pub, 32);
             v.app = t;
-            v.appSeq = ap.seq;
+            v.appSeq = appSeq;
             v.seq = h.voteSeq;
             v.date = now;
             v.yes = yn == "Y";
@@ -3555,6 +3560,8 @@ static void netCommand(const String& cmd, Print& out) {
     NetHost& h = *netHost;
     std::string a = arg;
     for (char& ch : a) ch = (char)std::tolower((unsigned char)ch);
+    std::string t = a.substr(0, a.find(' ')), rest;  // the first word (lowercase), then what follows it as typed
+    if (t.size() < arg.size()) rest = arg.substr(arg.find_first_not_of(' ', t.size()));
     if (word == "@NET") {
         std::string up = arg;
         for (char& ch : up) ch = (char)std::toupper((unsigned char)ch);
@@ -3579,14 +3586,7 @@ static void netCommand(const String& cmd, Print& out) {
                            s1 == std::string::npos ? "" : l.c_str() + s1 + 1);
             }
             if (v.empty()) out.println("axis: the record is empty");
-        } else if ((up == "APPS" || up == "MEMBERS") && !h.appsLoaded) out.println("@ERR User Net is still loading");
-        else if (up == "APPS") netApps(h, out);
-        else if (up == "MEMBERS") {
-            for (const std::string& b : h.core->members().members()) {
-                const axis::net::NetCard* c = h.core->state().card(b);
-                out.printf("%s %s%s\n", b.c_str(), c ? c->name.c_str() : "-", h.core->isRevBoard(b) ? " (Rev)" : "");
-            }
-        } else out.println("axis: @NET, @NET SYNC, @NET PEERS, @NET RECORD [n], @NET LOCAL, @NET APPS, @NET MEMBERS");
+        } else if (!netUserCommand(h, up, arg, a, t, rest, out)) out.println("axis: @NET, @NET SYNC, @NET PEERS, @NET RECORD [n], @NET LOCAL, @NET APPS, @NET MEMBERS");
         return;
     }
     // local moderation: this board only
@@ -3617,7 +3617,7 @@ static void netCommand(const String& cmd, Print& out) {
         out.printf(ok ? "@OK %s %s\n" : "@ERR %s %s not saved\n", word.c_str() + 4, a.c_str());
         return;
     }
-    if (netUserCommand(h, word, arg, a, out)) return;
+    if (netUserCommand(h, word, arg, a, t, rest, out)) return;
     // Rev's notices: only on Rev's board
     if (netRevSlot(h) < 0) {
         out.println("@ERR not Rev's board");
@@ -3626,7 +3626,6 @@ static void netCommand(const String& cmd, Print& out) {
     static const char* const kRev[4][2] = {{"@NETBAN", "ban"}, {"@NETHOLD", "hold"}, {"@NETKILL", "kill"}, {"@NETLIFT", "lift"}};
     for (const auto& r : kRev)
         if (word == r[0]) {  // ban: a board; hold, kill: a post; lift: either (the target's shape picks the group)
-            std::string t = a.substr(0, a.find(' '));
             bool        board = netIsBoard(t), post = netIsPostId(t), kill = r[1][0] == 'k';
             if (r[1][0] == 'b' && board && (t == h.core->board() || h.core->isRevBoard(t))) out.println("@ERR never this board or Rev's");
             else if (!(r[1][0] == 'b' ? board : r[1][0] == 'l' ? board || post : post)) out.println("@ERR bad board or post id");
@@ -3656,22 +3655,14 @@ static void netCommand(const String& cmd, Print& out) {
     }
 }
 
-// The User Net areas this board carries: all four on Rev's board, else those in net_user_areas while net_user is on.
-static std::vector<std::string> netCarried(const NetHost& h) {
+// The User Net areas this board carries (a mask): all four on Rev's board, else net_user_areas while net_user is on.
+static uint8_t netCarried(const NetHost& h) { return netRevSlot(h) >= 0 ? 15 : boardCfg->netUser ? boardCfg->netUserAreas : 0; }
+static void netCarry(NetHost& h, uint8_t m) {
     std::vector<std::string> v;
-    bool                     rev = netRevSlot(h) >= 0;
-    std::string              id;
-    for (char ch : boardCfg->netUserAreas + ",") {
-        if (ch != ',') {
-            if (ch != ' ') id += ch;
-            continue;
-        }
-        if (boardCfg->netUser && !rev && axis::net::isUserNetArea(id)) v.push_back(id);
-        id.clear();
-    }
-    if (rev)
-        for (const axis::net::NetArea& a : axis::net::userNetAreas()) v.push_back(a.id);
-    return v;
+    for (size_t i = 0; i < 4; i++)
+        if (m >> i & 1) v.push_back(axis::net::userNetAreas()[i].id);
+    h.core->setUserAreas(std::move(v));
+    h.carried = m;
 }
 
 // The boot load of /net/apps.txt, two lines a pass (each a signature check) and only with heap to spare; sessions
@@ -3699,7 +3690,7 @@ static void netAppsLoadStep(NetHost& h) {
     h.cfgUser = boardCfg->netUser;
     h.cfgAreas = boardCfg->netUserAreas;
     h.cfgLevel = boardCfg->netUserLevel;
-    h.core->setUserAreas(netCarried(h));
+    netCarry(h, netCarried(h));
     h.unMember = h.core->selfMember();
     h.unDirty = true;
 }
@@ -3723,12 +3714,17 @@ static void netAppsCompact(NetHost& h) {
         }
     if (in) std::fclose(in);
     if (out) ok = std::fclose(out) == 0 && ok;
-    if (ok) {
-        ::unlink(path.c_str());
-        ok = ::rename(tmp.c_str(), path.c_str()) == 0;  // (if not, the next start takes the temp file as the file)
-    } else {
-        ::unlink(tmp.c_str());
+    if (ok) {  // the old file steps aside as apps.old until the new one is in place (netStart restores it if not)
+        std::string old = netPath("apps.old");
+        ::unlink(old.c_str());
+        ok = ::rename(path.c_str(), old.c_str()) == 0;
+        if (ok && ::rename(tmp.c_str(), path.c_str()) != 0) {
+            ::rename(old.c_str(), path.c_str());
+            ok = false;
+        }
+        if (ok) ::unlink(old.c_str());
     }
+    if (!ok) ::unlink(tmp.c_str());
     if ((in = std::fopen(path.c_str(), "rb")) != nullptr) {
         pos = 0;
         for (uint32_t at = 0; netAppsNext(in, pos, line); at = pos)
@@ -3752,9 +3748,9 @@ static void netUserTick(NetHost& h) {
         h.cfgUser = c.netUser;
         h.cfgAreas = c.netUserAreas;
         h.cfgLevel = c.netUserLevel;
-        std::vector<std::string> v = netCarried(h);
-        for (const std::string& id : v) reset = reset || !core.carries(id);
-        core.setUserAreas(std::move(v));
+        uint8_t m = netCarried(h);
+        reset = (m & ~h.carried) != 0;  // an area more
+        netCarry(h, m);
         netAreasGen++;  // (the level may have changed)
     }
     h.unDirty = false;
@@ -3765,21 +3761,20 @@ static void netUserTick(NetHost& h) {
         core.resetUserHistory();
         h.dirty = true;
     }
-    std::string un;
-    if (member && c.netUser)
-        for (const std::string& id : core.userAreas()) un += (un.empty() ? "" : ",") + id;
-    if (un != netUnNow) {
-        netUnNow = un;
+    uint8_t un = member && c.netUser ? h.carried : 0;
+    if (un != netUnMask) {
+        netUnMask = un;
         netAreasGen++;
         if (cluster && cluster->role() == axis::cluster::Role::Main) cluster->shareSettings();  // the followers' callers too
     }
     if (netRevSlot(h) < 0) return;
     int n = 0;
-    for (const auto& d : core.members().sealsDue()) {
-        axis::net::NetApp ap;
-        bool              admit = d.second == axis::net::NetMembers::Status::Member;
-        if (n++ == 4 || !netNotice(h, admit ? "admit" : "deny", d.first, netHeldApp(h, d.first, ap) ? std::to_string(ap.seq) : std::string("1"), nullptr)) break;
-    }
+    for (const auto& d : core.members().sealsDue())
+        if (n < 4 && netNotice(h, d.second == axis::net::NetMembers::Status::Member ? "admit" : "deny", d.first, netAppSeq(h, d.first), nullptr)) n++;
+        else if (n < 4 && !h.sealSaid) {  // (the next change tries again)
+            logEvent(String("net: seal for ") + d.first.c_str() + " not taken");
+            h.sealSaid = true;
+        }
 }
 
 static bool netStart() {
@@ -3827,11 +3822,15 @@ static bool netStart() {
         core.setAppsFile(netAppsAppend, netAppsScan, netAppsReadAt);
     }
     core.state().load(netFileRead("state.txt"), day);
-    {  // /net/apps.txt is read a few lines a pass from the loop (netAppsLoadStep); a rewrite stopped by a reset is finished
-        std::string p = netPath("apps.txt"), t = netTmpPath("apps.txt");
+    {  // /net/apps.txt is read a few lines a pass from the loop (netAppsLoadStep). A compaction stopped by a reset: with no
+        // apps.txt the old file (apps.old) comes back, else the temp file; the others go only once apps.txt is there.
+        std::string p = netPath("apps.txt"), t = netTmpPath("apps.txt"), o = netPath("apps.old");
         struct stat st;
-        if (::stat(p.c_str(), &st) != 0) ::rename(t.c_str(), p.c_str());
-        else ::unlink(t.c_str());
+        if (::stat(p.c_str(), &st) != 0 && ::rename(o.c_str(), p.c_str()) != 0) ::rename(t.c_str(), p.c_str());
+        if (::stat(p.c_str(), &st) == 0) {
+            ::unlink(t.c_str());
+            ::unlink(o.c_str());
+        }
         core.members().beginLoad();
     }
     core.seen().load(netFileRead("seen.txt"));
@@ -3981,7 +3980,7 @@ static void netTick() {
 static bool netAreasOn() { return asFollower() ? netMainUp : netHost && boardCfg->netSysop; }
 
 // The settings a new Node gets: the board's, plus the four Sysop Net areas for the sysop alone while the net runs, then
-// the User Net areas callers get now (netUnNow) at net_user_level. Never saved: they are not in boardCfg->msgAreas.
+// the User Net areas callers get now (netUnMask) at net_user_level. Never saved: they are not in boardCfg->msgAreas.
 static std::shared_ptr<const axis::bbs::BbsConfig> nodeCfg() {
     if (!netAreasOn()) return boardCfg;
     // one shared copy per board settings, rebuilt when boardCfg is replaced or the User Net areas may have changed
@@ -3996,11 +3995,11 @@ static std::shared_ptr<const axis::bbs::BbsConfig> nodeCfg() {
             f.minSecurity = axis::bbs::kSysopSecurity;
             c->msgAreas.push_back(f);
         }
-        for (const axis::net::NetArea& a : axis::net::userNetAreas())  // (their names say "User Net: ")
-            if (("," + netUnNow + ",").find("," + a.id + ",") != std::string::npos) {
+        for (size_t i = 0; i < 4; i++)  // (their names say "User Net: ")
+            if (netUnMask >> i & 1) {
                 axis::bbs::FileArea f;
-                f.id = a.id;
-                f.name = a.name;
+                f.id = axis::net::userNetAreas()[i].id;
+                f.name = axis::net::userNetAreas()[i].name;
                 f.minSecurity = boardCfg->netUserLevel;
                 c->msgAreas.push_back(f);
             }
@@ -4822,7 +4821,7 @@ static void startCluster() {
 #if AXIS_NETS
     cluster->settings = [] {  // plus "net_up=1" while Sysop Net runs here and the User Net areas callers get (an old follower keeps them as unknown keys)
         std::string s = axis::bbs::formatConfig(*boardCfg);
-        if (netHost && boardCfg->netSysop) s += "net_up=1\nnet_un=" + netUnNow + "\n";
+        if (netHost && boardCfg->netSysop) s += "net_up=1\nnet_un=" + axis::bbs::userNetList(netUnMask) + "\n";
         return s;
     };
 #else
@@ -4832,9 +4831,9 @@ static void startCluster() {
 #if AXIS_NETS
         netMainUp = ini.find("\nnet_up=1\n") != std::string::npos;  // an old main never says it: off
         size_t      un = ini.find("\nnet_un=");  // an old main never says it: no User Net areas
-        std::string got = un == std::string::npos ? std::string() : ini.substr(un + 8, ini.find('\n', un + 8) - (un + 8));
-        if (got != netUnNow) {
-            netUnNow = got;
+        uint8_t     got = un == std::string::npos ? 0 : axis::bbs::userNetMask(ini.substr(un + 8, ini.find('\n', un + 8) - (un + 8)));
+        if (got != netUnMask) {
+            netUnMask = got;
             netAreasGen++;
         }
 #endif

@@ -62,7 +62,8 @@ public:
     // after appending the line. Nothing if the line is not held.
     void setOffset(const std::string& line, uint32_t off);
     // The board's held app: its line's offset (kNoOffset if not known). False if none is held.
-    bool heldApp(const std::string& board, uint32_t& off) const;
+    // seq, if given, gets the held app's seq.
+    bool heldApp(const std::string& board, uint32_t& off, uint32_t* seq = nullptr) const;
     // The voter's held vote on app (the one on the app held now, else the highest app seq): its line's
     // offset. False if none is held.
     bool heldVote(const std::string& voter, const std::string& app, uint32_t& off) const;

@@ -473,11 +473,12 @@ void NetMembers::setOffset(const std::string& line, uint32_t off) {
         (pool == 1 ? votes_ : outsiders_)[index].off = off;
 }
 
-bool NetMembers::heldApp(const std::string& board, uint32_t& off) const {
+bool NetMembers::heldApp(const std::string& board, uint32_t& off, uint32_t* seq) const {
     uint64_t b;
     const App* a = parseId(board, b) ? findApp(b) : nullptr;
     if (!a) return false;
     off = a->off;
+    if (seq) *seq = a->seq;
     return true;
 }
 

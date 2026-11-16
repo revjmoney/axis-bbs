@@ -269,11 +269,7 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
         if (n.kind == "veto" ? !n.value.empty() : (!parseU32(n.value, appSeq) || appSeq == 0)) return false;
         if (it == notices_.end()) {
             // Full: a new target is refused. Never evicted, the tally depends on every seal.
-            size_t count = 0;
-            for (auto i = notices_.lower_bound(std::make_pair(std::string("member"), std::string()));
-                 i != notices_.end() && i->first.first == "member"; ++i)
-                ++count;
-            if (count >= kMaxMemberNotices) return false;
+            if (memberNoticeCount() >= kMaxMemberNotices) return false;
         }
     }
 
@@ -328,6 +324,13 @@ const NetNotice* NetState::memberNotice(const std::string& board) const {
 uint32_t NetState::memberNoticeDay(const std::string& board) const {
     auto it = notices_.find(std::make_pair(std::string("member"), board));
     return it == notices_.end() ? 0 : it->second.day;
+}
+size_t NetState::memberNoticeCount() const {
+    size_t n = 0;
+    for (auto i = notices_.lower_bound(std::make_pair(std::string("member"), std::string()));
+         i != notices_.end() && i->first.first == "member"; ++i)
+        ++n;
+    return n;
 }
 void NetState::forEachMemberNotice(const std::function<void(const std::string& board, const NetNotice&)>& f) const {
     for (auto i = notices_.lower_bound(std::make_pair(std::string("member"), std::string()));
