@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "bbs/msgbase.h"
+#include "bbs/users.h"
 #include "net/members.h"
 #include "net/record.h"
 #include "net/outlog.h"
@@ -36,6 +37,8 @@ const std::vector<NetArea>& userNetAreas();
 bool isUserNetArea(const std::string& id);      // one of userNetAreas
 const NetArea* netArea(const std::string& id);  // either family; nullptr when id is neither
 bool isNetAreaId(const std::string& area);      // starts with "sn_" or "un_"
+// The caller may post to the nets: an account, net posts allowed (permNets) and not a twit.
+inline bool mayPostToNets(const bbs::User* u) { return u && u->permNets && !u->twit; }
 
 // The post id held in a Message's net field (the whole line or the headers-only start). "" if none.
 std::string netPostId(const std::string& net);

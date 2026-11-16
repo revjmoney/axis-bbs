@@ -68,6 +68,7 @@ void UserStore::parse(const std::string& text) {
         else if (k == "perm_doors") u->permDoors = n != 0;
         else if (k == "free_dl") u->freeDownloads = n != 0;
         else if (k == "twit") u->twit = n != 0;
+        else if (k == "nonet") u->permNets = n == 0;
         else if (k.rfind("lr.", 0) == 0) u->lastRead[k.substr(3)] = (int)n;
         else if (k.rfind("nuv.", 0) == 0 && !v.empty()) {  // nuv.<voter>=y|n, then a space and the comment
             NuvVote nv;
@@ -125,6 +126,7 @@ std::string formatUser(const User& u) {
         kv("perm_doors", u.permDoors ? "1" : "0");
         kv("free_dl", u.freeDownloads ? "1" : "0");
         if (u.twit) kv("twit", "1");
+        if (!u.permNets) kv("nonet", "1");
         for (auto& lr : u.lastRead) kv(("lr." + lr.first).c_str(), std::to_string(lr.second));
         for (auto& a : u.answers) {
             std::string q = oneLine(a.first);

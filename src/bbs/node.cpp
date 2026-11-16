@@ -3542,9 +3542,10 @@ void Node::showUser() {
                                       {"up/down", std::to_string(u->uploads / 1024) + " / " + std::to_string(u->downloads / 1024) + " KB"},
                                       {"access", std::string(u->permFiles ? "files " : "") + (u->permMessages ? "msgs " : "") + (u->permDoors ? "doors " : "") +
                                                      (u->freeDownloads ? "free-dl" : "")},
-                                      {"twit", u->twit ? "YES" : "no"}});
+                                      {"twit", u->twit ? "YES" : "no"},
+                                      {"net posts", u->permNets ? "YES" : "no"}});
     out_ += "   " + theme::key("S", "ecurity  ") + theme::key("V", "alidate  ") + theme::key("D", "eny  ") + theme::key("T", "wit  ") + theme::key("F", "iles  ") +
-            theme::key("M", "sgs  ") + theme::key("O", " doors  ") + theme::key("L", " free dl  ") + theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
+            theme::key("M", "sgs  ") + theme::key("O", " doors  ") + theme::key("L", " free dl  ") + theme::key("N", "et posts  ") + theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
 }
 
 void Node::userEditKey(char c) {
@@ -3608,6 +3609,7 @@ void Node::userEditKey(char c) {
         case 'm': u->permMessages = !u->permMessages; break;
         case 'o': u->permDoors = !u->permDoors; break;
         case 'l': u->freeDownloads = !u->freeDownloads; break;
+        case 'n': u->permNets = !u->permNets; break;
         case 'q': showUsers(); return;
         default: return;
     }

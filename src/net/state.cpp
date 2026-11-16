@@ -325,6 +325,10 @@ const NetNotice* NetState::memberNotice(const std::string& board) const {
     auto it = notices_.find(std::make_pair(std::string("member"), board));
     return it == notices_.end() ? nullptr : &it->second.n;
 }
+uint32_t NetState::memberNoticeDay(const std::string& board) const {
+    auto it = notices_.find(std::make_pair(std::string("member"), board));
+    return it == notices_.end() ? 0 : it->second.day;
+}
 void NetState::forEachMemberNotice(const std::function<void(const std::string& board, const NetNotice&)>& f) const {
     for (auto i = notices_.lower_bound(std::make_pair(std::string("member"), std::string()));
          i != notices_.end() && i->first.first == "member"; ++i)

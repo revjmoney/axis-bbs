@@ -101,6 +101,11 @@ struct BbsConfig {
     std::string netFirstPeer;
     int         netSyncMin = 15, netKeepPosts = 500, netKeepDays = 90;
     std::string netName, netSysopName, netLocation;
+    // User Net (net/members.h): "net_user" (off unless 1) this board wants it; "net_user_areas" the un_ areas it carries
+    // (comma list); "net_user_level" the lowest security that may read and post in them.
+    bool        netUser = false;
+    std::string netUserAreas = "un_chat,un_tech,un_games,un_files";
+    int         netUserLevel = 20;
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)

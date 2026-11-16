@@ -118,7 +118,10 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "net_name") c.netName = v;
         else if (k == "net_sysop_name") c.netSysopName = v;
         else if (k == "net_location") c.netLocation = v;
-        else if (k == "net_up") {}  // the main's settings frame says its Sysop Net runs (main.cpp); never kept
+        else if (k == "net_user") c.netUser = n != 0;
+        else if (k == "net_user_areas") c.netUserAreas = v;
+        else if (k == "net_user_level") c.netUserLevel = (int)n;
+        else if (k == "net_up" || k == "net_un") {}  // the main's settings frame: its Sysop Net runs, its User Net areas (main.cpp); never kept
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "nuv_yes") c.nuvYes = (int)n;
         else if (k == "nuv_no") c.nuvNo = (int)n;
@@ -268,6 +271,9 @@ std::string formatConfig(const BbsConfig& c) {
     kv("net_name", c.netName);
     kv("net_sysop_name", c.netSysopName);
     kv("net_location", c.netLocation);
+    kv("net_user", c.netUser ? "1" : "0");
+    kv("net_user_areas", c.netUserAreas);
+    kv("net_user_level", std::to_string(c.netUserLevel));
     kv("theme", c.theme);
     kv("wfc", c.wfc);
     kv("ratio", std::to_string(c.ratio));
