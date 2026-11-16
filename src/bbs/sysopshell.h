@@ -73,6 +73,7 @@ public:
 
 private:
     void push(const std::string& title, std::function<void(Layer&)> build);
+    Item page(const std::string& label, const std::string& value, const std::string& title, std::function<void(Layer&)> build);
     void pushText(const std::string& title, const std::string& lines);
     void pop();
     void draw();
@@ -105,10 +106,11 @@ private:
 #if AXIS_NETS
     void sysopNet(Layer& l);
     void records(Layer& l);                                                // Traffic and logs: the record browser
-    void recordList(Layer& l, const std::string& title, const std::string& cmd, size_t skip);  // 20 lines from skip on
+    void recordPage(const std::string& title, const std::string& cmd);  // a list of 20 lines, from the newest
+    void recordList(Layer& l, const std::string& cmd);                 // the 20 from recPages_.back() on
     void userNet(Layer& l);
     void userVoting(Layer& l);                                                         // New Board Voting
-    void userApp(Layer& l, const std::string& board, std::shared_ptr<std::string> comment);  // one applicant, and the vote
+    void userApp(Layer& l, const std::string& board);  // one applicant, and the vote
     Item netAsk(const std::string& label, const std::string& value, const std::string& cmd);  // asks, then runs cmd + answer
     Item netShow(const std::string& label, const std::string& cmd);                           // a text page of cmd's answer
 #endif
@@ -129,6 +131,10 @@ private:
     std::string                            previewKey_, previewLook_;
     std::vector<std::string>               settings_;  // @SETTINGS for the layer being built
     bool                                   haveSettings_ = false;
+#if AXIS_NETS
+    std::vector<size_t>                    recPages_;     // the record list: the index each page starts at (Older, Newer)
+    std::string                            voteComment_;  // New Board Voting: the comment typed for the next vote
+#endif
     std::string                            header(const std::string& title) const;
     size_t page_() const { return cols_ >= 80 ? 14 : 7; }  // items a page: 14 online, 7 on the board's 12-line screen
 };

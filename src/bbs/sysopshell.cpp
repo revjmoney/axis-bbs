@@ -32,6 +32,7 @@ std::string fit(std::string s, size_t n) {
     if (s.size() > n) s.resize(n);
     return s;
 }
+constexpr size_t kTextLines = 400;  // a text page keeps at most this many lines (the rest is said to be cut)
 char keyFor(size_t i) { return i < 9 ? (char)('1' + i) : (char)('a' + (i - 9)); }
 
 // settings groups: the axis.ini keys each one shows (the rest land in "other")
@@ -110,6 +111,11 @@ void SysopShell::did(const std::string& reply) {
     if (nl != std::string::npos) note_.resize(nl);
 }
 
+// A row that opens a page: title and build go to push when it is picked.
+SysopShell::Item SysopShell::page(const std::string& label, const std::string& value, const std::string& title, std::function<void(Layer&)> build) {
+    return {label, value, [this, title, build] { push(title, build); }};
+}
+
 void SysopShell::push(const std::string& title, std::function<void(Layer&)> build) {
     Layer l;
     l.title = title;
@@ -121,8 +127,14 @@ void SysopShell::push(const std::string& title, std::function<void(Layer&)> buil
 void SysopShell::pushText(const std::string& title, const std::string& text) {
     Layer l;
     l.title = title;
-    for (auto& s : split(text, '\n'))
-        if (!s.empty()) l.text.push_back(s.rfind("axis: ", 0) == 0 ? s.substr(6) : s);
+    for (size_t at = 0, nl; at < text.size(); at = nl + 1) {
+        nl = std::min(text.find('\n', at), text.size());
+        if (l.text.size() >= kTextLines) {
+            l.text.push_back("(the rest is not shown)");
+            break;
+        }
+        if (nl > at) l.text.push_back(text.compare(at, 6, "axis: ") == 0 ? text.substr(at + 6, nl - at - 6) : text.substr(at, nl - at));
+    }
     layers_.push_back(std::move(l));
     draw();
 }
@@ -179,7 +191,7 @@ void SysopShell::begin() {
                    {"Settings", "", [this] { enter(SysopSection::Settings); }},
                    {"Menus", "", [this] { enter(SysopSection::Menus); }},
                    {"System", "", [this] { enter(SysopSection::System); }},
-                   {"Sections", "", [this] { push("SECTIONS", [this](Layer& x) { sections(x); }); }},
+                   page("Sections", "", "SECTIONS", [this](Layer& x) { sections(x); }),
                    {"Look", "", [this] { enter(SysopSection::Look); }}};
         if (!local_)  // over telnet the WFC is only ever picked here (at the board it is the home screen)
             l.items.push_back({"Waiting for caller screen", "", [this] {
@@ -377,7 +389,7 @@ void SysopShell::users(Layer& l) {
         auto f = split(line.substr(5), '|');
         if (f.size() < 6) continue;
         std::string h = f[1];
-        l.items.push_back({h, f[2] + ", level " + f[3] + ", " + f[4] + " calls", [this, h] { push("USER", [this, h](Layer& x) { user(x, h); }); }});
+        l.items.push_back(page(h, f[2] + ", level " + f[3] + ", " + f[4] + " calls", "USER", [this, h](Layer& x) { user(x, h); }));
     }
 }
 
@@ -439,8 +451,8 @@ void SysopShell::areas(Layer& l, bool msgs) {
         auto f = split(line, '|');
         if (f.size() < 4) continue;
         int n = std::atoi(f[0].c_str());
-        l.items.push_back({f[2], f[1] + (f[3] != "0" ? ", level " + f[3] : "") + (f.size() > 4 && f[4] == "m" ? ", mirrored" : ""),
-                           [this, msgs, n, f] { push(f[2], [this, msgs, n](Layer& x) { area(x, msgs, n); }); }});
+        l.items.push_back(page(f[2], f[1] + (f[3] != "0" ? ", level " + f[3] : "") + (f.size() > 4 && f[4] == "m" ? ", mirrored" : ""),
+                           f[2], [this, msgs, n](Layer& x) { area(x, msgs, n); }));
     }
 }
 
@@ -535,8 +547,8 @@ void SysopShell::posts(Layer& l, const std::string& a) {
 // ---- settings: every axis.ini setting, in groups; passwords set but never shown
 void SysopShell::settings(Layer& l) {
     for (int g = 0; g < (int)(sizeof kGroups / sizeof kGroups[0]); g++)
-        l.items.push_back({kGroups[g].name, "", [this, g] { push(kGroups[g].name, [this, g](Layer& x) { settingGroup(x, g); }); }});
-    l.items.push_back({"Other settings", "", [this] { push("OTHER", [this](Layer& x) { settingGroup(x, -1); }); }});
+        l.items.push_back(page(kGroups[g].name, "", kGroups[g].name, [this, g](Layer& x) { settingGroup(x, g); }));
+    l.items.push_back(page("Other settings", "", "OTHER", [this](Layer& x) { settingGroup(x, -1); }));
     l.items.push_back({"Sysop password", "(never shown)", [this] {
                            ask("New sysop password (4+)", true, [this](const std::string& v) { did(run_("@SYSOPPASS " + v)); });
                        }});
@@ -620,7 +632,7 @@ void SysopShell::menus(Layer& l) {
         auto f = split(line, '|');
         if (f.size() < 4) continue;
         int n = std::atoi(f[0].c_str());
-        l.items.push_back({"[" + f[1] + "] " + f[2], f[3], [this, n] { push("MENU ITEM", [this, n](Layer& x) { menuItem(x, n); }); }});
+        l.items.push_back(page("[" + f[1] + "] " + f[2], f[3], "MENU ITEM", [this, n](Layer& x) { menuItem(x, n); }));
     }
     l.items.push_back({"Back to the built-in menu", "", [this] {
                            confirm("Throw the edited menu away?", [this] { did(run_("@MENURESET")); });
@@ -704,7 +716,7 @@ void SysopShell::sections(Layer& l) {
 void SysopShell::system(Layer& l) {
     auto show = [this](const char* title, const char* cmd) { return [this, title, cmd] { pushText(title, run_(cmd)); }; };
     l.items.push_back({"Event log", "", show("EVENT LOG", "@LOG")});
-    l.items.push_back({"Nodes", "", [this] { push("NODES", [this](Layer& x) { nodes(x); }); }});
+    l.items.push_back(page("Nodes", "", "NODES", [this](Layer& x) { nodes(x); }));
     l.items.push_back({"Status", "", show("STATUS", "@STATUS")});
     l.items.push_back({"SD cards", "", show("CARDS", "@CARDS")});
     l.items.push_back({"Web, No-IP, Discord", "", show("WEB", "@WEB")});
@@ -712,11 +724,11 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
 #if AXIS_MODEMLINK
-    Item modemPage{"Modem", "LFD3K-SM radio callers", [this] { push("MODEM", [this](Layer& x) { modem(x); }); }};  // (last, online and here)
+    Item modemPage = page("Modem", "LFD3K-SM radio callers", "MODEM", [this](Layer& x) { modem(x); });  // (last, online and here)
 #endif
 #if AXIS_NETS
-    Item netPage{"Sysop Net", "board to board net", [this] { push("SYSOP NET", [this](Layer& x) { sysopNet(x); }); }};  // after Modem: no key moves
-    Item userPage{"User Net", "the member boards' net", [this] { push("USER NET", [this](Layer& x) { userNet(x); }); }};
+    Item netPage = page("Sysop Net", "board to board net", "SYSOP NET", [this](Layer& x) { sysopNet(x); });  // after Modem: no key moves
+    Item userPage = page("User Net", "the member boards' net", "USER NET", [this](Layer& x) { userNet(x); });
 #endif
     if (!local_) {  // the rest is for the sysop at the board: never over telnet
 #if AXIS_MODEMLINK
@@ -739,7 +751,7 @@ void SysopShell::system(Layer& l) {
                                else did("not formatted");
                            });
                        }});
-    l.items.push_back({"Station", "sensors and relays", [this] { push("STATION", [this](Layer& x) { station(x); }); }});
+    l.items.push_back(page("Station", "sensors and relays", "STATION", [this](Layer& x) { station(x); }));
 #if AXIS_MODEMLINK
     l.items.push_back(modemPage);
 #endif
@@ -814,10 +826,10 @@ void SysopShell::modem(Layer& l) {
 // ---- look: the caller theme and the waiting screen's skin (blank: it follows the theme)
 void SysopShell::look(Layer& l) {
     const char* t = theme::knownLook(setting("theme"));
-    l.items.push_back({"Theme", t ? t : "axis", [this] { push("THEME", [this](Layer& x) { lookPick(x, "theme", false); }); }});
+    l.items.push_back(page("Theme", t ? t : "axis", "THEME", [this](Layer& x) { lookPick(x, "theme", false); }));
     std::string ws = setting("wfc");
     const char* w = theme::isClassicWfc(ws) ? "classic" : theme::knownLook(ws);
-    l.items.push_back({"Waiting screen skin", w ? w : "follows the theme", [this] { push("WFC SKIN", [this](Layer& x) { lookPick(x, "wfc", true); }); }});
+    l.items.push_back(page("Waiting screen skin", w ? w : "follows the theme", "WFC SKIN", [this](Layer& x) { lookPick(x, "wfc", true); }));
     bool anim = setting("wfc_anim") != "0";  // the board's own panel only (against burn-in): telnet and serial WFCs stay still
     l.items.push_back({"Waiting screen animation", anim ? "on" : "off", [this, anim] { did(run_(std::string("@SET wfc_anim=") + (anim ? "0" : "1"))); }});
 }
@@ -905,7 +917,7 @@ void SysopShell::sysopNet(Layer& l) {
         if (k == 'H') l.items.push_back({r[1], "", nullptr});
         else if (k == 'V') l.items.push_back({r[1], after(d, arg), nullptr});
         else if (k == 'T') l.items.push_back(netShow(r[1], arg));
-        else if (k == 'B') l.items.push_back({r[1], "", [this] { push("TRAFFIC AND LOGS", [this](Layer& x) { records(x); }); }});
+        else if (k == 'B') l.items.push_back(page(r[1], "", "TRAFFIC AND LOGS", [this](Layer& x) { records(x); }));
         else if (k == 'A' || (k == 'R' && rev)) l.items.push_back(netAsk(r[1], "", arg));
         else if (k == 'S') {
             std::string v = setting(arg);
@@ -915,8 +927,10 @@ void SysopShell::sysopNet(Layer& l) {
     }
 }
 
-// ---- Traffic and logs: the net record browser. Lists come from @NET RECORD KIND / FIND (each line "<index> <date> <who>
-// <what>", newest first, then "older from <index>" if there is more); picking a line opens @NET RECORD SHOW <index>.
+// ---- Traffic and logs: the net record browser. Lists come from @NET RECORD KIND / FIND (each line "<index>
+// <file>:<offset>:<time> <date> <who> <what>", newest first, then "older from <index>" if lines are left). Picking a line
+// opens @NET RECORD SHOW <file>:<offset>:<time>: that very line, however the record has grown since. Older and Newer
+// page the same layer (recPages_: the index each page starts at).
 namespace {
 std::string wrap74(const std::string& s) {  // text pages cut lines at 74 columns: a record's fields are folded instead
     std::string o;
@@ -930,41 +944,40 @@ std::string wrap74(const std::string& s) {  // text pages cut lines at 74 column
 }
 }  // namespace
 
+void SysopShell::recordPage(const std::string& title, const std::string& cmd) {
+    recPages_.assign(1, 0);
+    push(title, [this, cmd](Layer& x) { recordList(x, cmd); });
+}
+
 void SysopShell::records(Layer& l) {
     static const char* const kLists[][2] = {{"All", "all"}, {"Votes", "votes"}, {"Members", "members"}, {"Actions", "actions"}};
     for (const auto& r : kLists) {
-        std::string title = r[0], cmd = std::string("@NET RECORD KIND ") + r[1] + " 20 ";
-        l.items.push_back({title, "", [this, title, cmd] { push(title, [this, title, cmd](Layer& x) { recordList(x, title, cmd, 0); }); }});
+        const char *title = r[0], *kind = r[1];
+        l.items.push_back({title, "", [this, title, kind] { recordPage(title, std::string("@NET RECORD KIND ") + kind + " 20 "); }});
     }
     l.items.push_back({"Search", "", [this] {
-                           ask("Search the record for", false, [this](const std::string& v) {
-                               std::string cmd = "@NET RECORD FIND " + v + " 20 ";
-                               push("SEARCH", [this, cmd](Layer& x) { recordList(x, "SEARCH", cmd, 0); });
-                           });
+                           ask("Search the record for", false, [this](const std::string& v) { recordPage("SEARCH", "@NET RECORD FIND " + v + " 20 "); });
                        }});
     l.items.push_back(netShow("Months", "@NET RECORD MONTHS"));
 }
 
-void SysopShell::recordList(Layer& l, const std::string& title, const std::string& cmd, size_t skip) {
-    std::string older;
-    for (auto& line : lines(cmd + std::to_string(skip))) {
-        size_t a = line.find(' '), d = a == std::string::npos ? a : line.find(' ', a + 1);
-        size_t t = d == std::string::npos ? d : line.find(' ', d + 1), w = t == std::string::npos ? t : line.find(' ', t + 1);
-        if (line.rfind("axis: older from ", 0) == 0) older = line.substr(17);
-        else if (w == std::string::npos || t < a + 6 || !std::isdigit((unsigned char)line[0]))
+void SysopShell::recordList(Layer& l, const std::string& cmd) {
+    long older = -1;
+    for (auto& line : lines(cmd + std::to_string(recPages_.empty() ? 0 : recPages_.back()))) {
+        auto f = split(line, ' ');  // index, file:offset:time, YYYY-MM-DD, HH:MM, who, what
+        if (line.rfind("axis: older from ", 0) == 0) older = std::strtol(line.c_str() + 17, nullptr, 10);
+        else if (f.size() < 5 || !std::isdigit((unsigned char)line[0]) || f[2].size() < 6)
             l.items.push_back({line.rfind("axis: ", 0) == 0 ? line.substr(6) : line, "", nullptr});
         else {
-            std::string n = line.substr(0, a);  // "MM-DD HH:MM who", then what
-            l.items.push_back({line.substr(a + 6, t - a - 6) + " " + line.substr(t + 1, w - t - 1), line.substr(w + 1), [this, n] {
-                                   pushText("RECORD " + n, wrap74(run_("@NET RECORD SHOW " + n)));
+            std::string at = f[1];
+            size_t      what = f[0].size() + f[1].size() + f[2].size() + f[3].size() + f[4].size() + 5;  // "MM-DD HH:MM who", then what
+            l.items.push_back({f[2].substr(5) + " " + f[3] + " " + f[4], what < line.size() ? line.substr(what) : "", [this, at] {
+                                   pushText("RECORD", wrap74(run_("@NET RECORD SHOW " + at)));
                                }});
         }
     }
-    if (!older.empty()) {
-        size_t from = (size_t)std::strtoul(older.c_str(), nullptr, 10);
-        l.items.push_back({"Older", "", [this, title, cmd, from] { push(title, [this, title, cmd, from](Layer& x) { recordList(x, title, cmd, from); }); }});
-    }
-    if (skip) l.items.push_back({"Newer", "", [this] { pop(); }});
+    if (older >= 0) l.items.push_back({"Older", "", [this, older] { recPages_.push_back((size_t)older), layers_.back().at = 0; }});
+    if (recPages_.size() > 1) l.items.push_back({"Newer", "", [this] { recPages_.pop_back(), layers_.back().at = 0; }});
 }
 
 // ---- User Net (System > User Net, after Sysop Net): this board's standing, its settings, applying, New Board Voting,
@@ -975,23 +988,20 @@ void SysopShell::userNet(Layer& l) {
     std::string said = d.empty() ? std::string("(no answer)") : d[0].rfind("axis: ", 0) == 0 ? d[0].substr(6) : d[0];
     l.items.push_back({"Status", st.empty() ? said : st, nullptr});
     l.items.push_back(netAsk("User Net (1 on, 0 off)", setting("net_user") == "1" ? "on" : "off", "@SET net_user="));
-    l.items.push_back({"Areas carried", areas.empty() ? "none" : areas, [this] {
-                           push("AREAS CARRIED", [this](Layer& x) {
-                               uint8_t m = userNetMask(setting("net_user_areas"));
-                               for (unsigned i = 0; i < 4; i++)
-                                   x.items.push_back({userNetList((uint8_t)(1u << i)), m >> i & 1 ? "on" : "off", [this, m, i] {
-                                                          did(run_("@SET net_user_areas=" + userNetList((uint8_t)(m ^ (1u << i)))));
-                                                      }});
-                           });
-                       }});
+    l.items.push_back(page("Areas carried", areas.empty() ? "none" : areas, "AREAS CARRIED", [this](Layer& x) {
+        uint8_t m = userNetMask(setting("net_user_areas"));
+        for (unsigned i = 0; i < 4; i++)
+            x.items.push_back({userNetList((uint8_t)(1u << i)), m >> i & 1 ? "on" : "off", [this, m, i] {
+                                   did(run_("@SET net_user_areas=" + userNetList((uint8_t)(m ^ (1u << i)))));
+                               }});
+    }));
     l.items.push_back(netAsk("Caller level", setting("net_user_level"), "@SET net_user_level="));
     if (st.empty() || st == "loading") return;  // not running here, or the applications are still loading
-    if (st == "member") {
-        size_t n = lines("@NET WAITING").size();
-        l.items.push_back({"New Board Voting", std::to_string(n) + " waiting", [this] { push("NEW BOARD VOTING", [this](Layer& x) { userVoting(x); }); }});
-    } else {
+    if (st == "member")
+        l.items.push_back(page("New Board Voting", std::to_string(lines("@NET WAITING").size()) + " waiting", "NEW BOARD VOTING",
+                               [this](Layer& x) { userVoting(x); }));
+    else
         l.items.push_back(netAsk("Apply (a short blurb)", "", "@NETAPPLY "));
-    }
     l.items.push_back(netShow("Members", "@NET MEMBERS"));
     if (after(d, "rev board") != "yes") return;
     l.items.push_back(netShow("Applications", "@NET APPS"));
@@ -1003,6 +1013,7 @@ void SysopShell::userNet(Layer& l) {
 
 // One row per applicant this board has not voted on: "<board> <yes> <no> <name>, <location>" from @NET WAITING.
 void SysopShell::userVoting(Layer& l) {
+    voteComment_.clear();  // a comment is for one applicant: typed again for the next
     for (auto& line : lines("@NET WAITING")) {
         auto f = split(line, ' ');
         if (f.size() < 4 || f[0].size() != 16) {
@@ -1010,24 +1021,23 @@ void SysopShell::userVoting(Layer& l) {
             continue;
         }
         std::string board = f[0];
-        l.items.push_back({line.substr(f[0].size() + f[1].size() + f[2].size() + 3), "yes " + f[1] + " no " + f[2], [this, board] {
-                               push("APPLICATION", [this, board, c = std::make_shared<std::string>()](Layer& x) { userApp(x, board, c); });
-                           }});
+        l.items.push_back(page(line.substr(f[0].size() + f[1].size() + f[2].size() + 3), "yes " + f[1] + " no " + f[2], "APPLICATION",
+                               [this, board](Layer& x) { userApp(x, board); }));
     }
     if (l.items.empty()) l.items.push_back({"Nobody is waiting for this board's vote", "", nullptr});
 }
 
 // The application (@NET APP <board>: its fields, the counts, each member's vote and comment), then the vote.
-void SysopShell::userApp(Layer& l, const std::string& board, std::shared_ptr<std::string> comment) {
+void SysopShell::userApp(Layer& l, const std::string& board) {
     std::string cmd = "@NET APP " + board;
     for (auto& line : lines(cmd)) {
         size_t sp = line.find(' ');
         l.items.push_back({line.substr(0, sp), sp == std::string::npos ? "" : line.substr(sp + 1), nullptr});
     }
     l.items.push_back({"Read it all", "", [this, cmd] { pushText("APPLICATION", wrap74(run_(cmd))); }});
-    l.items.push_back({"Comment", *comment, [this, comment] { ask("Comment for your vote", false, [comment](const std::string& v) { *comment = v; }); }});
+    l.items.push_back({"Comment", voteComment_, [this] { ask("Comment for your vote", false, [this](const std::string& v) { voteComment_ = v; }); }});
     for (const char* yn : {"Y", "N"})
-        l.items.push_back({*yn == 'Y' ? "Vote yes" : "Vote no", "", [this, board, comment, yn] { did(run_("@NETVOTE " + board + " " + yn + " " + *comment)); }});
+        l.items.push_back({*yn == 'Y' ? "Vote yes" : "Vote no", "", [this, board, yn] { did(run_("@NETVOTE " + board + " " + yn + " " + voteComment_)); }});
 }
 #endif
 

@@ -3,7 +3,6 @@
 // Reading the net record (net/netrecord.h) back for the sysop: which kind a line is, a search over it, whether its
 // signed line checks, and its record's fields one per line. The host reads the files; nothing here touches one.
 #pragma once
-#include <functional>
 #include <string>
 
 #include "net/state.h"
@@ -23,9 +22,14 @@ bool recordMatches(const std::string& line, RecordKind k, const std::string& tex
 // <board> is "Rev" for a notice and "?" for a line that is no record.
 std::string recordCheck(const std::string& signedLine, const NetState& st);
 
+// Takes one line of output; ctx is the caller's.
+using RecordLineFn = void (*)(void* ctx, const std::string& line);
+constexpr size_t kRecordFieldLines = 60;  // a post's body or an application's blurb: lines shown, then "(N more lines)"
+
 // The decoded record's fields, one "<name> <value>" line each (a post's body and an application's blurb a line of
-// theirs per line, indented). Every field is passed through netSafe. Nothing for an empty or unreadable line.
-void recordFields(const std::string& signedLine, const std::function<void(const std::string&)>& line);
+// theirs per line, indented, at most kRecordFieldLines). Every field is passed through netSafe. Nothing for an empty
+// or unreadable line.
+void recordFields(const std::string& signedLine, RecordLineFn line, void* ctx);
 
 // A field from another board, safe for a terminal: control bytes become '?'.
 std::string netSafe(std::string s);

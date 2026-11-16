@@ -3253,6 +3253,21 @@ static void netRecordTail(size_t skip, size_t count, std::vector<std::string>& o
 using axis::net::netSafe;  // a field from another board, safe for a terminal (net/recordview.h)
 static constexpr size_t kNetRecordScan = 2000;  // lines looked at by one command, so a search never holds the loop long
 
+// One line of output, for net/recordview.h's field lists (ctx is the Print).
+static void netOutLine(void* out, const std::string& line) { static_cast<Print*>(out)->printf("%s\n", line.c_str()); }
+
+// A record file's short name: "202611", "nodate", or "record" (the one file without a card).
+static std::string netRecordMonth(const std::string& path) {
+    size_t sl = path.rfind('/') + 1;
+    return path.substr(sl, path.size() - sl - 4);
+}
+
+// a comes before b, newest first: the file being written, then the months newest to oldest, nodate.log last
+static bool netRecordBefore(const std::string& a, const std::string& b, const std::string& cur) {
+    int ra = a == cur ? 0 : a.compare(a.size() - 10, 6, "nodate") == 0 ? 2 : 1, rb = b == cur ? 0 : b.compare(b.size() - 10, 6, "nodate") == 0 ? 2 : 1;
+    return ra != rb ? ra < rb : a > b;
+}
+
 // The record files, newest first: on the SD card the month being written, then /net/record/<yyyymm>.log newest to
 // oldest, nodate.log (lines from before the clock was set) last; without a card the one /net/record.log.
 static std::vector<std::string> netRecordFiles() {
@@ -3266,32 +3281,36 @@ static std::vector<std::string> netRecordFiles() {
         }
         closedir(d);
     }
-    auto rank = [&cur](const std::string& p) { return p == cur ? 0 : p.compare(p.size() - 10, 6, "nodate") == 0 ? 2 : 1; };
-    std::sort(v.begin(), v.end(), [&rank](const std::string& a, const std::string& b) { return rank(a) != rank(b) ? rank(a) < rank(b) : a > b; });
+    for (size_t i = 1; i < v.size(); i++)
+        for (size_t j = i; j > 0 && netRecordBefore(v[j], v[j - 1], cur); j--) std::swap(v[j], v[j - 1]);
     return v;
 }
 
-// Walks the record newest first across every file, from index skip on (index 0 is the newest line): each(index, line)
-// gets the line, only its first 255 bytes (the head) unless whole. Each file is read from its end in 512-byte pieces and
-// one line is held at a time. Stops when each says false or after kNetRecordScan lines; returns the next index to look
-// at then, or -1 at the record's end.
-static long netRecordWalk(size_t skip, bool whole, const std::function<bool(size_t, std::string&)>& each) {
-    std::unique_ptr<char[]> buf(new (std::nothrow) char[512]);
-    std::string             line;
-    size_t                  idx = 0, looked = 0;
+// Walks the record newest first across every file, from index skip on (index 0 is the newest line): each(index, file,
+// line start, line) gets the line, only its first 255 bytes (the head) unless whole. Each file is read from its end in
+// 512-byte pieces and one line is held at a time; a line over kNetRecordMaxLine is passed over but keeps its index.
+// Stops when each says false or after kNetRecordScan lines; returns the next index to look at then, or -1 when no
+// line is left.
+static long netRecordWalk(size_t skip, bool whole, const std::function<bool(size_t, const std::string&, long, std::string&)>& each) {
+    std::unique_ptr<char[]>  buf(new (std::nothrow) char[512]);
+    std::vector<std::string> files = netRecordFiles();
+    std::string              line;
+    size_t                   idx = 0, looked = 0;
     if (!buf) return -1;
-    for (const std::string& path : netRecordFiles()) {
-        FILE* f = std::fopen(path.c_str(), "rb");
+    for (size_t fi = 0; fi < files.size(); fi++) {
+        FILE* f = std::fopen(files[fi].c_str(), "rb");
         if (!f) continue;
-        bool stop = false;
+        bool stop = false, left = false;  // left: lines remain before the one it stopped at
         auto emit = [&](long s, long e) {  // the line [s, e); false to stop
             if (e <= s) return true;
-            if (idx < skip || (size_t)(e - s) > axis::net::kNetRecordMaxLine) return ++idx, true;  // (a broken line is passed over)
-            if (looked++ >= kNetRecordScan) return !(stop = true);
+            if (idx < skip || (size_t)(e - s) > axis::net::kNetRecordMaxLine) return ++idx, true;
+            if (looked++ >= kNetRecordScan) return !(stop = left = true);
             size_t n = whole ? (size_t)(e - s) : std::min<size_t>((size_t)(e - s), 255);
             line.resize(n);
             if (std::fseek(f, s, SEEK_SET) != 0 || std::fread(&line[0], 1, n, f) != n) line.clear();
-            return !(stop = !each(idx++, line));
+            stop = !each(idx++, files[fi], s, line);
+            left = s > 0;
+            return !stop;
         };
         std::fseek(f, 0, SEEK_END);
         long lineEnd = std::ftell(f), p;
@@ -3309,15 +3328,39 @@ static long netRecordWalk(size_t skip, bool whole, const std::function<bool(size
         }
         if (more && p == 0) emit(0, lineEnd);
         std::fclose(f);
-        if (stop) return (long)idx;
+        if (!stop) continue;
+        for (size_t k = fi + 1; !left && k < files.size(); k++) {  // stopped on a file's first line: any older file?
+            struct stat st;
+            left = ::stat(files[k].c_str(), &st) == 0 && st.st_size > 0;
+        }
+        return left ? (long)idx : -1;
     }
     return -1;
 }
 
-// "@NET RECORD FIND <text> [n [skip]]", "KIND votes|members|actions|all [n [skip]]", "MONTHS", "SHOW <index>" (args
-// lowercase, after RECORD). FIND and KIND print "<index> <date> <who> <what>" newest first, at most n (20, up to 100)
-// from the record's index skip on, then "older from <index>" if they stopped before its end; SHOW takes that index.
-// Trailing numbers after FIND's text are n and skip. False if args are none of these (the plain RECORD [n [skip]]).
+// The record line starting at pos in the file, if a line starts there (none over kNetRecordMaxLine).
+static bool netRecordLineAt(const std::string& path, long pos, std::string& line) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    bool  ok = f && pos >= 0 && (pos ? std::fseek(f, pos - 1, SEEK_SET) == 0 && std::fgetc(f) == '\n' : true);
+    char  b[128];
+    line.clear();
+    for (size_t r; ok && (r = std::fread(b, 1, sizeof b, f)) > 0;) {
+        const char* nl = (const char*)std::memchr(b, '\n', r);
+        size_t      n = nl ? (size_t)(nl - b) : r;
+        ok = line.size() + n <= axis::net::kNetRecordMaxLine;
+        if (ok) line.append(b, n);
+        if (nl) break;
+    }
+    if (f) std::fclose(f);
+    return ok && !line.empty();
+}
+
+// "@NET RECORD FIND <text> [n [skip]]", "KIND votes|members|actions|all [n [skip]]", "MONTHS", "SHOW <index>" or
+// "SHOW <file>:<offset>:<unix>" (args lowercase, after RECORD). FIND and KIND print "<index> <file>:<offset>:<unix> <date>
+// <who> <what>" newest first, at most n (20, up to 100) from the record's index skip on, then "older from <index>" if
+// lines are left. SHOW by index takes the line at that index now; by file, offset and time the very line listed (its
+// place does not move as the record grows; the time is checked, since internal flash cuts its file). Trailing numbers
+// after FIND's text are n and skip. False if args are none of these (the plain RECORD [n [skip]]).
 static bool netRecordBrowse(const NetHost& h, const std::string& args, Print& out) {
     std::vector<std::string> w;
     for (size_t at = 0, e; at < args.size(); at = e + 1) {
@@ -3332,23 +3375,36 @@ static bool netRecordBrowse(const NetHost& h, const std::string& args, Print& ou
         bool any = false;
         for (const std::string& p : netRecordFiles()) {
             struct stat st;
-            size_t      sl = p.rfind('/') + 1;
-            if (::stat(p.c_str(), &st) == 0) out.printf("%s %ld bytes\n", p.substr(sl, p.size() - sl - 4).c_str(), (long)st.st_size), any = true;
+            if (::stat(p.c_str(), &st) == 0) out.printf("%s %ld bytes\n", netRecordMonth(p).c_str(), (long)st.st_size), any = true;
         }
         if (!any) out.println("axis: the record is empty");
         return true;
     }
     if (!find && !show && sub != "kind") return false;
-    if ((find || show) && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) {
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) {
         out.println("@ERR low on memory just now, try again");
         return true;
     }
     if (show) {
         std::string line;
-        if (w.size() == 2 && digits(w[1]))
-            netRecordWalk((size_t)std::strtoul(w[1].c_str(), nullptr, 10), true, [&line](size_t, std::string& l) { return line.swap(l), false; });
+        size_t      c1 = w.size() == 2 ? w[1].find(':') : std::string::npos, c2 = c1 == std::string::npos ? c1 : w[1].find(':', c1 + 1);
+        if (w.size() == 2 && digits(w[1])) {
+            size_t want = (size_t)std::strtoul(w[1].c_str(), nullptr, 10);
+            netRecordWalk(want, true, [&line, want](size_t i, const std::string&, long, std::string& l) {
+                if (i == want) line.swap(l);
+                return false;
+            });
+        } else if (c2 != std::string::npos) {
+            for (const std::string& p : netRecordFiles())
+                if (netRecordMonth(p) == w[1].substr(0, c1) && netRecordLineAt(p, std::strtol(w[1].c_str() + c1 + 1, nullptr, 10), line) &&
+                    std::strtoul(line.c_str(), nullptr, 10) != std::strtoul(w[1].c_str() + c2 + 1, nullptr, 10))
+                    line.clear();  // another line is there now
+        } else {
+            out.println("@ERR @NET RECORD SHOW <index> or <file>:<offset>:<time>");
+            return true;
+        }
         if (line.empty()) {
-            out.println(w.size() == 2 && digits(w[1]) ? "axis: no such line" : "@ERR @NET RECORD SHOW <index>");
+            out.println("axis: that line is not in the record now");
             return true;
         }
         size_t      us = std::min(line.find('\x1f'), line.size());
@@ -3358,7 +3414,7 @@ static bool netRecordBrowse(const NetHost& h, const std::string& args, Print& ou
         out.printf("date %s\n", axis::net::netDateText((uint32_t)std::strtoul(head.c_str(), nullptr, 10)).c_str());
         out.printf("who %s\n", netSafe(head.substr(std::min(s1 + 1, s2), s2 - std::min(s1 + 1, s2))).c_str());
         out.printf("what %s\n", netSafe(head.substr(std::min(s2 + 1, head.size()))).c_str());
-        axis::net::recordFields(line, [&out](const std::string& f) { out.printf("%s\n", f.c_str()); });
+        axis::net::recordFields(line, netOutLine, &out);
         out.printf("check %s\n", axis::net::recordCheck(line, h.core->state()).c_str());
         return true;
     }
@@ -3374,14 +3430,16 @@ static bool netRecordBrowse(const NetHost& h, const std::string& args, Print& ou
     }
     unsigned long n = nums ? std::strtoul(w[w.size() - nums].c_str(), nullptr, 10) : 20, shown = 0;
     n = std::min<unsigned long>(n ? n : 20, 100);
-    long more = netRecordWalk(nums == 2 ? (size_t)std::strtoul(w.back().c_str(), nullptr, 10) : 0, find, [&](size_t i, std::string& l) {
-        if (!axis::net::recordMatches(l, find ? K::All : k, text)) return true;
-        std::string head = axis::net::recordHead(l);
-        size_t      sp = std::min(head.find(' '), head.size());
-        out.printf("%u %s %s\n", (unsigned)i, axis::net::netDateText((uint32_t)std::strtoul(head.c_str(), nullptr, 10)).c_str(),
-                   netSafe(head.substr(std::min(sp + 1, head.size()))).c_str());
-        return ++shown < n;
-    });
+    long more = netRecordWalk(nums == 2 ? (size_t)std::strtoul(w.back().c_str(), nullptr, 10) : 0, find,
+                              [&](size_t i, const std::string& file, long pos, std::string& l) {
+                                  if (!axis::net::recordMatches(l, find ? K::All : k, text)) return true;
+                                  std::string head = axis::net::recordHead(l);
+                                  size_t      sp = std::min(head.find(' '), head.size());
+                                  uint32_t    t = (uint32_t)std::strtoul(head.c_str(), nullptr, 10);
+                                  out.printf("%u %s:%ld:%u %s %s\n", (unsigned)i, netRecordMonth(file).c_str(), pos, (unsigned)t,
+                                             axis::net::netDateText(t).c_str(), netSafe(head.substr(std::min(sp + 1, head.size()))).c_str());
+                                  return ++shown < n;
+                              });
     if (!shown) out.println("axis: nothing found");
     if (more >= 0) out.printf("axis: older from %ld\n", more);
     return true;
@@ -3570,7 +3628,7 @@ static void netAppShow(const NetHost& h, const std::string& board, Print& out) {
         out.println("axis: no application held from that board");
         return;
     }
-    axis::net::recordFields(line, [&out](const std::string& f) { out.printf("%s\n", f.c_str()); });
+    axis::net::recordFields(line, netOutLine, &out);
     axis::net::NetMembers::Tally t = mem.tally(board);
     out.printf("counts yes %u of %u, no %u of %u\n", (unsigned)t.yes, (unsigned)st.votesYes(), (unsigned)t.no, (unsigned)st.votesNo());
     for (const std::string& m : mem.members()) {
