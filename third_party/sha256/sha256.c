@@ -13,6 +13,10 @@
 *********************************************************************/
 
 /*************************** HEADER FILES ***************************/
+/* AXIS: the board builds for size (-Os); password hashing (PBKDF2, 10000 rounds a login) keeps full speed. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC optimize("O2")
+#endif
 #include <stdlib.h>
 #include <memory.h>
 #include "sha256.h"

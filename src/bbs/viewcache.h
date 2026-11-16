@@ -26,6 +26,14 @@ std::string cacheName(const std::vector<ZipEntry>& packEntries);
 // Whether copy holds exactly the pack's viewable pieces, in order, with the same names, CRCs and sizes.
 bool matches(const std::vector<ZipEntry>& packEntries, const std::vector<ZipEntry>& copyEntries);
 
+// A pass waits while anyone is online and for kIdleAfterCall after (the next free moment is held back to at least
+// now + kIdleAfterCall): a pass that started the instant a caller hung up was the "free memory dip at the end of a call"
+// (2026-11-16 on board 1: 12 KB under the call's own low, 2 to 5 s after the hang up).
+constexpr uint32_t kIdleAfterCall = 120000;
+inline uint32_t holdForCallers(uint32_t nextMs, uint32_t now) {
+    return (int32_t)(nextMs - (now + kIdleAfterCall)) < 0 ? now + kIdleAfterCall : nextMs;
+}
+
 // Makes the copies ahead of callers (the main, while nobody is online), one small step per loop turn:
 // a pack opened, or up to stepBytes of a piece copied (a 1.7 MB movie in one go held the loop 7 s).
 // The board's inflate window is taken only for a deflated piece, from its first step to its last, and

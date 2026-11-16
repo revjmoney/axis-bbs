@@ -238,3 +238,45 @@ TEST_CASE("a look:FILE name asks for one look's screen (the sysop's preview)") {
     CHECK_FALSE(theme::splitLookFile("crt:", look, file));
     CHECK_FALSE(theme::splitLookFile("crt:a:b", look, file));
 }
+TEST_CASE("list screens take only the top rows of the theme's header art (the rest was wiped by the clear under it)") {
+    using namespace axis::bbs;
+    std::string art;
+    for (int r = 1; r <= 24; r++) art += "\x1b[1;3" + std::to_string(r % 8) + "mROW" + std::to_string(r) + std::string(70, '\xdb') + "\r\n";
+    theme::setArt([&](const std::string& name) { return name == "MSGS.ANS" ? art : std::string(); });
+    std::string top = listScreenTop("MESSAGE AREAS", "Area");
+    CHECK(top.find("ROW1") != std::string::npos);
+    CHECK(top.find("ROW3") != std::string::npos);
+    CHECK(top.find("ROW4") == std::string::npos);
+    CHECK(top.size() < 600);  // three rows of 24, not 2 KB
+    CHECK(listScreenHead("MSGS", "MESSAGE AREAS").find("ROW24") != std::string::npos);  // the text screens still get it whole
+    // art that wraps at column 80 with no line ends (every theme pack's MSGS.ANS): its top 3 rows as the terminal draws them
+    std::string wraps(24 * 80, '\xdb');
+    theme::setArt([&](const std::string& name) { return name == "MSGS.ANS" ? wraps : std::string(); });
+    std::string wrapTop = listScreenTop("MESSAGE AREAS", "Area");
+    CHECK(wrapTop.find(std::string(240, '\xdb')) != std::string::npos);
+    CHECK(wrapTop.find(std::string(241, '\xdb')) == std::string::npos);
+    theme::setArt(nullptr);
+}
+TEST_CASE("list screens ask the board's top-rows reader when it gives one (the whole file is not read)") {
+    using namespace axis::bbs;
+    int whole = 0, tops = 0, asked = 0;
+    theme::setArt([&](const std::string& name) {
+        whole++;
+        return name == "MSGS.ANS" ? std::string("A\r\nB\r\nC\r\nD\r\n") : std::string();
+    });
+    theme::setArtTop([&](const std::string& name, int rows) {
+        tops++;
+        asked = rows;
+        return name == "MSGS.ANS" ? std::string("A\r\nB\r\nC\r\n") : std::string();
+    });
+    std::string top = listScreenTop("MESSAGE AREAS", "Area");
+    CHECK(tops == 1);
+    CHECK(asked == 3);
+    CHECK(whole == 0);
+    CHECK(top.find("C\r\n") != std::string::npos);
+    CHECK(top.find("D\r\n") == std::string::npos);
+    listScreenHead("MSGS", "MESSAGE AREAS");  // a whole header: the whole-file reader
+    CHECK(whole == 1);
+    theme::setArtTop(nullptr);
+    theme::setArt(nullptr);
+}

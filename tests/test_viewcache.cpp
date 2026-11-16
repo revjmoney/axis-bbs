@@ -293,3 +293,17 @@ TEST_CASE("view cache: a pack with a damaged piece gets no copy and is not tried
 }
 
 #endif  // AXIS_ANSIVIEW
+
+TEST_CASE("view cache: a pass waits two minutes after the last caller, never starting at the hang up") {
+    using namespace axis::bbs::viewcache;
+    // due at 5 minutes, a caller still on at 10 minutes: the next pass is 2 minutes after the last turn they were seen
+    CHECK(holdForCallers(300000, 600000) == 600000 + kIdleAfterCall);
+    // seen again a second later: it moves with them
+    CHECK(holdForCallers(600000 + kIdleAfterCall, 601000) == 601000 + kIdleAfterCall);
+    // a pass already set further out (30 minutes after the last one ended) keeps its time
+    CHECK(holdForCallers(2400000, 600000) == 2400000);
+    // across the millis() wrap
+    CHECK(holdForCallers(0xFFFFF000u, 0xFFFFFF00u) == 0xFFFFFF00u + kIdleAfterCall);
+    CHECK(holdForCallers(0x00010000u, 0xFFFFFF00u) == 0xFFFFFF00u + kIdleAfterCall);  // (wraps to 0x1D3A0, after 0x10000)
+    CHECK(holdForCallers(0x00100000u, 0xFFFFFF00u) == 0x00100000u);                   // already later, past the wrap
+}
