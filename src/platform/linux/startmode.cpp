@@ -43,7 +43,9 @@ void say(const char* s) {  // stderr, async-signal-safe
 }
 
 void onStop(int sig) {
-    if (stopAsked) {  // asked twice (a second Ctrl-C): no more waiting
+    // A second Ctrl-C means "now". A repeated SIGHUP or SIGTERM does not: a shell that loses its ssh session sends
+    // SIGHUP more than once, and the callers' and the modem's hang-ups still deserve their turn (the alarm bounds it).
+    if (stopAsked && sig == SIGINT) {
         hostTerminalRestore();
         say("axis: stopped at once (asked twice)\n");
         _exit(sig == SIGINT ? 130 : 1);
@@ -97,7 +99,11 @@ void hostSignalsInstall() {
     struct sigaction sa{};
     sigemptyset(&sa.sa_mask);
     sa.sa_handler = onStop;  // no SA_RESTART: a wait in progress sees EINTR and the loop gets on to the shutdown
-    for (int s : {SIGINT, SIGTERM, SIGHUP}) sigaction(s, &sa, nullptr);
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+    struct sigaction was{};
+    if (sigaction(SIGHUP, nullptr, &was) == 0 && was.sa_handler != SIG_IGN)  // `nohup axis` keeps running on a hangup
+        sigaction(SIGHUP, &sa, nullptr);
     sa.sa_handler = onHardStop;
     sigaction(SIGALRM, &sa, nullptr);
     sa.sa_handler = onCrash;

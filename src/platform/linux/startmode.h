@@ -6,9 +6,10 @@
 //     itself on a set-up board. The program's own log lines go to <data>/log/axis.log so they never draw over it.
 //   Window: the board's screen in a window (plan task 6; until then it starts headless).
 //   Headless: the console's output is the log (stdout, the journal); its input is ignored.
-// Stopping: SIGINT, SIGTERM and SIGHUP (and later the window's close box) ask for a shutdown. The main loop then hangs
-// up every caller through the board's own hang-up path, hangs the radio modem up, restores the terminal and exits 0,
-// within 5 s (a timer forces the exit if a loop() turn never ends). A crash restores the terminal too.
+// Stopping: SIGINT, SIGTERM and SIGHUP (unless it was ignored, as under nohup; and later the window's close box) ask
+// for a shutdown. The main loop then hangs up every caller through the board's own hang-up path, hangs the radio modem
+// up, restores the terminal and exits 0, within 5 s (a timer forces the exit if a loop() turn never ends). A second
+// SIGINT exits at once. A crash restores the terminal too.
 #pragma once
 
 enum class StartMode { Terminal, Window, Headless };
