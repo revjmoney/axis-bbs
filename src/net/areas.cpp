@@ -368,6 +368,7 @@ bool NetCore::idxHead(bool clean) {
     hd_.clean = clean ? 1u : 0u;
     if (idxWrite_ && idxWrite_(0, &hd_, sizeof hd_)) return true;
     idx_ = Idx::Unknown;
+    idxFailed_ = true;
     return false;
 }
 
@@ -416,6 +417,7 @@ void NetCore::idxStart() {
 }
 
 bool NetCore::listingIndexWait() {
+    if (idxFailed_) return false;
     if (idx_ == Idx::Unknown) listingIndexStep();
     if (idx_ != Idx::Rebuild) return false;
     listingIndexStep();
@@ -427,6 +429,7 @@ bool NetCore::listingIndexStep() {
     if (idx_ == Idx::Unknown) {
         if (idxRead_(0, &hd_, sizeof hd_) && hd_.magic == kIdxMagic && hd_.clean == 1 && idxTailOk()) {
             idx_ = Idx::Ready;
+            idxFailed_ = false;
             return false;
         }
         // Missing, from a change cut short, the area changed, or unreadable: built again, a piece a call.
@@ -450,6 +453,7 @@ bool NetCore::listingIndexStep() {
     });
     if (n && !idxWrite_(kIdxHead + hd_.count * kIdxRec, buf, n * kIdxRec)) {
         idx_ = Idx::Unknown;  // started again later
+        idxFailed_ = true;
         return false;
     }
     hd_.count += n;
@@ -459,7 +463,10 @@ bool NetCore::listingIndexStep() {
     idxPos_ = pos;
     if (!end) return true;
     hd_.end = pos;
-    if (idxHead(true)) idx_ = Idx::Ready;
+    if (idxHead(true)) {
+        idx_ = Idx::Ready;
+        idxFailed_ = false;
+    }
     return false;
 }
 

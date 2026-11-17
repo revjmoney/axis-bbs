@@ -256,11 +256,15 @@ public:
     bool listingIndexReady() const { return idx_ == Idx::Ready; }
     // A listing line from a peer waits, left unread, while the index is being built: true then. Each call does one
     // more piece of that work (or the first look at the head), so a session waiting on it shortens the wait. False
-    // once it is ready, or when it cannot be built (takeListing then refuses with "store", as before).
+    // once it is ready, and false from a failed index write until it is ready again (takeListing then refuses with
+    // "store", as before), so a line waits on one rebuild at most and an index that cannot be built never holds it.
     bool listingIndexWait();
     // The index file may have changed or gone under the host (a card swap, a serial file command, a format): what is
     // held of it in RAM is forgotten, so the next look checks its head and the area's tail again.
-    void listingIndexForget() { idx_ = Idx::Unknown; }
+    void listingIndexForget() {
+        idx_ = Idx::Unknown;
+        idxFailed_ = false;
+    }
     // The caps the daily trim holds live listings to (kNetListingsMax and kNetListingsPerBoard by default).
     void setListingCaps(uint32_t total, uint32_t perBoard) {
         listingsMax_ = total;
@@ -449,6 +453,7 @@ private:
         uint32_t magic, clean, count, key[4], hasLast, lastNum, lastAt, end;
     };
     enum class Idx : uint8_t { Unknown, Rebuild, Ready };
+    bool idxFailed_ = false;  // an index write failed since it was last ready: listingIndexWait waits no more
     uint32_t idxHash(const std::string& s) const;
     uint32_t idxKey(const std::string& board, const std::string& area, const std::string& name) const;  // a record's key
     IdxRec idxRec(const NetListing& l, const bbs::Message& m) const;

@@ -3117,6 +3117,7 @@ static void netPump(NetHost& h, NetSlot& s, bool heapOk) {
         sent = netSendSome(s);
     }
     if (s.s->done() || s.s->failed()) netClose(h, s, nullptr);
+    else if (s.s->parked() && !s.c.connected()) return;  // the peer closed: what it sent, parked, is handled first
     else if (!sent || (!s.c.connected() && s.c.available() <= 0)) netClose(h, s, "connection closed");
 }
 
@@ -6364,10 +6365,11 @@ static int callersBesideSysop() {
     return n;
 }
 
-// @PUT @LS @TYPE @RM @MKDIR @BAUD from the serial console (tools/sdput.py); /net/files.idx may be replaced or removed.
+// @PUT @LS @TYPE @RM @MKDIR @BAUD from the serial console (tools/sdput.py). @PUT and @RM may replace or remove
+// /net/files.idx or nf_list: the index is forgotten first (not for the others, which would restart a rebuild).
 static bool serialFiles(const String& cmd) {
 #if AXIS_NETS
-    netIdxForget();
+    if (cmd.startsWith("@PUT ") || cmd.startsWith("@RM ")) netIdxForget();
 #endif
     return serialFileCommand(cmd);
 }

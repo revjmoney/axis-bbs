@@ -473,6 +473,7 @@ struct IdxFile {
     uint8_t     draw = 0x40;
     int         draws = 0;
     int         reads = 0;  // read calls (each a seek and a read on the board's one handle)
+    uint32_t    failFrom = 0xFFFFFFFFu;  // writes that reach this offset fail (a full card past the file's old end)
     void wire(NetCore& core) {
         core.setListingIndex(
             [this](uint32_t off, void* p, size_t n) {
@@ -482,6 +483,7 @@ struct IdxFile {
                 return true;
             },
             [this](uint32_t off, const void* p, size_t n) {
+                if ((uint64_t)off + n > failFrom) return false;
                 if (bytes.size() < (size_t)off + n) bytes.resize((size_t)off + n);
                 std::memcpy(&bytes[off], p, n);
                 return true;

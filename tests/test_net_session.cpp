@@ -1303,6 +1303,42 @@ TEST_CASE("on E lines a replace then 8 more listings, with 100 held: every one s
     CHECK(b.records().size() == 108);
 }
 
+TEST_CASE("on E lines an index that cannot be built: the waiting listing is NAKed store after one try, and the post after it is taken") {
+    RevKeys rk;
+    FNode b(0xEA);
+    RawDialer r(0xEB);
+    b.admit({&b.board, &r.card.board});
+    NetSession s(b.core, b.card, b.key, nonce(2), false, "");
+    r.handshake(s);
+    REQUIRE(s.proven());
+    for (uint32_t q = 1; q <= 100; q++)
+        REQUIRE(b.core.takeListing(makeListing(r.key, q, "P" + std::to_string(q)), r.card.board, true) == Took::Stored);
+    b.idx.failFrom = 44 + 24 * 32;  // the card is full past the first 32 records: every rebuild fails at its second step
+    s.tick(0, true);
+    s.takeOut();
+    std::string in = "SEQ 0\nE 0 " + encode(makeListing(r.key, 101, "P1")) + "\n";  // a replace: a rebuild starts
+    in += "E 1 " + encode(makeListing(r.key, 102, "N1")) + "\n";                       // waits on it
+    in += "E 2 " + encode(makePost(r.key, 200, kNow)) + "\n";                          // a post behind it
+    s.feed(in.data(), in.size());
+    CHECK(s.parked());
+    int ticks = 0;
+    while (s.parked() && ticks < 50) s.tick(0, true), ticks++;
+    CHECK(ticks <= 3);  // one rebuild attempt, not a park for good
+    CHECK_FALSE(s.parked());
+    CHECK_FALSE(s.failed());
+    std::string out = s.takeOut();
+    CHECK(hasLine(out, "ACK 0"));
+    CHECK(hasLine(out, "NAK 1 store"));  // transient: the sender's strikes count it, and posts get past it
+    CHECK(hasLine(out, "ACK 2"));
+    CHECK(b.liveSeqs("N1").empty());
+    // The card has room again: the host's ticks build the index, and the next listing is taken.
+    b.idx.failFrom = 0xFFFFFFFFu;
+    indexReady(b.core);
+    REQUIRE(b.core.listingIndexReady());
+    RawDialer::say(s, "E 3 " + encode(makeListing(r.key, 103, "N2")));
+    CHECK(hasLine(s.takeOut(), "ACK 3"));
+}
+
 TEST_CASE("fhistory: a pull with a replace and a removal in it loses no listing and is done") {
     RevKeys rk;
     FNode     r3(0xE8);
