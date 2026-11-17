@@ -13,7 +13,7 @@
 //   SEQ <highSeq> [WANT 30] [UWANT <areas>]
 //   S <record>* SEND           (the snapshot, maybe empty)
 //   H <post>* HEND             (only if the peer sent WANT)
-//   U <record>* UEND           (only if the peer sent UWANT)
+//   U <record>* UEND [F]       (only if the peer sent UWANT; F: see below)
 //   E <index> <record>*        (answered by ACK <index> or NAK <index> <reason>)
 //   DONE
 // Before the first E post of an origin board in a session, the sender puts that board's card on an
@@ -32,7 +32,11 @@
 // for un_files and this board is a member carrying it) every live Net Files listing and the tombstones
 // younger than kNetGoneKeepDays, then up to 100 posts per asked area it carries from the last 30 days,
 // oldest first, then UEND, which marks the pull done if at least one U line was taken or already held
-// (as HEND). A, V and L records go out only on E and U lines, never on S or H lines; E lines with A, V
+// (as HEND). A sender that sent the listings ends with "UEND F" (only ever to a net3 peer, so a Phase 2
+// board never sees it). The listings pull has its own flag (NetCore::needFilesHistory, saved as fhistory):
+// a member carrying un_files sends UWANT to a net3 peer until a pull ends with UEND F having taken or
+// held at least one L line, or with none sent, and the session's U cap not reached. So a board upgraded
+// from Phase 2, whose User Net pull was done long ago, still pulls the listings once. A, V and L records go out only on E and U lines, never on S or H lines; E lines with A, V
 // or un_ posts go only to a net2 peer, and L lines only to a net3 peer (before an L line, its home
 // board's card goes on an S line as for a post). At most kSyncUserEMax A, V and L E lines are taken
 // per session; past that they are answered NAK store. At most kSyncUserRecordsMax A, V and L U lines
@@ -339,6 +343,19 @@ void NetSession::syncLine(std::string& l) {
         deadline_ = kSyncDeadlineMs;  // a pull, as for WANT
         return;
     }
+    if (verb == "UEND") {
+        // "UEND F" (a net3 peer): every listing it holds came before it.
+        if (!sentUwant_ || peerUend_ || !(rest.empty() || rest == "F")) return fail("bad line", "bad");
+        peerUend_ = true;
+        // As for HEND: done only if at least one U line was taken or already held here. A peer with
+        // nothing to give (a stranger, a fresh board, or one answering UEND at once) leaves it to the next.
+        if (userGot_) core_.userHistoryGot();
+        // The listings: done when the peer sent all it holds and this side took them (none, or at least one taken
+        // or held, with the session's cap not reached).
+        if (rest == "F" && uAskFiles_ && (filesGot_ || !filesRx_) && userRecsTaken_ < kSyncUserRecordsMax)
+            core_.filesHistoryGot();
+        return;
+    }
     if (!rest.empty()) return fail("bad line", "bad");
     if (verb == "SEND") {
         if (peerSend_) return fail("bad line", "bad");
@@ -350,14 +367,6 @@ void NetSession::syncLine(std::string& l) {
         peerHend_ = true;
         // The whole pull came. With no H line at all the peer had nothing to give: ask the next one.
         if (histTaken_ > 0) core_.historyGot();
-        return;
-    }
-    if (verb == "UEND") {
-        if (!sentUwant_ || peerUend_) return fail("bad line", "bad");
-        peerUend_ = true;
-        // As for HEND: done only if at least one U line was taken or already held here. A peer with
-        // nothing to give (a stranger, a fresh board, or one answering UEND at once) leaves it to the next.
-        if (userGot_) core_.userHistoryGot();
         return;
     }
     if (verb == "DONE") {
@@ -515,11 +524,12 @@ void NetSession::takeUser(std::string_view rec, std::string& line) {
     if (rec.empty()) return;
     if (rec[0] == (char)NetKind::Listing) {
         NetListing l;
+        filesRx_++;
         if (userRecsTaken_ >= kSyncUserRecordsMax || !decode(rec, l)) return;
         userRecsTaken_++;
         // Stored now or held already (a duplicate, or one a tombstone here removed): the pull got something real.
         NetCore::Took t = core_.takeListing(l, peer_, true);
-        if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userGot_ = true;
+        if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userGot_ = filesGot_ = true;
         return;
     }
     if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {
@@ -551,7 +561,7 @@ bool NetSession::sendWalk(size_t& budget, bool& streamed, bool user) {
     while (budget && roomForData()) {
         if (!(user ? core_.userHistoryNext(hist_, since, uMask_, l) : core_.historyNext(hist_, since, l))) {
             hist_ = HistoryCursor();
-            send(user ? "UEND" : "HEND");
+            send(user ? (uFiles_ ? "UEND F" : "UEND") : "HEND");
             return true;
         }
         if (!fits(l)) continue;
@@ -590,13 +600,16 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
             deadline_ = kSyncDeadlineMs;  // a history pull may take the full deadline
         }
         // The User Net pull, only from a Phase 2 peer. Posts are asked for only while this board is a
-        // member (a board that is not would refuse them); applications and votes always.
-        if (peerNet2_ && core_.needUserHistory()) {
+        // member (a board that is not would refuse them); applications and votes always. A net3 peer is also
+        // asked while the listings pull is not done (its own flag), for a member carrying un_files.
+        bool files = peerNet3_ && core_.selfMember() && core_.carries(kNetFilesUserArea);
+        if (peerNet2_ && (core_.needUserHistory() || (files && core_.needFilesHistory()))) {
             std::string l = "UWANT ";
             size_t at = l.size();
             if (!core_.userAreas().empty() && core_.selfMember())
                 for (const std::string& a : core_.userAreas()) l += (l.size() > at ? "," : "") + a;
             if (l.size() == at) l += "-";
+            uAskFiles_ = files;
             send(l);
             sentUwant_ = true;
             deadline_ = kSyncDeadlineMs;
@@ -663,19 +676,21 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
                 bool files = false;
                 for (size_t i = 0; i < areas.size(); i++)
                     if (areas[i].id == kNetFilesUserArea) files = (uMask_ >> i & 1) != 0;
-                uStage_ = peerNet3_ && files ? 1 : 3;
+                uFiles_ = peerNet3_ && files && core_.selfMember() && core_.carries(kNetFilesUserArea);
+                uStage_ = uFiles_ ? 1 : 3;
             }
         }
         while (uStage_ == 1 || uStage_ == 2) {
             if (uLineAt_ >= uLines_.size()) {  // the batch went: the next one, or the next round
                 uLines_.clear();
                 uLineAt_ = 0;
-                if (uAfter_ < 0) {
+                if (uEnd_) {
                     uStage_++;
-                    uAfter_ = 0;
+                    uPos_ = 0;
+                    uEnd_ = false;
                     continue;
                 }
-                uAfter_ = core_.listingLines(uAfter_, uStage_ == 2, uLines_);
+                uEnd_ = core_.listingLines(uPos_, uStage_ == 2, uLines_);
                 continue;
             }
             if (!budget || !roomForData()) break;

@@ -5,6 +5,7 @@
 // line, the body); a follower asks the main over the cluster link (RemoteMessageStore). FidoNet
 // JAM/PKT can sit on top of this later.
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -16,8 +17,8 @@ struct Message {
     std::string from, to, subject, date, body;  // body lines separated by '\n'
     // A Sysop Net post: its encoded NetPost line (one line, fields joined by 0x1F). Empty for local
     // posts. read() gives the whole line; headers() give only its start, "P" 0x1F "<post id>", to save
-    // memory, except a Net Files listing ("L", at most 430 bytes), which they give whole. The file store
-    // writes it as a "net=" header line only when it is non-empty.
+    // memory. scanHeaders gives a Net Files listing ("L", at most 430 bytes) whole; headers() cut it too, since
+    // they hold up to 200 at once. The file store writes it as a "net=" header line only when it is non-empty.
     std::string net;
 };
 
@@ -35,6 +36,18 @@ public:
         for (const Message& m : headers(area))
             if (!each(m)) return;
     }
+    // scanHeaders from pos (0: the start), pos left where the header each refused is (a later call sees it again),
+    // or at the end. FileMessageStore keeps a byte offset (the scan reads only from there); this default counts
+    // headers and walks scanHeaders from the start.
+    virtual void scanHeadersFrom(const std::string& area, uint32_t& pos, const std::function<bool(const Message&)>& each) {
+        uint32_t n = 0;
+        scanHeaders(area, [&](const Message& m) {
+            if (n >= pos && !each(m)) return false;
+            n++;
+            return true;
+        });
+        pos = n;
+    }
     virtual ~MessageStore() = default;
 };
 
@@ -47,6 +60,7 @@ public:
     // the sysop: rewrite the area without the posts `gone` picks (numbers stay); how many went
     int drop(const std::string& area, const std::function<bool(const Message&)>& gone) override;
     void scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) override;
+    void scanHeadersFrom(const std::string& area, uint32_t& pos, const std::function<bool(const Message&)>& each) override;
 
 private:
     std::string path(const std::string& area) const;

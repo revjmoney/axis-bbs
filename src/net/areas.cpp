@@ -10,6 +10,7 @@
 #include <ctime>
 #include <initializer_list>
 
+#include "net/crc.h"
 #include "net/revkeys.h"
 
 namespace axis::net {
@@ -336,6 +337,115 @@ bool NetCore::shown(const NetListing& l) const {
     return !l.gone && !state_.banned(l.board) && !state_.held(listingId(l)) && !state_.killed(listingId(l));
 }
 
+// ---- the listing index (/net/files.idx) ----
+
+namespace {
+constexpr uint32_t kIdxMagic = 0x3158464Eu;  // "NFX1"
+constexpr uint32_t kIdxHead = 12, kIdxRec = sizeof(uint32_t) * 5;
+constexpr size_t kIdxChunk = 16;  // records read at once (320 bytes)
+uint32_t crcOf(const std::string& s) { return crc32((const uint8_t*)s.data(), s.size()); }
+}  // namespace
+
+uint32_t NetCore::IdxRec::keyOf(const std::string& board, const std::string& area, const std::string& name) {
+    return crcOf(board + "|" + area + "|" + name);
+}
+
+NetCore::IdxRec NetCore::IdxRec::of(const NetListing& l, int num) {
+    return IdxRec{keyOf(l.board, l.area, l.name), crcOf(l.board), l.seq, (uint32_t)num, l.gone ? 1u : 0u};
+}
+
+// The head: clean (1) or not (0, a change to the area is under way or failed), and the record count.
+bool NetCore::idxHead(bool clean) {
+    uint32_t h[2] = {clean ? 1u : 0u, idxCount_};
+    if (idxWrite_ && idxWrite_(4, h, sizeof h)) return true;
+    idx_ = Idx::Unknown;
+    return false;
+}
+
+bool NetCore::idxReady() {
+    if (idx_ == Idx::Unknown) listingIndexStep();  // a cheap look at the head; a rebuild goes on from the host's tick
+    return idx_ == Idx::Ready;
+}
+
+bool NetCore::idxEach(const std::function<bool(const IdxRec&)>& each) {
+    static_assert(sizeof(IdxRec) == kIdxRec, "an index record is five words");
+    IdxRec buf[kIdxChunk];
+    for (uint32_t i = 0; i < idxCount_;) {
+        uint32_t n = std::min<uint32_t>(kIdxChunk, idxCount_ - i);
+        if (!idxRead_(kIdxHead + i * kIdxRec, buf, n * kIdxRec)) {
+            idx_ = Idx::Unknown;
+            return false;
+        }
+        for (uint32_t k = 0; k < n; k++)
+            if (!each(buf[k])) return true;
+        i += n;
+    }
+    return true;
+}
+
+// Takes out the records of these message numbers (ascending, as both the area and the index are in store order),
+// moving the rest down in place; the caller writes the head after.
+bool NetCore::idxRemove(const std::vector<uint32_t>& nums) {
+    IdxRec buf[kIdxChunk];
+    uint32_t w = 0;
+    size_t j = 0;
+    for (uint32_t i = 0; i < idxCount_;) {
+        uint32_t n = std::min<uint32_t>(kIdxChunk, idxCount_ - i), kept = 0;
+        if (!idxRead_(kIdxHead + i * kIdxRec, buf, n * kIdxRec)) return idx_ = Idx::Unknown, false;
+        for (uint32_t k = 0; k < n; k++) {
+            while (j < nums.size() && nums[j] < buf[k].num) j++;
+            if (j < nums.size() && nums[j] == buf[k].num) continue;
+            buf[kept++] = buf[k];
+        }
+        if (kept && !idxWrite_(kIdxHead + w * kIdxRec, buf, kept * kIdxRec)) return idx_ = Idx::Unknown, false;
+        w += kept;
+        i += n;
+    }
+    idxCount_ = w;
+    return true;
+}
+
+bool NetCore::listingIndexStep() {
+    if (!idxRead_ || !idxWrite_) return false;
+    if (idx_ == Idx::Unknown) {
+        uint32_t h[3];
+        if (idxRead_(0, h, sizeof h) && h[0] == kIdxMagic && h[1] == 1) {
+            idxCount_ = h[2];
+            idx_ = Idx::Ready;
+            return false;
+        }
+        // Missing, from a change cut short, or unreadable: built again from kNetFilesArea, a piece a call.
+        uint32_t fresh[3] = {kIdxMagic, 0, 0};
+        if (!idxWrite_(0, fresh, sizeof fresh)) return false;
+        idxCount_ = 0;
+        idxPos_ = 0;
+        idx_ = Idx::Rebuild;
+        return true;
+    }
+    if (idx_ != Idx::Rebuild) return false;
+    IdxRec buf[kNetIndexStep];
+    uint32_t n = 0;
+    bool end = true;
+    store_.scanHeadersFrom(kNetFilesArea, idxPos_, [&](const Message& m) {
+        NetListing l;
+        if (!decode(m.net, l) || m.num <= 0) return true;
+        if (n == kNetIndexStep) return end = false;
+        buf[n++] = IdxRec::of(l, m.num);
+        return true;
+    });
+    if (n && !idxWrite_(kIdxHead + idxCount_ * kIdxRec, buf, n * kIdxRec)) {
+        idx_ = Idx::Unknown;  // started again later
+        return true;
+    }
+    idxCount_ += n;
+    if (!end) return true;
+    idx_ = Idx::Ready;
+    idxHead(true);
+    return false;
+}
+
+// ---- taking and making listings ----
+
 NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromPeer, bool history, const char** nak) {
     syncLimits();
     std::string id = listingId(l);
@@ -355,44 +465,65 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
         return res(r.t, r.why, r.word);
     // 5. killed
     if (state_.killed(id)) return res(Took::Rejected, "rejected killed", kNakKilled);
-    // 6. dedupe, as for posts: a history listing below the seen window is a duplicate only if it is held here.
-    bool look = history && seen_.belowWindow(id);
-    if (seen_.has(id) && !look) return res(Took::Duplicate, "duplicate", nullptr);
-    // 7. tombstones, by one header scan of the listings of this name from this board: a removal with a higher seq
-    // refuses a live listing (it was removed already, whatever the order they came in), and a removal drops the
-    // live listings below it.
-    bool held = false, removed = false, below = false;
-    store_.scanHeaders(kNetFilesArea, [&](const Message& m) {
+    // 6. dedupe, as for posts: below the seen window (a history listing, or any tombstone, which must never be lost)
+    // it is a duplicate only if the index holds this id.
+    if (seen_.has(id) && !((history || l.gone) && seen_.belowWindow(id))) return res(Took::Duplicate, "duplicate", nullptr);
+    // 7. what is held of this id and of this name, by the index (no index yet: the sender tries again later). Each hit
+    // is read back and checked, so a hash collision costs a read, never a wrong answer.
+    if (!idxReady()) return res(Took::Rejected, "rejected store", kNakStore);
+    IdxRec me = IdxRec::of(l, 0);
+    std::vector<uint32_t> hits, lower;
+    if (!idxEach([&](const IdxRec& x) {
+            if (x.board == me.board && (x.key == me.key || x.seq == l.seq)) hits.push_back(x.num);
+            return true;
+        }))
+        return res(Took::Rejected, "rejected store", kNakStore);
+    bool held = false, removed = false, newer = false;
+    for (uint32_t num : hits) {
+        Message m;
         NetListing s;
-        if (m.to != l.board || !decode(m.net, s) || s.board != l.board) return true;
-        if (s.seq == l.seq) held = true;  // this id (whatever its name)
-        if (s.area != l.area || s.name != l.name) return true;
-        if (s.gone && s.seq > l.seq) removed = true;
-        if (!s.gone && s.seq < l.seq) below = true;
-        return true;
-    });
+        if (!store_.read(kNetFilesArea, (int)num, m) || !decode(m.net, s) || s.board != l.board) continue;
+        if (s.seq == l.seq) held = true;
+        if (s.area != l.area || s.name != l.name) continue;
+        if (s.seq > l.seq) (s.gone ? removed : newer) = true;
+        else if (s.seq < l.seq && !s.gone) lower.push_back(num);  // ascending, as hits are
+    }
+    std::vector<uint32_t>().swap(hits);
     if (held) return res(Took::Duplicate, "duplicate", nullptr);
-    if (removed && !l.gone) return res(Took::Duplicate, "duplicate removed", nullptr);
+    // A tombstone or a re-listing with a higher seq is held: this one is older, whatever the order they came in. Seen,
+    // so a repeat costs nothing.
+    if (!l.gone && (removed || newer)) {
+        seen_.add(id, day());
+        return res(Took::Duplicate, removed ? "duplicate removed" : "duplicate replaced", nullptr);
+    }
     // 8. ingress, counting the line (history pulls are capped by the session; Rev's boards and this board are not)
     uint32_t today = day();
     if (!history && l.board != myBoard_ && !isRevBoard(l.board) && !ingress_.allow(l.board, line.size(), today))
         return res(Took::Limited, "limited", kNakLimited);
-    // 9. store
+    // 9. store, with the index marked unclean around the change (a reset in between rebuilds it)
     Message m;
     m.from = l.uploader;
     m.to = l.board;
     m.subject = l.name;
     m.date = netDateText(clockSet() && l.date > now_() ? now_() : l.date);  // as storePost
     m.net = line;
+    if (!idxHead(false)) return res(Took::Rejected, "rejected store", kNakStore);
     int num = store_.post(kNetFilesArea, m);
-    if (!num) return res(Took::Rejected, "rejected store", kNakStore);
+    if (!num) {
+        idx_ = Idx::Unknown;
+        return res(Took::Rejected, "rejected store", kNakStore);
+    }
     seen_.add(id, today);
-    if (l.gone && below)  // one rewrite of the area for the removal, only when it has something to drop
-        store_.drop(kNetFilesArea, [&](const Message& x) {
-            NetListing s;
-            return x.to == l.board && x.subject == l.name && decode(x.net, s) && !s.gone && s.board == l.board &&
-                   s.area == l.area && s.name == l.name && s.seq < l.seq;
-        });
+    me.num = (uint32_t)num;
+    if (idxWrite_(kIdxHead + idxCount_ * kIdxRec, &me, kIdxRec)) idxCount_++;
+    else idx_ = Idx::Unknown;
+    // A removal or a re-listing replaces the live listings of its name below it: one rewrite of the area, only when
+    // there is something to drop.
+    if (!lower.empty()) {
+        store_.drop(kNetFilesArea, [&](const Message& x) { return std::find(lower.begin(), lower.end(), (uint32_t)x.num) != lower.end(); });
+        if (idx_ == Idx::Ready) idxRemove(lower);
+    }
+    if (idx_ == Idx::Ready) idxHead(true);
     if (onEvent_) onEvent_(fromPeer, (fromPeer.empty() ? "listing made " : "listing stored ") + id, line);
     log("L " + std::to_string(num) + " " + id + " " + excludeList({fromPeer, l.board}));
     return Took::Stored;
@@ -443,54 +574,64 @@ int NetCore::listingsPage(int skip, int max, const std::function<void(const NetL
     return lo > 0 ? hi - lo + skip : -1;
 }
 
+// By the index: the record of that board and seq, read back and checked.
 bool NetCore::findListing(const std::string& id, NetListing& out) {
-    bool found = false;
-    eachListing([&](const Message& m, const NetListing& l) {
-        if (id.compare(0, 16, m.to) != 0 || listingId(l) != id) return true;
-        if ((found = shown(l))) out = l;
-        return false;  // ids are unique
+    uint32_t seq = 0;
+    if (id.size() < 18 || id[16] != '-' || !parseSeq(id.substr(17), seq) || !idxReady()) return false;
+    uint32_t bk = crcOf(id.substr(0, 16));
+    std::vector<uint32_t> hits;
+    idxEach([&](const IdxRec& x) {
+        if (x.board == bk && x.seq == seq && !(x.flags & 1)) hits.push_back(x.num);
+        return true;
     });
-    return found;
+    for (uint32_t num : hits) {
+        Message m;
+        NetListing l;
+        if (store_.read(kNetFilesArea, (int)num, m) && decode(m.net, l) && listingId(l) == id && shown(l)) {
+            out = std::move(l);
+            return true;
+        }
+    }
+    return false;
 }
 
-int NetCore::listingLines(int after, bool tombs, std::vector<std::string>& out) {
-    if (!carries(kNetFilesUserArea) || !selfMember()) return -1;
+bool NetCore::listingLines(uint32_t& pos, bool tombs, std::vector<std::string>& out) {
+    if (!carries(kNetFilesUserArea) || !selfMember()) return true;
     uint32_t now = now_();
-    bool clock = clockSet();
-    int last = -1;
+    bool clock = clockSet(), end = true;
     size_t bytes = 0;
-    eachListing([&](const Message& m, const NetListing& l) {
-        if (m.num <= after) return true;
+    store_.scanHeadersFrom(kNetFilesArea, pos, [&](const Message& m) {
+        NetListing l;
+        if (!decode(m.net, l)) return true;
         if (tombs ? !l.gone || state_.banned(l.board) || state_.killed(listingId(l)) : !shown(l)) return true;
         if (tombs && clock) {
             uint32_t t = netDateUnix(m.date);
             if (t && t + (uint64_t)kNetGoneKeepDays * 86400 < now) return true;
         }
-        if (bytes && bytes + m.net.size() > kNetPendingBytes) {
-            last = after;  // a full batch: the next call goes on from the last one taken
-            return false;
-        }
-        after = m.num;
+        if (bytes && bytes + m.net.size() > kNetPendingBytes) return end = false;  // a full batch: goes on from here
         bytes += m.net.size();
         out.push_back(m.net);
         return true;
     });
-    return last;
+    return end;
 }
 
-// Drops killed listings and tombstones past kNetGoneKeepDays (by count without a clock: the newest kNetGoneKeepCount
-// stay), then holds live listings to the caps. A board's oldest listing is its lowest seq, so arrival order does not
-// change what goes. Two header scans count, a third (only for boards past a cap) finds the seqs, then one rewrite.
+// Drops killed listings, live ones of banned boards and tombstones past kNetGoneKeepDays (by count without a clock:
+// the newest kNetGoneKeepCount stay), then holds live listings to the caps. A board's oldest listing is its lowest seq,
+// so arrival order does not change what goes. Header scans count (a further one per board past a cap finds its
+// seqs), then one rewrite of the area and of the index. Not while the index is being built.
 void NetCore::trimListings(uint32_t nowDay, bool clock) {
+    if (!idxReady()) return;
     auto old = [&](const Message& m) {
         uint32_t t = netDateUnix(m.date);
         return clock && t && nowDay > t / 86400 && nowDay - t / 86400 > kNetGoneKeepDays;
     };
+    auto dead = [&](const NetListing& l) { return state_.killed(listingId(l)) || (!l.gone && state_.banned(l.board)); };
     std::map<std::string, uint32_t> live, cut;  // live per home board; then, per board past a cap, how many go
     uint32_t total = 0, tombs = 0;
     bool drops = false;
     eachListing([&](const Message& m, const NetListing& l) {
-        if (state_.killed(listingId(l))) drops = true;
+        if (dead(l)) drops = true;
         else if (!l.gone) live[l.board]++, total++;
         else if (old(m)) drops = true;
         else tombs++;
@@ -517,7 +658,7 @@ void NetCore::trimListings(uint32_t nowDay, bool clock) {
     for (auto& kv : cut) {
         std::vector<uint32_t> seqs;
         eachListing([&](const Message&, const NetListing& l) {
-            if (l.board == kv.first && !l.gone && !state_.killed(listingId(l))) {
+            if (l.board == kv.first && !l.gone && !dead(l)) {
                 size_t j = seqs.size();
                 seqs.push_back(l.seq);
                 for (; j > 0 && seqs[j - 1] > l.seq; j--) std::swap(seqs[j], seqs[j - 1]);  // insertion, ascending
@@ -528,14 +669,17 @@ void NetCore::trimListings(uint32_t nowDay, bool clock) {
     }
     if (!drops && !tombCut && cut.empty()) return;
     uint32_t n = 0;
+    std::vector<uint32_t> gone;  // the numbers dropped, ascending (store order), for the index
+    if (!idxHead(false)) return;
     store_.drop(kNetFilesArea, [&](const Message& m) {
         NetListing l;
         if (!decode(m.net, l)) return false;
-        if (state_.killed(listingId(l))) return true;
-        if (l.gone) return old(m) || (!clock && n++ < tombCut);
         auto c = cut.find(l.board);
-        return c != cut.end() && l.seq <= c->second;
+        bool go = dead(l) || (l.gone ? old(m) || (!clock && n++ < tombCut) : c != cut.end() && l.seq <= c->second);
+        if (go) gone.push_back((uint32_t)m.num);
+        return go;
     });
+    if (idxRemove(gone)) idxHead(true);
 }
 
 bool NetCore::takeCard(const NetCard& c, const std::string& fromPeer) {
@@ -872,13 +1016,14 @@ std::string NetCore::saveCursors() const {
                (kv.second.outbound ? " out " : " in ") + std::to_string(kv.second.sessions) + "\n";
     if (history_ >= 0) out += history_ ? "history 1\n" : "history 0\n";
     out += userHistory_ ? "uhistory 1\n" : "uhistory 0\n";
+    out += filesHistory_ ? "fhistory 1\n" : "fhistory 0\n";
     return out;
 }
 
 void NetCore::loadCursors(const std::string& text) {
     links_.clear();
     history_ = -1;
-    userHistory_ = false;
+    userHistory_ = filesHistory_ = false;
     size_t pos = 0;
     while (pos < text.size()) {
         size_t e = text.find('\n', pos);
@@ -891,8 +1036,8 @@ void NetCore::loadCursors(const std::string& text) {
             history_ = t[1] == "1" ? 1 : 0;
             continue;
         }
-        if (t.size() == 2 && t[0] == "uhistory" && (t[1] == "0" || t[1] == "1")) {
-            userHistory_ = t[1] == "1";
+        if (t.size() == 2 && (t[0] == "uhistory" || t[0] == "fhistory") && (t[1] == "0" || t[1] == "1")) {
+            (t[0][0] == 'u' ? userHistory_ : filesHistory_) = t[1] == "1";
             continue;
         }
         Link l;

@@ -11,44 +11,63 @@ namespace axis::bbs {
 
 namespace {
 constexpr char   kSep = '\x1f', kSub = '\x1e';
-constexpr size_t kHeadLine = 448;  // what a headers-only scan keeps of a line (a whole Net Files listing, at most 434 with "net=")
+constexpr size_t kHeadLine = 448;  // what a headers-only scan keeps of a line (a Net Files listing is at most 434 with "net=")
 
 std::string oneLine(std::string s) {
     for (char& c : s)
         if (c == '\n' || c == '\r' || c == kSep || c == kSub) c = ' ';
     return s.substr(0, 72);
 }
-// read the file a record at a time; visit(header, body-wanted?) -> keep going
+// What a scan keeps of each record: the body and the whole net line (kWhole), or headers only with the net line cut
+// to "<kind><sep><first field>" (kCut), or headers only with a Net Files listing line kept whole (kListing).
+enum ScanMode { kCut, kListing, kWhole };
+// read the file a record at a time from byte start (a record's start, or 0); visit(header) -> keep going. at, if
+// given, ends at the start of the record visit refused (so a later scan from there sees it again), or at the end.
 template <typename F>
-void scan(const std::string& path, bool bodies, F visit) {
+void scan(const std::string& path, ScanMode mode, F visit, uint32_t start = 0, uint32_t* at = nullptr) {
+    if (at) *at = start;
     std::FILE* in = std::fopen(path.c_str(), "rb");
     if (!in) return;
+    if (start && std::fseek(in, (long)start, SEEK_SET) != 0) {
+        std::fclose(in);
+        return;
+    }
+    const bool  bodies = mode == kWhole;
     Message     m;
     bool        inBody = false, have = false;
     std::string line;
+    uint32_t    pos = start, lineAt = start, recAt = start;  // bytes read; where this line and this record began
     auto        done = [&]() {
         if (!have) return true;
         if (!m.body.empty() && m.body.back() == '\n') m.body.pop_back();
         return visit(m);
+    };
+    auto stop = [&](bool refused) {
+        if (at) *at = refused ? recAt : pos;
     };
     // Headers only: a line is kept to its first kHeadLine characters (a header, the start of the net line, or enough
     // of a body line to tell a record mark), so a long net line or body line is never held whole.
     const size_t cap = bodies ? (size_t)-1 : kHeadLine;
     for (int c;;) {
         c = std::fgetc(in);
+        if (c != EOF) pos++;
         if (c != EOF && c != '\n') {
             if (c != '\r' && line.size() < cap) line += (char)c;
             continue;
         }
         if (c == EOF && line.empty()) {  // the file's last newline: nothing more
-            done();
+            stop(!done());
             break;
         }
         if (line == "\x01MSG") {
-            if (!done()) break;
+            if (!done()) {
+                stop(true);
+                break;
+            }
             m = Message();
             have = true;
             inBody = false;
+            recAt = lineAt;
         } else if (have && !inBody) {
             if (line.empty()) inBody = true;
             else {
@@ -60,8 +79,7 @@ void scan(const std::string& path, bool bodies, F visit) {
                 else if (k == "subj") m.subject = v;
                 else if (k == "date") m.date = v;
                 else if (k == "net") {
-                    if (bodies) m.net = v;
-                    else if (v.compare(0, 2, "L") == 0) m.net = v;  // a Net Files listing (at most 430): whole
+                    if (bodies || (mode == kListing && v.compare(0, 2, "L\x1f") == 0)) m.net = v;  // a listing: at most 430
                     else {  // headers only: keep "P<sep><id>", not the whole (up to 9 KB) line
                         size_t a = v.find(kSep), b = a == std::string::npos ? a : v.find(kSep, a + 1);
                         m.net = b == std::string::npos ? v : v.substr(0, b);
@@ -72,8 +90,9 @@ void scan(const std::string& path, bool bodies, F visit) {
             m.body += (line.size() > 1 && line[0] == ' ' && line[1] == '\x01' ? line.substr(1) : line) + "\n";
         }
         line.clear();
+        lineAt = pos;
         if (c == EOF) {
-            done();
+            stop(!done());
             break;
         }
     }
@@ -144,7 +163,7 @@ std::string FileMessageStore::path(const std::string& area) const {
 
 std::vector<Message> FileMessageStore::headers(const std::string& area) {
     std::vector<Message> v;
-    scan(path(area), false, [&](const Message& m) {
+    scan(path(area), kCut, [&](const Message& m) {
         v.push_back(m);
         if (v.size() > kMaxHeaders) v.erase(v.begin());
         return true;
@@ -154,7 +173,7 @@ std::vector<Message> FileMessageStore::headers(const std::string& area) {
 
 bool FileMessageStore::read(const std::string& area, int num, Message& out) {
     bool found = false;
-    scan(path(area), true, [&](Message& m) {
+    scan(path(area), kWhole, [&](Message& m) {
         if (m.num != num) return true;
         out = std::move(m);  // the scan stops here, so the record is not needed again
         found = true;
@@ -167,7 +186,7 @@ int FileMessageStore::drop(const std::string& area, const std::function<bool(con
     std::string tmp = path(area) + ".tmp";
     std::FILE*  out = nullptr;
     int         dropped = 0, kept = 0;
-    scan(path(area), true, [&](const Message& m) {
+    scan(path(area), kWhole, [&](const Message& m) {
         if (gone(m)) {
             dropped++;
             return true;
@@ -189,7 +208,7 @@ int FileMessageStore::drop(const std::string& area, const std::function<bool(con
 
 int FileMessageStore::post(const std::string& area, const Message& m) {
     int last = 0;
-    scan(path(area), false, [&](const Message& h) {
+    scan(path(area), kCut, [&](const Message& h) {
         if (h.num > last) last = h.num;
         return true;
     });
@@ -201,7 +220,12 @@ int FileMessageStore::post(const std::string& area, const Message& m) {
 }
 
 void FileMessageStore::scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) {
-    scan(path(area), false, [&](const Message& m) { return each(m); });
+    scan(path(area), kListing, [&](const Message& m) { return each(m); });
+}
+
+void FileMessageStore::scanHeadersFrom(const std::string& area, uint32_t& pos,
+                                       const std::function<bool(const Message&)>& each) {
+    scan(path(area), kListing, [&](const Message& m) { return each(m); }, pos, &pos);
 }
 
 std::string serveMessages(MessageStore& st, const std::string& req) {

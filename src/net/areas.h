@@ -74,6 +74,7 @@ constexpr uint32_t kNetListingsMax = 1000;      // live listings held (the host 
 constexpr uint32_t kNetListingsPerBoard = 200;  // live listings from one home board
 constexpr uint32_t kNetGoneKeepDays = 120;      // a tombstone is kept this long (with the clock set)
 constexpr uint32_t kNetGoneKeepCount = 200;     // without a clock, the newest this many tombstones are kept
+constexpr uint32_t kNetIndexStep = 32;          // listings a rebuild of the listing index takes per call
 
 // The words a receiver puts after NAK <index>. Permanent ones move the sender's cursor past the entry;
 // transient ones (nocard, store) do not: the sender sends nothing more that session and tries the
@@ -181,8 +182,9 @@ public:
     std::string originate(const std::string& area, const bbs::Message& m, int* num = nullptr);
 
     // Net Files listings. Each is one message in kNetFilesArea: subject the name, from the uploader, to the home
-    // board, date as for posts, no body, net the encoded line. A tombstone (gone) drops every live listing of its
-    // (board, area, name) with a lower seq, and a live one that comes later with a lower seq is Duplicate.
+    // board, date as for posts, no body, net the encoded line. A listing or tombstone (gone) drops every live listing
+    // of its (board, area, name) with a lower seq, and a live one that comes later with a lower seq than one held for
+    // that name (live or gone) is Duplicate.
     // A listing from a peer, or made here (fromPeer ""). Same order of checks as take(NetPost):
     // valid, banned, blocked, card and signature, this board carries un_files and is a member, the home
     // board is a member (NAK area / member), killed, dedupe, tombstone, ingress (line size), store.
@@ -195,11 +197,28 @@ public:
     // banned-home and tombstoned ones. Returns the next skip, or -1 at the end.
     int listingsPage(int skip, int max, const std::function<void(const NetListing&)>& each);
     bool findListing(const std::string& id, NetListing& out);  // a live one only
-    // For a User Net pull: the stored lines after message number `after`, live listings (tombs false; not held,
-    // killed or banned-home) or tombstones younger than kNetGoneKeepDays (tombs true; all of them without a
-    // clock), added to out until they reach kNetPendingBytes. Returns the number to pass as after next time, or
-    // -1 once the scan reached the end. Nothing while this board is not a member carrying un_files.
-    int listingLines(int after, bool tombs, std::vector<std::string>& out);
+    // For a User Net pull: the stored lines from pos on (0 to start; the store's resume point, a byte offset in the
+    // file store), live listings (tombs false; not held, killed or banned-home) or tombstones younger than
+    // kNetGoneKeepDays (tombs true; all of them without a clock), added to out until they reach kNetPendingBytes.
+    // pos is left where the next batch starts. True once the scan reached the end. Nothing while this board is not
+    // a member carrying un_files.
+    bool listingLines(uint32_t& pos, bool tombs, std::vector<std::string>& out);
+    // /net/files.idx, the listing index: a 12 byte head ("NFX1", 1 when clean, the record count), then one 20 byte
+    // record per listing or tombstone in kNetFilesArea, in store order (IdxRec). read and write work on byte ranges
+    // of the file (a write at or past its end grows it); the host gives the file, a test a buffer. takeListing and
+    // findListing look things up in it instead of scanning the area. A head that is not clean (a reset during a
+    // change) or a failed read or write sends it to be built again from the area, kNetIndexStep listings a call to
+    // listingIndexStep; until then listings are refused with the transient "store" NAK.
+    void setListingIndex(std::function<bool(uint32_t off, void* p, size_t n)> read,
+                         std::function<bool(uint32_t off, const void* p, size_t n)> write) {
+        idxRead_ = std::move(read);
+        idxWrite_ = std::move(write);
+        idx_ = Idx::Unknown;
+    }
+    // One bounded piece of index work (a look at the head, or a piece of a rebuild); the host calls it from its idle
+    // tick. True while more is to do.
+    bool listingIndexStep();
+    bool listingIndexReady() const { return idx_ == Idx::Ready; }
     // The caps the daily trim holds live listings to (kNetListingsMax and kNetListingsPerBoard by default).
     void setListingCaps(uint32_t total, uint32_t perBoard) {
         listingsMax_ = total;
@@ -238,7 +257,8 @@ public:
     // origin's card too), then it moves past. True if the cursor moved.
     bool nakedTransient(const std::string& peer, uint32_t index);
     // "<peer> <index> <last sync unix> <out|in> <completed sessions>" per line, "history <0|1>" once
-    // whether the history pull is done is known, and "uhistory <0|1>" (the User Net pull). On load the pool field is optional: without it a
+    // whether the history pull is done is known, "uhistory <0|1>" (the User Net pull) and "fhistory <0|1>" (the
+    // listings pull). On load the pool field is optional: without it a
     // peer goes to the outbound pool while it has room, else the inbound one. Without the sessions
     // field (an older file) a peer counts as trusted: it was a link peer before this build.
     std::string saveCursors() const;
@@ -267,7 +287,13 @@ public:
     // board becomes a member or starts carrying another area.
     bool needUserHistory() const { return !userHistory_; }
     void userHistoryGot() { userHistory_ = true; }
-    void resetUserHistory() { userHistory_ = false; }
+    void resetUserHistory() { userHistory_ = filesHistory_ = false; }  // the listings pull too
+    // The listings pull (asked with UWANT of a net3 peer while this board is a member carrying un_files), its own
+    // flag, so a board upgraded from Phase 2 with uhistory done still gets the listings held before: done when a
+    // pull reached "UEND F" (the peer sent every listing it holds) having taken or held at least one L line, or with
+    // none sent. Saved with the cursors as "fhistory".
+    bool needFilesHistory() const { return !filesHistory_; }
+    void filesHistoryGot() { filesHistory_ = true; }
     // The apps file line at off, if it is a record held now (members().holds). For a User Net pull, which
     // walks members().offsets().
     bool userRecord(uint32_t off, std::string& line);
@@ -309,7 +335,7 @@ public:
         keepDays_ = keepDays;
     }
     // Once a day at most: retention for every Sysop Net and User Net area, pruning of the state and the seen
-    // set, trimming the outbound log, and for Net Files: killed listings and old tombstones dropped, then the
+    // set, trimming the outbound log, and for Net Files: killed listings, banned boards' live ones and old tombstones dropped, then the
     // caps (a home board past its cap loses its own lowest seqs; past the total, the board holding the most
     // does; never this board's own, never a tombstone). Without a clock (nowUnix not past kNetClockSet) it runs
     // whenever called, by count only: the host calls it once per 24 hours of uptime.
@@ -351,6 +377,18 @@ private:
     void eachListing(const std::function<bool(const bbs::Message& m, const NetListing& l)>& each);
     bool shown(const NetListing& l) const;  // live, and not held, killed or from a banned board
     void trimListings(uint32_t nowDay, bool clock);
+    // The listing index (setListingIndex). keyOf is the crc32 of "<board>|<area>|<name>", board the crc32 of the
+    // board id, flags 1 for a tombstone.
+    struct IdxRec {
+        uint32_t key, board, seq, num, flags;
+        static uint32_t keyOf(const std::string& board, const std::string& area, const std::string& name);
+        static IdxRec of(const NetListing& l, int num);
+    };
+    enum class Idx : uint8_t { Unknown, Rebuild, Ready };
+    bool idxReady();  // looks at the head if not known yet
+    bool idxHead(bool clean);
+    bool idxEach(const std::function<bool(const IdxRec&)>& each);  // false if a read failed
+    bool idxRemove(const std::vector<uint32_t>& nums);
     Res resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet, bool peerNet3);
     Res readRecord(bool held, uint32_t off, std::string& line);
     // Who is a member and who is denied, before a change, to note what the change did (empty without a
@@ -381,11 +419,16 @@ private:
     std::function<bool(uint32_t)> reserve_;
     uint32_t keepPosts_ = kNetKeepPosts, keepDays_ = kNetKeepDays;
     uint32_t listingsMax_ = kNetListingsMax, listingsPerBoard_ = kNetListingsPerBoard;
+    std::function<bool(uint32_t, void*, size_t)> idxRead_;
+    std::function<bool(uint32_t, const void*, size_t)> idxWrite_;
+    Idx idx_ = Idx::Unknown;
+    uint32_t idxCount_ = 0, idxPos_ = 0;  // records held; where a rebuild goes on in the area
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;
     std::string firstPeer_;
     int8_t history_ = -1;  // see historyState
     bool userHistory_ = false;  // a User Net pull reached UEND
+    bool filesHistory_ = false;  // a listings pull reached UEND F
     std::vector<std::string> userAreas_;
     std::function<bool(const std::string&, uint32_t&)> appsAppend_;
     std::function<void(const AppsLineFn&)> appsScan_;

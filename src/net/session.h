@@ -142,8 +142,9 @@ private:
     // The User Net pull this side gives (the peer sent UWANT): the asked areas (bit i: userNetAreas()[i]),
     // the apps file offsets of the records held when it started (4 bytes each, at most about 300) and how
     // far it is through them, the stage (0 applications and votes, 1 live listings, 2 tombstones, 3 posts),
-    // the listing lines of the batch read now (at most kNetPendingBytes) and the message number to go on
-    // from (-1: the scan reached the end), and whether UEND has gone.
+    // the listing lines of the batch read now (at most kNetPendingBytes), where the next batch starts in the
+    // hidden area and whether the scan reached its end, whether the listings were sent (then UEND F), and
+    // whether UEND has gone.
     uint8_t uMask_ = 0;
     std::vector<uint32_t> uOffs_;
     size_t uAt_ = 0;
@@ -151,7 +152,8 @@ private:
     uint8_t uStage_ = 0;
     std::vector<std::string> uLines_;
     size_t uLineAt_ = 0;
-    int uAfter_ = 0;
+    uint32_t uPos_ = 0;
+    bool uEnd_ = false, uFiles_ = false;
     std::deque<std::pair<uint32_t, std::string>> fetched_;
     // Log index, and whether a nocard NAK for it can be cured: a post whose origin's card the peer has
     // from the handshake or got ahead of it this session. Without one, nocard is final for that entry.
@@ -172,6 +174,10 @@ private:
     uint32_t userPostsTaken_ = 0, userRecsTaken_ = 0;  // U lines taken this session (posts; applications and votes)
     uint32_t userETaken_ = 0;                          // E application, vote and listing lines taken this session
     bool userGot_ = false;  // a U line this side took or already held: only then does UEND mark the pull done
+    // The listings pull this side asked for (un_files in its UWANT to a net3 peer): L lines received, and whether
+    // one was taken or already held. UEND F marks it done when one was, or none came.
+    bool uAskFiles_ = false, filesGot_ = false;
+    uint32_t filesRx_ = 0;
     uint32_t postsSent_ = 0, postsTaken_ = 0, naks_ = 0, naksSent_ = 0;
 };
 

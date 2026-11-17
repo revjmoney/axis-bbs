@@ -2391,6 +2391,24 @@ static void netAppsScan(const axis::net::NetCore::AppsLineFn& each) {
     std::fclose(f);
 }
 
+// /net/files.idx, the Net Files listing index (NetCore::setListingIndex): byte ranges read and written in place.
+static bool netIdxRead(uint32_t off, void* p, size_t n) {
+    FILE* f = std::fopen(netPath("files.idx").c_str(), "rb");
+    if (!f) return false;
+    bool ok = std::fseek(f, (long)off, SEEK_SET) == 0 && std::fread(p, 1, n, f) == n;
+    std::fclose(f);
+    return ok;
+}
+static bool netIdxWrite(uint32_t off, const void* p, size_t n) {
+    std::string path = netPath("files.idx");
+    FILE*       f = std::fopen(path.c_str(), "r+b");
+    if (!f) f = std::fopen(path.c_str(), "w+b");  // first use
+    if (!f) return false;
+    bool ok = std::fseek(f, (long)off, SEEK_SET) == 0 && std::fwrite(p, 1, n, f) == n;
+    ok = std::fclose(f) == 0 && ok;
+    return ok;
+}
+
 // /net/outlog.txt for FileOutLog (net/outlog.h). Reads are mostly in order, so the line and byte offset the last
 // read ended at are kept and the next read starts there. No file stays open between calls.
 struct NetLogFile {
@@ -4107,13 +4125,15 @@ static bool netStart() {
         NetHost*              hp = h.get();  // (the host outlives the core: both live in netHost from here on)
         axis::net::NetRecord* rec = h->record.get();
         core.setOnEvent([rec, hp](const std::string& who, const std::string& what, const std::string& line) {
-            if (what[0] != 'p') hp->unDirty = true;  // an app, vote, card or notice: User Net looks again (netUserTick)
+            // an app, vote, card or notice: User Net looks again (netUserTick); not for a post or a listing
+            if (what[0] != 'p' && what[0] != 'l') hp->unDirty = true;
             if (!rec || (!storageHasSd() && what.compare(0, 14, "post duplicate") == 0)) return;  // internal flash: spare it the wear
             rec->note(who, what, line);
         });
         core.setLocalFilter([hp](const std::string& b) { return netHas(hp->blocks, b); },
                             [hp](const std::string& id) { return netHas(hp->hides, id); });
         core.setAppsFile(netAppsAppend, netAppsScan, netAppsReadAt);
+        core.setListingIndex(netIdxRead, netIdxWrite);
     }
     core.state().load(netFileRead("state.txt"), day);
     {  // /net/apps.txt is read a few lines a pass from the loop (netAppsLoadStep). A compaction stopped by a reset: with no
@@ -4234,6 +4254,7 @@ static void netTick() {
     axis::net::NetCore& core = *h.core;
     netPosted(h);  // (a post that went around the store)
     netUserTick(h);
+    if (heapOk) core.listingIndexStep();  // the listing index: a look at it, or a piece of its rebuild
     if (h.file.broken || (!h.log->ok() && millis() - h.logTryMs >= kNetMinuteMs)) netLogOpen(h);
     if (millis() - h.minuteMs >= kNetMinuteMs) {
         h.minuteMs = millis();
