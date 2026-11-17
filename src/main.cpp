@@ -2433,22 +2433,32 @@ static void netAppsScan(const axis::net::NetCore::AppsLineFn& each) {
     std::fclose(f);
 }
 
-// /net/files.idx, the Net Files listing index (NetCore::setListingIndex): byte ranges read and written in place.
-static bool netIdxRead(uint32_t off, void* p, size_t n) {
-    FILE* f = std::fopen(netPath("files.idx").c_str(), "rb");
-    if (!f) return false;
-    bool ok = std::fseek(f, (long)off, SEEK_SET) == 0 && std::fread(p, 1, n, f) == n;
-    std::fclose(f);
+// /net/files.idx, the Net Files listing index (NetCore::setListingIndex): byte ranges read and written in place. A
+// take reads it in many pieces, so one handle stays open between calls (an open on the card each time cost more than
+// the reads). It is closed after a failed read or write (the next call opens it again) and by netIdxClose wherever the
+// file may change or go under it: a restart, the card looked at again or formatted, a serial file command.
+static FILE* netIdxF = nullptr;
+static void  netIdxClose() {
+    if (netIdxF) std::fclose(netIdxF);
+    netIdxF = nullptr;
+}
+static bool netIdxDone(bool ok) {
+    if (!ok) netIdxClose();
     return ok;
 }
+static bool netIdxOpen(bool make) {  // a read never makes the file
+    if (!netIdxF) netIdxF = std::fopen(netPath("files.idx").c_str(), make ? "w+b" : "r+b");
+    return netIdxF != nullptr;
+}
+static bool netIdxRead(uint32_t off, void* p, size_t n) {
+    return netIdxDone(netIdxOpen(false) && std::fseek(netIdxF, (long)off, SEEK_SET) == 0 && std::fread(p, 1, n, netIdxF) == n);
+}
+// A head write (offset 0) is synced to the card with the records before it: the head marks a change under way and
+// ends it, so it must be there before the area changes and after the records are. Records alone are only flushed.
 static bool netIdxWrite(uint32_t off, const void* p, size_t n) {
-    std::string path = netPath("files.idx");
-    FILE*       f = std::fopen(path.c_str(), "r+b");
-    if (!f) f = std::fopen(path.c_str(), "w+b");  // first use
-    if (!f) return false;
-    bool ok = std::fseek(f, (long)off, SEEK_SET) == 0 && std::fwrite(p, 1, n, f) == n;
-    ok = std::fclose(f) == 0 && ok;
-    return ok;
+    if (!netIdxOpen(false) && !netIdxOpen(true)) return false;  // first use
+    return netIdxDone(std::fseek(netIdxF, (long)off, SEEK_SET) == 0 && std::fwrite(p, 1, n, netIdxF) == n &&
+                      std::fflush(netIdxF) == 0 && (off || ::fsync(fileno(netIdxF)) == 0));
 }
 
 // /net/outlog.txt for FileOutLog (net/outlog.h). Reads are mostly in order, so the line and byte offset the last
@@ -3278,6 +3288,7 @@ static bool netSave(NetHost& h, bool force = false) {
 // Before a clean restart.
 static void netSaveNow() {
     if (netHost) netSave(*netHost, true);
+    netIdxClose();
 }
 
 // ---- the net record, local moderation and the @NET commands
@@ -5310,6 +5321,7 @@ static bool netStart() {
         core.setLocalFilter([hp](const std::string& b) { return netHas(hp->blocks, b); },
                             [hp](const std::string& id) { return netHas(hp->hides, id); });
         core.setAppsFile(netAppsAppend, netAppsScan, netAppsReadAt);
+        netIdxClose();  // (a handle from before is not trusted)
         core.setListingIndex(netIdxRead, netIdxWrite, [](void* p, size_t n) {
             for (size_t i = 0; i < n; i += 4) {
                 uint32_t r = esp_random();
@@ -6316,6 +6328,14 @@ static int callersBesideSysop() {
     return n;
 }
 
+// @PUT @LS @TYPE @RM @MKDIR @BAUD from the serial console (tools/sdput.py); /net/files.idx may be replaced or removed.
+static bool serialFiles(const String& cmd) {
+#if AXIS_NETS
+    netIdxClose();
+#endif
+    return serialFileCommand(cmd);
+}
+
 // Erase and re-make the SD card: the touch menu's YES button and "@SDFORMAT FORMAT" (the sysop menu) share this.
 // False when it was refused because a caller is online; `result` says what happened either way. force: the
 // serial console's "@SDFORMAT FORMAT force" goes ahead anyway.
@@ -6324,6 +6344,9 @@ static bool sdFormatNow(String& result, bool& ok, bool force = false) {
         logEvent("sysop: SD format refused, a caller is online");
         return false;
     }
+#if AXIS_NETS
+    netIdxClose();
+#endif
     ok = storageFormatSd(result);
     logEvent(String("sysop: SD format ") + (ok ? "done" : "FAILED") + ": " + result);
     makeAreaFolders();
@@ -7541,6 +7564,9 @@ static void runCommand(const String& cmd, Print& out) {
         screenFailNext();
         out.println("axis: the next full screen copy fails");
     } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
+#if AXIS_NETS
+        netIdxClose();
+#endif
         SD.end();
         storageInit();
         screenDirty = true;
@@ -7704,7 +7730,7 @@ static void runCommand(const String& cmd, Print& out) {
         ESP.restart();
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
-    } else if (&out == &Serial && serialFileCommand(cmd)) {
+    } else if (&out == &Serial && serialFiles(cmd)) {
         for (int32_t& c : listCount) c = -1;  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py) (a list file may have changed)
     } else if (cmd == "@RERUNSETUP" && boardIsHeadless()) {  // the wizard is on a screen this board hasn't got
         out.println("axis: setup refused: this board is headless (no screen to run setup on)");
