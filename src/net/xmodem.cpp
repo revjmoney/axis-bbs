@@ -46,6 +46,15 @@ void XmodemSender::sendBlock() {
     line_.write(b.data(), n);
 }
 
+void XmodemSender::pump(uint32_t now) {
+    if (!queued_) return;
+    uint32_t len = oneK_ && crc_ && size_ - pos_ > 128 ? 1024 : 128, have = size_ - pos_ < len ? size_ - pos_ : len;
+    if (have && !dataReady(pos_, have)) return;  // next step; no timer runs meanwhile
+    queued_ = false;
+    sendBlock();
+    since_ = now;
+}
+
 bool XmodemSender::step(uint32_t now) {
     if (result_ != Result::Running) return false;
     if (!started_) {
@@ -66,7 +75,7 @@ bool XmodemSender::step(uint32_t now) {
                         line_.write(&e, 1);
                         st_ = St::WaitEotAck;
                     } else {
-                        sendBlock();
+                        queued_ = true;
                         st_ = St::WaitAck;
                     }
                     since_ = now;
@@ -74,6 +83,7 @@ bool XmodemSender::step(uint32_t now) {
                 }
                 break;
             case St::WaitAck:
+                if (queued_) break;  // our block has not gone out yet: nothing to answer
                 if (c == ACK) {
                     uint32_t moved = size_ - pos_ < blockLen_ ? size_ - pos_ : blockLen_;
                     pos_ += moved;
@@ -86,15 +96,14 @@ bool XmodemSender::step(uint32_t now) {
                         line_.write(&e, 1);
                         st_ = St::WaitEotAck;
                     } else {
-                        sendBlock();
+                        queued_ = true;
                     }
                 } else if (c == NAK || c == 'C') {
                     if (++tries_ > kTries) {
                         cancel(line_);
                         return finish(Result::Failed, "too many errors");
                     }
-                    sendBlock();
-                    since_ = now;
+                    queued_ = true;
                 }
                 break;
             case St::WaitEotAck:
@@ -107,20 +116,24 @@ bool XmodemSender::step(uint32_t now) {
         }
     }
     if (result_ != Result::Running) return false;
+    pump(now);
+    if (result_ != Result::Running) return false;
     uint32_t wait = st_ == St::WaitStart ? kStartWait : kAckWait;
-    if (now - since_ > wait) {
+    if (!queued_ && now - since_ > wait) {  // the answer timer starts when the block goes out
         if (st_ == St::WaitStart || ++tries_ > kTries) {
             cancel(line_);
             return finish(Result::Failed, "the caller's program didn't answer");
         }
-        if (st_ == St::WaitAck) sendBlock();
-        else {
+        if (st_ == St::WaitAck) {
+            queued_ = true;
+            pump(now);
+        } else {
             uint8_t e = EOT;
             line_.write(&e, 1);
         }
         since_ = now;
     }
-    return true;
+    return result_ == Result::Running;
 }
 
 // ------------------------------------------------------------------ receiver

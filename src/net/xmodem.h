@@ -18,6 +18,7 @@ public:
 private:
     enum class St { WaitStart, WaitAck, WaitEotAck };
     void sendBlock();
+    void pump(uint32_t now);  // sends the queued block once its data is ready
     door::ByteStream& line_;
     ReadAt            read_;
     uint32_t          size_, pos_ = 0, blockLen_ = 0;
@@ -26,7 +27,7 @@ private:
     uint8_t           seq_ = 1;
     int               tries_ = 0, cans_ = 0;
     uint32_t          since_ = 0;
-    bool              started_ = false;
+    bool              started_ = false, queued_ = false;  // queued_: a block waits on ReadyAt (no timer runs)
 };
 
 class XmodemReceiver : public Transfer {

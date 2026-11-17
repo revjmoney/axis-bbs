@@ -86,6 +86,7 @@ add_library(axiscore STATIC
     src/net/netrecord.cpp
     src/net/recordview.cpp
     src/net/members.cpp
+    src/net/fetch.cpp
     dosemu/door/cpu.cpp
     dosemu/door/guestmem.cpp
     dosemu/door/mz.cpp

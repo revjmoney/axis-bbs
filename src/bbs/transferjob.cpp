@@ -42,10 +42,7 @@ TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream
             return;
         }
         size_ = src_->size();
-        RandomFile* f = src_.get();
-        auto        rd = [f](uint32_t off, uint8_t* buf, size_t n) { return f->readAt(off, buf, n); };
-        if (req_.proto == 'Z') xfer_.reset(new net::ZmodemSender(line_, rd, size_, req_.name));
-        else xfer_.reset(new net::XmodemSender(line_, rd, size_, req_.proto == 'K'));
+        startSender(req_.name);
         return;
     }
     auto wr = [this](const uint8_t* p, size_t n) { return writeData(p, n); };
@@ -59,6 +56,28 @@ TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream
         }
         xfer_.reset(new net::XmodemReceiver(line_, wr));
     }
+}
+
+#if AXIS_NETS
+TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, std::unique_ptr<RandomFile> file,
+                         uint32_t size, const std::string& name, net::Transfer::ReadyAt ready)
+    : lib_(lib), req_(std::move(req)), line_(line), src_(std::move(file)), size_(size) {
+    req_.upload = false;
+    if (!src_) {
+        note_ = "that file isn't there any more";
+        done_ = true;
+        return;
+    }
+    startSender(name);
+    xfer_->setReady(std::move(ready));
+}
+#endif
+
+void TransferJob::startSender(const std::string& name) {
+    RandomFile* f = src_.get();
+    auto        rd = [f](uint32_t off, uint8_t* buf, size_t n) { return f->readAt(off, buf, n); };
+    if (req_.proto == 'Z') xfer_.reset(new net::ZmodemSender(line_, rd, size_, name));
+    else xfer_.reset(new net::XmodemSender(line_, rd, size_, req_.proto == 'K'));
 }
 
 TransferJob::~TransferJob() {
