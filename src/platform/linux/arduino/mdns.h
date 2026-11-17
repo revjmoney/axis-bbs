@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// ESP-IDF's mDNS query API, as the board's modem search calls it. mDNS comes with the network layer (plan task 3):
-// until then no search starts.
+// ESP-IDF's mDNS query API, as the board's modem search calls it. Not used on Linux (plan 1 is solo; the V3 is
+// reached by serial): a search logs once and never starts, so applyNetwork() never waits for one.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -56,10 +56,8 @@ typedef struct mdns_result_s {
 typedef struct mdns_search_once_s mdns_search_once_t;
 typedef void (*mdns_query_notify_t)(mdns_search_once_t* search);
 
-inline mdns_search_once_t* mdns_query_async_new(const char*, const char*, const char*, uint16_t, uint32_t, size_t,
-                                                mdns_query_notify_t) {
-    return nullptr;
-}
+mdns_search_once_t* mdns_query_async_new(const char* name, const char* service, const char* proto, uint16_t type,
+                                         uint32_t timeoutMs, size_t maxResults, mdns_query_notify_t notify);  // hostnet.cpp
 inline bool mdns_query_async_get_results(mdns_search_once_t*, uint32_t, mdns_result_t** results) {
     if (results) *results = nullptr;
     return false;

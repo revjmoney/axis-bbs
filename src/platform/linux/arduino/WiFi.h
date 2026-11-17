@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // The ESP32 core's WiFi object on Linux. The PC's own network is already up when the program starts, so the
-// station is always "connected"; there is no radio to scan or hotspot to open. The addresses come with the
-// network layer (plan task 3).
+// station is always "connected"; there is no radio to scan or hotspot to open. localIP() is the PC's first
+// non-loopback IPv4 address; macAddress() is a stable made-up value from /etc/machine-id (not a real MAC).
+// Bodies in hostnet.cpp.
 #pragma once
 #include <cstdint>
 
@@ -47,12 +48,12 @@ public:
     bool setSleep(bool) { return true; }
     bool setHostname(const char*) { return true; }
 
-    IPAddress localIP() { return IPAddress(); }
-    IPAddress gatewayIP() { return IPAddress(); }
-    IPAddress subnetMask() { return IPAddress(); }
+    IPAddress localIP();
+    IPAddress gatewayIP();  // the default route's gateway (/proc/net/route)
+    IPAddress subnetMask();  // localIP()'s
     IPAddress dnsIP(uint8_t = 0) { return IPAddress(); }
     IPAddress softAPIP() { return IPAddress(); }
-    String    macAddress() { return String("00:00:00:00:00:00"); }  // a placeholder until the network layer (task 3)
+    String    macAddress();
     String    SSID() { return String(); }
     int8_t    RSSI() { return 0; }
 
@@ -65,7 +66,7 @@ public:
     wifi_auth_mode_t encryptionType(uint8_t) { return WIFI_AUTH_OPEN; }
 
     bool softAP(const char*, const char* = nullptr, int = 1, int = 0, int = 4) { return false; }  // no hotspot
-    int  hostByName(const char*, IPAddress&) { return 0; }  // lookups come with task 3
+    int  hostByName(const char* host, IPAddress& out);  // waits for the answer (4 s at most), as the core's does
 };
 
 inline WiFiClass WiFi;

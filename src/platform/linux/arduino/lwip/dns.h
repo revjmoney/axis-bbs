@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// lwIP's DNS lookup, as the board's code calls it. The lookup itself comes with the network layer (plan task 3);
-// until then every lookup fails at once.
+// lwIP's DNS lookup, as the board's code calls it. A dotted quad answers at once (ERR_OK); a name is looked up with
+// getaddrinfo on a short-lived thread (ERR_INPROGRESS) and the callback runs later from the main loop, between two
+// loop() turns (hostnetPoll in hostnet.h). Body in hostnet.cpp.
 #pragma once
 #include <cstdint>
 

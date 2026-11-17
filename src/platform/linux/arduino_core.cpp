@@ -85,9 +85,6 @@ extern "C" int esp_rom_printf(const char* fmt, ...) {
     return n;
 }
 
-// lwIP's lookup: comes with the network layer (plan task 3)
-err_t dns_gethostbyname(const char*, ip_addr_t*, dns_found_callback, void*) { return ERR_ARG; }
-
 // ------------------------------------------------------------------ the serial console
 HostSerial Serial;
 

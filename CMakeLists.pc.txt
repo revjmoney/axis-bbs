@@ -306,6 +306,9 @@ if(UNIX AND NOT APPLE)
         src/platform/linux/preferences.cpp
         src/platform/linux/serialfiles.cpp
         src/platform/linux/heapscope.cpp
+        src/platform/linux/hostconf.cpp
+        src/platform/linux/hostnet.cpp
+        src/platform/linux/netgate.cpp
         src/platform/cyd/config_store.cpp  # the board's own: LittleFS is the data folder's flash/ (fs.cpp)
         src/platform/cyd/sdfiles.cpp       # the board's own: its /sd/files paths go through fs_remap.cpp
         src/platform/cyd/screen.cpp        # the board's own: pure LovyanGFX, nothing to port

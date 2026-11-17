@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // The axis program's process: the board's setup() once, then its loop() for ever, as the ESP32's Arduino core
-// does. ESP.restart() ends the process with exit code 3. Before setup(), the data folder is made ready (paths.h).
+// does. ESP.restart() ends the process with exit code 3. Before setup(), the data folder is made ready (paths.h)
+// and axis.conf read (hostconf.h).
 #include <unistd.h>
 
 #include <csignal>
@@ -9,6 +10,8 @@
 #include <cstring>
 
 #include "platform/linux/host.h"
+#include "platform/linux/hostconf.h"
+#include "platform/linux/hostnet.h"
 #include "platform/linux/paths.h"
 
 void setup();
@@ -46,6 +49,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::printf("axis: data folder %s\n", axisDataDir().c_str());
+    hostConfLoad(axisDataDir());  // <data>/axis.conf: ports and the accept gate's limits
+    hostnetStart();
     setup();
-    for (;;) loop();
+    for (;;) {
+        loop();
+        hostnetPoll();  // finished DNS lookups call back here, on the main thread, between loop() turns
+    }
 }
