@@ -315,6 +315,9 @@ if(UNIX AND NOT APPLE)
         src/platform/cyd/sdfiles.cpp       # the board's own: its /sd/files paths go through fs_remap.cpp
         src/platform/cyd/screen.cpp        # the board's own: pure LovyanGFX, nothing to port
         src/platform/cyd/ansi_screen.cpp)
+    if(AXIS_WINDOW)  # the window start mode: LovyanGFX's SDL panel as the board's screen
+      target_sources(axis PRIVATE src/platform/linux/window.cpp)
+    endif()
     # The board's screen files get Arduino.h (Serial, millis) through LovyanGFX's Arduino build on the ESP32.
     set_source_files_properties(src/platform/cyd/screen.cpp src/platform/cyd/ansi_screen.cpp
         PROPERTIES COMPILE_OPTIONS "-include;Arduino.h")

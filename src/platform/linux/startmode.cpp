@@ -88,8 +88,8 @@ StartMode detectStartMode(int argc, char** argv) {
         std::fprintf(stderr, "axis: --terminal needs a terminal on stdin and stdout; running headless\n");
         return StartMode::Headless;
     }
-    if (m == StartMode::Window) {  // plan task 6 brings the window
-        std::fprintf(stderr, "axis: the window is not built yet; running headless\n");
+    if (m == StartMode::Window && !AXIS_WINDOW) {
+        std::fprintf(stderr, "axis: this axis was built without the window (AXIS_WINDOW); running headless\n");
         return StartMode::Headless;
     }
     return m;

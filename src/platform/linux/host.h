@@ -10,6 +10,8 @@
 namespace axis::host {
 extern StartMode   startMode;  // detectStartMode()'s answer, after any fallback
 extern std::string dataDir;    // --data DIR ("" when not given)
+// The board's screen is a window (the window start mode, window.h): boardHasPanel(). Set before setup(), never after.
+extern bool windowOn;
 // The board's serial console (Serial): what it reads (-1: nothing, input ignored, as headless) and where it writes.
 // Terminal mode reads stdin and writes the terminal; headless writes stdout (the log) and reads nothing.
 extern int serialIn;
