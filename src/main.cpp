@@ -2612,8 +2612,9 @@ struct NetServe {
     std::unique_ptr<axis::bbs::RandomFile>   file;  // the file being served (check opens it)
     std::string                              pend, id, who;  // who: "<handle>@<board>" once the GET is read
     std::string                              from;  // the calling board
-    uint32_t                                 ip = 0;
+    uint32_t                                 ip = 0, closeMs = 0;  // closeMs: the half-close, or the last byte heard after it
     bool                                     proven = false, served = false;  // the GET's signature checked; check passed
+    bool                                     closing = false;  // half-closed: what comes is dropped until the dialer closes
     // noexcept (WiFiClient() cannot throw): NetHost's constructor then needs no unwinding code for the members before it.
     NetServe() noexcept {}
 };
@@ -3981,21 +3982,34 @@ static void netServeAccept(WiFiClient& c, const std::string& got) {
     v->s->feed(got.data(), got.size());
 }
 
+// The call is over: logged, then half-closed (lwIP sends its FIN after the queued bytes) with the slot kept while
+// netServePump drops what the dialer still sends, until it closes or kFetchStallMs passes with nothing heard. A dialer's
+// late keepalive on a fully closed socket would be answered with a reset that throws away bytes it has not read yet.
+// Called again while closing (that wait over, or the net turned off): the socket closes and the slot is free.
 static void netServeClose(NetHost& h, const char* why) {
     NetServe& v = h.serve;
-    if (v.s) v.pend += v.s->takeOut(256);  // a NO line still to go
-    for (uint32_t t0 = millis(); !v.pend.empty() && v.c.connected() && millis() - t0 < 200;) {
-        if (!netSendRaw(v.c, v.pend)) break;
-        if (!v.pend.empty()) delay(2);
+    if (!v.closing) {
+        if (v.s) v.pend += v.s->takeOut(256);  // a NO line still to go
+        for (uint32_t t0 = millis(); !v.pend.empty() && v.c.connected() && millis() - t0 < 200;) {
+            if (!netSendRaw(v.c, v.pend)) break;
+            if (!v.pend.empty()) delay(2);
+        }
+        bool        done = v.s && v.s->finished() && !v.s->failed() && v.served;
+        std::string word = why ? why : v.s ? v.s->why() : "";
+        if (done) netFilesNote(h, v.from, "fetch served %s to %s", v.id.c_str(), v.who.c_str());
+        else
+            netFilesLog("fetch %s from %s %s (%s)", v.id.empty() ? "call" : v.id.c_str(), v.who.c_str(), v.served ? "stopped" : "refused", word.c_str());
+        if (!v.proven && (word == "sig" || word == "bad" || word == "timeout")) netStrike(v.ip);  // never proved who it is
+        else if (v.proven) netProven(v.ip);
+        int fd = v.c.fd();
+        if (!why && fd >= 0 && v.c.connected() && shutdown(fd, SHUT_WR) == 0) {
+            v.closing = true;
+            v.closeMs = millis();
+            return;
+        }
     }
     netDrainStop(v.c);
-    bool        done = v.s && v.s->finished() && !v.s->failed() && v.served;
-    std::string word = why ? why : v.s ? v.s->why() : "";
-    if (done) netFilesNote(h, v.from, "fetch served %s to %s", v.id.c_str(), v.who.c_str());
-    else
-        netFilesLog("fetch %s from %s %s (%s)", v.id.empty() ? "call" : v.id.c_str(), v.who.c_str(), v.served ? "stopped" : "refused", word.c_str());
-    if (!v.proven && (word == "sig" || word == "bad" || word == "timeout")) netStrike(v.ip);  // never proved who it is
-    else if (v.proven) netProven(v.ip);
+    v.closing = false;
     v.s.reset();  // before the file it reads
     v.file.reset();
     v.pend.clear();
@@ -4008,6 +4022,11 @@ static void netServePump(NetHost& h) {
     if (!v.s) return;
     char   buf[256];
     size_t fed = 0;
+    if (v.closing) {  // half-closed: drop what comes (a keepalive) until the dialer closes
+        for (int i = 0; i < 8 && v.c.available() > 0 && v.c.read((uint8_t*)buf, sizeof buf) > 0; i++) v.closeMs = millis();
+        if (!v.c.connected() || millis() - v.closeMs >= axis::net::kFetchStallMs) netServeClose(h, nullptr);
+        return;
+    }
     while (fed < 2048) {  // the GET line, then only the dialer's keepalives
         int a = v.c.available();
         if (a <= 0) break;
@@ -4227,7 +4246,15 @@ static void netFetchPump(NetHost& h) {
     St st = s.f->state();
     if (st == St::Failed) netFetchFail(h, s.f->why());
     else if (st == St::Done) netFetchDone(h);
-    else if (!sent || (!s.c.connected() && s.c.available() <= 0)) netFetchFail(h, "closed");  // gone before every byte came
+    else if (!sent || (!s.c.connected() && s.c.available() <= 0)) {  // gone before every byte came
+        netFilesLog("fetch %s closed at %u of %u", axis::net::listingId(s.l).c_str(), (unsigned)s.f->reached(), (unsigned)s.l.size);
+        if (st != St::Streaming || s.retries >= axis::net::kFetchRetries) netFetchFail(h, "closed");
+        else {  // asked again from where the sender reads (as for a seek outside the window)
+            s.retries++;
+            s.redial = true;
+            s.redialAt = s.f->aimed();
+        }
+    }
     else if (st == St::Streaming) {
         if (s.f->room() > 0) s.slowMs += now - s.tickMs;
         if (s.slowMs >= kNetFetchSlowMs) {
