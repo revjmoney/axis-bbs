@@ -90,22 +90,39 @@ What it does, in this order:
    the LAN (and on a VPN interface if there is one), the LAN BBS port, panel 2326 and cluster
    UDP 2325 from the LAN, and the public BBS port from anywhere only if `public_port` is set.
    Then default deny incoming, allow outgoing, and enable. The allow rules always go in first.
-6. fail2ban `sshd` jail: 1 hour ban after 5 failures.
+   Before the first change it saves `ufw status verbose` to `/root/axis-harden-ufw-before.txt`.
+6. fail2ban `sshd` jail: 1 hour ban after 5 failures, never banning the LAN or VPN ranges.
 7. Automatic security updates (unattended-upgrades).
 8. Prints `ss -tulpn`.
 
 After it runs, open a new SSH session and a Remote Desktop connection before closing the old one.
 
+Something else listening (the plan lists it, with ready-to-paste commands) can be kept open
+to the LAN with `--allow-lan-port PORT` or `--allow-lan-port PORT/udp` (repeat for more).
+Without sudo the dry run cannot read `axis.conf` or the current ufw rules; `sudo ./harden-i5.sh --dry-run`
+shows the exact plan and still changes nothing.
+
+fail2ban never bans the LAN (or VPN) ranges, since after this script SSH is reachable only from
+there and a ban would be you.
+
 To undo:
 
-    sudo ufw status numbered               # rules tagged axis-harden were added by the script
-    sudo ufw delete N                      # remove one, or: sudo ufw disable (turns the firewall off)
-    sudo rm /etc/ssh/sshd_config.d/10-axis-hardening.conf && sudo systemctl reload ssh
-    sudo systemctl disable --now fail2ban  # or unban one address:
-    sudo fail2ban-client set sshd unbanip ADDRESS
+1. Firewall rules: every rule the script added is tagged `axis-harden`.
 
-ufw may have been on before the script ran, so `ufw disable` can turn off more than the
-script turned on; deleting the tagged rules is the exact undo.
+        sudo ufw status numbered
+        sudo ufw delete N
+
+   The numbers shift after each delete, so list again before the next one.
+2. Firewall default policy: the first real run saved what ufw looked like before to
+   `/root/axis-harden-ufw-before.txt`. Put it back from there: if it said
+   `Status: inactive` (or ufw was not installed), `sudo ufw disable`; if its `Default:` line said
+   `allow (incoming)`, `sudo ufw default allow incoming`; likewise for outgoing.
+3. SSH:
+
+        sudo rm /etc/ssh/sshd_config.d/10-axis-hardening.conf && sudo systemctl reload ssh
+
+4. fail2ban: `sudo systemctl disable --now fail2ban` and `sudo rm /etc/fail2ban/jail.d/axis-sshd.local`.
+   To unban one address instead: `sudo fail2ban-client set sshd unbanip ADDRESS`.
 
 To go public, forward the public port on the router straight to this box (a direct port
 forward). That is the supported way; a tunnel or proxy makes every caller look like one address.

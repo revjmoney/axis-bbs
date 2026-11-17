@@ -26,21 +26,34 @@ SSH_PORT=22
 dry=0
 assume_yes=0
 extra_rdp=()
+extra_lan=()   # entries like 8080/tcp or 5353/udp
+UFW_BEFORE="/root/axis-harden-ufw-before.txt"
 
 usage() {
-    echo "usage: sudo $0 [--dry-run] [--yes] [--rdp-port N]"
-    echo "  --dry-run     print the plan and every command without running any (no sudo needed)"
-    echo "  --yes         skip the final 'apply?' question (the LAN subnet question is always asked)"
-    echo "  --rdp-port N  also allow Remote Desktop on port N from the LAN (added to what is detected)"
+    echo "usage: sudo $0 [--dry-run] [--yes] [--rdp-port N] [--allow-lan-port N[/udp]]"
+    echo "  --dry-run              print the plan and every command without running any (no sudo needed,"
+    echo "                         but sudo lets it read axis.conf and the current ufw rules)"
+    echo "  --yes                  skip the final 'apply?' question (the LAN subnet question is always asked)"
+    echo "  --rdp-port N           also allow Remote Desktop on port N from the LAN (added to what is detected)"
+    echo "  --allow-lan-port N     also allow port N (tcp, or N/udp) from the LAN; repeat for more"
 }
+
+is_port() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) dry=1; shift ;;
         --yes|-y) assume_yes=1; shift ;;
         --rdp-port) [ $# -ge 2 ] || { usage; exit 2; }
-                    [[ "$2" =~ ^[0-9]+$ ]] || { echo "--rdp-port needs a number" >&2; exit 2; }
+                    is_port "$2" || { echo "--rdp-port needs a port number (1-65535)" >&2; exit 2; }
                     extra_rdp+=("$2"); shift 2 ;;
+        --allow-lan-port)
+                    [ $# -ge 2 ] || { usage; exit 2; }
+                    lp="${2%/*}"; lproto="tcp"
+                    [ "$lp" != "$2" ] && lproto="${2#*/}"
+                    is_port "$lp" || { echo "--allow-lan-port needs a port number (1-65535): $2" >&2; exit 2; }
+                    [ "$lproto" = "tcp" ] || [ "$lproto" = "udp" ] || { echo "--allow-lan-port takes N, N/tcp or N/udp: $2" >&2; exit 2; }
+                    extra_lan+=("$lp/$lproto"); shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage; exit 2 ;;
     esac
@@ -83,8 +96,6 @@ write_file() {
     printf '%s\n' "$content" | sed 's/^/      | /'
     return 0
 }
-
-is_port() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 
 ip4_to_int() {
     local a b c d
@@ -146,8 +157,21 @@ vpn_ifaces=()
 while read -r ifn; do
     case "$ifn" in tailscale*|wg*|zt*|tun*) vpn_ifaces+=("$ifn") ;; esac
 done < <(ip -o link show 2>/dev/null | awk -F': ' '{sub(/@.*/, "", $2); print $2}')
+# Address ranges reached over the VPN (for fail2ban's ignore list).
+vpn_nets=()
+for ifn in "${vpn_ifaces[@]}"; do
+    case "$ifn" in tailscale*) vpn_nets+=("100.64.0.0/10" "fd7a:115c:a1e0::/48") ;; esac
+    while read -r n; do
+        [ -n "$n" ] && vpn_nets+=("$n")
+    done < <( { ip -4 route show table all dev "$ifn" 2>/dev/null; ip -6 route show table all dev "$ifn" 2>/dev/null; } \
+              | awk '$1 ~ /\// && $1 !~ /^(default|fe80|ff00|multicast|local|broadcast)/ {print $1}')
+done
+if [ ${#vpn_nets[@]} -gt 0 ]; then
+    mapfile -t vpn_nets < <(printf '%s\n' "${vpn_nets[@]}" | sort -u)
+fi
 if [ ${#vpn_ifaces[@]} -gt 0 ]; then
     say "VPN interfaces:          ${vpn_ifaces[*]} (SSH and Remote Desktop will be allowed on these too)"
+    say "VPN ranges:              ${vpn_nets[*]:-none seen}"
 else
     say "VPN interfaces:          none found (tailscale*, wg*, zt*, tun*)"
 fi
@@ -239,12 +263,17 @@ done
 head_ "AXIS ports"
 lan_port=2323
 public_port=""
+# conf_value KEY: the last KEY=value in axis.conf, without a trailing "# comment" or quotes.
+conf_value() {
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$AXIS_CONF" | tail -n1 \
+        | sed 's/[[:space:]]*#.*$//' | tr -d "[:space:]\"'"
+}
 if [ -r "$AXIS_CONF" ]; then
-    v="$(sed -n 's/^[[:space:]]*lan_port[[:space:]]*=[[:space:]]*//p' "$AXIS_CONF" | tail -n1 | tr -d '[:space:]')"
+    v="$(conf_value lan_port)"
     if [ -n "$v" ]; then
         if is_port "$v"; then lan_port="$v"; else warn "lan_port '$v' in $AXIS_CONF is not a port, using 2323"; fi
     fi
-    v="$(sed -n 's/^[[:space:]]*public_port[[:space:]]*=[[:space:]]*//p' "$AXIS_CONF" | tail -n1 | tr -d '[:space:]')"
+    v="$(conf_value public_port)"
     if [ -z "$v" ] || [ "$v" = "0" ]; then
         say "public_port is off in $AXIS_CONF, no public rule"
     elif is_port "$v"; then
@@ -252,8 +281,12 @@ if [ -r "$AXIS_CONF" ]; then
     else
         warn "public_port '$v' in $AXIS_CONF is not a port, no public rule"
     fi
+elif [ "$is_root" -eq 0 ] && { [ -e "$AXIS_CONF" ] || { [ -d "$(dirname "$AXIS_CONF")" ] && ! [ -x "$(dirname "$AXIS_CONF")" ]; }; }; then
+    say "$AXIS_CONF cannot be read without sudo; the real run reads it. This plan assumes"
+    say "lan_port 2323 and no public port, so it may show the wrong LAN port and leave out a"
+    say "public rule. For the exact plan: sudo ./harden-i5.sh --dry-run"
 elif [ -e "$AXIS_CONF" ]; then
-    say "$AXIS_CONF is not readable (needs sudo), so lan_port is taken as 2323 and the public rule is skipped"
+    say "$AXIS_CONF is not readable, so lan_port is taken as 2323 and the public rule is skipped"
 else
     say "$AXIS_CONF does not exist yet, so lan_port is taken as 2323 and the public rule is skipped"
 fi
@@ -263,8 +296,12 @@ say "Cluster port:            $CLUSTER_PORT/udp (from the LAN)"
 if [ -n "$public_port" ]; then
     say "Public BBS port:         $public_port/tcp (from anywhere)"
 fi
+if [ ${#extra_lan[@]} -gt 0 ]; then
+    say "Extra LAN ports:         ${extra_lan[*]} (from the LAN, --allow-lan-port)"
+fi
 
 head_ "Firewall now"
+ufwv=""
 ufw_ok=1
 command -v ufw >/dev/null 2>&1 || ufw_ok=0
 if [ "$ufw_ok" -eq 0 ]; then
@@ -272,43 +309,51 @@ if [ "$ufw_ok" -eq 0 ]; then
 elif [ "$is_root" -eq 1 ]; then
     ufwv="$(ufw status verbose 2>&1 || true)"
     printf '%s\n' "$ufwv"
-    if printf '%s\n' "$ufwv" | grep -q '^Status: active' && printf '%s\n' "$ufwv" | grep -q 'deny (incoming)'; then
+    if grep -q '^Status: active' <<<"$ufwv" && grep -q 'deny (incoming)' <<<"$ufwv"; then
         say "Incoming is already deny by default, no change there."
     else
         say "Incoming is not deny yet: it will become deny AFTER the allow rules below are in."
     fi
     # Existing rules that open SSH or Remote Desktop to everyone (this script will not delete them).
-    broad="$(printf '%s\n' "$ufwv" | grep -E "^($SSH_PORT|OpenSSH|$(IFS='|'; echo "${rdp_ports[*]}"))(/tcp)?([[:space:]]|\(v6\))" | grep -E 'Anywhere[[:space:]]*$|Anywhere \(v6\)[[:space:]]*$' | grep -v ' on ' || true)"
+    broad="$(grep -E "^($SSH_PORT|OpenSSH|$(IFS='|'; echo "${rdp_ports[*]}"))(/tcp)?([[:space:]]|\(v6\))" <<<"$ufwv" | grep -E 'Anywhere[[:space:]]*$|Anywhere \(v6\)[[:space:]]*$' | grep -v ' on ' || true)"
     if [ -n "$broad" ]; then
         warn "these existing rules open SSH or Remote Desktop to any address, not just the LAN:"
         printf '%s\n' "$broad" | sed 's/^/    /'
         say "  This script leaves them alone. Once the LAN rules work, you can remove them with"
-        say "  'sudo ufw status numbered' and then 'sudo ufw delete N'."
+        say "  'sudo ufw status numbered' and then 'sudo ufw delete N' (numbers shift after each"
+        say "  delete, so list again before the next one)."
     fi
 else
     say "ufw is installed and its rules and default policy cannot be read without sudo."
-    say "The real run prints them here first. It only adds rules; it never deletes or resets."
+    say "The real run prints them here first and saves them to $UFW_BEFORE."
+    say "It only adds rules; it never deletes or resets. For the exact plan: sudo ./harden-i5.sh --dry-run"
 fi
 
 # Things listening on the network that this script adds no rule for (they get blocked
 # from outside once incoming is deny, unless an existing rule already opens them).
-allowed_tcp=("$SSH_PORT" "${rdp_ports[@]}" "$lan_port" "$PANEL_PORT")
-[ -n "$public_port" ] && allowed_tcp+=("$public_port")
+allowed=("$SSH_PORT/tcp" "$lan_port/tcp" "$PANEL_PORT/tcp" "$CLUSTER_PORT/udp" "${extra_lan[@]}")
+for p in "${rdp_ports[@]}"; do allowed+=("$p/tcp"); done
+[ -n "$public_port" ] && allowed+=("$public_port/tcp")
 others=""
+other_cmds=""
+seen=" "
 while read -r proto addr; do
     case "$addr" in 127.*|"[::1]"*|*%lo:*) continue ;; esac
     port="${addr##*:}"
-    if [ "$proto" = "tcp" ]; then
-        printf '%s\n' "${allowed_tcp[@]}" | grep -qx "$port" && continue
-    else
-        [ "$port" = "$CLUSTER_PORT" ] && continue
-    fi
+    is_port "$port" || continue
+    [[ " ${allowed[*]} " == *" $port/$proto "* ]] && continue
     others+="    $proto $addr"$'\n'
+    [[ "$seen" == *" $port/$proto "* ]] && continue
+    seen+="$port/$proto "
+    for src in "${lan_srcs[@]}"; do
+        other_cmds+="    sudo ufw allow from $src to any port $port proto $proto comment '$TAG lan $port'"$'\n'
+    done
 done < <(ss -tulnH 2>/dev/null | awk '{print $1, $5}' | sort -u)
 if [ -n "$others" ]; then
     warn "these are listening on the network and get no new rule (blocked from outside unless a rule already allows them):"
     printf '%s' "$others"
-    say "  To keep one open to the LAN: sudo ufw allow from $subnet to any port N proto tcp"
+    say "  To keep them open to the LAN, rerun with --allow-lan-port PORT (or PORT/udp), or run:"
+    printf '%s' "$other_cmds"
 fi
 
 head_ "SSH"
@@ -415,6 +460,16 @@ else
 fi
 
 head_ "Firewall"
+# Keep the state from before the first run, so the default policy can be put back.
+if [ -e "$UFW_BEFORE" ]; then
+    say "  $UFW_BEFORE already exists (from an earlier run), kept as is"
+elif [ "$dry" -eq 1 ]; then
+    say "  would save the current 'ufw status verbose' to $UFW_BEFORE"
+else
+    say "  + save the current 'ufw status verbose' to $UFW_BEFORE"
+    { echo "# ufw before harden-i5.sh, $(date)"; printf '%s\n' "${ufwv:-ufw was not installed}"; } > "$UFW_BEFORE"
+    chmod 0600 "$UFW_BEFORE"
+fi
 for src in "${lan_srcs[@]}"; do
     run ufw allow from "$src" to any port "$SSH_PORT" proto tcp comment "$TAG ssh"
     for p in "${rdp_ports[@]}"; do
@@ -431,6 +486,9 @@ for src in "${lan_srcs[@]}"; do
     run ufw allow from "$src" to any port "$lan_port" proto tcp comment "$TAG bbs lan"
     run ufw allow from "$src" to any port "$PANEL_PORT" proto tcp comment "$TAG panel"
     run ufw allow from "$src" to any port "$CLUSTER_PORT" proto udp comment "$TAG cluster"
+    for e in "${extra_lan[@]}"; do
+        run ufw allow from "$src" to any port "${e%/*}" proto "${e#*/}" comment "$TAG lan ${e%/*}"
+    done
 done
 if [ -n "$public_port" ]; then
     run ufw allow "$public_port/tcp" comment "$TAG bbs public"
@@ -441,10 +499,13 @@ run ufw --force enable
 [ "$dry" -eq 0 ] && ufw status verbose
 
 head_ "fail2ban: sshd jail"
+# SSH is reachable only from the LAN (and VPN) after this, so never ban those: that would be you.
+ignore="127.0.0.1/8 ::1 ${lan_srcs[*]}${vpn_nets[*]:+ ${vpn_nets[*]}}"
 jail="# Added by harden-i5.sh (AXIS).
 [sshd]
 enabled = true
 backend = systemd
+ignoreip = $ignore
 bantime = 1h
 maxretry = 5"
 [ "$dry" -eq 0 ] && mkdir -p "$(dirname "$F2B_JAIL")"
