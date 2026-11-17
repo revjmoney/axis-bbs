@@ -963,9 +963,10 @@ TEST_CASE("fetchLetGo: a follower's slot with a lost e is let go once Done or Fa
     CHECK_FALSE(fetchLetGo(&job, &caller, false, quiet));
     // a follower's transfer holds it (job is the owner, its token): kept while the fetch runs, however quiet
     CHECK_FALSE(fetchLetGo(&follower, &follower, false, quiet));
-    // Done or Failed and its "e" lost: let go once nobody asked (t and b) for the idle time
-    CHECK(fetchLetGo(&follower, &follower, true, quiet));
-    CHECK_FALSE(fetchLetGo(&follower, &follower, true, kFetchIdleMs - 1));
+    // Done or Failed and its "e" lost: let go once nobody asked (t and b) for 3 minutes (past the senders' ~110 s give-up)
+    CHECK(fetchLetGo(&follower, &follower, true, 3 * kFetchIdleMs + 1));
+    CHECK_FALSE(fetchLetGo(&follower, &follower, true, 3 * kFetchIdleMs));
+    CHECK_FALSE(fetchLetGo(&follower, &follower, true, quiet));
 }
 
 #endif  // AXIS_NETS && AXIS_TRANSFERS

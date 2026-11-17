@@ -38,9 +38,10 @@ constexpr uint32_t kFetchIdleMs = 60000;             // the host lets go a fetch
 
 // The host's one fetch slot is let go once nobody asked about it for kFetchIdleMs (quietMs): while no transfer holds it
 // (job null), and, when a follower's transfer holds it (job is the owner, the follower's token, since a TransferJob
-// here is never its owner), once the fetch is Done or Failed (ended), so a follower's lost "e" cannot keep it.
+// here is never its owner), once the fetch is Done or Failed (ended) and 3 * kFetchIdleMs (3 minutes) have passed, past
+// the XMODEM/ZMODEM senders' give-up of about 110 s, so a follower's lost "e" cannot keep it.
 inline bool fetchLetGo(const void* job, const void* owner, bool ended, uint32_t quietMs) {
-    return (!job || (job == owner && ended)) && quietMs > kFetchIdleMs;
+    return (!job && quietMs > kFetchIdleMs) || (job == owner && ended && quietMs > 3 * kFetchIdleMs);
 }
 static_assert((kFetchWindow & (kFetchWindow - 1)) == 0, "the ring indexes by offset");
 
