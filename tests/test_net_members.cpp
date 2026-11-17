@@ -559,8 +559,7 @@ TEST_CASE("a member filling the pool with votes on unheld apps cannot block a re
     // A load keeps the oldest 16 per voter on unheld apps, whatever the line order.
     std::string text;
     const KeyPair D = keyOf(0x54);
-    for (uint32_t i = 0; i < 20; i++) text = encode(makeVote(D, idOf(0x3000 + i), 1, 1, true, kNow + i)) + "
-" + text;
+    for (uint32_t i = 0; i < 20; i++) text = encode(makeVote(D, idOf(0x3000 + i), 1, 1, true, kNow + i)) + "\n" + text;
     NetMembers again(t.st, [](const std::string& b) { return b == revBoard(); });
     again.load(text);
     CHECK(again.voteCount() == kMaxOpenApps);
