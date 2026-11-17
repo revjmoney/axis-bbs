@@ -236,6 +236,49 @@ TEST_CASE("User Net pull") {
     CHECK_FALSE(b.core.needUserHistory());
 }
 
+TEST_CASE("an empty or junk UEND leaves the User Net pull not done; a real pull completes it") {
+    RevKeys rk;
+    UNode a(0xC1), b(0xC2);  // both fresh: b asks for the User Net pull
+    REQUIRE(b.core.needUserHistory());
+    {  // A stranger (no link peer) answers UEND at once, after a junk U line and a forged application.
+        NetSession s(b.core, b.card, b.key, nonce(2), false, "");
+        RawDialer r(0xC3);
+        r.card.links = "internet,net2";
+        r.card.seq++;
+        REQUIRE(signCard(r.card, r.key));
+        r.handshake(s);
+        REQUIRE(s.proven());
+        s.tick(0, true);
+        CHECK(countPrefix(s.takeOut(), "UWANT") == 1);
+        RawDialer::say(s, "SEQ 0");
+        RawDialer::say(s, "U junk");
+        std::string forged = encode(makeApp(keyOf(0xC4)));
+        forged[forged.size() - 1] = forged[forged.size() - 1] == 'a' ? 'b' : 'a';  // the signature no longer checks
+        RawDialer::say(s, "U " + forged);
+        RawDialer::say(s, "UEND");
+        CHECK_FALSE(s.failed());
+        CHECK(b.core.members().appCount() == 0);
+        CHECK(b.core.needUserHistory());
+        CHECK(hasLine(b.core.saveCursors(), "uhistory 0"));
+    }
+    {  // A fresh board with nothing to give: UEND alone, and the next session asks again.
+        Said s = sync(b, a, 5);
+        CHECK(countPrefix(s.fromDialer, "UWANT") == 1);
+        CHECK(countPrefix(s.fromAnswerer, "U ") == 0);
+        CHECK(countPrefix(s.fromAnswerer, "UEND") == 1);
+        CHECK(b.core.needUserHistory());
+    }
+    REQUIRE(a.core.takeApp(makeApp(keyOf(0xC5)), ""));
+    {  // A pull that brings one application is done.
+        Said s = sync(b, a, 7);
+        CHECK(countPrefix(s.fromDialer, "UWANT") == 1);
+        CHECK(countPrefix(s.fromAnswerer, "U A") == 1);
+        CHECK(b.core.members().appCount() == 1);
+        CHECK_FALSE(b.core.needUserHistory());
+        CHECK(hasLine(b.core.saveCursors(), "uhistory 1"));
+    }
+}
+
 TEST_CASE("a board voted in by three members asks for the User Net posts") {
     RevKeys rk;
     UNode x(0xE5), a(0xE6);

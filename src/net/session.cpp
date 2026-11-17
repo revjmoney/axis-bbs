@@ -29,9 +29,10 @@
 // peer whose card has the token net2 in its links (a v0.53 board never sees UWANT or U). <areas> is a
 // comma list of the un_ areas this board carries while it is a member, or "-". The peer answers with U
 // lines: every application and vote it holds, then up to 100 posts per asked area it carries from the
-// last 30 days, oldest first, then UEND, which marks the pull done. A and V records go out only on E
-// and U lines, never on S or H lines, and E lines with A, V or un_ posts go only to a net2 peer. At
-// most kSyncUserEMax A and V E lines are taken per session; past that they are answered NAK store.
+// last 30 days, oldest first, then UEND, which marks the pull done if at least one U line was taken or
+// already held (as HEND). A and V records go out only on E and U lines, never on S or H lines, and E
+// lines with A, V or un_ posts go only to a net2 peer. At most kSyncUserEMax A and V E lines are taken
+// per session; past that they are answered NAK store.
 // BYE <reason> ends the session at any point.
 #include "net/session.h"
 
@@ -348,7 +349,9 @@ void NetSession::syncLine(std::string& l) {
     if (verb == "UEND") {
         if (!sentUwant_ || peerUend_) return fail("bad line", "bad");
         peerUend_ = true;
-        core_.userHistoryGot();  // the pull reached its end: done, whatever it held
+        // As for HEND: done only if at least one U line was taken or already held here. A peer with
+        // nothing to give (a stranger, a fresh board, or one answering UEND at once) leaves it to the next.
+        if (userGot_) core_.userHistoryGot();
         return;
     }
     if (verb == "DONE") {
@@ -498,7 +501,8 @@ void NetSession::takeUser(std::string_view rec, std::string& line) {
     if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {
         if (userRecsTaken_ >= kSyncUserRecordsMax) return;
         userRecsTaken_++;
-        takeRecord(rec);
+        // Taken now or held already (a repeat pull): the pull got something real. Junk does not count.
+        if (takeRecord(rec) && core_.members().holds(std::string(rec))) userGot_ = true;
         return;
     }
     if (rec[0] != (char)NetKind::Post || userPostsTaken_ >= kSyncUserHistoryMax) return;
@@ -506,7 +510,10 @@ void NetSession::takeUser(std::string_view rec, std::string& line) {
     if (!decode(rec, p) || !isUserNetArea(p.area)) return;
     std::string().swap(line);  // rec is no longer looked at
     NetCore::Took t = core_.take(std::move(p), peer_, true);
-    if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userPostsTaken_++;
+    if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) {
+        userPostsTaken_++;
+        userGot_ = true;
+    }
     if (t == NetCore::Took::Stored) postsTaken_++;
 }
 

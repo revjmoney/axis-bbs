@@ -224,7 +224,8 @@ public:
     // -1: not known yet (nothing saved), 0: not done, 1: done.
     int historyState() const { return history_; }
 
-    // The User Net pull (UWANT, U, UEND), its own flag: asked until a pull reaches UEND. Not done on a
+    // The User Net pull (UWANT, U, UEND), its own flag: asked until a pull reaches UEND having taken or
+    // already held at least one U line (an empty UEND, from anyone, leaves it to the next). Not done on a
     // board with nothing saved, so a board upgraded from v0.53 asks once. The host resets it when this
     // board becomes a member or starts carrying another area.
     bool needUserHistory() const { return !userHistory_; }

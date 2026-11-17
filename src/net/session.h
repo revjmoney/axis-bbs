@@ -165,6 +165,7 @@ private:
     uint32_t histTaken_ = 0;  // H lines passed to take this session
     uint32_t userPostsTaken_ = 0, userRecsTaken_ = 0;  // U lines taken this session (posts; applications and votes)
     uint32_t userETaken_ = 0;                          // E application and vote lines taken this session
+    bool userGot_ = false;  // a U line this side took or already held: only then does UEND mark the pull done
     uint32_t postsSent_ = 0, postsTaken_ = 0, naks_ = 0, naksSent_ = 0;
 };
 
