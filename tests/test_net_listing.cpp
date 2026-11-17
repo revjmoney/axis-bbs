@@ -1,0 +1,686 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rev. J. Money
+// Net Files listings in NetCore: who may list, dedupe with posts, the one-record-per-name rule in any arrival order, the
+// caps and the trim, what is shown, the listing index (/net/files.idx) and its rebuilds, and the drop budgets.
+#include <algorithm>
+#include <cstdio>
+
+#include "net/crc.h"
+#include "net_testutil.h"
+
+using namespace nettest;
+using axis::bbs::Message;
+using Took = NetCore::Took;
+
+namespace {
+
+// A receiving board r and a home board h, both User Net members on both, each holding the other's card.
+struct Pair {
+    FNode r, h;
+    Pair(uint8_t a, uint8_t b) : r(a), h(b) {
+        r.knows(h);
+        h.knows(r);
+        r.admit({&r.board, &h.board});
+        h.admit({&r.board, &h.board});
+    }
+    Took take(const NetListing& l, const char** nak = nullptr) { return r.core.takeListing(l, h.board, false, nak); }
+};
+
+std::string word(const char* w) { return w ? w : ""; }
+
+size_t countName(FNode& n, const std::string& name) {
+    size_t c = 0;
+    for (const auto& l : n.records()) c += l.name == name;
+    return c;
+}
+
+// A NetCore over a counting store (the file store under it), set up as an FNode is.
+struct CountedNode {
+    TempDir                   dir;
+    axis::bbs::FileMessageStore files;
+    CountingStore             store;
+    MemOutLog                 log;
+    KeyPair                   key;
+    uint32_t                  now = kNow;
+    NetCore                   core;
+    AppsFile                  apps;
+    IdxFile                   idx;
+    NetCard                   card;
+    explicit CountedNode(uint8_t seed)
+        : files(dir.p.string()), store(files), key(keyOf(seed)), core(store, key, [this] { return now; }, log) {
+        card = makeCard(key, "Counted");
+        card.links = kNetCardLinks;
+        REQUIRE(signCard(card, key));
+        REQUIRE(core.setOwnCard(card));
+        apps.wire(core);
+        std::vector<std::string> all;
+        for (const auto& a : userNetAreas()) all.push_back(a.id);
+        core.setUserAreas(all);
+        idx.wire(core);
+        indexReady(core);
+        REQUIRE(core.listingIndexReady());
+    }
+};
+
+}  // namespace
+
+TEST_CASE("listings: a non-member's listing is refused member; a board not carrying un_files or not a member refuses area") {
+    RevKeys rk;
+    {
+        FNode r(0x81), h(0x82);
+        r.knows(h);
+        r.admit({&r.board});  // h is no member here
+        const char* nak = nullptr;
+        CHECK(r.core.takeListing(makeListing(h.key, 1), h.board, false, &nak) != Took::Stored);
+        CHECK(word(nak) == kNakMember);
+        CHECK(r.records().empty());
+    }
+    {
+        FNode r(0x83, false), h(0x84);  // r carries no User Net area
+        r.knows(h);
+        r.admit({&r.board, &h.board});
+        const char* nak = nullptr;
+        CHECK(r.core.takeListing(makeListing(h.key, 1), h.board, false, &nak) != Took::Stored);
+        CHECK(word(nak) == kNakArea);
+    }
+    {
+        FNode r(0x85), h(0x86);
+        r.knows(h);
+        r.admit({&h.board});  // r itself is no member
+        const char* nak = nullptr;
+        CHECK(r.core.takeListing(makeListing(h.key, 1), h.board, false, &nak) != Took::Stored);
+        CHECK(word(nak) == kNakArea);
+        CHECK(r.core.originateListing(makeListing(r.key, 1)).empty());  // nor may it list its own
+    }
+}
+
+TEST_CASE("listings: the listing id is deduped with its board's posts") {
+    RevKeys rk;
+    Pair p(0x87, 0x88);
+    CHECK(p.r.core.take(makePost(p.h.key, 5, kNow), p.h.board) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 5)) == Took::Duplicate);  // id <h>-5 is the post's
+    CHECK(p.r.records().empty());
+    CHECK(p.take(makeListing(p.h.key, 6)) == Took::Stored);
+    CHECK(p.r.core.take(makePost(p.h.key, 6, kNow), p.h.board) == Took::Duplicate);
+    CHECK(p.take(makeListing(p.h.key, 6)) == Took::Duplicate);
+    CHECK(p.r.records().size() == 1);
+}
+
+TEST_CASE("listings: listing 5, re-listing 9 and removal 7 of one name end with 9 live in all 6 orders; removal 10 leaves none") {
+    RevKeys rk;
+    for (uint32_t removal : {7u, 10u}) {
+        int order[3] = {0, 1, 2};
+        int runs = 0;
+        do {
+            CAPTURE(removal);
+            CAPTURE(order[0]);
+            CAPTURE(order[1]);
+            CAPTURE(order[2]);
+            Pair p(0x89, 0x8A);  // a fresh receiver for each order
+            const NetListing recs[3] = {makeListing(p.h.key, 5, "SAME.ZIP"), makeListing(p.h.key, 9, "SAME.ZIP"),
+                                        makeListing(p.h.key, removal, "SAME.ZIP", true)};
+            for (int i : order) {
+                Took t = p.take(recs[i]);
+                CHECK((t == Took::Stored || t == Took::Duplicate));
+            }
+            std::vector<uint32_t> live = p.r.liveSeqs("SAME.ZIP");
+            std::vector<std::string> shown = p.r.page();
+            NetListing found;
+            if (removal == 7) {
+                CHECK(live == std::vector<uint32_t>{9});
+                CHECK(shown == std::vector<std::string>{p.h.board + "-9"});
+                CHECK(p.r.core.findListing(p.h.board + "-9", found));
+            } else {
+                CHECK(live.empty());
+                CHECK(shown.empty());
+                CHECK_FALSE(p.r.core.findListing(p.h.board + "-9", found));
+            }
+            CHECK_FALSE(p.r.core.findListing(p.h.board + "-5", found));
+            CHECK(countName(p.r, "SAME.ZIP") == 1);  // one record per name
+            runs++;
+        } while (std::next_permutation(order, order + 3));
+        CHECK(runs == 6);
+    }
+}
+
+TEST_CASE("listings: a re-listing replaces the lower one in either order; list, remove, list, remove keeps one record") {
+    RevKeys rk;
+    {
+        Pair p(0x8B, 0x8C);
+        CHECK(p.take(makeListing(p.h.key, 5, "A.ZIP")) == Took::Stored);
+        CHECK(p.take(makeListing(p.h.key, 9, "A.ZIP")) == Took::Stored);
+        CHECK(p.r.liveSeqs("A.ZIP") == std::vector<uint32_t>{9});
+        CHECK(countName(p.r, "A.ZIP") == 1);
+    }
+    {
+        Pair p(0x8B, 0x8C);
+        CHECK(p.take(makeListing(p.h.key, 9, "A.ZIP")) == Took::Stored);
+        CHECK(p.take(makeListing(p.h.key, 5, "A.ZIP")) == Took::Duplicate);
+        CHECK(p.r.liveSeqs("A.ZIP") == std::vector<uint32_t>{9});
+        CHECK(countName(p.r, "A.ZIP") == 1);
+        // the same name in another area is another file
+        CHECK(p.take(makeListing(p.h.key, 10, "A.ZIP", false, kNow, "other")) == Took::Stored);
+        CHECK(countName(p.r, "A.ZIP") == 2);
+    }
+    {  // this board's own: list, remove, list, remove
+        FNode n(0x8D);
+        n.admit({&n.board});
+        NetListing l = makeListing(n.key, 1, "OWN.TXT");
+        NetListing gone = l;
+        gone.gone = true;
+        for (int i = 0; i < 2; i++) {
+            CHECK_FALSE(n.core.originateListing(l).empty());
+            CHECK(n.liveSeqs("OWN.TXT").size() == 1);
+            CHECK_FALSE(n.core.originateListing(gone).empty());
+            CHECK(n.liveSeqs("OWN.TXT").empty());
+        }
+        CHECK(countName(n, "OWN.TXT") == 1);
+        CHECK(n.records().back().gone);
+    }
+}
+
+TEST_CASE("listings: the per-board cap drops that board's oldest; the total cap takes from the board with the most, never this board's") {
+    RevKeys rk;
+    FNode r(0x90), a(0x91), b(0x92);
+    r.knows(a), r.knows(b);
+    r.admit({&r.board, &a.board, &b.board});
+    // a lists 5 (they arrive out of seq order), b 3, this board 2
+    for (uint32_t s : {3u, 1u, 5u, 2u, 4u}) CHECK(r.core.takeListing(makeListing(a.key, s, "A" + std::to_string(s)), a.board) == Took::Stored);
+    for (uint32_t s : {7u, 6u, 8u}) CHECK(r.core.takeListing(makeListing(b.key, s, "B" + std::to_string(s)), b.board) == Took::Stored);
+    for (int i = 0; i < 2; i++) CHECK_FALSE(r.core.originateListing(makeListing(r.key, 1, "R" + std::to_string(i))).empty());
+    {  // per board 3: a loses its two lowest seqs, b and this board keep all
+        r.core.setListingCaps(1000, 3);
+        r.core.trim(kNow);
+        std::vector<uint32_t> as, bs;
+        size_t own = 0;
+        for (const auto& l : r.records()) {
+            if (l.board == a.board) as.push_back(l.seq);
+            if (l.board == b.board) bs.push_back(l.seq);
+            own += l.board == r.board;
+        }
+        std::sort(as.begin(), as.end());
+        std::sort(bs.begin(), bs.end());
+        CHECK(as == std::vector<uint32_t>{3, 4, 5});
+        CHECK(bs == std::vector<uint32_t>{6, 7, 8});
+        CHECK(own == 2);
+    }
+    {  // total 6 (3 + 3 + 2 = 8 live): one at a time from whoever holds the most, never this board's own
+        r.now += kDay;  // the trim runs once a day
+        r.core.setListingCaps(6, 200);
+        r.core.trim(r.now);
+        std::vector<uint32_t> as, bs;
+        size_t own = 0;
+        for (const auto& l : r.records()) {
+            if (l.board == a.board) as.push_back(l.seq);
+            if (l.board == b.board) bs.push_back(l.seq);
+            own += l.board == r.board;
+        }
+        std::sort(as.begin(), as.end());
+        std::sort(bs.begin(), bs.end());
+        CHECK(as == std::vector<uint32_t>{4, 5});
+        CHECK(bs == std::vector<uint32_t>{7, 8});
+        CHECK(own == 2);
+    }
+    {  // a total below this board's own count: only others' go
+        r.now += kDay;
+        r.core.setListingCaps(1, 200);
+        r.core.trim(r.now);
+        size_t own = 0, others = 0;
+        for (const auto& l : r.records()) (l.board == r.board ? own : others)++;
+        CHECK(own == 2);
+        CHECK(others == 0);
+        CHECK(r.page().size() == 2);
+    }
+}
+
+TEST_CASE("listings: the trim drops a tombstone at 121 days and keeps ones at 120 and 119") {
+    RevKeys rk;
+    Pair p(0x93, 0x94);
+    CHECK(p.take(makeListing(p.h.key, 1, "OLD121", true, kNow - 121 * kDay)) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 2, "OLD120", true, kNow - 120 * kDay)) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 3, "OLD119", true, kNow - 119 * kDay)) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 4, "LIVE", false, kNow - 300 * kDay)) == Took::Stored);  // live ones never age out
+    p.r.core.trim(kNow);
+    std::vector<std::string> names;
+    for (const auto& l : p.r.records()) names.push_back(l.name);
+    CHECK(names == std::vector<std::string>{"OLD120", "OLD119", "LIVE"});
+    // The pull's tombstone batch gives the young ones (its age check reads the stored minute, so the one at exactly 120
+    // days may fall either side), never a live listing.
+    std::vector<std::string> out;
+    uint32_t pos = 0;
+    CHECK(p.r.core.listingLines(pos, true, out));
+    std::vector<std::string> sent;
+    for (const auto& line : out) {
+        NetListing l;
+        REQUIRE(decode(line, l));
+        sent.push_back(l.name);
+    }
+    CHECK(std::find(sent.begin(), sent.end(), "OLD119") != sent.end());
+    CHECK(std::find(sent.begin(), sent.end(), "LIVE") == sent.end());
+    CHECK(sent.size() <= 2);
+}
+
+TEST_CASE("listings: killed, held and banned-home listings are not shown; the trim drops a banned board's live ones and keeps its tombstones") {
+    RevKeys rk;
+    FNode r(0x95), a(0x96), b(0x97);
+    r.knows(a), r.knows(b);
+    r.admit({&r.board, &a.board, &b.board});
+    for (uint32_t s = 1; s <= 3; s++) CHECK(r.core.takeListing(makeListing(a.key, s, "A" + std::to_string(s)), a.board) == Took::Stored);
+    CHECK(r.core.takeListing(makeListing(b.key, 1, "B1"), b.board) == Took::Stored);
+    CHECK(r.core.takeListing(makeListing(b.key, 2, "B0", true), b.board) == Took::Stored);
+    CHECK(r.page().size() == 4);
+    std::string a1 = a.board + "-1", a2 = a.board + "-2", b1 = b.board + "-1";
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "kill", a1, 101), ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "hold", a2, 102), ""));
+    std::vector<std::string> shown = r.page();
+    CHECK(shown == std::vector<std::string>{b1, a.board + "-3"});
+    NetListing l;
+    CHECK_FALSE(r.core.findListing(a1, l));
+    CHECK_FALSE(r.core.findListing(a2, l));
+    CHECK(r.core.findListing(a.board + "-3", l));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "ban", b.board, 103), ""));
+    CHECK(r.page() == std::vector<std::string>{a.board + "-3"});
+    CHECK_FALSE(r.core.findListing(b1, l));
+    // A killed id is refused when it comes again.
+    const char* nak = nullptr;
+    CHECK(r.core.takeListing(makeListing(a.key, 1, "A1"), a.board, false, &nak) == Took::Rejected);
+    CHECK(word(nak) == kNakKilled);
+    r.core.trim(kNow);
+    std::vector<std::string> left;
+    for (const auto& x : r.records()) left.push_back(x.name + (x.gone ? "-gone" : ""));
+    std::sort(left.begin(), left.end());
+    // the killed one and b's live one are dropped; the held one stays stored (hidden); b's tombstone stays
+    CHECK(left == std::vector<std::string>{"A2", "A3", "B0-gone"});
+}
+
+TEST_CASE("listings: nf_list is in no caller area list and nothing unsigned is posted into it") {
+    RevKeys rk;
+    CHECK_FALSE(isNetAreaId(kNetFilesArea));
+    CHECK(netArea(kNetFilesArea) == nullptr);
+    CHECK_FALSE(isUserNetArea(kNetFilesArea));
+    CHECK(sysopNetArea(kNetFilesArea) == nullptr);
+    for (const auto& a : userNetAreas()) CHECK(a.id != kNetFilesArea);
+    for (const auto& a : sysopNetAreas()) CHECK(a.id != kNetFilesArea);
+    FNode n(0x98);
+    NetPostingStore callers(n.files, n.core);
+    Message m;
+    m.from = "Caller";
+    m.subject = "FAKE.ZIP";
+    CHECK(callers.post(kNetFilesArea, m) == 0);
+    CHECK(n.records().empty());
+}
+
+TEST_CASE("listings: headers() cut a listing line to its board; a header scan gives it whole") {
+    RevKeys rk;
+    Pair p(0x99, 0x9A);
+    NetListing l = makeListing(p.h.key, 1, "WHOLE.ZIP");
+    CHECK(p.take(l) == Took::Stored);
+    auto hs = p.r.files.headers(kNetFilesArea);
+    REQUIRE(hs.size() == 1);
+    CHECK(hs[0].net == std::string("L\x1F") + p.h.board);
+    std::string whole;
+    p.r.files.scanHeaders(kNetFilesArea, [&](const Message& m) {
+        whole = m.net;
+        return true;
+    });
+    CHECK(whole == encode(l));
+    MemStore ms;  // the test store keeps the same rule
+    Message x;
+    x.net = encode(l);
+    ms.post(kNetFilesArea, x);
+    CHECK(ms.headers(kNetFilesArea)[0].net == std::string("L\x1F") + p.h.board);
+    ms.scanHeaders(kNetFilesArea, [&](const Message& m) {
+        CHECK(m.net == encode(l));
+        return true;
+    });
+}
+
+TEST_CASE("listing index: 64 takes read no whole area and no message by number") {
+    RevKeys rk;
+    CountedNode r(0x9B);
+    UNode       h(0x9C);
+    REQUIRE(r.core.takeCard(h.card, ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", r.card.board, 1, "1"), ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", h.board, 2, "1"), ""));
+    r.store.reset();
+    for (uint32_t s = 1; s <= 64; s++)
+        CHECK(r.core.takeListing(makeListing(h.key, s, "F" + std::to_string(s) + ".ZIP"), h.board, true) == Took::Stored);
+    CHECK(r.store.scans == 0);
+    CHECK(r.store.reads == 0);
+    CHECK(r.store.headerCalls == 0);
+    CHECK(r.store.readsAt == 0);       // distinct names: nothing to read back
+    CHECK(r.store.scansFrom == 64);    // one short scan of each new message, from where the area ended
+    // A re-listing reads back the one record it replaces, at its offset.
+    r.store.reset();
+    CHECK(r.core.takeListing(makeListing(h.key, 70, "F1.ZIP"), h.board, true) == Took::Stored);
+    CHECK(r.store.readsAt == 1);
+    CHECK(r.store.reads == 0);
+    NetListing l;
+    r.store.reset();
+    CHECK(r.core.findListing(h.board + "-70", l));
+    CHECK(r.store.scans + r.store.reads == 0);
+    CHECK(r.store.readsAt == 1);
+}
+
+TEST_CASE("listing index: a forced key collision still gives the right answer; five records on one key are refused store") {
+    RevKeys rk;
+    Pair p(0x9D, 0x9E);
+    for (uint32_t s = 1; s <= 6; s++) CHECK(p.take(makeListing(p.h.key, s, "N" + std::to_string(s))) == Took::Stored);
+    // Record i is at 44 + 24 * i: key, board, seq, num, flags, at.
+    auto rec = [&](size_t i, size_t w) { return 44 + 24 * i + 4 * w; };
+    std::string& b = p.r.idx.bytes;
+    std::memcpy(&b[rec(1, 0)], &b[rec(0, 0)], 4);  // N2's record now looks like N1's name
+    // A re-listing of N1 reads both back and drops only N1.
+    CHECK(p.take(makeListing(p.h.key, 10, "N1")) == Took::Stored);
+    CHECK(p.r.liveSeqs("N1") == std::vector<uint32_t>{10});
+    CHECK(p.r.liveSeqs("N2") == std::vector<uint32_t>{2});
+    // After that rewrite the index was built again with a new key. Force five onto one key: refused, transient.
+    for (size_t i = 1; i < 5; i++) std::memcpy(&b[rec(i, 0)], &b[rec(0, 0)], 4);
+    NetListing first;
+    std::string name0;
+    {
+        uint32_t seq0 = 0;
+        std::memcpy(&seq0, &b[rec(0, 2)], 4);
+        for (const auto& l : p.r.records())
+            if (l.seq == seq0) name0 = l.name;
+    }
+    REQUIRE(!name0.empty());
+    const char* nak = nullptr;
+    CHECK(p.r.core.takeListing(makeListing(p.h.key, 20, name0), p.h.board, false, &nak) == Took::Rejected);
+    CHECK(word(nak) == kNakStore);
+    CHECK(countName(p.r, name0) == 1);
+}
+
+TEST_CASE("listing index: an unclean head is built again in pieces, listings refused store until it is done") {
+    RevKeys rk;
+    Pair p(0xA2, 0xA3);
+    for (uint32_t s = 1; s <= 40; s++) CHECK(p.take(makeListing(p.h.key, s, "U" + std::to_string(s))) == Took::Stored);
+    std::string key = p.r.idx.key();
+    p.r.idx.setWord(1, 0);   // a reset during a change left it unclean
+    p.r.idx.wire(p.r.core);  // the next boot
+    const char* nak = nullptr;
+    CHECK(p.take(makeListing(p.h.key, 41, "U41"), &nak) == Took::Rejected);
+    CHECK(word(nak) == kNakStore);
+    NetListing l;
+    CHECK_FALSE(p.r.core.findListing(p.h.board + "-5", l));
+    CHECK(p.r.core.originateListing(makeListing(p.r.key, 1, "MINE")).empty());
+    CHECK(p.r.core.listingIndexStep());  // 32 of the 40: more to do
+    CHECK_FALSE(p.r.core.listingIndexReady());
+    CHECK_FALSE(p.r.core.listingIndexStep());  // the last 8
+    REQUIRE(p.r.core.listingIndexReady());
+    CHECK(p.r.idx.key() != key);
+    CHECK(p.r.idx.word(2) == 40);
+    CHECK(p.r.core.findListing(p.h.board + "-5", l));
+    CHECK(p.take(makeListing(p.h.key, 41, "U41")) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 42, "U1")) == Took::Stored);  // the replace still finds U1
+    CHECK(p.r.liveSeqs("U1") == std::vector<uint32_t>{42});
+}
+
+TEST_CASE("listing index: a deleted index, a message behind its back or a lost area rebuild it with the same answers") {
+    RevKeys rk;
+    Pair p(0xA4, 0xA5);
+    for (uint32_t s = 1; s <= 5; s++) CHECK(p.take(makeListing(p.h.key, s, "D" + std::to_string(s))) == Took::Stored);
+    NetListing l;
+    {  // deleted between two takes
+        p.r.idx.bytes.clear();
+        p.r.idx.wire(p.r.core);
+        indexReady(p.r.core);
+        REQUIRE(p.r.core.listingIndexReady());
+        CHECK(p.r.core.findListing(p.h.board + "-3", l));
+        CHECK(p.take(makeListing(p.h.key, 3, "D3")) == Took::Duplicate);
+        CHECK(p.take(makeListing(p.h.key, 6, "D2")) == Took::Stored);
+        CHECK(p.r.liveSeqs("D2") == std::vector<uint32_t>{6});
+    }
+    {  // a message posted straight into nf_list (a sysop's move): the tail check sees it at the next look
+        std::string key = p.r.idx.key();
+        Message m;
+        m.subject = "junk";
+        REQUIRE(p.r.files.post(kNetFilesArea, m) > 0);
+        p.r.idx.wire(p.r.core);
+        indexReady(p.r.core);
+        REQUIRE(p.r.core.listingIndexReady());
+        CHECK(p.r.idx.key() != key);  // built again
+        CHECK(p.r.core.findListing(p.h.board + "-4", l));
+        // and with that junk the last message, a fresh look is ready at once, with no rebuild
+        key = p.r.idx.key();
+        int draws = p.r.idx.draws;
+        p.r.idx.wire(p.r.core);
+        CHECK(indexReady(p.r.core) == 0);
+        CHECK(p.r.core.listingIndexReady());
+        CHECK(p.r.idx.key() == key);
+        CHECK(p.r.idx.draws == draws);
+    }
+    {  // the area is lost: the index is built again, empty
+        std::error_code ec;
+        for (const auto& e : fs::recursive_directory_iterator(p.r.dir.p, ec))
+            if (e.path().filename().string().find(kNetFilesArea) != std::string::npos) fs::remove(e.path(), ec);
+        p.r.idx.wire(p.r.core);
+        indexReady(p.r.core);
+        REQUIRE(p.r.core.listingIndexReady());
+        CHECK(p.r.idx.word(2) == 0);
+        CHECK_FALSE(p.r.core.findListing(p.h.board + "-4", l));
+        CHECK(p.take(makeListing(p.h.key, 7, "D7")) == Took::Stored);
+    }
+}
+
+TEST_CASE("listing index: each build draws a new key, names with equal crc32 do not collide, and no key bytes are in it") {
+    RevKeys rk;
+    Pair p(0xA6, 0xA7);
+    // Two names whose "board|area|name" crc32 values are equal.
+    std::map<uint32_t, std::string> seen;
+    uint32_t                        rnd = 99;
+    std::string n1, n2;
+    for (int i = 0; i < 400000 && n2.empty(); i++) {
+        // (names that differ only in a few bytes never collide: crc32 catches every burst of 32 bits or less)
+        std::string name = "C";
+        for (int k = 0; k < 10; k++) {
+            rnd = rnd * 1103515245u + 12345u;
+            name += (char)('A' + (rnd >> 16) % 26);
+        }
+        name += ".BIN";
+        std::string k = p.h.board + "|files|" + name;
+        uint32_t c = crc32((const uint8_t*)k.data(), k.size());
+        auto it = seen.find(c);
+        if (it != seen.end()) {
+            n1 = it->second;
+            n2 = name;
+        } else {
+            seen[c] = name;
+        }
+    }
+    std::map<uint32_t, std::string>().swap(seen);
+    REQUIRE(!n2.empty());
+    CHECK(p.take(makeListing(p.h.key, 1, n1)) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 2, n2)) == Took::Stored);
+    auto keyOfRec = [&](size_t i) {
+        uint32_t w = 0;
+        std::memcpy(&w, &p.r.idx.bytes[44 + 24 * i], 4);
+        return w;
+    };
+    CHECK(keyOfRec(0) != keyOfRec(1));
+    CHECK(p.r.liveSeqs(n1) == std::vector<uint32_t>{1});
+    CHECK(p.r.liveSeqs(n2) == std::vector<uint32_t>{2});
+    // A rebuild: a new key, so new record hashes for the same names.
+    std::string key = p.r.idx.key();
+    uint32_t    h0 = keyOfRec(0);
+    p.r.idx.bytes.clear();
+    p.r.idx.wire(p.r.core);
+    indexReady(p.r.core);
+    REQUIRE(p.r.core.listingIndexReady());
+    CHECK(p.r.idx.key() != key);
+    CHECK(keyOfRec(0) != h0);
+    // Nothing of the board's key pair is in the file: no 4 byte window of its secret or public key.
+    const std::string& b = p.r.idx.bytes;
+    int found = 0;
+    for (const uint8_t* part : {p.r.key.secret, p.r.key.pub})
+        for (size_t i = 0; i + 4 <= 32; i++)
+            if (b.find(std::string((const char*)part + i, 4)) != std::string::npos) found++;
+    CHECK(found == 0);
+}
+
+TEST_CASE("listing index: a trim that drops nothing leaves the index as it was; after a drop the later listings are still found") {
+    RevKeys rk;
+    Pair p(0xA8, 0xA9);
+    CHECK(p.take(makeListing(p.h.key, 1, "T1", true, kNow - 119 * kDay)) == Took::Stored);  // near the age line, kept
+    CHECK(p.take(makeListing(p.h.key, 2, "T2")) == Took::Stored);
+    std::string before = p.r.idx.bytes;
+    p.r.core.trim(kNow);
+    CHECK(p.r.idx.bytes == before);
+    // A drop (the removal of T2's earlier copy) moves every later offset; a listing stored after it is still found.
+    CHECK(p.take(makeListing(p.h.key, 3, "T3")) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 4, "T4")) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 5, "T2", true)) == Took::Stored);
+    NetListing l;
+    CHECK(p.r.core.findListing(p.h.board + "-4", l));
+    CHECK(l.name == "T4");
+    CHECK(p.r.core.findListing(p.h.board + "-3", l));
+    CHECK_FALSE(p.r.core.findListing(p.h.board + "-2", l));
+}
+
+TEST_CASE("listings: the drop budgets, 8 a session and 64 a day; this board's own are exempt") {
+    RevKeys rk;
+    {  // per session: 20 ascending re-listings of one name from a peer
+        Pair p(0xAA, 0xAB);
+        p.r.core.listingSessionStart();
+        int stored = 0, store = 0;
+        for (uint32_t s = 1; s <= 20; s++) {
+            const char* nak = nullptr;
+            Took t = p.take(makeListing(p.h.key, s, "R.ZIP"), &nak);
+            stored += t == Took::Stored;
+            store += word(nak) == kNakStore;
+        }
+        CHECK(stored == 9);  // the first replaces nothing, then 8 replacements
+        CHECK(store == 11);
+        CHECK(p.r.liveSeqs("R.ZIP") == std::vector<uint32_t>{9});
+        p.r.core.listingSessionStart();  // the next session takes 8 more
+        stored = 0;
+        for (uint32_t s = 10; s <= 20; s++) stored += p.take(makeListing(p.h.key, s, "R.ZIP")) == Took::Stored;
+        CHECK(stored == 8);
+        CHECK(countName(p.r, "R.ZIP") == 1);
+        // this board's own removal still goes through, budget or not
+        CHECK_FALSE(p.r.core.originateListing(makeListing(p.r.key, 1, "OWN")).empty());
+        NetListing g = makeListing(p.r.key, 1, "OWN", true);
+        CHECK_FALSE(p.r.core.originateListing(g).empty());
+        CHECK(p.r.liveSeqs("OWN").empty());
+    }
+    {  // per day, with the clock set: 64 across sessions, then the next day 8 more (pull lines, which skip ingress)
+        Pair p(0xAC, 0xAD);
+        uint32_t seq = 1, stored = 0;
+        CHECK(p.r.core.takeListing(makeListing(p.h.key, seq++, "D.ZIP"), p.h.board, true) == Took::Stored);
+        for (int session = 0; session < 9; session++) {
+            p.r.core.listingSessionStart();
+            for (int i = 0; i < 8; i++) stored += p.r.core.takeListing(makeListing(p.h.key, seq++, "D.ZIP"), p.h.board, true) == Took::Stored;
+        }
+        CHECK(stored == 64);
+        p.r.now += kDay;
+        p.r.core.listingSessionStart();
+        stored = 0;
+        for (int i = 0; i < 10; i++) stored += p.r.core.takeListing(makeListing(p.h.key, seq++, "D.ZIP", false, p.r.now), p.h.board, true) == Took::Stored;
+        CHECK(stored == 8);
+        CHECK_FALSE(p.r.core.originateListing(makeListing(p.r.key, 1, "OWN2")).empty());
+        CHECK_FALSE(p.r.core.originateListing(makeListing(p.r.key, 1, "OWN2", true)).empty());  // both budgets spent
+        CHECK(p.r.liveSeqs("OWN2").empty());
+    }
+}
+
+TEST_CASE("listings: without a clock the daily drop budget comes back with the trim") {
+    RevKeys rk;
+    FNode   r(0xAF), h(0xB0);
+    r.now = 1000;  // no clock
+    r.knows(h);
+    r.admit({&r.board, &h.board});
+    uint32_t seq = 1, stored = 0;
+    CHECK(r.core.takeListing(makeListing(h.key, seq++, "N.ZIP", false, 1000), h.board, true) == Took::Stored);
+    for (int session = 0; session < 9; session++) {
+        r.core.listingSessionStart();
+        for (int i = 0; i < 8; i++) stored += r.core.takeListing(makeListing(h.key, seq++, "N.ZIP", false, 1000), h.board, true) == Took::Stored;
+    }
+    CHECK(stored == 64);
+    r.core.trim(0);
+    r.core.listingSessionStart();
+    stored = 0;
+    for (int i = 0; i < 10; i++) stored += r.core.takeListing(makeListing(h.key, seq++, "N.ZIP", false, 1000), h.board, true) == Took::Stored;
+    CHECK(stored == 8);
+}
+
+TEST_CASE("listings: one refused past the drop budget is not charged to its home board's ingress") {
+    RevKeys rk;
+    Pair p(0xB1, 0xB2);
+    REQUIRE(p.r.core.takeNotice(makeNotice(rev0(), 0, "limits", "net", 104, "posts=12,bytes=100000"), ""));
+    p.r.core.listingSessionStart();
+    for (uint32_t s = 1; s <= 9; s++) REQUIRE(p.take(makeListing(p.h.key, s, "I.ZIP")) == Took::Stored);  // 9 of 12
+    const char* nak = nullptr;
+    for (uint32_t s = 10; s <= 30; s++) CHECK(p.take(makeListing(p.h.key, s, "I.ZIP"), &nak) == Took::Rejected);
+    CHECK(word(nak) == kNakStore);
+    // 3 left of the 12: fresh names are still taken
+    for (uint32_t s = 31; s <= 33; s++) CHECK(p.take(makeListing(p.h.key, s, "J" + std::to_string(s))) == Took::Stored);
+    CHECK(p.take(makeListing(p.h.key, 34, "J34"), &nak) == Took::Limited);
+    CHECK(word(nak) == kNakLimited);
+}
+
+TEST_CASE("listings: a removal far below the seen window on an E line is still stored and drops its listing") {
+    RevKeys rk;
+    Pair p(0xB3, 0xB4);
+    CHECK(p.take(makeListing(p.h.key, 1, "OLD.ZIP")) == Took::Stored);
+    for (uint32_t s = 10; s <= 80; s++) CHECK(p.r.core.take(makePost(p.h.key, s, kNow), p.h.board, true) == Took::Stored);
+    std::string id = p.h.board + "-5";
+    REQUIRE(p.r.core.seen().belowWindow(id));
+    CHECK(p.take(makeListing(p.h.key, 5, "OLD.ZIP", true)) == Took::Stored);
+    CHECK(p.r.liveSeqs("OLD.ZIP").empty());
+    CHECK(countName(p.r, "OLD.ZIP") == 1);
+    CHECK(p.take(makeListing(p.h.key, 5, "OLD.ZIP", true)) == Took::Duplicate);  // held now
+}
+
+TEST_CASE("listings: listingsPage counts once; a store, a drop and a notice each make it count again") {
+    RevKeys rk;
+    Pair p(0xB5, 0xB6);
+    for (uint32_t s = 1; s <= 20; s++) CHECK(p.take(makeListing(p.h.key, s, "P" + std::to_string(s))) == Took::Stored);
+    int next = 0;
+    std::vector<std::string> first = p.r.page(0, 15, &next);
+    CHECK(first.size() == 15);
+    CHECK(first.front() == p.h.board + "-20");
+    CHECK(next == 15);
+    std::vector<std::string> second = p.r.page(15, 15, &next);
+    CHECK(second.size() == 5);
+    CHECK(second.back() == p.h.board + "-1");
+    CHECK(next == -1);
+    CHECK(p.take(makeListing(p.h.key, 21, "P21")) == Took::Stored);
+    CHECK(p.r.page(0, 15).front() == p.h.board + "-21");
+    CHECK(p.take(makeListing(p.h.key, 22, "P21", true)) == Took::Stored);  // a drop
+    CHECK(p.r.page(0, 15).front() == p.h.board + "-20");
+    CHECK(p.r.page(0, 100).size() == 20);
+    REQUIRE(p.r.core.takeNotice(makeNotice(rev0(), 0, "hold", p.h.board + "-20", 105), ""));
+    CHECK(p.r.page(0, 15).front() == p.h.board + "-19");
+    CHECK(p.r.page(0, 100).size() == 19);
+    CHECK(p.r.page(19, 15).empty());
+}
+
+TEST_CASE("listings: a page draw is one scan once the count is held; a store, a drop and a notice count again") {
+    RevKeys rk;
+    CountedNode r(0xB7);
+    UNode       h(0xB8);
+    REQUIRE(r.core.takeCard(h.card, ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", r.card.board, 1, "1"), ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", h.board, 2, "1"), ""));
+    for (uint32_t s = 1; s <= 20; s++) REQUIRE(r.core.takeListing(makeListing(h.key, s, "S" + std::to_string(s)), h.board) == Took::Stored);
+    auto draw = [&] {
+        r.store.reset();
+        int n = 0;
+        r.core.listingsPage(0, 15, [&](const NetListing&) { n++; });
+        CHECK(n == 15);
+        return r.store.scans;
+    };
+    CHECK(draw() == 2);  // the count, then the page
+    CHECK(draw() == 1);
+    CHECK(r.core.takeListing(makeListing(h.key, 21, "S21"), h.board) == Took::Stored);
+    CHECK(draw() == 2);
+    CHECK(draw() == 1);
+    CHECK(r.core.takeListing(makeListing(h.key, 22, "S21", true), h.board) == Took::Stored);
+    CHECK(draw() == 2);
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "kill", h.board + "-3", 3), ""));
+    CHECK(draw() == 2);
+    CHECK(draw() == 1);
+    r.now += kDay;
+    r.core.trim(r.now);  // drops the killed one
+    CHECK(draw() == 2);
+}
