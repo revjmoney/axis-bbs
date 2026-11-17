@@ -481,7 +481,7 @@ public:
             NetVote v;
             uint32_t vo;
             if (!appsReadAt(off, line)) continue;
-            if (line[0] != 'A') break;  // the votes come after the applications
+            if (line[0] != 'A') break;  // offsets() lists the applications before the votes
             if (!decode(line, a)) continue;
             const NetNotice* n = st.memberNotice(a.board);
             NetMembers::Tally t = mem.tally(a.board);

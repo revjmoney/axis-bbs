@@ -85,7 +85,7 @@ Turn it on with `@SET net_user=1`, choose the areas with `net_user_areas` and th
 @NETAPPLY <blurb>
 ```
 
-The application carries the board's id, its public key, the card's name, sysop and location, the board's MAC, your blurb (up to 240 characters, line breaks allowed) and a number counting that board's applications. It is signed with the board's own key and travels over Sysop Net. `@NETAPPLY` is refused when `net_user` is off, when the board is already a member or has already applied, when it is vetoed, while the clock is not yet set, and for 30 days after a deny. A reply of `@OK applied` means it was taken here and will be passed on.
+The application carries the board's id, its public key, the card's name, sysop and location, the board's MAC, your blurb (up to 240 printable characters; line breaks are dropped) and a number counting that board's applications. It is signed with the board's own key and travels over Sysop Net. `@NETAPPLY` is refused when `net_user` is off, when the board is already a member or has already applied, when it is vetoed, while the clock is not yet set, and for 30 days after a deny. A reply of `@OK applied` means it was taken here and will be passed on.
 
 ### How to vote
 
@@ -145,13 +145,13 @@ Listings are newest first, at most 100 lines, with `older from <index>` when mor
 
 ### /net/apps.txt
 
-The signed application and vote lines are kept whole in `/net/apps.txt` on the storage root, one line each, appended as they are taken. The board holds only compact fields in RAM and reads a line back by its byte offset, so the file is never read whole at run time. It is read a few lines a pass at boot. Past twice the size of what is held (and 64 KB), the file is rewritten with only the lines still held, streamed through a temp file; the old file steps aside as `apps.old` until the new one is in place, and a restart after a cut puts the right one back.
+The signed application and vote lines are kept whole in `/net/apps.txt` on the storage root, one line each, appended as they are taken. The board holds only compact fields in RAM and reads a line back by its byte offset, so the file is never read whole at run time. It is read two lines a pass at boot. Past twice the size of what is held (and 64 KB), the file is rewritten with only the lines still held, streamed through a temp file; the old file steps aside as `apps.old` until the new one is in place, and a restart after a cut puts the right one back.
 
 ## The PC test peer
 
 `axis_netpeer` (built with the PC build) is a net node on the PC, for testing a board against something other than a board. Besides `post`, `peers`, `sync` and `list`, it speaks User Net with these commands, one per line on stdin:
 
-- `user on|off` carries all four User Net areas and says `net2` on the peer's card, or stops. It is remembered in `user.txt`.
+- `user on|off` carries all four User Net areas (the peer has no per-area setting) and says `net2` on the peer's card, or stops. It is remembered in `user.txt`.
 - `apply <blurb>` applies, as `@NETAPPLY` does (`\n` in the blurb is a line break). The peer needs `user on` first.
 - `vote <board> y|n [comment]` votes, once the peer is a member.
 - `apps` lists the applications held, with the counts. `members` lists the members.
