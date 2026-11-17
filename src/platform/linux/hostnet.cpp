@@ -36,6 +36,7 @@ constexpr uint16_t kPanelPort = 2326;     // main.cpp's panelServer: the one ser
 constexpr uint32_t kWriteStallMs = 3000;  // write() gives up when the socket has taken nothing for this long
 constexpr int      kAcceptBurst = 256;    // connections taken off one listener per hasClient()
 constexpr int      kMaxLookups = 8;       // DNS lookups running at once
+constexpr uint32_t kSilentMs = 30000;     // a caller from outside the LAN that sends nothing at all this long is hung up
 
 uint16_t lanPort = 2323, publicPort = 0;
 bool     closing = false;  // the program is stopping: no new callers, and every open one is hung up
@@ -204,6 +205,8 @@ struct HostSocket {
     uint16_t port;   // the peer's (0 for a radio call)
     bool     gated;  // let in by the accept gate, which counts it until it closes
     bool     caller = false;  // a caller (accepted, or a radio call): hostnetHangUpCallers() hangs it up
+    bool     heard = true;    // a gated caller from outside the LAN has sent a byte (false until it does)
+    uint32_t acceptMs = 0;    // when it was accepted
     HostSocket(int f, uint32_t i, uint16_t p, bool g) : fd(f), ip(i), port(p), gated(g) {}
     ~HostSocket() {
         if (caller) callerSockets().erase(this);
@@ -307,7 +310,10 @@ int WiFiClient::read(uint8_t* buf, size_t n) {
     if (!s_) return -1;
     if (!buf || !n) return 0;
     ssize_t r = recv(s_->fd, buf, n, MSG_DONTWAIT);
-    if (r > 0) return (int)r;
+    if (r > 0) {
+        s_->heard = true;
+        return (int)r;
+    }
     if (r == 0 || again(errno)) return 0;  // nothing now, or the peer's end (connected() says which)
     fail();
     return -1;
@@ -445,7 +451,10 @@ void WiFiServer::drain(int i) {
             continue;
         }
         tune(c);
-        waiting_.push_back(WiFiClient(newCaller(c, ip, ntohs(sa.sin_port), true)));
+        auto s = newCaller(c, ip, ntohs(sa.sin_port), true);
+        s->heard = lan;  // the LAN is spared the silent-caller timeout (hostnetPoll)
+        s->acceptMs = millis();
+        waiting_.push_back(WiFiClient(s));
     }
 }
 
@@ -520,7 +529,33 @@ void hostnetStart() {
     }
 }
 
+// A gated caller from outside the LAN that has sent no byte at all within kSilentMs of being accepted is hung up (both
+// ways shut, as hostnetHangUpCallers), so connections that never speak cannot hold every node. The LAN and the radio
+// calls (not gated) are spared; any byte at all, read or waiting, counts.
+static void hangUpSilent() {
+    static uint32_t last = 0, lastLog = 0;
+    uint32_t        now = millis();
+    if (now - last < 1000) return;
+    last = now;
+    for (HostSocket* s : callerSockets()) {
+        if (s->heard || s->fd < 0) continue;
+        int n = 0;
+        if (ioctl(s->fd, FIONREAD, &n) == 0 && n > 0) {
+            s->heard = true;
+            continue;
+        }
+        if (now - s->acceptMs < kSilentMs) continue;
+        s->heard = true;  // once
+        ::shutdown(s->fd, SHUT_RDWR);
+        if (now - lastLog > 10000) {
+            std::printf("axis: net: hung up %s: nothing sent in %u s\n", NetGate::ipText(s->ip).c_str(), kSilentMs / 1000);
+            lastLog = now;
+        }
+    }
+}
+
 void hostnetPoll() {
+    hangUpSilent();
     std::vector<DnsDone> done;
     {
         std::lock_guard<std::mutex> l(dnsMutex());
@@ -630,3 +665,4 @@ mdns_search_once_t* mdns_query_async_new(const char*, const char*, const char*, 
     said = true;
     return nullptr;
 }
+
