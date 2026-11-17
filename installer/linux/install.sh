@@ -36,8 +36,21 @@ case "$modem" in
     *) echo "--modem must be a device path like /dev/ttyUSB0" >&2; exit 1 ;;
 esac
 case "$modem" in
+    "" | /dev/ttyUSB* | /dev/serial/*) ;;
+    *) echo "warning: $modem is not /dev/ttyUSB* or /dev/serial/*; it will still work through dialout, but the V3 normally appears as ttyUSB" >&2 ;;
+esac
+case "$modem" in
     *[[:space:]]*) echo "--modem must not contain spaces" >&2; exit 1 ;;
 esac
+
+if [ -n "$seed" ]; then
+    bad="$(find "$seed" \( -type l -o -type b -o -type c -o -type p -o -type s -o -perm /6000 \) -print)"
+    if [ -n "$bad" ]; then
+        echo "the seed has links, device nodes or setuid/setgid files, so it was refused:" >&2
+        echo "$bad" >&2
+        exit 1
+    fi
+fi
 
 data=/var/lib/axis
 
@@ -64,6 +77,9 @@ echo "folder $data: ready (0700, owned by axis)"
 # 4. The program.
 install -m 0755 -o root -g root "$binary" /usr/local/bin/axis
 echo "program: installed /usr/local/bin/axis from $binary"
+if systemctl is-active --quiet axis.service; then
+    echo "restart axis to use the new program: sudo systemctl restart axis"
+fi
 
 # 5. The modem, written to axis.conf as modem=PATH (other keys are kept).
 if [ -n "$modem" ]; then
@@ -89,8 +105,9 @@ fi
 if [ -n "$seed" ]; then
     install -d -m 0700 -o axis -g axis "$data/sd"
     if [ -z "$(ls -A "$data/sd")" ]; then
-        cp -a "$seed"/. "$data/sd"/
+        cp -R --no-preserve=ownership,mode "$seed"/. "$data/sd"/
         chown -R axis:axis "$data/sd"
+        find "$data/sd" -type f -exec chmod 0600 {} +
         find "$data/sd" -type d -exec chmod 0700 {} +
         echo "seed: copied $seed into $data/sd"
     else

@@ -47,6 +47,10 @@ and systemd starts it again after 2 seconds. A clean stop stays stopped.
 - Use a direct port forward only. A local tunnel or proxy would make every internet caller
   look like 127.0.0.1 and share one limit.
 
+The service has no capabilities, so it cannot bind ports under 1024. Use a high port and forward
+to it on the router, or add `AmbientCapabilities=CAP_NET_BIND_SERVICE` in a drop-in
+(`systemctl edit axis`).
+
 Other `axis.conf` keys: `lan_port`, `public_port`, `max_callers`, `max_per_ip`,
 `max_per_ip_lan`, `rate_per_ip`, `modem`. Edit as root, then restart.
 
@@ -64,5 +68,6 @@ Stop the service first if it holds the same modem or ports: `sudo systemctl stop
 ## What the unit locks down
 
 Runs as user `axis`, no new privileges, no capabilities, read-only system, no home folders,
-private /tmp, writes only to `/var/lib/axis`, only IP and local sockets, and only USB serial
-devices (`DevicePolicy=closed` with `char-ttyUSB`). Limits: 4096 open files, 512 MB memory.
+private /tmp, writes only to `/var/lib/axis`, and only IP and local sockets. The modem is opened
+through normal file permissions (the `dialout` group), so the program can pick it up again after
+a hot-plug. Limits: 4096 open files, 512 MB memory.
