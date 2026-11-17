@@ -424,6 +424,43 @@ TEST_CASE("listing index: 50 appends each go after the head's last number, and e
     CHECK(r.idx.key() == key);
 }
 
+TEST_CASE("listing index: listings passed to a peer are read at their offset by the index, by number while it rebuilds") {
+    RevKeys rk;
+    CountedNode r(0xCA);
+    UNode       h(0xCB), q(0xCC);
+    REQUIRE(r.core.takeCard(h.card, ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", r.card.board, 1, "1"), ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", h.board, 2, "1"), ""));
+    r.core.addLinkPeer(q.board, true);  // a peer starts at the log's end: the listings below go to it
+    for (uint32_t s = 1; s <= 20; s++)
+        REQUIRE(r.core.takeListing(makeListing(h.key, s, "W" + std::to_string(s) + ".ZIP"), h.board, true) == Took::Stored);
+    auto sent = [&] {
+        std::vector<std::string> ids;
+        for (const auto& e : r.core.pendingFor(q.board, 64)) {
+            NetListing l;
+            if (decode(e.second, l)) ids.push_back(listingId(l));
+        }
+        return ids;
+    };
+    r.store.reset();
+    std::vector<std::string> ready = sent();
+    REQUIRE(ready.size() == 20);
+    CHECK(ready.front() == h.board + "-1");
+    CHECK(ready.back() == h.board + "-20");
+    CHECK(r.store.reads == 0);  // no read by number (each a scan of the area from its start)
+    CHECK(r.store.scans == 0);
+    CHECK(r.store.readsAt == 20);
+    // While the index is built again: the same lines, read by number.
+    r.idx.setWord(1, 0);
+    r.idx.wire(r.core);
+    REQUIRE(r.core.listingIndexStep());  // the look: unclean, a rebuild starts (20 left, one more call)
+    REQUIRE_FALSE(r.core.listingIndexReady());
+    r.store.reset();
+    CHECK(sent() == ready);
+    CHECK(r.store.reads == 20);
+    CHECK(r.store.readsAt == 0);
+}
+
 TEST_CASE("listing index: a forced key collision still gives the right answer; five records on one key are refused store") {
     RevKeys rk;
     Pair p(0x9D, 0x9E);

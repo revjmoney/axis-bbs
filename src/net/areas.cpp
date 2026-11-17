@@ -971,8 +971,22 @@ NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer,
     if (t[0] == "L") {
         if (!peerNet3 || t.size() != 4 || t[2].size() < 17 || state_.killed(t[2]) || state_.banned(t[2].substr(0, 16)))
             return Res::Skip;
-        Message m;
-        if (!store_.read(kNetFilesArea, std::atoi(t[1].c_str()), m)) return Res::Retry;
+        // By the index when it is ready (its records are in number order): one read at the record's offset. Not
+        // found there, or no index: a read by number, which scans the area.
+        Message  m;
+        uint32_t num = (uint32_t)std::atoi(t[1].c_str()), at = 0;
+        bool     hit = false;
+        if (idx_ == Idx::Ready)
+            idxEach([&](const IdxRec& x) {
+                if (x.num >= num) {
+                    hit = x.num == num;
+                    at = x.at;
+                    return false;
+                }
+                return true;
+            });
+        if (!(hit && store_.readAt(kNetFilesArea, at, (int)num, m)) && !store_.read(kNetFilesArea, (int)num, m))
+            return Res::Retry;
         NetListing l;
         if (!decode(m.net, l) || listingId(l) != t[2]) return Res::Skip;  // that number now holds another record
         line = std::move(m.net);
