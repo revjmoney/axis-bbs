@@ -111,6 +111,12 @@ struct BbsConfig {
     bool        netUser = false;
     uint8_t     netUserAreas = 15;
     int         netUserLevel = 20;
+#if AXIS_NETS
+    // Net Files (User Net): "net_files_areas" the local file area ids shared on User Net (comma list, blank = none);
+    // "net_files_radio_kb" the size in KB over which a caller on a radio link is asked before a fetch.
+    std::string netFilesAreas;
+    int         netFilesRadioKb = 64;
+#endif
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)
