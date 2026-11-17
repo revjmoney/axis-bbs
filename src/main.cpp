@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -3621,6 +3622,28 @@ static bool netNotice(NetHost& h, const char* kind, const std::string& target, c
 }
 
 // ---- Net Files (listings: net/areas.h; fetch calls: net/fetch.h): sharing, serving and fetching
+
+// An event log line "net files: ..." (one formatted line instead of a chain of String additions).
+static void netFilesLog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void netFilesLog(const char* fmt, ...) {
+    char    b[192];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    logEvent(String("net files: ") + b);
+}
+
+// Closes a socket after reading what is left in it, so lwIP closes it cleanly rather than answering with a reset.
+static void netDrainStop(WiFiClient& c) {
+    uint8_t b[64];
+    for (int i = 0; i < 32 && c.available() > 0; i++)
+        if (c.read(b, sizeof b) <= 0) break;
+    c.stop();
+}
+
+static constexpr uint32_t kNetFilesTurnMs = 20;  // file reads in one loop turn stop past this (a pooled read can be a cluster round trip)
+
 #if AXIS_FILES
 // net_files_areas: the local file area ids shared on User Net, a comma list (spaces around an id are dropped). Only an
 // id a listing can carry (1 to 16 of a-z 0-9 _) counts.
@@ -3648,13 +3671,13 @@ static std::string netSysopName() { return boardCfg->sysopHandle.empty() ? std::
 
 static constexpr size_t   kNetShareQueue = 32;     // listings and removals waiting at most; more are dropped (logged)
 static constexpr size_t   kNetShareChunk = 2048;   // a listing's crc is read in pieces this size (kFetchChunk)
-static constexpr uint32_t kNetSharePerTurn = 8;    // pieces per loop turn (16 KB), so a big file never holds the loop
+static constexpr uint32_t kNetSharePerTurn = 8;    // pieces per loop turn at most (16 KB), and only for kNetFilesTurnMs
 
 static void netShareAdd(NetShareItem it) {
     NetHost* h = netHost.get();
     if (!h || !netFilesOn(*h) || !netFilesShared(it.area)) return;
     if (h->share.q.size() >= kNetShareQueue) {
-        logEvent(String("net files: too many waiting, ") + it.name.c_str() + (it.gone ? " not unlisted" : " not listed"));
+        netFilesLog("too many waiting, %s not %s", it.name.c_str(), it.gone ? "unlisted" : "listed");
         return;
     }
     h->share.q.push_back(std::move(it));
@@ -3702,15 +3725,16 @@ static void netShareSend(NetHost& h, const NetShareItem& it, uint32_t size, uint
     std::string id = h.core->originateListing(l);
     netPosted(h);
     h.share.counted = false;
-    logEvent(String("net files: ") + (it.gone ? "unlisted " : "listed ") + it.area.c_str() + "/" + it.name.c_str() +
-             (id.empty() ? " FAILED" : (" as " + id).c_str()));
+    netFilesLog("%s %s/%s %s%s", it.gone ? "unlisted" : "listed", it.area.c_str(), it.name.c_str(), id.empty() ? "FAILED" : "as ",
+                id.c_str());
 }
 
-// @NET LISTALL: the next few files of the area walked go into the queue; names this board lists there already are skipped.
+// @NET LISTALL: the next files of the area walked fill the queue (one list of the area per kNetShareQueue files); names this
+// board lists there already are skipped.
 static void netListAllNext(NetHost& h) {
     NetShare& sh = h.share;
     std::vector<axis::bbs::FileEntry> v = callerFiles().list(sh.allArea);
-    while (sh.allIx < v.size() && sh.q.size() < 8) {
+    while (sh.allIx < v.size() && sh.q.size() < kNetShareQueue) {
         const axis::bbs::FileEntry& e = v[sh.allIx++];
         uint32_t k = axis::net::crc32((const uint8_t*)e.name.data(), e.name.size());
         if (std::find(sh.allHave.begin(), sh.allHave.end(), k) != sh.allHave.end()) continue;
@@ -3722,7 +3746,7 @@ static void netListAllNext(NetHost& h) {
         sh.q.push_back(std::move(it));
     }
     if (sh.allIx < v.size()) return;
-    logEvent(String("net files: every file in ") + sh.allArea.c_str() + " is listed");
+    netFilesLog("every file in %s is listed", sh.allArea.c_str());
     sh.allArea.clear();
     std::vector<uint32_t>().swap(sh.allHave);
 }
@@ -3754,10 +3778,11 @@ static void netShareStep(NetHost& h) {
     }
     if (sh.pos < sh.size) {
         std::unique_ptr<uint8_t[]> buf(new (std::nothrow) uint8_t[kNetShareChunk]);
-        for (uint32_t i = 0; buf && i < kNetSharePerTurn && sh.pos < sh.size; i++) {
+        uint32_t t0 = millis();
+        for (uint32_t i = 0; buf && i < kNetSharePerTurn && sh.pos < sh.size && (!i || millis() - t0 <= kNetFilesTurnMs); i++) {
             size_t n = std::min<size_t>(kNetShareChunk, sh.size - sh.pos);
             if (!sh.file->readAt(sh.pos, buf.get(), n)) {
-                logEvent(String("net files: ") + sh.cur.name.c_str() + " could not be read, not listed");
+                netFilesLog("%s could not be read, not listed", sh.cur.name.c_str());
                 sh.file.reset();
                 return;
             }
@@ -3906,7 +3931,7 @@ static void netServeAccept(WiFiClient& c, const std::string& got) {
     if (!ok) {  // the slot is taken, short of memory, or not serving: the caller's board says "busy"
         c.print("NO busy\r\n");
         delay(10);
-        c.stop();
+        netDrainStop(c);
         return;
     }
     v->c = c;
@@ -3926,16 +3951,15 @@ static void netServeClose(NetHost& h, const char* why) {
         if (!netSendRaw(v.c, v.pend)) break;
         if (!v.pend.empty()) delay(2);
     }
-    v.c.stop();
+    netDrainStop(v.c);
     bool        done = v.s && v.s->finished() && !v.s->failed() && v.served;
     std::string word = why ? why : v.s ? v.s->why() : "";
     if (done) {
         std::string what = "fetch served " + v.id + " to " + v.who;
-        logEvent(String("net files: ") + what.c_str());
+        netFilesLog("%s", what.c_str());
         if (h.record) h.record->note(v.from, what, std::string());
     } else
-        logEvent(String("net files: fetch ") + (v.id.empty() ? "call" : v.id.c_str()) + " from " + v.who.c_str() + (v.served ? " stopped (" : " refused (") +
-                 word.c_str() + ")");
+        netFilesLog("fetch %s from %s %s (%s)", v.id.empty() ? "call" : v.id.c_str(), v.who.c_str(), v.served ? "stopped" : "refused", word.c_str());
     if (!v.proven && (word == "sig" || word == "bad" || word == "timeout")) netStrike(v.ip);  // never proved who it is
     else if (v.proven) netProven(v.ip);
     v.s.reset();  // before the file it reads
@@ -3958,8 +3982,9 @@ static void netServePump(NetHost& h) {
         v.s->feed(buf, (size_t)r);
         fed += (size_t)r;
     }
-    bool sent = true;
-    for (int i = 0; i < 4 && sent && v.pend.empty(); i++) {  // up to 4 pieces a turn while the socket takes them
+    bool     sent = true;
+    uint32_t t0 = millis();
+    for (int i = 0; i < 4 && sent && v.pend.empty() && (!i || millis() - t0 <= kNetFilesTurnMs); i++) {  // up to 4 pieces a turn
         v.pend = v.s->takeOut(axis::net::kFetchChunk + 64);
         if (v.pend.empty()) break;
         sent = netSendRaw(v.c, v.pend);
@@ -3986,12 +4011,17 @@ static NetFetchSlot* netFetchFor(uint32_t gen) {
     return h && h->fetch.ph != FetchPh::Idle && h->fetch.gen == gen ? &h->fetch : nullptr;
 }
 
+// The call's socket closed and its unsent text dropped (the client and its window stay unless the caller drops them).
+static void netFetchDrop(NetFetchSlot& s) {
+    netDrainStop(s.c);
+    s.c = WiFiClient();
+    s.pend.clear();
+}
+
 static void netFetchClear(NetHost& h) {
     NetFetchSlot& s = h.fetch;
-    s.c.stop();
-    s.c = WiFiClient();
+    netFetchDrop(s);
     s.f.reset();
-    s.pend.clear();
     s.pend.shrink_to_fit();
     s.ph = FetchPh::Idle;
     s.owner = s.job = nullptr;
@@ -4006,14 +4036,12 @@ static void netFetchRelease(const void* owner) {
 static void netFetchFail(NetHost& h, const char* why) {
     NetFetchSlot& s = h.fetch;
     if (s.ph == FetchPh::Idle || s.ph == FetchPh::Failed) return;
-    s.c.stop();
-    s.c = WiFiClient();
+    netFetchDrop(s);
     s.f.reset();
-    s.pend.clear();
     s.ph = FetchPh::Failed;
     s.why = why && *why ? why : "bad";
-    logEvent(String("net files: fetch ") + axis::net::listingId(s.l).c_str() + " for " + s.handle.c_str() + " from " + s.home.c_str() +
-             " stopped (" + s.why + ")" + heapText());
+    netFilesLog("fetch %s for %s from %s stopped (%s)%s", axis::net::listingId(s.l).c_str(), s.handle.c_str(), s.home.c_str(), s.why,
+                heapText().c_str());
 }
 
 // The home board can be dialed: its card is held with a host, and the listing says internet.
@@ -4059,7 +4087,7 @@ static void netFetchDial(NetHost& h) {
 }
 
 static void netFetchNote(NetHost& h, const std::string& what) {
-    logEvent(String("net files: ") + what.c_str());
+    netFilesLog("%s", what.c_str());
     if (h.record) h.record->note(h.fetch.l.board, what, std::string());
 }
 
@@ -4069,9 +4097,7 @@ static void netFetchRedial(NetHost& h) {
     uint32_t      cs = s.f ? s.f->crcState() : 0xFFFFFFFFu, cp = s.f ? s.f->crcPos() : axis::net::kFetchNoCrc;
     s.redial = false;
     if (cp == axis::net::kFetchNoCrc || s.redialAt > cp) s.forward = true;  // bytes skipped: the end cannot be checked
-    s.c.stop();
-    s.c = WiFiClient();
-    s.pend.clear();
+    netFetchDrop(s);
     s.f.reset();  // (its window first, then the new one)
     if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kNetHeapFloor + axis::net::kFetchWindow)
         s.f.reset(new (std::nothrow) axis::net::FetchClient(s.l, s.homePub, s.handle, h.key, h.core->board(), netNonce(), s.redialAt, cs, cp));
@@ -4079,7 +4105,7 @@ static void netFetchRedial(NetHost& h) {
         netFetchFail(h, "memory");
         return;
     }
-    logEvent(String("net files: fetch ") + axis::net::listingId(s.l).c_str() + " asked again from " + String(s.redialAt));
+    netFilesLog("fetch %s asked again from %u", axis::net::listingId(s.l).c_str(), (unsigned)s.redialAt);
     s.at = s.redialAt;
     s.fedNow = 0;
     s.slowMs = 0;
@@ -4101,9 +4127,7 @@ static void netFetchDone(NetHost& h) {
         }
         netFetchNote(h, "fetch " + axis::net::listingId(s.l) + " for " + s.handle + " unverified (resumed)");
     }
-    s.c.stop();
-    s.c = WiFiClient();
-    s.pend.clear();
+    netFetchDrop(s);
     s.ph = FetchPh::Done;
 }
 
@@ -4112,7 +4136,7 @@ static void netFetchPump(NetHost& h) {
     if (s.ph == FetchPh::Idle) return;
     uint32_t now = millis();
     if (!s.job && now - s.touchMs > kNetFetchIdleMs) {  // begun and never taken up (its caller or follower is gone)
-        if (s.ph != FetchPh::Failed) logEvent(String("net files: fetch ") + axis::net::listingId(s.l).c_str() + " let go (nobody asked for it)");
+        if (s.ph != FetchPh::Failed) netFilesLog("fetch %s let go (nobody asked for it)", axis::net::listingId(s.l).c_str());
         netFetchClear(h);
         return;
     }
@@ -4289,6 +4313,7 @@ static int netFetchPoll(const void* owner, uint32_t& size, const char*& word) {
 }
 
 // Once netFetchPoll says ready: the caller's download job over the fetch (nullptr when it is not ready or already has one).
+// It can also be nullptr right after a ready poll (no memory for the job): the browser treats that as "stopped".
 // It reads through a NetFetchFile and holds its sender with the slot's ready hook; the job ending lets the slot go.
 static axis::bbs::TransferJob* netFetchJob(const void* owner, axis::bbs::FileLibrary& lib, const axis::bbs::TransferRequest& req,
                                            axis::door::ByteStream& line) {
@@ -4310,31 +4335,62 @@ static void netFetchJobNote(const void* j, std::string& note) {
     if (netHost && netHost->fetch.ph == FetchPh::Failed && netHost->fetch.job == j) note = "the file transfer from " + netHost->fetch.home + " stopped";
 }
 
-// "@NET FETCHTEST <id>" (the bench): the listing fetched to nowhere, read in order as a sender would. It runs to its end
-// inside the command (the loop waits, so only for the bench), at most 10 minutes; the fetch's own timers end a dead one.
+// "@NET FETCHTEST <id>" (the bench): the listing fetched to nowhere, read in order as a sender would, a few KB a loop turn
+// (netFetchTestStep, from netTick) so the board goes on meanwhile; at most 10 minutes. The result goes to the event log
+// (and so to Serial); "@NET FETCHTEST" alone prints the last one.
+struct NetFetchTest {
+    bool        on = false;
+    uint32_t    gen = 0, off = 0, size = 0, t0 = 0;
+    std::string last;
+};
+static NetFetchTest netFetchTestRun;
+static const char   kNetFetchTestOwner = 0;
+
 static void netFetchTest(NetHost& h, const std::string& id, Print& out) {
-    static const char owner = 0;
-    int               r = netFetchBegin(&owner, id, netSysopName(), 0);
+    NetFetchTest& t = netFetchTestRun;
+    if (id.empty()) {
+        out.println(t.on ? "axis: a fetch test is running" : t.last.empty() ? "axis: no fetch test yet" : t.last.c_str());
+        return;
+    }
+    if (t.on) {
+        out.println("@ERR a fetch test is running");
+        return;
+    }
+    int r = netFetchBegin(&kNetFetchTestOwner, id, netSysopName(), 0);
     if (r != kNetFetchStarted) {
         out.printf("@ERR %s\n", kNetFetchWords[r]);
         return;
     }
-    NetFetchSlot&              s = h.fetch;
-    uint32_t                   gen = s.gen, off = 0, size = s.l.size, t0 = millis();
-    std::unique_ptr<uint8_t[]> buf(new (std::nothrow) uint8_t[1024]);
-    s.job = &owner;  // (no idle let-go while it runs)
-    while (buf && netFetchFor(gen) && s.ph != FetchPh::Failed && !(s.ph == FetchPh::Done && off >= size)) {
-        netFetchPump(h);
-        size_t n = std::min<size_t>(1024, size - off);
-        if (off < size && netFetchReadyAt(gen, off, n) && netFetchRead(gen, off, buf.get(), n)) off += (uint32_t)n;
-        if (millis() - t0 > 600000u) netFetchFail(h, "timeout");
-        delay(1);
+    h.fetch.job = &kNetFetchTestOwner;  // (no idle let-go while it runs)
+    t.on = true;
+    t.gen = h.fetch.gen;
+    t.off = 0;
+    t.size = h.fetch.l.size;
+    t.t0 = millis();
+    out.printf("@OK fetching %s\n", id.c_str());
+}
+
+static void netFetchTestStep(NetHost& h) {
+    NetFetchTest& t = netFetchTestRun;
+    if (!t.on) return;
+    NetFetchSlot* s = netFetchFor(t.gen);
+    uint8_t       buf[1024];
+    for (int i = 0; s && i < 4 && t.off < t.size && s->ph != FetchPh::Failed; i++) {
+        size_t n = std::min<size_t>(sizeof buf, t.size - t.off);
+        if (!netFetchReadyAt(t.gen, t.off, n) || !netFetchRead(t.gen, t.off, buf, n)) break;
+        t.off += (uint32_t)n;
     }
-    if (!netFetchFor(gen)) out.println("@ERR stopped");
-    else if (s.ph == FetchPh::Done) out.printf("@OK %u crc ok\n", (unsigned)off);
-    else if (!std::strcmp(s.why, "crc")) out.printf("@OK %u crc bad\n", (unsigned)size);
-    else out.printf("@ERR %s\n", s.why);
-    if (netFetchFor(gen)) netFetchClear(h);
+    if (s && s->ph != FetchPh::Failed && millis() - t.t0 > 600000u) netFetchFail(h, "timeout");
+    char res[64];
+    if (!s) std::snprintf(res, sizeof res, "@ERR stopped");
+    else if (s->ph == FetchPh::Done && t.off >= t.size) std::snprintf(res, sizeof res, "@OK %u crc ok", (unsigned)t.off);
+    else if (s->ph != FetchPh::Failed) return;  // still going
+    else if (!std::strcmp(s->why, "crc")) std::snprintf(res, sizeof res, "@OK %u crc bad", (unsigned)t.size);
+    else std::snprintf(res, sizeof res, "@ERR %s", s->why);
+    t.on = false;
+    t.last = res;
+    netFilesLog("fetch test: %s", res);
+    if (s) netFetchClear(h);
 }
 #endif  // AXIS_TRANSFERS
 
@@ -4351,8 +4407,8 @@ static bool netFilesCommand(NetHost& h, const std::string& up, const std::string
     }
 #endif
 #if AXIS_TRANSFERS
-    if (up.compare(0, 10, "FETCHTEST ") == 0) {
-        netFetchTest(h, a.substr(10), out);
+    if (up == "FETCHTEST" || up.compare(0, 10, "FETCHTEST ") == 0) {
+        netFetchTest(h, a.size() > 10 ? a.substr(10) : std::string(), out);
         return true;
     }
 #endif
@@ -5095,7 +5151,9 @@ static void netTick() {
         h.out.phase = NetPhase::Idle;
 #if AXIS_TRANSFERS
         if (h.serve.s) netServeClose(h, "net off");
-        netFetchFail(h, "off");  // (its caller's transfer ends; the slot goes with it)
+        netFetchFail(h, "off");  // (its caller's transfer ends)
+        netFetchPump(h);         // a failed fetch nobody takes up is still let go
+        netFetchTestStep(h);
 #endif
         return;
     }
@@ -5106,6 +5164,7 @@ static void netTick() {
 #if AXIS_TRANSFERS
     netServePump(h);  // Net Files calls, apart from the sync sessions (neither waits for the other)
     netFetchPump(h);
+    netFetchTestStep(h);  // @NET FETCHTEST, a few KB a turn
 #endif
 #if AXIS_FILES
     if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kNetHeapFloor) netShareStep(h);
@@ -6194,7 +6253,11 @@ static void startCluster() {
         }
 #if AXIS_FILES
         auto& srv = fileServers[nodeNum];
-#if AXIS_SD_POOL
+#if AXIS_NETS
+        // Through the callers' library with Net Files on top (rawCallerFiles: the pool while card followers are joined, else
+        // this card), so a follower's removal or rename in a shared area unlists it too.
+        if (!srv) srv.reset(new axis::cluster::FileServer(netSharingFiles));
+#elif AXIS_SD_POOL
         if (!srv) srv.reset(new axis::cluster::FileServer(pooledFiles));  // (just this card when it is the only one)
 #else
         if (!srv) srv.reset(new axis::cluster::FileServer(sdFiles));
