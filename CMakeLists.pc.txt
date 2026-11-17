@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-O2 -Wall -Wextra)
 
-add_library(axiscore STATIC
+set(AXISCORE_SOURCES
     src/net/telnet.cpp
     src/net/telnetstream.cpp
     src/net/crc.cpp
@@ -103,6 +103,7 @@ add_library(axiscore STATIC
     src/platform/pc/tcpstream.cpp
     third_party/i8086/i8086.cpp
     third_party/miniz/miniz_tinfl.c)
+add_library(axiscore STATIC ${AXISCORE_SOURCES})
 target_include_directories(axiscore PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
 
 add_executable(axis_tests
@@ -240,5 +241,74 @@ if(AXIS_OFF)
   target_compile_definitions(axis_tests PRIVATE AXIS_TEST_SWITCHED=1)
   if(AXIS_OFF_FLAGS MATCHES "AXIS_TRANSFERS=0")  # the XMODEM/ZMODEM test tool has nothing to link
     set_target_properties(xfertest PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  endif()
+endif()
+
+# The native Linux program, axis: the board's own src/main.cpp, unchanged, on a Linux host layer
+# (src/platform/linux) that provides the Arduino and ESP-IDF calls it makes. The screens are LovyanGFX's, from
+# the board's PlatformIO copy: cmake -DLOVYANGFX_DIR=<.pio/libdeps/cyd/LovyanGFX>. Without it, axis is skipped.
+if(UNIX AND NOT APPLE)
+  set(LOVYANGFX_DIR "" CACHE PATH "LovyanGFX source tree (the board's PlatformIO copy, .pio/libdeps/cyd/LovyanGFX)")
+  find_package(SDL2 QUIET)
+  if(SDL2_FOUND)
+    set(AXIS_WINDOW_DEFAULT ON)
+  else()
+    set(AXIS_WINDOW_DEFAULT OFF)
+  endif()
+  option(AXIS_WINDOW "axis opens a window showing the board's screens (needs the SDL2 dev files)" ${AXIS_WINDOW_DEFAULT})
+
+  if(NOT LOVYANGFX_DIR OR NOT EXISTS "${LOVYANGFX_DIR}/src/LovyanGFX.hpp")
+    message(STATUS "axis: LOVYANGFX_DIR is not a LovyanGFX tree, so the axis program is not built")
+  else()
+    # LovyanGFX for the PC. Its platform is picked by a macro: the SDL window with AXIS_WINDOW, otherwise its
+    # Linux framebuffer platform, which needs nothing installed (axis never gives it a framebuffer panel: with no
+    # window it runs as a headless board). Set explicitly, so installing SDL later cannot switch it silently.
+    file(GLOB LGFX_SOURCES CONFIGURE_DEPENDS
+        ${LOVYANGFX_DIR}/src/lgfx/Fonts/efont/*.c
+        ${LOVYANGFX_DIR}/src/lgfx/Fonts/IPA/*.c
+        ${LOVYANGFX_DIR}/src/lgfx/utility/*.c
+        ${LOVYANGFX_DIR}/src/lgfx/v1/*.cpp
+        ${LOVYANGFX_DIR}/src/lgfx/v1/panel/*.cpp
+        ${LOVYANGFX_DIR}/src/lgfx/v1/touch/*.cpp)
+    add_library(lgfx_host STATIC ${LGFX_SOURCES})
+    target_include_directories(lgfx_host SYSTEM PUBLIC ${LOVYANGFX_DIR}/src)
+    target_compile_definitions(lgfx_host PUBLIC LGFX_USE_V1=)  # empty, as board.h defines it
+    target_compile_options(lgfx_host PRIVATE -w)  # a third-party library: its warnings are not ours to fix
+    if(AXIS_WINDOW)
+      find_package(SDL2 REQUIRED)
+      target_compile_definitions(lgfx_host PUBLIC LGFX_SDL)
+      target_link_libraries(lgfx_host PUBLIC SDL2::SDL2)
+    else()
+      target_compile_definitions(lgfx_host PUBLIC LGFX_LINUX_FB)
+    endif()
+    target_link_libraries(lgfx_host PUBLIC pthread)
+
+    # The core again, built the way axis is: no cluster yet (AXIS_CLUSTER=0) and no SD pool (the pool is the
+    # cluster's), every other feature at the board's default (bbs/features.h). axiscore above keeps the test flags.
+    add_library(axiscore_solo STATIC ${AXISCORE_SOURCES})
+    target_include_directories(axiscore_solo PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
+    target_compile_definitions(axiscore_solo PUBLIC AXIS_CLUSTER=0)
+
+    add_executable(axis
+        src/main.cpp
+        src/platform/linux/main_linux.cpp
+        src/platform/linux/arduino_core.cpp
+        src/platform/linux/board.cpp
+        src/platform/linux/wifi.cpp
+        src/platform/linux/web.cpp
+        src/platform/linux/storage.cpp
+        src/platform/linux/config_store.cpp
+        src/platform/linux/sdfiles.cpp
+        src/platform/linux/serialfiles.cpp
+        src/platform/linux/heapscope.cpp
+        src/platform/cyd/screen.cpp        # the board's own: pure LovyanGFX, nothing to port
+        src/platform/cyd/ansi_screen.cpp)
+    # The board's screen files get Arduino.h (Serial, millis) through LovyanGFX's Arduino build on the ESP32.
+    set_source_files_properties(src/platform/cyd/screen.cpp src/platform/cyd/ansi_screen.cpp
+        PROPERTIES COMPILE_OPTIONS "-include;Arduino.h")
+    target_include_directories(axis BEFORE PRIVATE src/platform/linux/arduino)
+    target_include_directories(axis PRIVATE src/platform/cyd third_party/monocypher)
+    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=0 LGFX_USE_V1=)
+    target_link_libraries(axis PRIVATE axiscore_solo lgfx_host)
   endif()
 endif()
