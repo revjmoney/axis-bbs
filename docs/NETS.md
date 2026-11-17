@@ -53,9 +53,9 @@ User Net (see "User Net" below):
 
 Local moderation, which only changes this board and is never sent anywhere:
 
-- `@NETHIDE <post id>` hides a post here. Example: `@NETHIDE 3f9a1c2b`
+- `@NETHIDE <post id>` hides a post here. Example: `@NETHIDE 3f9a1c2b`. A Net Files listing id (`<board id>-<seq>`) hides that listing here: callers do not see it and this board does not send it in a pull.
 - `@NETUNHIDE <post id>` shows it again.
-- `@NETBLOCK <board id>` drops a board's calls and posts here. Example: `@NETBLOCK 0123456789abcdef`
+- `@NETBLOCK <board id>` drops a board's calls, posts and Net Files listings here. Its listings held from before are not shown or sent in a pull, and no fetch dials it (`that board can't be reached right now`). Example: `@NETBLOCK 0123456789abcdef`
 - `@NETUNBLOCK <board id>` lifts the block.
 
 Net-wide moderation. These work only on a board whose signer is one of Rev's keys, and the answer is a notice every board checks against Rev's public keys:
@@ -183,7 +183,7 @@ Pick the file areas to share with `net_files_areas`, a comma list of file area i
 
 | What | Limit |
 | --- | --- |
-| Live listings held | 1000 (100 on a board with no SD card) |
+| Live listings held | 1000 (100 on a board with no SD card). This board's own listings are not held to it. |
 | Live listings from one home board | 200 (100 on a board with no SD card). This board's own listings are not held to it. |
 | A removal (tombstone) is kept | 120 days (200 removals on a board with no clock) |
 | Listings from peers that replace or remove one already held | 8 a session and 64 a day |
@@ -215,10 +215,10 @@ server: OK <bytes from the offset to the end>
 - `GET` is signed with the calling board's key. The home board checks that signature against the calling board's card. It checks that the listing is live and its own, that its area is still shared, that the calling board is a member and neither banned nor blocked, and that the file's size is what was listed.
 - A refusal is `NO <word>` and the call ends. The words are `busy` (the serve slot is taken, the board is short of memory, its index is being rebuilt, this board is not serving at all (net off, still loading, or a follower), or the dialer's address is backed off after failed calls), `gone` (no such live listing, or the file is missing), `size` (the file changed after it was listed), `member` (the calling board is not a member), `banned` (the calling board is banned or blocked) and `sig` (the signature does not check). A request that does not parse is `bad`.
 - A call that moves nothing for 20 seconds ends. While the bytes stream, the caller's board sends a one-byte keepalive every 10 seconds, so a slow radio caller (TCP held back at the far end) is not taken for a dead dialer.
-- The caller's board checks the listing's CRC-32 as the bytes arrive, and before the last block goes to the caller's ZMODEM or XMODEM sender. A file that does not match fails the call with `crc`, so the caller never gets the end of a changed file. A `crc` failure is not retried.
+- The caller's board checks the listing's CRC-32 as the bytes arrive, and before the last block goes to the caller's ZMODEM or XMODEM sender. A file that does not match fails the call with `crc`, so the caller never gets the end of a damaged file, or of one changed at its home board after it was listed. A `crc` failure is not retried. The check is not a defence against a deliberate change on the path: links are plain TCP and the listing carries a CRC-32, not a cryptographic hash, so someone who knows the file can change it and keep the CRC.
 - A sender may ask to go back (a ZMODEM re-position), or after that ahead to where it was. The board keeps an 8 KB window, and on the way the CRC state at checkpoints: every 8 KB of the file from the start (coarser for files over 2 MB: at most 256 of them, every other one going and the spacing doubling when full, so they never take more than 1 KB), and where each call stopped with its state there. If the sender goes outside the window, the board makes a new call from the checkpoint at or below the offset asked for, with that CRC state, and folds every byte from there into the CRC again in order; the sender reads from its own offset. At each checkpoint an earlier call recorded, and at each point where an earlier call stopped, the new call's CRC state must equal the recorded one, or the fetch fails `crc`. So the bytes the caller already has from an earlier call and the bytes it gets now are the same file, and the end is checked against the listing; a download counts as verified only when that holds to the end. That is done at most 3 times for one download, then the fetch ends `retries`.
 - A caller's program that resumes its own partial file (an offset past the start) cannot be checked. That download is **unverified**: it is allowed, and `unverified (resumed)` is written to the event log and the net record.
-- A home board that trickles (under about 1 KB in 2 minutes while the caller's side has room) is cut off `slow`. A fetch that nobody asks about for 60 seconds before its transfer starts is let go.
+- A home board that trickles (under about 1 KB in 2 minutes while the caller's side has room) is cut off `slow`. A fetch that nobody asks about for 60 seconds before its transfer starts is let go, and so is a follower caller's fetch that ended (done or failed) once the follower stops asking about it for 60 seconds.
 
 When a fetch is served, the home board writes `fetch served <id> to <handle>@<board>` to the net record and the event log. A refused or stopped call goes to the event log only.
 
@@ -228,7 +228,7 @@ In Files, the last row of the area list is **Net Files (User Net)**. It shows fo
 
 1. A caller on a radio link, for a file over `net_files_radio_kb`, is asked: `This file is <n> KB. Over the radio link at <bps> bps that's about <m> minutes. Fetch it anyway? (Y/N)`. If the modem has not reported its rate, the rate of the caller's LoRa tier is used, or the slowest tier's.
 2. The caller picks ZMODEM or XMODEM.
-3. The board says `Connecting to <home>...`. When the home board answers, the transfer starts.
+3. The board says `Connecting to <home>...`. When the home board answers, the transfer starts. For a radio caller the DOWNLOAD window has no time row (the radio question gave the time); other callers see the usual 24 KB/s estimate.
 
 The messages: `that board is busy, try again in a minute` (busy), `that file is no longer there` (gone or size), and `that board can't be reached right now` for everything else (no host, no answer, a failed call). A transfer that stops part way says `the file transfer from <home> stopped`.
 
