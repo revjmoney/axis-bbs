@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Rev. J. Money
 """A pretend LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM on a pty, for trying axis --modem without a radio.
 
-usage: lfd3k_fake_modem.py LINK [one|stop|strand MARKDIR]      (then: axis --modem LINK ...)
+usage: lfd3k_fake_modem.py LINK [one|stop|deaf|strand MARKDIR]      (then: axis --modem LINK ...)
 
 LINK becomes a symlink to the pty's slave side, so axis can be pointed at it before it exists and finds the new one
 after the pretend modem is "unplugged". It answers as the real firmware does: in a call, +++ with the guard time is
@@ -18,6 +18,8 @@ OK. Every open of the port must bring guard, +++, guard, ATH before AT&V (checke
 With "one" it plays a single 25 s call instead, for a set-up board (AXIS logs it as a RADIO SF9 caller).
 With "stop" it plays a single call and keeps it up, printing what axis sends, for stopping axis mid-call: axis
 must send +++ (answered OK) and then ATH (answered NO CARRIER) before it exits.
+With "deaf" the port opens on a call that ignores +++ and ATH: axis must strand without sending AT&V, ignore a
+typed RING and OK, and answer calls again after a framed NO CARRIER.
 With "strand" (a board that is not set up) it ignores AXIS's +++ so the hang-up fails, and touches marker files in
 MARKDIR for a driver script: stranded (a typed RING and CONNECT must do nothing; the minute's retry is answered),
 stranded2 (recovered by a framed NO CARRIER), callup (kill axis now and start it again: the new start must hang the
@@ -227,9 +229,32 @@ def strand(m, markdir):
     log('done')
 
 
+def deaf_open(m):
+    """A call left up that ignores +++ when axis opens the port: axis must not send AT&V, and must strand."""
+    got = m.read(15)
+    log(f'axis sent {show(got)!r}: ' + ('no AT&V' if b'AT&V' not in got else 'AT&V SENT AS CALL BYTES'))
+    m.send(b'\r\nRING\r\nOK\r\n')   # the caller typing a RING and an OK: nothing may come of them
+    got = m.read(3)
+    log('typed RING and OK: ' + ('axis sent nothing' if not got else f'axis sent {show(got)!r}'))
+    m.send(NO_CARRIER)
+    log('sent NO CARRIER')
+    got = m.read(3, b'AT&V\r')
+    if b'AT&V\r' in got:
+        m.send(b'\r\nLFD3K-SM settings\r\nNAME TESTSTN\r\nOK\r\n')
+    log(f'after NO CARRIER axis sent {show(got)!r}')
+    m.ring()
+    m.send(NO_CARRIER)
+    log('sent NO CARRIER')
+    m.read(2)
+    log('done')
+
+
 def main():
     link = sys.argv[1]
     m = Modem(link)
+    if sys.argv[2:] == ['deaf']:
+        deaf_open(m)
+        return
     m.wait_probe()
     if sys.argv[2:3] == ['strand']:
         strand(m, sys.argv[3])

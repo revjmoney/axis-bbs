@@ -682,13 +682,15 @@ void step(uint32_t now) {
         } else if (now - M.since >= kAthMs) {
             bool err = M.reply.find(kError) != std::string::npos;
             M.reply.clear();
-            if (M.opening) {  // AT&V may still settle it (an answer means command mode); none means stranded
-                say(std::string("ATH got ") + (err ? "ERROR" : "no answer") + " at the start, AT&V all the same");
+            if (M.opening && err) {  // the modem answered, so it is in command mode: AT&V must still get an answer
+                say("ATH got ERROR at the start, AT&V all the same");
                 M.opening = false;
                 M.openUnsure = true;
                 M.lines.clear();
                 M.toTty += "\rAT&V\r";
                 enter(St::Probe, now);
+            } else if (M.opening) {  // nothing at all: a call may be up that ignored the +++ (AT&V would reach it)
+                strand(now, "ATH got no answer at the start");
             } else if (err) {  // the modem answered, so it is in command mode (ATH itself never answers ERROR)
                 say("hang up: ERROR (the modem did not confirm the hang-up, but it is in command mode)");
                 M.lines.clear();
