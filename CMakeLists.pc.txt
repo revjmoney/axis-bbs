@@ -199,6 +199,9 @@ add_executable(axis_tests
     tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
+if(UNIX AND NOT APPLE)  # the native Linux program's accept gate: plain C++ and POSIX, so the tests can link it
+  target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp)
+endif()
 if(WIN32)
   target_link_libraries(axiscore PUBLIC ws2_32)
 endif()
