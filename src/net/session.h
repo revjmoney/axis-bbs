@@ -41,7 +41,8 @@ constexpr size_t kSyncOutMax = 16 * 1024;             // more unsent than this: 
 constexpr uint32_t kSyncHistoryMax = 800;             // H lines taken per session (4 areas x 200)
 constexpr size_t kSyncCardsAhead = 64;                // origins whose card went ahead of their posts, remembered
 constexpr uint32_t kSyncUserHistoryMax = 400;         // U post lines taken per session (4 areas x 100)
-constexpr uint32_t kSyncUserRecordsMax = 512;         // U application, vote and listing lines taken per session
+constexpr uint32_t kSyncUserRecordsMax = 512;         // U application and vote lines taken per session
+constexpr uint32_t kSyncUserListingsMax = 1400;       // U listing lines taken per session (1000 live and the tombstones)
 constexpr uint32_t kSyncUserEMax = 64;                // E application, vote and listing lines taken per session; then NAK store
 
 class NetSession {
@@ -174,10 +175,10 @@ private:
     uint32_t userPostsTaken_ = 0, userRecsTaken_ = 0;  // U lines taken this session (posts; applications and votes)
     uint32_t userETaken_ = 0;                          // E application, vote and listing lines taken this session
     bool userGot_ = false;  // a U line this side took or already held: only then does UEND mark the pull done
-    // The listings pull this side asked for (un_files in its UWANT to a net3 peer): L lines received, and whether
-    // one was taken or already held. UEND F marks it done when one was, or none came.
-    bool uAskFiles_ = false, filesGot_ = false;
-    uint32_t filesRx_ = 0;
+    // The listings pull this side asked for (un_files in its UWANT to a net3 peer); UEND F marks it done. U listing
+    // lines taken this session.
+    bool uAskFiles_ = false;
+    uint32_t userListsTaken_ = 0;
     uint32_t postsSent_ = 0, postsTaken_ = 0, naks_ = 0, naksSent_ = 0;
 };
 

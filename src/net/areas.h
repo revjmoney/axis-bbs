@@ -182,9 +182,9 @@ public:
     std::string originate(const std::string& area, const bbs::Message& m, int* num = nullptr);
 
     // Net Files listings. Each is one message in kNetFilesArea: subject the name, from the uploader, to the home
-    // board, date as for posts, no body, net the encoded line. A listing or tombstone (gone) drops every live listing
-    // of its (board, area, name) with a lower seq, and a live one that comes later with a lower seq than one held for
-    // that name (live or gone) is Duplicate.
+    // board, date as for posts, no body, net the encoded line. One record is kept per (board, area, name): a listing
+    // or tombstone (gone) drops every record of its name with a lower seq, and one that comes later at or below the
+    // seq held for that name is Duplicate.
     // A listing from a peer, or made here (fromPeer ""). Same order of checks as take(NetPost):
     // valid, banned, blocked, card and signature, this board carries un_files and is a member, the home
     // board is a member (NAK area / member), killed, dedupe, tombstone, ingress (line size), store.
@@ -203,12 +203,15 @@ public:
     // pos is left where the next batch starts. True once the scan reached the end. Nothing while this board is not
     // a member carrying un_files.
     bool listingLines(uint32_t& pos, bool tombs, std::vector<std::string>& out);
-    // /net/files.idx, the listing index: a 12 byte head ("NFX1", 1 when clean, the record count), then one 20 byte
-    // record per listing or tombstone in kNetFilesArea, in store order (IdxRec). read and write work on byte ranges
-    // of the file (a write at or past its end grows it); the host gives the file, a test a buffer. takeListing and
-    // findListing look things up in it instead of scanning the area. A head that is not clean (a reset during a
-    // change) or a failed read or write sends it to be built again from the area, kNetIndexStep listings a call to
-    // listingIndexStep; until then listings are refused with the transient "store" NAK.
+    // /net/files.idx, the listing index: a 28 byte head (IdxHead), then one 24 byte record per listing or tombstone
+    // in kNetFilesArea, in store order (IdxRec). read and write work on byte ranges of the file (a write at or past
+    // its end grows it); the host gives the file, a test a buffer. takeListing and findListing look things up in it
+    // and read just the records it points at (MessageStore::readAt), never scanning the area. Its hashes are salted
+    // with a secret salt drawn at each build, so collisions cannot be chosen. A head that is not clean (a reset
+    // during a change), a tail that does not match the area (a sysop's move into it, or a replaced file), or a failed
+    // read or write sends it to be built again from the area, kNetIndexStep listings a call to listingIndexStep;
+    // until then listings are refused with the transient "store" NAK. After a drop from the area it is built again
+    // at once (the offsets moved).
     void setListingIndex(std::function<bool(uint32_t off, void* p, size_t n)> read,
                          std::function<bool(uint32_t off, const void* p, size_t n)> write) {
         idxRead_ = std::move(read);
@@ -290,8 +293,7 @@ public:
     void resetUserHistory() { userHistory_ = filesHistory_ = false; }  // the listings pull too
     // The listings pull (asked with UWANT of a net3 peer while this board is a member carrying un_files), its own
     // flag, so a board upgraded from Phase 2 with uhistory done still gets the listings held before: done when a
-    // pull reached "UEND F" (the peer sent every listing it holds) having taken or held at least one L line, or with
-    // none sent. Saved with the cursors as "fhistory".
+    // pull reached "UEND F" (the peer sent every listing it holds). Saved with the cursors as "fhistory".
     bool needFilesHistory() const { return !filesHistory_; }
     void filesHistoryGot() { filesHistory_ = true; }
     // The apps file line at off, if it is a record held now (members().holds). For a User Net pull, which
@@ -377,18 +379,25 @@ private:
     void eachListing(const std::function<bool(const bbs::Message& m, const NetListing& l)>& each);
     bool shown(const NetListing& l) const;  // live, and not held, killed or from a banned board
     void trimListings(uint32_t nowDay, bool clock);
-    // The listing index (setListingIndex). keyOf is the crc32 of "<board>|<area>|<name>", board the crc32 of the
-    // board id, flags 1 for a tombstone.
+    // The listing index (setListingIndex). key: the salted crc32 of "<board>|<area>|<name>", board: the salted
+    // crc32 of the board id, flags 1 for a tombstone, at where the message starts in the area.
     struct IdxRec {
-        uint32_t key, board, seq, num, flags;
-        static uint32_t keyOf(const std::string& board, const std::string& area, const std::string& name);
-        static IdxRec of(const NetListing& l, int num);
+        uint32_t key, board, seq, num, flags, at;
+    };
+    // magic "NFX2", clean (1) or not, records, salt, and the area's last message (any, junk too): its number,
+    // where it starts, and where the area ends after it (to tell the area changed behind the index's back).
+    struct IdxHead {
+        uint32_t magic, clean, count, salt, lastNum, lastAt, end;
     };
     enum class Idx : uint8_t { Unknown, Rebuild, Ready };
+    uint32_t idxHash(const std::string& s) const;
+    IdxRec idxRec(const NetListing& l, const bbs::Message& m) const;
     bool idxReady();  // looks at the head if not known yet
     bool idxHead(bool clean);
     bool idxEach(const std::function<bool(const IdxRec&)>& each);  // false if a read failed
-    bool idxRemove(const std::vector<uint32_t>& nums);
+    bool idxTailOk();
+    void idxStart();      // a rebuild from the start, with a new salt
+    void idxRebuildNow();
     Res resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet, bool peerNet3);
     Res readRecord(bool held, uint32_t off, std::string& line);
     // Who is a member and who is denied, before a change, to note what the change did (empty without a
@@ -422,7 +431,9 @@ private:
     std::function<bool(uint32_t, void*, size_t)> idxRead_;
     std::function<bool(uint32_t, const void*, size_t)> idxWrite_;
     Idx idx_ = Idx::Unknown;
-    uint32_t idxCount_ = 0, idxPos_ = 0;  // records held; where a rebuild goes on in the area
+    IdxHead hd_ = {};
+    uint32_t idxPos_ = 0;  // where a rebuild goes on in the area
+    uint32_t saltDraws_ = 0;
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;
     std::string firstPeer_;

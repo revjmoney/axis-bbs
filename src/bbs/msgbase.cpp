@@ -67,7 +67,7 @@ void scan(const std::string& path, ScanMode mode, F visit, uint32_t start = 0, u
             m = Message();
             have = true;
             inBody = false;
-            recAt = lineAt;
+            recAt = m.at = lineAt;
         } else if (have && !inBody) {
             if (line.empty()) inBody = true;
             else {
@@ -226,6 +226,15 @@ void FileMessageStore::scanHeaders(const std::string& area, const std::function<
 void FileMessageStore::scanHeadersFrom(const std::string& area, uint32_t& pos,
                                        const std::function<bool(const Message&)>& each) {
     scan(path(area), kListing, [&](const Message& m) { return each(m); }, pos, &pos);
+}
+
+bool FileMessageStore::readAt(const std::string& area, uint32_t at, int num, Message& out) {
+    bool found = false;
+    scan(path(area), kWhole, [&](Message& m) {
+        if ((found = m.num == num && m.at == at)) out = std::move(m);
+        return false;  // only the record that starts there
+    }, at);
+    return found;
 }
 
 std::string serveMessages(MessageStore& st, const std::string& req) {

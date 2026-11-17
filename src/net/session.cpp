@@ -34,13 +34,13 @@
 // oldest first, then UEND, which marks the pull done if at least one U line was taken or already held
 // (as HEND). A sender that sent the listings ends with "UEND F" (only ever to a net3 peer, so a Phase 2
 // board never sees it). The listings pull has its own flag (NetCore::needFilesHistory, saved as fhistory):
-// a member carrying un_files sends UWANT to a net3 peer until a pull ends with UEND F having taken or
-// held at least one L line, or with none sent, and the session's U cap not reached. So a board upgraded
-// from Phase 2, whose User Net pull was done long ago, still pulls the listings once. A, V and L records go out only on E and U lines, never on S or H lines; E lines with A, V
+// a member carrying un_files sends UWANT to a net3 peer until a pull ends with UEND F (the peer sent every
+// listing it holds; one refused here would be refused again). So a board upgraded from Phase 2, whose User
+// Net pull was done long ago, still pulls the listings once. A, V and L records go out only on E and U lines, never on S or H lines; E lines with A, V
 // or un_ posts go only to a net2 peer, and L lines only to a net3 peer (before an L line, its home
 // board's card goes on an S line as for a post). At most kSyncUserEMax A, V and L E lines are taken
-// per session; past that they are answered NAK store. At most kSyncUserRecordsMax A, V and L U lines
-// are taken per session; the rest are read and dropped.
+// per session; past that they are answered NAK store. At most kSyncUserRecordsMax A and V U lines and
+// kSyncUserListingsMax L U lines are taken per session; the rest are read and dropped.
 // BYE <reason> ends the session at any point.
 #include "net/session.h"
 
@@ -350,10 +350,8 @@ void NetSession::syncLine(std::string& l) {
         // As for HEND: done only if at least one U line was taken or already held here. A peer with
         // nothing to give (a stranger, a fresh board, or one answering UEND at once) leaves it to the next.
         if (userGot_) core_.userHistoryGot();
-        // The listings: done when the peer sent all it holds and this side took them (none, or at least one taken
-        // or held, with the session's cap not reached).
-        if (rest == "F" && uAskFiles_ && (filesGot_ || !filesRx_) && userRecsTaken_ < kSyncUserRecordsMax)
-            core_.filesHistoryGot();
+        // The listings: done, the peer sent every one it holds (any this side refused would be refused again).
+        if (rest == "F" && uAskFiles_) core_.filesHistoryGot();
         return;
     }
     if (!rest.empty()) return fail("bad line", "bad");
@@ -524,12 +522,11 @@ void NetSession::takeUser(std::string_view rec, std::string& line) {
     if (rec.empty()) return;
     if (rec[0] == (char)NetKind::Listing) {
         NetListing l;
-        filesRx_++;
-        if (userRecsTaken_ >= kSyncUserRecordsMax || !decode(rec, l)) return;
-        userRecsTaken_++;
+        if (userListsTaken_ >= kSyncUserListingsMax || !decode(rec, l)) return;
+        userListsTaken_++;
         // Stored now or held already (a duplicate, or one a tombstone here removed): the pull got something real.
         NetCore::Took t = core_.takeListing(l, peer_, true);
-        if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userGot_ = filesGot_ = true;
+        if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userGot_ = true;
         return;
     }
     if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {

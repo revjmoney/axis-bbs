@@ -20,6 +20,9 @@ struct Message {
     // memory. scanHeaders gives a Net Files listing ("L", at most 430 bytes) whole; headers() cut it too, since
     // they hold up to 200 at once. The file store writes it as a "net=" header line only when it is non-empty.
     std::string net;
+    // Where the record starts in its store, as scans give it (the file store: a byte offset; others: its place in
+    // the area). For readAt and scanHeadersFrom; not stored.
+    uint32_t at = 0;
 };
 
 class MessageStore {
@@ -37,16 +40,26 @@ public:
             if (!each(m)) return;
     }
     // scanHeaders from pos (0: the start), pos left where the header each refused is (a later call sees it again),
-    // or at the end. FileMessageStore keeps a byte offset (the scan reads only from there); this default counts
-    // headers and walks scanHeaders from the start.
+    // or at the end; each message's at is where it starts. FileMessageStore keeps a byte offset (the scan reads only
+    // from there); this default counts headers and walks scanHeaders from the start.
     virtual void scanHeadersFrom(const std::string& area, uint32_t& pos, const std::function<bool(const Message&)>& each) {
         uint32_t n = 0;
         scanHeaders(area, [&](const Message& m) {
-            if (n >= pos && !each(m)) return false;
+            if (n >= pos) {
+                Message c = m;
+                c.at = n;
+                if (!each(c)) return false;
+            }
             n++;
             return true;
         });
         pos = n;
+    }
+    // The message numbered num that starts at at (as a scan gave it), whole as read() gives it. False if that is not
+    // where it is. FileMessageStore reads just that record; this default is read().
+    virtual bool readAt(const std::string& area, uint32_t at, int num, Message& out) {
+        (void)at;
+        return read(area, num, out);
     }
     virtual ~MessageStore() = default;
 };
@@ -61,6 +74,7 @@ public:
     int drop(const std::string& area, const std::function<bool(const Message&)>& gone) override;
     void scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) override;
     void scanHeadersFrom(const std::string& area, uint32_t& pos, const std::function<bool(const Message&)>& each) override;
+    bool readAt(const std::string& area, uint32_t at, int num, Message& out) override;
 
 private:
     std::string path(const std::string& area) const;
