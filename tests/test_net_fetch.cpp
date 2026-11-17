@@ -370,6 +370,41 @@ TEST_CASE("fetch: a home board that closes short leaves the client streaming, ne
     CHECK_FALSE(c.cli->verified());
 }
 
+// main's netFetchPump, when a call closes short: asked again from aimed() (where the sender reads), as for a seek outside
+// the window. The end that arrived (reached()) can be a whole window past the sender, and a call from its checkpoint
+// would leave the sender's next read behind the new window (another try spent).
+TEST_CASE("fetch: a call closed short is asked again from where the sender reads, not from the end that arrived, and verifies") {
+    Call c(40000);
+    c.start(0);
+    c.connect();
+    uint32_t             off = 0;
+    std::vector<uint8_t> b(1000);
+    for (int i = 0; i < 4000 && off < 20000; i++)
+        if (c.readyAt(off, 1000) && c.readAt(off, b.data(), 1000)) off += 1000;
+    REQUIRE(off == 20000);
+    (void)c.cli->ready(off, 1000);  // the sender asks for its next block
+    c.turns(50);                    // the ring fills a window past it, then the home board's socket closes
+    REQUIRE(c.cli->state() == St::Streaming);
+    CHECK(c.cli->aimed() == off);
+    CHECK(c.cli->reached() == off + kFetchWindow);
+    uint32_t at = 0, cs = 0;
+    REQUIRE(c.cli->checkpoint(c.cli->reached(), at, cs));
+    CHECK(at > off);  // from the end that arrived, the sender would be behind
+    REQUIRE(c.cli->checkpoint(c.cli->aimed(), at, cs));
+    CHECK(at <= off);
+    FetchClient::CrcMarks marks = c.cli->takeMarks();
+    c.start(at, cs, at);
+    c.cli->giveMarks(std::move(marks));
+    c.cli->aim(off);
+    c.connect();
+    REQUIRE(c.cli->state() == St::Streaming);
+    CHECK_FALSE(c.cli->behind(off));
+    std::vector<uint8_t> rest = c.drain(off, 1000);
+    CHECK(c.retries == 0);  // no second try spent
+    CHECK(rest == slice(c.file, off, 40000));
+    CHECK(c.cli->verified());
+}
+
 TEST_CASE("fetch: an offset past the listing's size fails size before any call") {
     Call c(5000);
     FetchClient f(c.l, pubOf(homeKey()), "Caller", myKey(), boardOf(myKey()), nonce(0x51), 5001);

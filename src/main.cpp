@@ -3982,10 +3982,11 @@ static void netServeAccept(WiFiClient& c, const std::string& got) {
     v->s->feed(got.data(), got.size());
 }
 
-// The call is over: logged, then half-closed (lwIP sends its FIN after the queued bytes) with the slot kept while
-// netServePump drops what the dialer still sends, until it closes or kFetchStallMs passes with nothing heard. A dialer's
-// late keepalive on a fully closed socket would be answered with a reset that throws away bytes it has not read yet.
-// Called again while closing (that wait over, or the net turned off): the socket closes and the slot is free.
+// The call is over and logged. A served one is half-closed (lwIP sends its FIN after the queued bytes) with the slot kept
+// while netServePump drops what the dialer still sends, until it closes or kFetchStallMs passes with nothing heard: a
+// dialer's late keepalive on a fully closed socket would be answered with a reset that throws away bytes it has not read
+// yet. Any other call closes at once (a stranger cannot hold the slot with stray bytes). Called again while closing (that
+// wait over, or the net turned off): the socket closes and the slot is free.
 static void netServeClose(NetHost& h, const char* why) {
     NetServe& v = h.serve;
     if (!v.closing) {
@@ -4002,7 +4003,7 @@ static void netServeClose(NetHost& h, const char* why) {
         if (!v.proven && (word == "sig" || word == "bad" || word == "timeout")) netStrike(v.ip);  // never proved who it is
         else if (v.proven) netProven(v.ip);
         int fd = v.c.fd();
-        if (!why && fd >= 0 && v.c.connected() && shutdown(fd, SHUT_WR) == 0) {
+        if (done && !why && fd >= 0 && v.c.connected() && shutdown(fd, SHUT_WR) == 0) {  // served (a proven member) only
             v.closing = true;
             v.closeMs = millis();
             return;

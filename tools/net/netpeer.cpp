@@ -913,7 +913,8 @@ bool pumpServe(Serve& v) {
     }
     flushServe(v);
     if (v.sock->carrier()) {
-        FetchServeEnd::Step st = v.end.step(msNow(), v.pend.size(), !in.empty());
+        // only a served call's (a proven member's) bytes count as life: a stranger cannot hold the slot with them
+        FetchServeEnd::Step st = v.end.step(msNow(), v.pend.size(), !in.empty() && v.note->served);
         if (st == FetchServeEnd::Shut) v.sock->shutdownWrite();
         if (st != FetchServeEnd::Close) return true;
     }
