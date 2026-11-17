@@ -2694,6 +2694,7 @@ static bool                     netStartSaid = false;
 
 static axis::bbs::MessageStore* netMessages() { return netHost ? netHost->store.get() : nullptr; }
 static bool netMainUp = false;  // a follower: the main's settings frame said its net is up ("net_up=1")
+static bool netMainFiles = false;  // a follower: the main answers Net Files for its callers ("net_files=1")
 static bool netSharedUp = false;  // the main: what the last settings frame said
 // The User Net areas callers get now: on the main while this board is a member with net_user on, on a
 // follower what the main's settings frame said ("net_un="). netAreasGen moves whenever they or net_user_level may have.
@@ -3895,8 +3896,9 @@ static constexpr uint32_t kNetFetchSlowMs = 120000;
 static constexpr uint32_t kNetFetchSlowBytes = 1024;
 static constexpr uint32_t kNetFetchIdleMs = 60000;     // a fetch with no transfer that nobody asks about this long is let go
 // netFetchBegin's answers.
-enum NetFetchBegin { kNetFetchStarted = 0, kNetFetchBusy, kNetFetchGone, kNetFetchUnreachable, kNetFetchOff, kNetFetchOwn };
-static const char* const kNetFetchWords[] = {"started", "busy", "gone", "unreachable", "off", "own"};
+// level: the board's own listing, in an area above the caller's security level.
+enum NetFetchBegin { kNetFetchStarted = 0, kNetFetchBusy, kNetFetchGone, kNetFetchUnreachable, kNetFetchOff, kNetFetchOwn, kNetFetchLevel };
+static const char* const kNetFetchWords[] = {"started", "busy", "gone", "unreachable", "off", "own", "level"};
 
 // ---- the serve slot (an AXISFILE 1 call from another board)
 
@@ -4045,7 +4047,14 @@ static void netFetchClear(NetHost& h) {
     s.redial = false;
     s.gen++;  // a NetFetchFile or ready hook left from it is stale now
 }
+#if AXIS_FILES && AXIS_CLUSTER
+static void netRemoteRelease(const void* owner);
+static void netRemoteNote(const void* j, std::string& note);
+#endif
 static void netFetchRelease(const void* owner) {
+#if AXIS_FILES && AXIS_CLUSTER
+    netRemoteRelease(owner);  // (a follower's, held through the main; also cleared here after this board became main)
+#endif
     if (netHost && owner && netHost->fetch.ph != FetchPh::Idle && netHost->fetch.owner == owner) netFetchClear(*netHost);
 }
 
@@ -4345,29 +4354,32 @@ static axis::bbs::TransferJob* netFetchJob(const void* owner, axis::bbs::FileLib
 
 // serviceJob: a Net Files download that ended because the fetch stopped gets a clear message, not the sender's "read error".
 static void netFetchJobNote(const void* j, std::string& note) {
-    if (netHost && netHost->fetch.ph == FetchPh::Failed && netHost->fetch.job == j) {
-        note = "the file transfer from ";
-        note += netHost->fetch.home;
-        note += " stopped";
-    }
+#if AXIS_FILES && AXIS_CLUSTER
+    netRemoteNote(j, note);
+#endif
+    if (netHost && netHost->fetch.ph == FetchPh::Failed && netHost->fetch.job == j) note = "the file transfer from " + netHost->fetch.home + " stopped";
 }
 
 #if AXIS_FILES
 static_assert(kNetFetchStarted == axis::bbs::NetFilesView::kStarted && kNetFetchBusy == axis::bbs::NetFilesView::kBusy &&
                   kNetFetchGone == axis::bbs::NetFilesView::kGone && kNetFetchUnreachable == axis::bbs::NetFilesView::kUnreachable &&
-                  kNetFetchOff == axis::bbs::NetFilesView::kOff && kNetFetchOwn == axis::bbs::NetFilesView::kOwn,
+                  kNetFetchOff == axis::bbs::NetFilesView::kOff && kNetFetchOwn == axis::bbs::NetFilesView::kOwn &&
+                  kNetFetchLevel == axis::bbs::NetFilesView::kLevel,
               "NetFilesView mirrors NetFetchBegin");
 
 // The caller's Net Files list (NetFilesView::page): every text in it comes from another board, made safe here. A row
 // whose home board cannot be dialed (no host on its card) says so in place of its description.
+static std::string netPageReach;  // the last page's rows: '1' reachable, '0' not (a follower's G reply)
 static int netFilesView(int skip, int max, std::vector<axis::bbs::FileEntry>& out, std::vector<std::string>& ids,
                         std::vector<std::string>& homes) {
     NetHost* h = netHost.get();
+    netPageReach.clear();
     if (!h) return -1;
     if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) return axis::bbs::NetFilesView::kShort;
     const axis::net::NetState& st = h->core->state();
     return h->core->listingsPage(skip, max, [&](const axis::net::NetListing& l) {
         bool reach = l.board == h->core->board() || netFetchReach(*h, l);
+        netPageReach += reach ? '1' : '0';
         out.push_back({netLogText(l.name), l.size, reach ? netSafe(l.desc) : std::string("(can't be reached)"), l.date});
         ids.push_back(axis::net::listingId(l));
         homes.push_back(netSafe(netCardName(st.card(l.board)).c_str()));
@@ -4390,15 +4402,179 @@ static int32_t netCallerBps(const axis::net::LinkInfo& k) {
 // NetFilesView::begin for a caller here (owner: their Node). This board's own listing is downloaded from its area, so
 // it is answered before the slot is asked (a busy slot never refuses a local file); only while the area is still
 // shared, as the serve check asks (unsharing does not take the listings back).
-static int netFilesBegin(const axis::bbs::Node* n, const std::string& id, std::string& area, std::string& name) {
+// This board's own listing for a caller of security level `level`: own while its area is still shared and open to that
+// level (Node::openTo's rule), else gone or level.
+static int netFilesOwn(const axis::net::NetListing& l, int level) {
+    if (!netFilesShared(l.area)) return kNetFetchGone;
+    for (const axis::bbs::FileArea& a : boardCfg->areas)
+        if (a.id == l.area) return a.minSecurity <= level ? kNetFetchOwn : kNetFetchLevel;
+    return kNetFetchGone;
+}
+// NetFilesView::begin on this board, for a caller here (owner: their Node) or a follower's (owner: its file server).
+static int netFilesBegin(const void* owner, const std::string& id, const std::string& handle, int level, std::string& area,
+                         std::string& name) {
     axis::net::NetListing l;
     if (netHost && netHost->core->findListing(id, l) && l.board == netHost->core->board()) {
-        if (!netFilesShared(l.area)) return kNetFetchGone;
         area = l.area;
         name = l.name;
-        return kNetFetchOwn;
+        return netFilesOwn(l, level);
     }
-    return netFetchBegin(n, id, n->handle(), 0);
+    return netFetchBegin(owner, id, handle, 0);
+}
+
+#if AXIS_CLUSTER
+static std::string netNo(const char* word) {  // a refusal or failure for a follower: "0<word>"
+    std::string r("0");
+    r += word;
+    return r;
+}
+
+// The main's answer to a follower's caller (FileServer: G page, b begin or poll, t take, e end; f has 8 fields). owner is
+// that follower's file server; the follower lets one of its callers at a time hold the fetch. Every answer comes from
+// what is here now: t reads the fetch's window only, so a follower never holds this loop longer than its own request.
+static std::string netFollowerOp(const void* owner, char op, const std::vector<std::string>& f) {
+    uint32_t a = (uint32_t)std::strtoul(f[0].c_str(), nullptr, 10), b = (uint32_t)std::strtoul(f[1].c_str(), nullptr, 10);
+    char     num[16];
+    if (op == 'G') {  // "G skip max": "1<next skip>", then a line per row: id name size desc home reach
+        std::vector<axis::bbs::FileEntry> v;
+        std::vector<std::string>          ids, homes;
+        int         next = netFilesView((int)a, b && b <= 15 ? (int)b : 15, v, ids, homes);
+        // (15 rows fit one link frame: id 27, name, size, desc 120, home 40 bytes at most, about 4 KB in all)
+        std::string r("1");
+        r += std::to_string(next);
+        for (size_t i = 0; i < v.size(); i++) {
+            std::snprintf(num, sizeof num, "\x1f%u\x1f", (unsigned)v[i].size);
+            ((((((r += '\n') += ids[i]) += '\x1f') += v[i].name) += num) += v[i].desc) += '\x1f';
+            ((r += homes[i]) += '\x1f') += i < netPageReach.size() ? netPageReach[i] : '1';
+        }
+        return r;
+    }
+    NetHost* h = netHost.get();
+    if (!h) return netNo("off");
+    NetFetchSlot& s = h->fetch;
+    bool          mine = s.ph != FetchPh::Idle && s.owner == owner;
+    if (op == 'b') {  // "b id handle offset level": begin; the same id again (or no handle) asks how it goes
+        if (!mine || axis::net::listingId(s.l) != f[0]) {
+            if (f[1].empty()) return netNo("stopped");
+            std::string area, name;  // (the main's own file: the follower downloads it from that area; no level: refused)
+            int         r = netFilesBegin(owner, f[0], f[1], f[3].empty() ? -1 : (int)std::strtol(f[3].c_str(), nullptr, 10), area, name);
+            return r == kNetFetchOwn ? "3" + area + '\x1f' + name : r == kNetFetchStarted ? std::string("2") : netNo(kNetFetchWords[r]);
+        }
+        uint32_t    size = 0;
+        const char* word = "stopped";
+        int         r = netFetchPoll(owner, size, word);
+        if (r <= 0) return r ? netNo(word) : std::string("2");
+        std::snprintf(num, sizeof num, "1%u\x1f", (unsigned)size);
+        return num + s.home;
+    }
+    if (op == 't') {  // "t offset length": "1<bytes>", "2" not here yet, "0<word>"
+        if (!mine) return netNo("stopped");
+        if (b > axis::cluster::FileServer::kChunk || (uint64_t)a + b > s.l.size) return netNo("bad");
+        if (s.ph != FetchPh::Failed && !netFetchReadyAt(s.gen, a, b)) return std::string("2");
+        std::string r(1 + b, '1');
+        if (s.ph != FetchPh::Failed && netFetchRead(s.gen, a, (uint8_t*)&r[1], b)) return r;
+        return netNo(s.ph == FetchPh::Failed ? s.why : "closed");
+    }
+    if (op == 'e') netFetchRelease(owner);
+    return std::string("1");
+}
+
+// A follower's side: the main's fetch, held by one of this board's callers at a time.
+struct NetRemoteFetch {
+    const void*                           owner = nullptr;
+    const axis::cluster::RemoteFetchFile* file = nullptr;  // once the transfer runs
+    const void*                           job = nullptr;
+    std::string                           id, home;
+    uint32_t                              size = 0, askMs = 0;
+};
+static NetRemoteFetch netRemote;
+static std::string    netRemoteWord;     // why the last one failed (kept after release: the browser shows it after)
+static constexpr uint32_t kNetRemoteAskMs = 250;  // how often a connecting fetch is asked about (a round trip each)
+
+static void netRemoteRelease(const void* owner) {
+    if (!owner || netRemote.owner != owner) return;
+    std::string ignored;
+    remoteFiles.raw("e", ignored);
+    netRemote.owner = netRemote.job = nullptr;  // (id and home are only read while it is held)
+    netRemote.file = nullptr;
+    netRemote.size = 0;
+}
+
+static void netRemoteNote(const void* j, std::string& note) {
+    if (j && netRemote.job == j && netRemote.file && !netRemote.file->word().empty()) note = "the file transfer from " + netRemote.home + " stopped";
+}
+
+// Once the poll says ready: the caller's download job over the main's fetch (nullptr when not ready or no memory). The
+// fetch is ended (netRemoteRelease) once the job is gone: serviceJob and hangUp release this caller's.
+static axis::bbs::TransferJob* netRemoteJob(const void* owner, const axis::bbs::TransferRequest& req, axis::door::ByteStream& line) {
+    if (!owner || netRemote.owner != owner || netRemote.file || !netRemote.size) return nullptr;
+    uint32_t       size = netRemote.size;
+    auto*    f = new (std::nothrow) axis::cluster::RemoteFetchFile(remoteFiles, size, [] { return (uint32_t)millis(); });
+    if (!f) return nullptr;
+    netRemote.file = f;
+    std::unique_ptr<axis::bbs::RandomFile> file(f);
+    axis::bbs::TransferJob*                j = new (std::nothrow)
+        axis::bbs::TransferJob(remoteFiles, req, line, std::move(file), size, req.name, [f](uint32_t off, size_t n) { return f->ready(off, n); });
+    if (j) netRemote.job = j;
+    return j;
+}
+#endif
+
+// NetFilesView for a caller here: this board's fetch, or on a follower the main's (through the file link).
+static int netViewPage(int skip, int max, std::vector<axis::bbs::FileEntry>& out, std::vector<std::string>& ids,
+                       std::vector<std::string>& homes) {
+#if AXIS_CLUSTER
+    if (asFollower()) return remoteFiles.netPage(skip, max, out, ids, homes);  // (its rows marked as here)
+#endif
+    return netFilesView(skip, max, out, ids, homes);
+}
+static int netViewBegin(const axis::bbs::Node* n, const std::string& id, std::string& area, std::string& name) {
+#if AXIS_CLUSTER
+    if (asFollower()) {
+        if (netRemote.owner && netRemote.owner != n) return kNetFetchBusy;  // another caller here has the main's fetch
+        netRemoteRelease(n);
+        std::string a;
+        char        r = remoteFiles.netFetch(id, n->handle(), n->securityLevel(), a);
+        if (r == '1' || r == '2') {
+            netRemote.owner = n;
+            netRemote.id = id;
+            netRemote.askMs = millis();
+            return kNetFetchStarted;
+        }
+        if (r == '3') {  // "area<1F>name"
+            size_t k = a.find('\x1f');
+            area = a.substr(0, k);
+            name = k == std::string::npos ? std::string() : a.substr(k + 1);
+            return kNetFetchOwn;
+        }
+        for (int i = kNetFetchBusy; r == '0' && i <= kNetFetchLevel; i++)
+            if (a == kNetFetchWords[i]) return i;
+        return kNetFetchUnreachable;
+    }
+#endif
+    return netFilesBegin(n, id, n->handle(), n->securityLevel(), area, name);
+}
+static int netViewPoll(const void* owner, uint32_t& size, const char*& word) {
+#if AXIS_CLUSTER
+    if (asFollower()) {
+        word = "stopped";
+        if (!owner || netRemote.owner != owner) return -1;
+        if (millis() - netRemote.askMs < kNetRemoteAskMs) return 0;
+        netRemote.askMs = millis();
+        std::string a;
+        char        r = remoteFiles.netFetch(netRemote.id, "", 0, a);  // (no handle: only asks)
+        if (r == '2') return 0;
+        if (r == '1') {  // "size<1F>home"
+            size = netRemote.size = (uint32_t)std::strtoul(a.c_str(), nullptr, 10);
+            netRemote.home = a.substr(a.find('\x1f') + 1);
+            return 1;
+        }
+        netRemoteWord = r == '0' ? a : "closed";
+        word = netRemoteWord.c_str();
+        return -1;
+    }
+#endif
+    return netFetchPoll(owner, size, word);
 }
 #endif
 
@@ -5736,14 +5912,14 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
             return l && l->backlog() >= axis::net::TelnetStream::kHoldLow;
         });
 #if AXIS_NETS && AXIS_FILES && AXIS_TRANSFERS
-        if (!asFollower()) {  // Net Files, fetched by this board (the owner of the fetch slot: this caller's Node)
-            const axis::bbs::Node*   n = node.get();
+        if (!asFollower() || netMainFiles) {  // Net Files: this board's fetch, or on a follower the main's (an older main never says so)
+            const axis::bbs::Node*  n = node.get();
             axis::bbs::NetFilesView v;
-            v.page = netFilesView;
-            v.unreachable = netFetchUnreachable;
-            v.callerRadioBps = [n] { return netCallerBps(n->link()); };
-            v.begin = [n](const std::string& id, std::string& area, std::string& name) { return netFilesBegin(n, id, area, name); };
-            v.poll = [n](uint32_t& size, const char*& word) { return netFetchPoll(n, size, word); };
+            v.page = netViewPage;
+            v.unreachable = netFetchUnreachable;  // (a follower: "", the main says it when the fetch begins)
+            v.callerRadioBps = [n] { return netCallerBps(n->link()); };  // (this board's own caller link)
+            v.begin = [n](const std::string& id, std::string& area, std::string& name) { return netViewBegin(n, id, area, name); };
+            v.poll = [n](uint32_t& size, const char*& word) { return netViewPoll(n, size, word); };
             v.release = [n] { netFetchRelease(n); };
             node->setNetFiles(std::move(v));
         }
@@ -6151,7 +6327,12 @@ static void startCluster() {
 #if AXIS_NETS
     cluster->settings = [] {  // plus "net_up=1" while Sysop Net runs here and the User Net areas callers get (an old follower keeps them as unknown keys)
         std::string s = axis::bbs::formatConfig(*boardCfg);
-        if (netHost && boardCfg->netSysop) s += "net_up=1\nnet_un=" + axis::bbs::userNetList(netUnMask) + "\n";
+        if (netHost && boardCfg->netSysop) {
+            s += "net_up=1\nnet_un=" + axis::bbs::userNetList(netUnMask) + "\n";
+#if AXIS_FILES && AXIS_TRANSFERS
+            s += "net_files=1\n";  // followers' callers get Net Files through this board (FileServer G b t e)
+#endif
+        }
         return s;
     };
 #else
@@ -6160,6 +6341,7 @@ static void startCluster() {
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
 #if AXIS_NETS
         netMainUp = ini.find("\nnet_up=1\n") != std::string::npos;  // an old main never says it: off
+        netMainFiles = ini.find("\nnet_files=1\n") != std::string::npos;
         size_t      un = ini.find("\nnet_un=");  // an old main never says it: no User Net areas
         uint8_t     got = un == std::string::npos ? 0 : axis::bbs::userNetMask(ini.substr(un + 8, ini.find('\n', un + 8) - (un + 8)));
         if (got != netUnMask) {
@@ -6225,7 +6407,8 @@ static void startCluster() {
         }
     };
     // A follower's request is told apart by its first letter. The file server (cluster/remotefiles.cpp) owns
-    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H B E and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
+    // L R S A C W F D X N, and with the nets G b t e (Net Files: lower case, as B T E are taken here); the rest here are
+    // M O T U J V Y Z Q P K H B E and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
     // until 2026-11-09: that took every file open (packs, views, downloads) and upload away from a follower.
     cluster->onRequest = [](int nodeNum, const std::string& req) {
         servedRequest = true;  // a follower waits on this: no nap this turn
@@ -6362,8 +6545,19 @@ static void startCluster() {
 #if AXIS_FILES
     cluster->onMainGone = [] { cardServer.reset(); };  // its half-done uploads and mirror copies are thrown away
 #endif
+#if AXIS_NETS && AXIS_FILES
+    axis::cluster::FileServer::uploaded = netFilesUploaded;  // a follower's upload into a shared area is listed
+    remoteFiles.who = [] { return node ? node->handle() : std::string(); };  // (a follower: the caller describing an upload)
+#if AXIS_TRANSFERS
+    axis::cluster::FileServer::netOp = netFollowerOp;
+#endif
+#endif
     cluster->onNodeGone = [](int nodeNum) {  // its unfinished uploads go, its door's files close, its locks free
 #if AXIS_FILES
+#if AXIS_NETS && AXIS_TRANSFERS
+        auto fs = fileServers.find(nodeNum);
+        if (fs != fileServers.end()) netFetchRelease(fs->second.get());  // its caller's Net Files fetch, if it had one
+#endif
         fileServers.erase(nodeNum);
 #endif
         auto it = doorServers.find(nodeNum);
@@ -7807,6 +8001,9 @@ __attribute__((noinline)) static void serviceJob() {
         if (line && line->carrier()) {
             node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, note, millis());
             job.reset();  // gives the inflate window back
+#if AXIS_NETS && AXIS_TRANSFERS
+            netFetchRelease(node.get());  // (a follower: the main's fetch ends now; here the job's file already let it go)
+#endif
             noteZipHeap();
             sendApp(node->takeOutput());
         } else {
@@ -7888,7 +8085,11 @@ static void serviceSession(int i) {
                           node->handle().c_str());
 #if AXIS_NETS
                 if (node->transfer().net) {  // a Net Files download: over the fetch slot its connect left ready
-                    job.reset(netFetchJob(node.get(), callerFiles(), node->transfer(), *line));
+#if AXIS_FILES && AXIS_CLUSTER
+                    if (asFollower()) job.reset(netRemoteJob(node.get(), node->transfer(), *line));  // (the main's fetch)
+                    else
+#endif
+                        job.reset(netFetchJob(node.get(), callerFiles(), node->transfer(), *line));
                     if (!job) {  // (no memory for the job right after ready: the fetch stopped)
                         netFetchRelease(node.get());
                         node->transferDone(false, 0, 0, "stopped", millis());

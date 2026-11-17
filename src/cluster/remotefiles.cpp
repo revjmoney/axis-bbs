@@ -5,6 +5,8 @@
 #include "bbs/features.h"
 #if AXIS_FILES
 
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -32,12 +34,23 @@ std::string ok(const std::string& data = "") { return "1" + data; }
 std::string no() { return "0"; }
 }  // namespace
 
+#if AXIS_NETS
+std::string (*FileServer::netOp)(const void*, char, const std::vector<std::string>&) = nullptr;
+void (*FileServer::uploaded)(const std::string&, const std::string&, const std::string&, const std::string&) = nullptr;
+#endif
+
 std::string FileServer::handle(const std::string& req) {
     if (req.empty()) return no();
     char op = req[0];
-    if (op != 'S' && op != 'A') open_.reset();  // a download is over: an open file holds SD buffers
     auto f = splitN(req.size() > 1 ? req.substr(2) : std::string(), op == 'W' ? 2 : 8);
-    auto arg = [&](size_t i) { return i < f.size() ? f[i] : std::string(); };
+    f.resize(8);  // (missing fields read empty)
+    auto arg = [&](size_t i) -> const std::string& { return f[i]; };
+#if AXIS_NETS
+    if (op == 'G' || op == 'b' || op == 't' || op == 'e') return netOp ? netOp(this, op, f) : no();  // (a download's open file stays)
+    std::string at;  // an upload's "area<1F>name" (not for W: its second field is the data)
+    if (op == 'C' || op == 'D' || op == 'X' || op == 'N') at = f[0] + kSep + f[1];
+#endif
+    if (op != 'S' && op != 'A') open_.reset();  // a download is over: an open file holds SD buffers
     // the area and file names a follower sends must stay inside the file areas, whatever the store does
     size_t names = op == 'L' ? 1 : op == 'N' ? 3 : (op == 'R' || op == 'S' || op == 'A' || op == 'C' || op == 'D' || op == 'X') ? 2 : 0;
     for (size_t i = 0; i < names; i++)
@@ -76,37 +89,71 @@ std::string FileServer::handle(const std::string& req) {
             auto w = lib_.create(arg(0), arg(1));
             if (!w) return no();
             int id = nextUpload_++;
-            uploads_[id] = std::move(w);
+            Upload& u = uploads_[id];
+            u.w = std::move(w);
+#if AXIS_NETS
+            u.at = at;
+#endif
             return ok(std::to_string(id));
         }
         case 'W': {  // upload data
             auto it = uploads_.find((int)toU(arg(0)));
-            return it != uploads_.end() && it->second->write((const uint8_t*)arg(1).data(), arg(1).size()) ? ok() : no();
+            return it != uploads_.end() && it->second.w->write((const uint8_t*)arg(1).data(), arg(1).size()) ? ok() : no();
         }
         case 'F': {  // finish an upload: keep or throw away
             auto it = uploads_.find((int)toU(arg(0)));
             if (it == uploads_.end()) return no();
-            bool done = it->second->finish(arg(1) == "1");
+            bool done = it->second.w->finish(arg(1) == "1");
+#if AXIS_NETS
+            if (done && arg(1) == "1") {
+                if (kept_.size() >= 4) kept_.erase(kept_.begin());  // (a few at once: one per caller on the follower)
+                kept_.push_back(std::move(it->second.at));
+            }
+#endif
             uploads_.erase(it);
             open_.reset();  // the area changed
             return done ? ok() : no();
         }
-        case 'D': return lib_.describe(arg(0), arg(1), arg(2)) ? ok() : no();
+        case 'D': {  // describe: area, name, text (and, for an upload, the uploader's handle)
+            if (!lib_.describe(arg(0), arg(1), arg(2))) return no();
+#if AXIS_NETS
+            // an upload's description is its last step (TransferJob::finish, after any ZIP rework): now it can be listed
+            auto k = std::find(kept_.begin(), kept_.end(), at);
+            if (k != kept_.end()) {
+                kept_.erase(k);
+                if (uploaded) uploaded(arg(0), arg(1), arg(2), arg(3));
+            }
+#endif
+            return ok();
+        }
         case 'X':
+        case 'N': {
             open_.reset();
-            return lib_.remove(arg(0), arg(1)) ? ok() : no();
-        case 'N':
-            open_.reset();
-            return lib_.rename(arg(0), arg(1), arg(2)) ? ok() : no();
+            if (!(op == 'X' ? lib_.remove(arg(0), arg(1)) : lib_.rename(arg(0), arg(1), arg(2)))) return no();
+#if AXIS_NETS
+            // a kept upload goes with its file, or follows its new name (a ZIP: the rezipped temp replaces the upload)
+            auto k = std::find(kept_.begin(), kept_.end(), at);
+            if (k != kept_.end()) {
+                if (op == 'N') *k = f[0] + kSep + f[2];
+                else kept_.erase(k);
+            }
+#endif
+            return ok();
+        }
         default: return no();
     }
 }
 
-bool RemoteFileLibrary::call(std::initializer_list<std::string> fields, std::string& data) {
+bool RemoteFileLibrary::raw(std::initializer_list<std::string> fields, std::string& reply) {
     std::string req;
     for (auto& f : fields) req += (req.empty() ? "" : std::string(1, kSep)) + f;
+    return raw(req, reply);
+}
+bool RemoteFileLibrary::raw(const std::string& req, std::string& reply) { return ask_ && ask_(req, reply) && !reply.empty(); }
+
+bool RemoteFileLibrary::call(std::initializer_list<std::string> fields, std::string& data) {
     std::string reply;
-    if (!ask_ || !ask_(req, reply) || reply.empty() || reply[0] != '1') return false;
+    if (!raw(fields, reply) || reply[0] != '1') return false;
     data = reply.substr(1);
     return true;
 }
@@ -220,7 +267,11 @@ std::unique_ptr<bbs::WriteFile> RemoteFileLibrary::create(const std::string& are
 
 bool RemoteFileLibrary::describe(const std::string& a, const std::string& n, const std::string& d) {
     std::string ignored;
+#if AXIS_NETS
+    return call({"D", a, n, d, who ? who() : std::string()}, ignored);  // (an older main reads three fields)
+#else
     return call({"D", a, n, d}, ignored);
+#endif
 }
 bool RemoteFileLibrary::remove(const std::string& a, const std::string& n) {
     std::string ignored;
@@ -230,6 +281,62 @@ bool RemoteFileLibrary::rename(const std::string& a, const std::string& from, co
     std::string ignored;
     return call({"N", a, from, to}, ignored);
 }
+
+
+#if AXIS_NETS
+int RemoteFileLibrary::netPage(int skip, int max, std::vector<bbs::FileEntry>& out, std::vector<std::string>& ids,
+                               std::vector<std::string>& homes) {
+    std::string data;
+    if (!call({"G", std::to_string(skip), std::to_string(max)}, data)) return -1;  // (a main without Net Files says "0")
+    size_t pos = data.find('\n');
+    int    next = (int)std::strtol(data.c_str(), nullptr, 10);
+    while (pos != std::string::npos && ++pos < data.size()) {
+        size_t e = data.find('\n', pos);
+        if (e == std::string::npos) e = data.size();
+        auto p = splitN(data.substr(pos, e - pos), 6);  // id name size desc home reach (shown already in desc)
+        pos = e;
+        if (p.size() < 5 || p[0].empty()) continue;
+        out.push_back({p[1], toU(p[2]), p[3], 0});
+        ids.push_back(p[0]);
+        homes.push_back(p[4]);
+    }
+    return next;
+}
+
+char RemoteFileLibrary::netFetch(const std::string& id, const std::string& handle, int level, std::string& rest) {
+    std::string reply;
+    if (!raw({"b", id, handle, "0", std::to_string(level)}, reply)) return 0;
+    rest.assign(reply, 1, std::string::npos);
+    return reply[0];
+}
+
+bool RemoteFetchFile::ready(uint32_t off, size_t n) {
+    if (!word_.empty() || has(off, n)) return true;
+    if (waiting_ && clock_ && clock_() - waitMs_ < kWaitMs) return false;
+    uint32_t    k = size_ - off < FileServer::kChunk ? size_ - off : (uint32_t)FileServer::kChunk;  // (n is a block: at most 1 KB)
+    char        req[32];
+    std::snprintf(req, sizeof req, "t%c%u%c%u", kSep, (unsigned)off, kSep, (unsigned)k);
+    std::string reply;
+    if (off >= size_ || !lib_.raw(req, reply)) reply = "0closed";
+    waiting_ = reply[0] == '2';
+    if (waiting_) {
+        waitMs_ = clock_ ? clock_() : 0;
+        return false;
+    }
+    if (reply[0] == '1' && reply.size() == 1 + (size_t)k) {
+        ahead_.assign(reply, 1, std::string::npos);
+        aheadAt_ = off;
+    } else
+        word_ = reply[0] == '0' && reply.size() > 1 ? reply.substr(1) : std::string("closed");
+    return true;
+}
+
+bool RemoteFetchFile::readAt(uint32_t off, uint8_t* buf, size_t n) {
+    if (!has(off, n) && (!ready(off, n) || !has(off, n))) return false;
+    std::memcpy(buf, ahead_.data() + (off - aheadAt_), n);
+    return true;
+}
+#endif
 
 }  // namespace axis::cluster
 

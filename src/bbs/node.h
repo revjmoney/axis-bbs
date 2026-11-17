@@ -169,6 +169,7 @@ public:
     std::string tagline() const;       // the caller's tagline (signs their posts), "" if none
     std::string activityText() const;  // what the caller is doing, in a few words ("files: ANSI Packs")
     const std::string& handle() const { return handle_; }
+    int                securityLevel() const;  // the sysop 255, a caller their account's, no accounts 0
     // the door the caller picked ("" unless InDoor); the host runs it, then calls resumeAfterDoor
     std::string      doorRequested() const { return state_ == State::InDoor ? door().id : ""; }
     const DoorEntry& door() const { return door_ < doorList_.size() ? doorList_[door_] : cfg_->doors[door_]; }
@@ -362,7 +363,6 @@ private:
     int                       mnTo_ = 0, splitWith_ = 0, splitAsk_ = 0;  // the node asked, in split chat with, asking us
     int                       splitRow_[2] = {2, 14}, splitCol_[2] = {1, 1};  // split chat cursors: their half, mine
     std::vector<FileArea>     myAreas_, myMsgAreas_;  // the areas this caller's security level opens
-    int                       securityLevel() const;  // the sysop 255, a caller their account's, no accounts 0
     std::vector<FileArea>     openTo(const std::vector<FileArea>& all) const;
     std::string               splitHandle_;        // who is asking us
     std::vector<std::string>  notes_;              // notes that came while a door or transfer had the screen

@@ -342,6 +342,7 @@ namespace {
 const char* netWhy(const std::string& word) {  // a refused or failed fetch, for the caller
     if (word == "busy") return "that board is busy, try again in a minute";
     if (word == "gone" || word == "size") return "that file is no longer there";
+    if (word == "level") return "that file is in an area closed to your account";
     return "that board can't be reached right now";
 }
 }  // namespace
@@ -391,7 +392,7 @@ void FileBrowser::netStart() {
     }
     out_ += "\r\n";
     if (r != NetFilesView::kStarted) {
-        refuse(netWhy(r == NetFilesView::kBusy ? "busy" : r == NetFilesView::kGone ? "gone" : ""));
+        refuse(netWhy(r == NetFilesView::kBusy ? "busy" : r == NetFilesView::kGone ? "gone" : r == NetFilesView::kLevel ? "level" : ""));
         return;
     }
     out_ += std::string("\r\n   ") + DIM + "Connecting to " + netHome_.substr(0, 30) + "..." + HI;

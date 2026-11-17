@@ -125,7 +125,8 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "net_files_areas") c.netFilesAreas = v;
         else if (k == "net_files_radio_kb") c.netFilesRadioKb = n < 0 ? 0 : n;
 #endif
-        else if (k == "net_up" || k == "net_un") {}  // the main's settings frame: its Sysop Net runs, its User Net areas (main.cpp); never kept
+        else if (k == "net_up" || k == "net_un" || k == "net_files") {}  // the main's settings frame: its Sysop Net runs, its User Net
+                                                                          // areas, it serves followers Net Files (main.cpp); never kept
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "nuv_yes") c.nuvYes = (int)n;
         else if (k == "nuv_no") c.nuvNo = (int)n;
