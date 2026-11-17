@@ -33,9 +33,12 @@ stopped. A native build drops the CYD's memory limits and runs at full PC speed.
    - **A CYD main with an SD card is up:** joins as a **follower** with the cluster key and serves the same
      BBS. It **never takes main** from a board that has a card (the existing "cardless main hands main to a
      board with a card" rule must not see the i5's disk as a card in this case).
-   - **Daily backup:** as a follower, at **12:00 local time** each day, copies the main's SD card files into
-     a **mirror folder** on the i5 (only files changed since the last copy, paced so callers on the boards
-     don't feel it). Skipped while the i5 is main.
+   - **Daily check, copy only if needed (Rev: "only backup the sd if we need to"):** as a follower, at
+     **12:00 local time** each day, the i5 compares the main's card listing (path, size, time) with its
+     **mirror folder** and copies only what is missing or different; if the mirror already matches (the
+     live follow below normally keeps it so), nothing is copied. The one full copy happens the first time
+     the i5 joins a cluster with an empty mirror. Paced so callers on the boards don't feel it. Skipped
+     while the i5 is main.
    - **A main without an SD card is up:** the i5 **takes over as main**, serving the cluster's files from
      the mirror (the mirror counts as its card).
    - **The card board comes back** after the takeover: the **i5 stays main**, the board joins as a
