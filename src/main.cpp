@@ -4113,22 +4113,30 @@ static void netFetchDial(NetHost& h) {
 }
 
 
-// A new client from a new offset (the caller's sender asked outside the window). The running crc goes on with it.
+// A new client from a new offset (the caller's sender asked outside the window). While the crc is on, it asks again from
+// the crc checkpoint at or below that offset (for a seek ahead, the last one reached), with its state and the checkpoints,
+// so every byte from there is checked in order and the sender reads from its offset; with the crc off (a caller resuming
+// its own partial file) it starts at the offset, unchecked.
 static void netFetchRedial(NetHost& h) {
     NetFetchSlot& s = h.fetch;
-    uint32_t      cs = s.f ? s.f->crcState() : 0xFFFFFFFFu, cp = s.f ? s.f->crcPos() : axis::net::kFetchNoCrc;
+    uint32_t      at = s.redialAt, cs = 0xFFFFFFFFu, cp = s.f ? s.f->crcPos() : axis::net::kFetchNoCrc;
+    axis::net::FetchClient::CrcMarks marks;
     s.redial = false;
-    if (cp == axis::net::kFetchNoCrc || s.redialAt > cp) s.forward = true;  // bytes skipped: the end cannot be checked
+    if (cp != axis::net::kFetchNoCrc && s.f->checkpoint(s.redialAt, at, cs)) marks = s.f->takeMarks();
+    else s.forward = true;
+    cp = s.forward ? axis::net::kFetchNoCrc : at;
     netFetchDrop(s);
     s.f.reset();  // (its window first, then the new one)
     if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kNetHeapFloor + axis::net::kFetchWindow)
-        s.f.reset(new (std::nothrow) axis::net::FetchClient(s.l, s.homePub, s.handle, h.key, h.core->board(), netNonce(), s.redialAt, cs, cp));
+        s.f.reset(new (std::nothrow) axis::net::FetchClient(s.l, s.homePub, s.handle, h.key, h.core->board(), netNonce(), at, cs, cp));
     if (!s.f) {
         netFetchFail(h, "memory");
         return;
     }
-    netFilesLog("fetch %s asked again from %u", axis::net::listingId(s.l).c_str(), (unsigned)s.redialAt);
-    s.at = s.redialAt;
+    s.f->giveMarks(std::move(marks));
+    s.f->aim(s.redialAt);
+    netFilesLog("fetch %s asked again from %u (at %u)", axis::net::listingId(s.l).c_str(), (unsigned)s.redialAt, (unsigned)at);
+    s.at = at;
     s.fedNow = 0;
     s.slowMs = 0;
     s.slowFed = s.fed;

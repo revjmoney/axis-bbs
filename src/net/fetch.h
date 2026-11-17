@@ -21,6 +21,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "net/record.h"
 
@@ -33,6 +34,7 @@ constexpr uint32_t kFetchConnectMs = 15000;          // connect plus handshake
 constexpr int      kFetchRetries = 3;                // re-requests at a new offset per download
 constexpr uint32_t kFetchNoCrc = 0xFFFFFFFFu;        // crcPos() when the crc can no longer be checked
 constexpr size_t   kFetchMaxLine = 1024;             // a longer line fails the call (HI is 165, GET about 260)
+constexpr size_t   kFetchCrcMarks = 256;             // crc checkpoints kept per download (4 bytes each)
 static_assert((kFetchWindow & (kFetchWindow - 1)) == 0, "the ring indexes by offset");
 
 // What the host found for a request.
@@ -88,11 +90,16 @@ private:
 //
 // The listing's signed crc (CRC-32 of the whole file) is checked: the client keeps a running CRC over
 // the bytes it takes, and when the last byte arrives a mismatch fails the call "crc" before the last
-// block is readable, so the caller's program never gets the end of a changed file. A re-request (a seek
-// outside the window) passes the old client's crcState() and crcPos() to the new one: the new client
-// ignores bytes before crcPos for the CRC and carries on from there, so a rewound download is still
-// checked end to end. If the bytes ever skip past crcPos (a forward seek, say a receiver resuming its
-// own partial file), the CRC cannot be completed: crcPos() then reads kFetchNoCrc and the end is not
+// block is readable, so the caller's program never gets the end of a changed file. On the way it keeps
+// the CRC state at checkpoints: every kFetchWindow of the file from offset 0, at most kFetchCrcMarks of
+// them (when full, every other one goes and the spacing doubles, so they never take more than 1 KB).
+// A rewind (a seek before the window) is a new call from the checkpoint at or below the offset asked
+// for (checkpoint()), with that state, that offset as crcPos, and the checkpoints handed on (takeMarks,
+// giveMarks); aim() then tells the new client where the sender reads. Every byte from the checkpoint on
+// is folded into the CRC again in order, the bytes before the sender's offset only pass through the
+// ring, so the bytes the caller gets after a rewind are checked too. verified() is true only when one
+// pass covered 0 to the end. A new client whose offset is not its crcPos (a forward seek, say a receiver
+// resuming its own partial file) cannot be checked: crcPos() reads kFetchNoCrc and the end is not
 // checked (verified() says which).
 // Once streaming, the newest bytes stay in a kFetchWindow ring: the client takes bytes only up to
 // kFetchWindow past where the sender last asked (ready or read), so TCP holds the home board back
@@ -110,9 +117,20 @@ public:
     enum class St { Hello, Asked, Streaming, Done, Failed };  // Done: every byte has arrived (still readable)
     St          state() const { return st_; }
     const char* why() const { return why_; }  // the server's NO word, or "stall", "sig", "size", "crc", "bad", "memory"
-    uint32_t    crcState() const { return crc_; }  // for the next client of a re-request
+    uint32_t    crcState() const { return crc_; }
     uint32_t    crcPos() const { return crcOn_ ? crcPos_ : kFetchNoCrc; }
-    bool        verified() const { return st_ == St::Done && crcOn_; }  // Done and the crc matched
+    bool        verified() const { return st_ == St::Done && crcOn_; }  // Done, one pass from 0, and the crc matched
+    // The CRC state over [0, i * step) for each checkpoint i reached.
+    struct CrcMarks {
+        std::vector<uint32_t> state;
+        uint32_t              step = (uint32_t)kFetchWindow;
+    };
+    // The checkpoint at or below off (and at or below crcPos): its offset and state. False when there is none (the crc
+    // is not on).
+    bool     checkpoint(uint32_t off, uint32_t& at, uint32_t& state) const;
+    CrcMarks takeMarks() { return std::move(marks_); }  // for the next client of a rewind
+    void     giveMarks(CrcMarks m);                       // from the last client: kept up to this client's start
+    void     aim(uint32_t off) const { want_ = off; }   // where the sender reads (a rewind's target, past the start)
     // [off, off+n) is in the window (or off is at or past the end of the file). Also notes off as where
     // the sender is, which is what lets the ring take more.
     bool ready(uint32_t off, size_t n) const;
@@ -123,6 +141,7 @@ private:
     void     line(const std::string& l);
     void     fail(const char* why);
     void     arrived();  // every byte is in: check the crc, then Done
+    void     hash(const uint8_t* p, size_t n);  // into the crc, taking checkpoints on the way
     uint32_t low() const { return hi_ - start_ > kFetchWindow ? hi_ - (uint32_t)kFetchWindow : start_; }
     KeyPair  me_;
     std::string board_, homePub_, handle_, myBoard_, dial_, id_, in_, out_;
@@ -130,6 +149,7 @@ private:
     uint32_t size_, start_, hi_;  // the file's size, the first offset asked for, the end of what has arrived
     uint32_t listCrc_, crc_, crcPos_;  // the listing's crc; the running CRC-32 state over [0, crcPos_)
     bool     crcOn_;
+    CrcMarks marks_;
     mutable uint32_t want_;       // where the sender last asked
     St          st_ = St::Hello;
     const char* why_ = "";

@@ -170,7 +170,8 @@ FetchClient::FetchClient(const NetListing& l, const std::string& homePub, const 
                          uint32_t crcState, uint32_t crcPos)
     : me_(me), board_(l.board), homePub_(homePub), handle_(handle), myBoard_(myBoard), dial_(dialNonce16),
       id_(listingId(l)), size_(l.size), start_(offset), hi_(offset), listCrc_(l.crc), crc_(crcState),
-      crcPos_(crcPos), crcOn_(crcPos != kFetchNoCrc && crcPos <= l.size), want_(offset) {
+      crcPos_(crcPos), crcOn_(crcPos == offset && crcPos <= l.size), want_(offset) {
+    hash(nullptr, 0);  // the checkpoint at 0, for a download from the start
     if (offset > l.size) {
         fail("size");
         return;
@@ -196,6 +197,43 @@ size_t FetchClient::room() const {
     return cap > hi_ ? (size_t)std::min<uint64_t>(cap - hi_, kFetchWindow) : 0;
 }
 
+void FetchClient::hash(const uint8_t* p, size_t n) {
+    if (!crcOn_) return;
+    for (;;) {
+        if (marks_.state.size() == kFetchCrcMarks) {  // full: every other one goes, the spacing doubles
+            for (size_t i = 0; i < kFetchCrcMarks / 2; i++) marks_.state[i] = marks_.state[2 * i];
+            marks_.state.resize(kFetchCrcMarks / 2);
+            marks_.step *= 2;
+        }
+        uint64_t next = (uint64_t)marks_.state.size() * marks_.step;  // the next checkpoint's offset
+        if (next == crcPos_) {
+            marks_.state.push_back(crc_);
+            continue;
+        }
+        size_t k = next > crcPos_ && next - crcPos_ < n ? (size_t)(next - crcPos_) : n;
+        if (!k) return;
+        crc_ = crc32Update(crc_, p, k);
+        crcPos_ += (uint32_t)k;
+        p += k;
+        n -= k;
+    }
+}
+
+bool FetchClient::checkpoint(uint32_t off, uint32_t& at, uint32_t& state) const {
+    if (!crcOn_ || marks_.state.empty()) return false;
+    size_t i = std::min<size_t>(off / marks_.step, marks_.state.size() - 1);
+    at = (uint32_t)(i * marks_.step);
+    state = marks_.state[i];
+    return true;
+}
+
+void FetchClient::giveMarks(CrcMarks m) {
+    if (!crcOn_ || !m.step || crcPos_ % m.step || crcPos_ / m.step >= m.state.size()) return;  // not one of its checkpoints
+    m.state.resize(crcPos_ / m.step);  // up to its start; hash() takes the one at the start again
+    marks_ = std::move(m);
+    hash(nullptr, 0);
+}
+
 void FetchClient::arrived() {
     if (crcOn_ && crcPos_ == size_ && ~crc_ != listCrc_) return fail("crc");  // the last block never goes out
     if (crcPos_ != size_) crcOn_ = false;  // bytes were skipped: the end cannot be checked
@@ -218,14 +256,7 @@ size_t FetchClient::feed(const char* p, size_t n) {
     if (st_ == St::Done) return n;  // anything past the promised bytes is dropped (the data is whole)
     if (at == n || st_ != St::Streaming) return at;
     size_t take = std::min(n - at, room());
-    if (crcOn_ && take) {
-        if (hi_ > crcPos_) crcOn_ = false;  // a gap: these bytes skip past what the crc covers
-        else if (hi_ + take > crcPos_) {      // bytes before crcPos_ were counted by an earlier call
-            uint32_t skip = crcPos_ - hi_;
-            crc_ = crc32Update(crc_, (const uint8_t*)p + at + skip, take - skip);
-            crcPos_ = hi_ + (uint32_t)take;
-        }
-    }
+    hash((const uint8_t*)p + at, take);  // (crcPos_ is hi_ while the crc is on: one pass, in order)
     for (size_t done = 0; done < take;) {
         size_t i = hi_ & (kFetchWindow - 1), k = std::min(take - done, kFetchWindow - i);
         std::memcpy(ring_.get() + i, p + at + done, k);
@@ -331,7 +362,7 @@ bool FetchClient::read(uint32_t off, uint8_t* buf, size_t n) {
 
 bool FetchClient::behind(uint32_t off) const {
     if (off >= size_) return false;
-    return off < low() || (uint64_t)off >= (uint64_t)hi_ + kFetchWindow;
+    return off < low() || (uint64_t)off >= (uint64_t)std::max(hi_, want_) + kFetchWindow;  // (want_: an aim() past what came)
 }
 
 }  // namespace axis::net

@@ -77,6 +77,7 @@ struct Call {
     uint32_t                     now = 0;
     int                          calls = 0, retries = 0;
     bool                         forward = false;  // a re-request skipped bytes: the end cannot be checked
+    uint32_t                     lastAt = 0;       // where the last re-request started (a crc checkpoint)
 
     explicit Call(size_t n, uint32_t seed = 7) : file(bytes(n, seed)), l(listingFor(file)) {}
 
@@ -142,9 +143,14 @@ struct Call {
         if (off < l.size && cli->behind(off)) {
             if (retries >= kFetchRetries) return true;
             retries++;
-            uint32_t cs = cli->crcState(), cp = cli->crcPos();
-            if (cp == kFetchNoCrc || off > cp) forward = true;
-            start(off, cs, cp);
+            uint32_t              at = off, cs = 0xFFFFFFFFu;
+            FetchClient::CrcMarks marks;
+            if (cli->crcPos() != kFetchNoCrc && cli->checkpoint(off, at, cs)) marks = cli->takeMarks();
+            else forward = true;
+            lastAt = at;
+            start(at, cs, forward ? kFetchNoCrc : at);
+            cli->giveMarks(std::move(marks));
+            cli->aim(off);
             connect();
             return false;
         }
@@ -535,10 +541,8 @@ TEST_CASE("fetch: a rewind re-request carries the crc and verifies; with a chang
     }
 }
 
-// Skipped: it fails as built. A re-request carries one crc state, at crcPos, so the bytes it sends again below crcPos
-// reach the caller unchecked and verified() still says true (fetch.h; Task 3 ruling I2). Waiting on a ruling (Task 8
-// report, concern 1); the case with the change past crcPos is checked above.
-TEST_CASE("fetch: a byte changed in the part a rewind re-request sends again fails crc" * doctest::skip()) {
+// The rewind asks again from the crc checkpoint below 4,000 (offset 0), so the bytes it sends again are checked.
+TEST_CASE("fetch: a byte changed in the part a rewind re-request sends again fails crc") {
     Call c(40000);
     c.start(0);
     c.connect();
@@ -557,6 +561,58 @@ TEST_CASE("fetch: a byte changed in the part a rewind re-request sends again fai
     INFO("delivered bytes match the listing: " << same << ", state " << (int)c.cli->state());
     CHECK((c.cli->state() == St::Failed && std::string(c.cli->why()) == "crc"));
     CHECK_FALSE(c.cli->verified());
+}
+
+TEST_CASE("fetch: a rewind asks again from the crc checkpoint below it; an unchanged home copy still verifies") {
+    Call c(40000);
+    c.start(0);
+    c.connect();
+    uint32_t             off = 0;
+    std::vector<uint8_t> b(1000);
+    for (int i = 0; i < 4000 && off < 30000; i++)
+        if (c.readyAt(off, 1000) && c.readAt(off, b.data(), 1000)) off += 1000;
+    REQUIRE(off == 30000);
+    uint32_t at = 0, state = 0;
+    REQUIRE(c.cli->checkpoint(13000, at, state));
+    CHECK(at == 8192);  // every kFetchWindow from 0
+    CHECK_FALSE(c.readyAt(13000, 1000));
+    CHECK(c.calls == 2);
+    CHECK(c.lastAt == 8192);
+    CHECK_FALSE(c.forward);
+    std::vector<uint8_t> rest = c.drain(13000, 1000);
+    CHECK(rest == slice(c.file, 13000, 40000));
+    CHECK(c.cli->verified());
+}
+
+TEST_CASE("fetch: the crc checkpoints halve when full and stay within 1 KB; a rewind across the coarser spacing verifies") {
+    const size_t big = 3 * 1024 * 1024;  // 384 windows: past kFetchCrcMarks
+    Call         c(big, 11);
+    c.start(0);
+    c.connect();
+    uint32_t             off = 0;
+    std::vector<uint8_t> b(4096);
+    for (int i = 0; i < 200000 && off < 2600000; i++)
+        if (c.readyAt(off, 4096) && c.readAt(off, b.data(), 4096)) off += 4096;
+    REQUIRE(off >= 2600000);
+    uint32_t at = 0, state = 0;
+    REQUIRE(c.cli->checkpoint(2 * 1024 * 1024 + 20000, at, state));
+    CHECK(at == 2 * 1024 * 1024 + 16384);  // the spacing doubled to 16 KB
+    // A rewind 12,000 past a checkpoint: with 16 KB spacing that is more than a window back.
+    uint32_t target = 61 * 16384 + 12000;  // 12,000 past a 16 KB checkpoint
+    REQUIRE(c.cli->checkpoint(target, at, state));
+    CHECK(at % 16384 == 0);
+    CHECK(target - at > kFetchWindow);
+    c.flipAt = -1;
+    CHECK_FALSE(c.readyAt(target, 4096));
+    CHECK(c.lastAt == at);
+    std::vector<uint8_t> rest = c.drain(target, 4096, 400000);
+    CHECK(rest == slice(c.file, target, big));
+    CHECK(c.cli->state() == St::Done);
+    CHECK(c.cli->verified());
+    FetchClient::CrcMarks m = c.cli->takeMarks();
+    CHECK(m.state.size() <= kFetchCrcMarks);
+    CHECK(m.state.size() * sizeof(uint32_t) <= 1024);
+    CHECK(m.step == 16384);
 }
 
 TEST_CASE("fetch: a forward resume reports unverified") {
