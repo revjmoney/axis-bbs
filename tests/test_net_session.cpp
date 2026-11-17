@@ -1243,7 +1243,15 @@ TEST_CASE("A, V and L E lines share the per-session cap; past it NAK store") {
     CHECK(b.records().size() == kSyncUserEMax);
 }
 
-TEST_CASE("on E lines the 9th replacing listing of a session is NAKed store, transient") {
+// Ticks the session (as the host's turns would, with no other step of the index) until no listing line waits, at
+// most n times; how many it took.
+int untilUnparked(NetSession& s, int n = 200) {
+    int t = 0;
+    while (s.parked() && t < n) s.tick(0, true), t++;
+    return t;
+}
+
+TEST_CASE("on E lines a listing after a replace waits, unread, for the index; the 9th replace of a session is NAKed store") {
     RevKeys rk;
     FNode b(0xD4);
     RawDialer r(0xD5);
@@ -1253,15 +1261,82 @@ TEST_CASE("on E lines the 9th replacing listing of a session is NAKed store, tra
     REQUIRE(s.proven());
     s.tick(0, true);
     s.takeOut();
-    RawDialer::say(s, "SEQ 0");
-    for (uint32_t i = 0; i < 10; i++) {
-        RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeListing(r.key, i + 1, "SAME.ZIP")));
-        indexReady(b.core);  // the host's tick builds the index again between lines
-    }
+    std::string in = "SEQ 0\n";
+    for (uint32_t i = 0; i < 10; i++) in += "E " + std::to_string(i) + " " + encode(makeListing(r.key, i + 1, "SAME.ZIP")) + "\n";
+    s.feed(in.data(), in.size());  // one read, as a host turn gives it (one record: each wait is one step)
+    CHECK(untilUnparked(s) < 200);
+    CHECK_FALSE(s.parked());
+    CHECK_FALSE(s.failed());
     std::string out = s.takeOut();
-    CHECK(countPrefix(out, "ACK ") == 9);  // the first, then 8 that replace
+    CHECK(countPrefix(out, "ACK ") == 9);  // the first, then 8 that replace (the session's drop budget)
+    CHECK(countPrefix(out, "NAK ") == 1);
     CHECK(countPrefix(out, "NAK 9 store") == 1);
     CHECK(b.liveSeqs("SAME.ZIP") == std::vector<uint32_t>{9});
+}
+
+TEST_CASE("on E lines a replace then 8 more listings, with 100 held: every one stored, no NAK, the session steps the index") {
+    RevKeys rk;
+    FNode b(0xE6);
+    RawDialer r(0xE7);
+    b.admit({&b.board, &r.card.board});
+    NetSession s(b.core, b.card, b.key, nonce(2), false, "");
+    r.handshake(s);
+    REQUIRE(s.proven());
+    for (uint32_t q = 1; q <= 100; q++)
+        REQUIRE(b.core.takeListing(makeListing(r.key, q, "P" + std::to_string(q)), r.card.board, true) == Took::Stored);
+    s.tick(0, true);
+    s.takeOut();
+    std::string in = "SEQ 0\nE 0 " + encode(makeListing(r.key, 101, "P1")) + "\n";  // replaces P1 (seq 1)
+    for (uint32_t i = 1; i <= 8; i++) in += "E " + std::to_string(i) + " " + encode(makeListing(r.key, 101 + i, "N" + std::to_string(i))) + "\n";
+    s.feed(in.data(), in.size());
+    CHECK(s.parked());
+    CHECK_FALSE(b.core.listingIndexReady());
+    int ticks = untilUnparked(s);
+    CHECK(ticks >= 2);  // 100 records, 32 a step: the session's own steps built it (nothing else stepped it)
+    CHECK(ticks < 10);
+    CHECK(b.core.listingIndexReady());
+    std::string out = s.takeOut();
+    CHECK(countPrefix(out, "ACK ") == 9);
+    CHECK(countPrefix(out, "NAK ") == 0);
+    CHECK(b.liveSeqs("P1") == std::vector<uint32_t>{101});
+    for (uint32_t i = 1; i <= 8; i++) CHECK(b.liveSeqs("N" + std::to_string(i)) == std::vector<uint32_t>{101 + i});
+    CHECK(b.records().size() == 108);
+}
+
+TEST_CASE("fhistory: a pull with a replace and a removal in it loses no listing and is done") {
+    RevKeys rk;
+    FNode     r3(0xE8);
+    RawDialer r(0xE9);
+    r.card.links = kNetCardLinks;
+    REQUIRE(signCard(r.card, r.key));
+    r3.admit({&r3.board, &r.card.board});
+    NetSession s(r3.core, r3.card, r3.key, nonce(2), false, "");
+    r.handshake(s);
+    REQUIRE(s.proven());
+    for (uint32_t q = 1; q <= 40; q++)
+        REQUIRE(r3.core.takeListing(makeListing(r.key, q, "H" + std::to_string(q)), r.card.board, true) == Took::Stored);
+    s.tick(0, true);
+    CHECK(hasLine(s.takeOut(), "UWANT un_chat,un_tech,un_games,un_files"));
+    // 60 U listings: the 3rd replaces H1, the 30th removes H2, the rest are new names.
+    std::string in = "SEQ 0\nSEND\n";
+    for (uint32_t i = 1; i <= 60; i++) {
+        NetListing l = i == 3 ? makeListing(r.key, 40 + i, "H1") : i == 30 ? makeListing(r.key, 40 + i, "H2", true)
+                                                                            : makeListing(r.key, 40 + i, "U" + std::to_string(i));
+        in += "U " + encode(l) + "\n";
+    }
+    in += "UEND F\n";
+    s.feed(in.data(), in.size());
+    CHECK(s.parked());
+    CHECK(untilUnparked(s) < 200);
+    s.tick(10, true);
+    CHECK_FALSE(s.failed());
+    CHECK(r3.records().size() == 98);  // 40 held, 2 of them replaced, 60 taken
+    CHECK(r3.liveSeqs("H1") == std::vector<uint32_t>{43});
+    CHECK(r3.liveSeqs("H2").empty());
+    for (uint32_t i = 1; i <= 60; i++)
+        if (i != 3 && i != 30) CHECK(r3.liveSeqs("U" + std::to_string(i)) == std::vector<uint32_t>{40 + i});
+    CHECK_FALSE(r3.core.needFilesHistory());  // nothing refused: the pull is done
+    CHECK(hasLine(r3.core.saveCursors(), "fhistory 1"));
 }
 
 TEST_CASE("fhistory: a nocard refusal does not hold the listings pull") {

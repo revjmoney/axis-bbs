@@ -254,6 +254,13 @@ public:
     // tick. True while more is to do.
     bool listingIndexStep();
     bool listingIndexReady() const { return idx_ == Idx::Ready; }
+    // A listing line from a peer waits, left unread, while the index is being built: true then. Each call does one
+    // more piece of that work (or the first look at the head), so a session waiting on it shortens the wait. False
+    // once it is ready, or when it cannot be built (takeListing then refuses with "store", as before).
+    bool listingIndexWait();
+    // The index file may have changed or gone under the host (a card swap, a serial file command, a format): what is
+    // held of it in RAM is forgotten, so the next look checks its head and the area's tail again.
+    void listingIndexForget() { idx_ = Idx::Unknown; }
     // The caps the daily trim holds live listings to (kNetListingsMax and kNetListingsPerBoard by default).
     void setListingCaps(uint32_t total, uint32_t perBoard) {
         listingsMax_ = total;

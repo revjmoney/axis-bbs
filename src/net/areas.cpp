@@ -415,6 +415,13 @@ void NetCore::idxStart() {
     idx_ = idxHead(false) ? Idx::Rebuild : Idx::Unknown;
 }
 
+bool NetCore::listingIndexWait() {
+    if (idx_ == Idx::Unknown) listingIndexStep();
+    if (idx_ != Idx::Rebuild) return false;
+    listingIndexStep();
+    return idx_ == Idx::Rebuild;
+}
+
 bool NetCore::listingIndexStep() {
     if (!idxRead_ || !idxWrite_) return false;
     if (idx_ == Idx::Unknown) {

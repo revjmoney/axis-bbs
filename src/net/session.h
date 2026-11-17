@@ -61,6 +61,9 @@ public:
     NetSession& operator=(const NetSession&) = delete;
 
     void feed(const char* p, size_t n);  // bytes from the socket
+    // A listing line waits for the listing index to be built (NetCore::listingIndexWait): it and what came after it
+    // are held, unread, and taken again from tick. The host reads nothing more from the socket meanwhile.
+    bool parked() const { return !parked_.empty(); }
     std::string takeOut();               // bytes for the socket (send them before closing)
     void tick(uint32_t nowMs, bool heapOk);
 
@@ -109,6 +112,7 @@ private:
     void fail(const char* why, const char* bye);
     bool roomForData() const { return out_.size() < kSyncOutHigh; }
     bool outOverflow();
+    void resume();
 
     NetCore& core_;
     NetCard me_;
@@ -121,6 +125,8 @@ private:
     bool failed_ = false;
     std::string why_;
     std::string in_, out_;
+    std::string parked_;   // a listing line waiting for the index, and the bytes after it (parked())
+    bool wait_ = false;    // the line just handled must wait (set by takeEntry or takeUser)
 
     std::string peer_, peerNonce_;
     NetCard peerCard_;  // held from the hello to the proof only

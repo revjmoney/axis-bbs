@@ -162,6 +162,11 @@ bool NetSession::outOverflow() {
 
 void NetSession::feed(const char* p, size_t n) {
     if (failed_ || n == 0) return;
+    if (!parked_.empty()) {  // (the host waits while parked; a host that does not is still served in order)
+        if (parked_.size() + n > kSyncOutMax + kSyncMaxLine) return fail("frame too big", "big");
+        parked_.append(p, n);
+        return resume();
+    }
     size_t i = 0;
     while (i < n && !failed_) {
         const char* nl = (const char*)std::memchr(p + i, '\n', n - i);
@@ -181,8 +186,23 @@ void NetSession::feed(const char* p, size_t n) {
         l.swap(in_);  // the buffer is empty again before the line is handled
         if (!l.empty() && l.back() == '\r') l.pop_back();  // records never hold a CR
         line(l);
+        if (wait_) {  // a listing line while the index is built: it and the rest wait, unread
+            wait_ = false;
+            linesRx_--;
+            parked_ = l + '\n';
+            parked_.append(p + i, n - i);
+            return;
+        }
         if (outOverflow()) return;
     }
+}
+
+// The parked lines again, once the listing index is ready (each call also builds a piece of it).
+void NetSession::resume() {
+    if (parked_.empty() || failed_ || core_.listingIndexWait()) return;
+    std::string p;
+    p.swap(parked_);
+    feed(p.data(), p.size());
 }
 
 void NetSession::line(std::string& l) {
@@ -461,6 +481,9 @@ void NetSession::takeEntry(std::string_view idx, std::string_view rec, std::stri
         NetListing nl;
         if (userETaken_ >= kSyncUserEMax) {
             reason = kNakStore;
+        } else if (rec[0] == (char)NetKind::Listing && core_.listingIndexWait()) {
+            wait_ = true;  // unanswered: taken again once the index is built (not a "store" NAK, which holds the sender)
+            return;
         } else {
             userETaken_++;
             if (rec[0] != (char)NetKind::Listing) {
@@ -532,6 +555,10 @@ void NetSession::takeUser(std::string_view rec, std::string& line) {
     if (rec[0] == (char)NetKind::Listing) {
         NetListing l;
         if (userListsTaken_ >= kSyncUserListingsMax || !decode(rec, l)) return;
+        if (core_.listingIndexWait()) {  // taken again once the index is built, not dropped
+            wait_ = true;
+            return;
+        }
         userListsTaken_++;
         // Stored now or held already (a duplicate, or one a tombstone here removed): the pull got something real.
         const char* why = nullptr;
@@ -589,8 +616,8 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         started_ = true;
         startMs_ = lastRxMs_ = nowMs;
     }
-    if (heard_ || !heapOk) {
-        // Short of heap the host reads nothing (TCP holds the peer back), so the peer's silence is
+    if (heard_ || !heapOk || !parked_.empty()) {
+        // Short of heap, or parked, the host reads nothing (TCP holds the peer back), so the peer's silence is
         // ours: the silence timer stands still. The whole session's deadline still runs.
         heard_ = false;
         lastRxMs_ = nowMs;
@@ -599,6 +626,8 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
     if ((uint32_t)(nowMs - lastRxMs_) > kSyncTimeoutMs) return fail("timeout", "timeout");
     if (outOverflow()) return;
     if (phase_ != Phase::Sync || !heapOk) return;
+    resume();  // a piece of the listing index's rebuild, then the parked lines once it is ready
+    if (failed_) return;
 
     // 0. Whether to ask for history: until a pull has finished (NetCore::needHistory). Decided here,
     // with heap to spare (it may read headers), and always before this side's SEND.

@@ -472,9 +472,11 @@ struct IdxFile {
     std::string bytes;
     uint8_t     draw = 0x40;
     int         draws = 0;
+    int         reads = 0;  // read calls (each a seek and a read on the board's one handle)
     void wire(NetCore& core) {
         core.setListingIndex(
             [this](uint32_t off, void* p, size_t n) {
+                reads++;
                 if ((size_t)off + n > bytes.size()) return false;
                 std::memcpy(p, bytes.data() + off, n);
                 return true;

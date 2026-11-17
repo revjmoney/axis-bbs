@@ -3100,7 +3100,7 @@ static void netPump(NetHost& h, NetSlot& s, bool heapOk) {
     size_t fed = 0;
     // Short of heap nothing is read: a received line costs a few copies of itself (up to 9 KB each), so it waits
     // in the socket and TCP holds the peer back. The session's silence timer stands still meanwhile.
-    while (heapOk && fed < kNetFeedPerTurn) {
+    while (heapOk && !s.s->parked() && fed < kNetFeedPerTurn) {  // (parked: a listing line waits for the index)
         int a = s.c.available();
         if (a <= 0) break;
         int r = s.c.read((uint8_t*)buf, (size_t)a < sizeof buf ? (size_t)a : sizeof buf);
@@ -3290,6 +3290,12 @@ static bool netSave(NetHost& h, bool force = false) {
 static void netSaveNow() {
     if (netHost) netSave(*netHost, true);
     netIdxClose();
+}
+// /net/files.idx may change or go under the board (a card swap, a serial file command, a format): the handle is
+// closed and NetCore forgets the index, so its next look checks the head and the area's tail again.
+static void netIdxForget() {
+    netIdxClose();
+    if (netHost && netHost->core) netHost->core->listingIndexForget();
 }
 
 // ---- the net record, local moderation and the @NET commands
@@ -6359,7 +6365,7 @@ static int callersBesideSysop() {
 // @PUT @LS @TYPE @RM @MKDIR @BAUD from the serial console (tools/sdput.py); /net/files.idx may be replaced or removed.
 static bool serialFiles(const String& cmd) {
 #if AXIS_NETS
-    netIdxClose();
+    netIdxForget();
 #endif
     return serialFileCommand(cmd);
 }
@@ -6373,7 +6379,7 @@ static bool sdFormatNow(String& result, bool& ok, bool force = false) {
         return false;
     }
 #if AXIS_NETS
-    netIdxClose();
+    netIdxForget();
 #endif
     ok = storageFormatSd(result);
     logEvent(String("sysop: SD format ") + (ok ? "done" : "FAILED") + ": " + result);
@@ -7593,7 +7599,7 @@ static void runCommand(const String& cmd, Print& out) {
         out.println("axis: the next full screen copy fails");
     } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
 #if AXIS_NETS
-        netIdxClose();
+        netIdxForget();
 #endif
         SD.end();
         storageInit();

@@ -461,6 +461,72 @@ TEST_CASE("listing index: listings passed to a peer are read at their offset by 
     CHECK(r.store.readsAt == 0);
 }
 
+TEST_CASE("listing index: a take reads the index in 16-record pieces (one read each, growing with the count) and never the area") {
+    RevKeys rk;
+    CountedNode r(0xCD);
+    UNode       h(0xCE);
+    REQUIRE(r.core.takeCard(h.card, ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", r.card.board, 1, "1"), ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", h.board, 2, "1"), ""));
+    uint32_t seq = 1;
+    auto takeOne = [&](uint32_t held) {
+        CAPTURE(held);
+        r.idx.reads = 0;
+        r.store.reset();
+        REQUIRE(r.core.takeListing(makeListing(h.key, seq, "M" + std::to_string(seq) + ".ZIP"), h.board, true) == Took::Stored);
+        seq++;
+        uint32_t chunks = (held + 15) / 16;
+        CHECK(r.idx.reads == (int)chunks);  // idxEach over every record: one read per 16; nothing else is read
+        CHECK(r.store.scans == 0);
+        CHECK(r.store.reads == 0);
+        CHECK(r.store.posts == 0);
+        CHECK(r.store.postAfters == 1);
+        CHECK(r.store.scansFrom == 1);  // the one new message, from where the area ended
+        return r.idx.reads;
+    };
+    for (; seq <= 50; seq++) REQUIRE(r.core.takeListing(makeListing(h.key, seq, "M" + std::to_string(seq) + ".ZIP"), h.board, true) == Took::Stored);
+    int at50 = takeOne(50);
+    for (; seq <= 500; seq++) REQUIRE(r.core.takeListing(makeListing(h.key, seq, "M" + std::to_string(seq) + ".ZIP"), h.board, true) == Took::Stored);
+    int at500 = takeOne(500);
+    CHECK(at50 == 4);
+    CHECK(at500 == 32);  // grows with the count, a read per 16 records, on the one open handle
+}
+
+TEST_CASE("listing index: forgotten after the area was replaced behind it, the next take goes above the new area's numbers") {
+    RevKeys rk;
+    Pair p(0xCF, 0xD0);
+    for (uint32_t s = 1; s <= 5; s++) REQUIRE(p.take(makeListing(p.h.key, s, "K" + std::to_string(s))) == Took::Stored);
+    REQUIRE(p.r.core.listingIndexReady());
+    // Another card's nf_list (a card swap and @SDCHECK, or a serial @PUT): numbers 1..20, so above the head's 5.
+    std::error_code ec;
+    for (const auto& e : fs::recursive_directory_iterator(p.r.dir.p, ec))
+        if (e.path().filename().string() == std::string(kNetFilesArea) + ".msg") fs::remove(e.path(), ec);
+    for (uint32_t s = 1; s <= 20; s++) {
+        NetListing l = makeListing(p.h.key, 100 + s, "OTHER" + std::to_string(s));
+        Message m;
+        m.from = l.uploader;
+        m.to = l.board;
+        m.subject = l.name;
+        m.net = encode(l);
+        REQUIRE(p.r.files.post(kNetFilesArea, m) == (int)s);
+    }
+    p.r.core.listingIndexForget();  // what the host does with the handle at those points
+    const char* nak = nullptr;
+    CHECK(p.take(makeListing(p.h.key, 30, "NEW"), &nak) == Took::Rejected);  // the tail check: built again first
+    CHECK(word(nak) == kNakStore);
+    indexReady(p.r.core);
+    REQUIRE(p.r.core.listingIndexReady());
+    CHECK(p.take(makeListing(p.h.key, 30, "NEW")) == Took::Stored);
+    std::vector<int> nums;
+    p.r.files.scanHeaders(kNetFilesArea, [&](const Message& m) { return nums.push_back(m.num), true; });
+    REQUIRE(nums.size() == 21);
+    CHECK(nums.back() == 21);
+    for (size_t i = 1; i < nums.size(); i++) CHECK(nums[i] > nums[i - 1]);  // ascending, so no number twice
+    NetListing l;
+    CHECK(p.r.core.findListing(p.h.board + "-30", l));
+    CHECK(p.r.core.findListing(p.h.board + "-120", l));
+}
+
 TEST_CASE("listing index: a forced key collision still gives the right answer; five records on one key are refused store") {
     RevKeys rk;
     Pair p(0x9D, 0x9E);
