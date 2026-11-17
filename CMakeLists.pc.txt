@@ -290,6 +290,7 @@ if(UNIX AND NOT APPLE)
     add_library(axiscore_solo STATIC ${AXISCORE_SOURCES})
     target_include_directories(axiscore_solo PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
     target_compile_definitions(axiscore_solo PUBLIC AXIS_CLUSTER=0)
+    target_compile_options(axiscore_solo PRIVATE -w)  # as the board builds it: the core's warnings are its own
 
     add_executable(axis
         src/main.cpp
@@ -299,19 +300,31 @@ if(UNIX AND NOT APPLE)
         src/platform/linux/wifi.cpp
         src/platform/linux/web.cpp
         src/platform/linux/storage.cpp
-        src/platform/linux/config_store.cpp
-        src/platform/linux/sdfiles.cpp
+        src/platform/linux/paths.cpp
+        src/platform/linux/fs.cpp
+        src/platform/linux/fs_remap.cpp
+        src/platform/linux/preferences.cpp
         src/platform/linux/serialfiles.cpp
         src/platform/linux/heapscope.cpp
+        src/platform/cyd/config_store.cpp  # the board's own: LittleFS is the data folder's flash/ (fs.cpp)
+        src/platform/cyd/sdfiles.cpp       # the board's own: its /sd/files paths go through fs_remap.cpp
         src/platform/cyd/screen.cpp        # the board's own: pure LovyanGFX, nothing to port
         src/platform/cyd/ansi_screen.cpp)
     # The board's screen files get Arduino.h (Serial, millis) through LovyanGFX's Arduino build on the ESP32.
     set_source_files_properties(src/platform/cyd/screen.cpp src/platform/cyd/ansi_screen.cpp
         PROPERTIES COMPILE_OPTIONS "-include;Arduino.h")
+    # main.cpp is the board's file, built with -w as the board builds it (src/platform/linux keeps its warnings).
+    set_source_files_properties(src/main.cpp PROPERTIES COMPILE_OPTIONS "-w")
     target_include_directories(axis BEFORE PRIVATE src/platform/linux/arduino)
     target_include_directories(axis PRIVATE src/platform/cyd third_party/monocypher)
     target_compile_definitions(axis PRIVATE AXIS_CLUSTER=0 LGFX_USE_V1=)
     target_link_libraries(axis PRIVATE axiscore_solo lgfx_host)
     target_link_options(axis PRIVATE -Wl,--gc-sections)
+    # The board's paths (/sd, /littlefs) become the data folder's at link time: every call below, from main.cpp,
+    # the core or the platform files, goes through src/platform/linux/fs_remap.cpp. Only this executable is wrapped.
+    foreach(fn fopen fopen64 freopen open open64 __open_2 __open64_2 stat stat64 lstat lstat64 mkdir rename remove
+            opendir unlink rmdir access truncate statvfs)
+      target_link_options(axis PRIVATE "-Wl,--wrap=${fn}")
+    endforeach()
   endif()
 endif()

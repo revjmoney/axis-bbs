@@ -53,8 +53,7 @@ void vTaskDelay(TickType_t ticks) { delay(ticks * portTICK_PERIOD_MS); }
 EspClass ESP;
 
 void EspClass::restart() {
-    std::fflush(stdout);
-    std::fflush(stderr);
+    std::fflush(nullptr);  // every open stdio stream (the log and any file main.cpp left open), not only stdout
     _exit(3);  // code 3: "restart me" (the systemd unit restarts the program); no static destructors run mid-loop
 }
 void esp_restart(void) { ESP.restart(); }
@@ -95,7 +94,12 @@ HostSerial Serial;
 void HostSerial::fill() {
     if (eof_ || head_ != tail_) return;
     pollfd p{STDIN_FILENO, POLLIN, 0};
-    if (poll(&p, 1, 0) <= 0 || !(p.revents & (POLLIN | POLLHUP | POLLERR))) return;
+    if (poll(&p, 1, 0) <= 0) return;
+    if (p.revents & POLLNVAL) {  // stdin is not open at all: the same as its end
+        eof_ = true;
+        return;
+    }
+    if (!(p.revents & (POLLIN | POLLHUP | POLLERR))) return;
     ssize_t n = ::read(STDIN_FILENO, buf_, sizeof buf_);
     if (n > 0) {
         head_ = 0;

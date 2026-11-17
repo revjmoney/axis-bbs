@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The board's SD card. On Linux it becomes the data folder's sd/ (plan task 2): until then there is no card.
+// The board's SD card: the data folder's sd/. It is always there, so it reads as a mounted SDHC card whose size
+// is the size of the filesystem the data folder is on.
 #pragma once
 #include <cstdint>
 
@@ -11,11 +12,12 @@ typedef enum { CARD_NONE, CARD_MMC, CARD_SD, CARD_SDHC, CARD_UNKNOWN } sdcard_ty
 namespace fs {
 class SDFS : public FS {
 public:
+    constexpr SDFS() : FS("/sd") {}
     void     end() {}
-    uint8_t  cardType() { return CARD_NONE; }
-    uint64_t cardSize() { return 0; }
-    uint64_t totalBytes() { return 0; }
-    uint64_t usedBytes() { return 0; }
+    uint8_t  cardType() { return CARD_SDHC; }
+    uint64_t cardSize() { return total(); }
+    uint64_t totalBytes() { return total(); }
+    uint64_t usedBytes() { return used(); }
 };
 }  // namespace fs
 

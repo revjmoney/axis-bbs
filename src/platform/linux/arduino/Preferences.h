@@ -1,56 +1,69 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The ESP32 core's Preferences (NVS namespaces). Saving comes with the data folder (plan task 2, prefs/): until
-// then no namespace opens, every read gives its default and every write saves nothing.
+// The ESP32 core's Preferences (NVS namespaces), kept as <data>/prefs/<namespace>.ini: one key=value line each,
+// values escaped (\xHH for "\", "=" in a key, and any byte outside printable ASCII). Every put saves the whole
+// namespace at once (a temp file, then a rename), as NVS commits each write. preferences.cpp.
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <string>
 
 #include "WString.h"
 
 class Preferences {
 public:
-    bool begin(const char* name, bool readOnly = false, const char* partition = nullptr) {
-        (void)name, (void)readOnly, (void)partition;
-        return false;
-    }
-    void   end() {}
-    bool   clear() { return false; }
-    bool   remove(const char*) { return false; }
-    bool   isKey(const char*) { return false; }
-    size_t freeEntries() { return 0; }
+    // false, as on the ESP32, when a namespace opened read-only has never been written
+    bool   begin(const char* name, bool readOnly = false, const char* partition = nullptr);
+    void   end();
+    bool   clear();
+    bool   remove(const char* key);
+    bool   isKey(const char* key);
+    size_t freeEntries();
 
-    size_t putChar(const char*, int8_t) { return 0; }
-    size_t putUChar(const char*, uint8_t) { return 0; }
-    size_t putShort(const char*, int16_t) { return 0; }
-    size_t putUShort(const char*, uint16_t) { return 0; }
-    size_t putInt(const char*, int32_t) { return 0; }
-    size_t putUInt(const char*, uint32_t) { return 0; }
-    size_t putLong(const char*, int32_t) { return 0; }
-    size_t putULong(const char*, uint32_t) { return 0; }
-    size_t putLong64(const char*, int64_t) { return 0; }
-    size_t putULong64(const char*, uint64_t) { return 0; }
-    size_t putFloat(const char*, float) { return 0; }
-    size_t putDouble(const char*, double) { return 0; }
-    size_t putBool(const char*, bool) { return 0; }
-    size_t putString(const char*, const char*) { return 0; }
-    size_t putString(const char*, const String&) { return 0; }
-    size_t putBytes(const char*, const void*, size_t) { return 0; }
+    size_t putChar(const char* key, int8_t v) { return putNum(key, v, 1); }
+    size_t putUChar(const char* key, uint8_t v) { return putNum(key, v, 1); }
+    size_t putShort(const char* key, int16_t v) { return putNum(key, v, 2); }
+    size_t putUShort(const char* key, uint16_t v) { return putNum(key, v, 2); }
+    size_t putInt(const char* key, int32_t v) { return putNum(key, v, 4); }
+    size_t putUInt(const char* key, uint32_t v) { return putNum(key, v, 4); }
+    size_t putLong(const char* key, int32_t v) { return putNum(key, v, 4); }
+    size_t putULong(const char* key, uint32_t v) { return putNum(key, v, 4); }
+    size_t putLong64(const char* key, int64_t v) { return putNum(key, v, 8); }
+    size_t putULong64(const char* key, uint64_t v);
+    size_t putFloat(const char* key, float v);
+    size_t putDouble(const char* key, double v);
+    size_t putBool(const char* key, bool v) { return putNum(key, v ? 1 : 0, 1); }
+    size_t putString(const char* key, const char* v);
+    size_t putString(const char* key, const String& v) { return putString(key, v.c_str()); }
+    size_t putBytes(const char* key, const void* v, size_t n);
 
-    int8_t   getChar(const char*, int8_t def = 0) { return def; }
-    uint8_t  getUChar(const char*, uint8_t def = 0) { return def; }
-    int16_t  getShort(const char*, int16_t def = 0) { return def; }
-    uint16_t getUShort(const char*, uint16_t def = 0) { return def; }
-    int32_t  getInt(const char*, int32_t def = 0) { return def; }
-    uint32_t getUInt(const char*, uint32_t def = 0) { return def; }
-    int32_t  getLong(const char*, int32_t def = 0) { return def; }
-    uint32_t getULong(const char*, uint32_t def = 0) { return def; }
-    int64_t  getLong64(const char*, int64_t def = 0) { return def; }
-    uint64_t getULong64(const char*, uint64_t def = 0) { return def; }
-    float    getFloat(const char*, float def = 0) { return def; }
-    double   getDouble(const char*, double def = 0) { return def; }
-    bool     getBool(const char*, bool def = false) { return def; }
-    String   getString(const char*, const String& def = String()) { return def; }
-    size_t   getBytesLength(const char*) { return 0; }
-    size_t   getBytes(const char*, void*, size_t) { return 0; }
+    int8_t   getChar(const char* key, int8_t def = 0) { return (int8_t)getNum(key, def); }
+    uint8_t  getUChar(const char* key, uint8_t def = 0) { return (uint8_t)getNum(key, def); }
+    int16_t  getShort(const char* key, int16_t def = 0) { return (int16_t)getNum(key, def); }
+    uint16_t getUShort(const char* key, uint16_t def = 0) { return (uint16_t)getNum(key, def); }
+    int32_t  getInt(const char* key, int32_t def = 0) { return (int32_t)getNum(key, def); }
+    uint32_t getUInt(const char* key, uint32_t def = 0) { return (uint32_t)getNum(key, def); }
+    int32_t  getLong(const char* key, int32_t def = 0) { return (int32_t)getNum(key, def); }
+    uint32_t getULong(const char* key, uint32_t def = 0) { return (uint32_t)getNum(key, def); }
+    int64_t  getLong64(const char* key, int64_t def = 0) { return getNum(key, def); }
+    uint64_t getULong64(const char* key, uint64_t def = 0);
+    float    getFloat(const char* key, float def = 0);
+    double   getDouble(const char* key, double def = 0);
+    bool     getBool(const char* key, bool def = false) { return getNum(key, def ? 1 : 0) != 0; }
+    String   getString(const char* key, const String& def = String());
+    size_t   getBytesLength(const char* key);
+    size_t   getBytes(const char* key, void* buf, size_t max);
+
+private:
+    size_t       putNum(const char* key, int64_t v, size_t bytes);
+    int64_t      getNum(const char* key, int64_t def);
+    size_t       put(const char* key, const std::string& v, size_t bytes);
+    const std::string* find(const char* key) const;
+    bool         save();
+
+    bool                               open_ = false;
+    bool                               readOnly_ = false;
+    std::string                        file_;  // <data>/prefs/<namespace>.ini
+    std::map<std::string, std::string> keys_;
 };
