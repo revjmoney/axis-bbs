@@ -61,3 +61,116 @@ Board 1 is not a member or a Rev board under the real build. No notice was signe
   - The board client's handling of the home board's close (`main.cpp:4219`, `!connected() && available() <= 0` with a full window).
   - Board client against a board server was not tried. Next: a second-board or host repro, before any fix.
 - **Minor:** sync log lines say `0 in` while listings were taken (only posts are counted). `@NET FETCHTEST` with no id shows the last finished run, not a refusal at begin (`@ERR gone` there was not kept as the last result).
+
+## Re-bench (0fed318), 2026-11-17
+
+Board 1 (COM17) ran a bench-only build: nets/phase3 at 0fed318 plus a test-key swap in `src/net/revkeys.cpp` only, with two fresh throwaway test keys (test board ids 081fbb2d9cd58175 and 3b3727361f2c21a3). The image was 2,125,717 B (90.1%). Rev's real seeds were never read or used. The PC peer `axis_netpeer` (named P3Peer2, on test key 1) was built on the build box from the same test-key tree and listened on port 2401. The arrangement matched the first run: both ends were (test) Rev boards, so no admit, vote or limits notice was signed. The first run's two test cards and its P3Peer listings were signed by its deleted test keys. They stayed on board 1 as residue and played no part. The busy heap test was skipped again.
+
+Notes on the setup:
+- **Starting count:** board 1 held 200 P3Peer listings at the start, not 257. The daily trim holds each home board to 200 live listings (`kNetListingsPerBoard`), and it ran after the first run's restore. So the series starts at 200 held, and there is no 100 point.
+- **When the peer listed its files:** its 1001 listings (F0001 to F1000 plus BIG300K.BIN) were made after its first session with board 1. In a first try, with the listings made before the link, 24 clean sessions pulled nothing. This was seen once and not traced. Board 1 already showed `history done` from the first run, so a fresh board may behave differently.
+- **First peer:** `net_first_peer` was pinned to the new peer's board id, because board 1 still remembered the old P3Peer board for that address and port.
+- **Upper count:** held counts reach 1201 (the 200 old listings plus 1001 new) only until the next daily trim, which cuts each board back to 200.
+
+### I6: loop turn per stored listing
+
+The firmware has no loop-turn timer, so these are wall-clock figures. A serial `@STATUS` ping ran every 0.1 s, and its reply delay and the `loop stalled` lines give the turn length. Each session stored 64 listings in about 8 turns, as in the first run: the board reads 2 KB of a session's lines a turn (`kNetFeedPerTurn`), about 8 listings. Only turns inside a session with the peer are counted. Board 1 also dials three dead peers in turn, and each of those dials costs a 1.2 to 1.6 s turn that has nothing to do with storing. Those turns are left out.
+
+| Listings held | First run (c90758f), turn while storing (s) | Re-bench (0fed318), turn while storing (s) | Re-bench, per stored listing (s) |
+| --- | --- | --- | --- |
+| about 100 | 3.0 to 3.3 | not measured (the series starts at 200) | |
+| about 250 | 6.1 to 7.6 (watchdog every turn) | 0.59 to 0.68 | 0.07 to 0.09 |
+| about 500 | not reached (extrapolated about 17 s) | 0.64 to 0.75 | 0.08 to 0.09 |
+| about 750 | not reached | 0.73 to 0.83 | 0.09 to 0.10 |
+| about 1000 | not reached (extrapolated about 27 s) | 0.82 to 0.97 | 0.10 to 0.12 |
+| 1160 to 1201 | not reached | 0.89 to 0.95 | 0.11 to 0.12 |
+
+- **Peak:** the longest store turn seen was 1.06 s (at about 1150 held).
+- **Speed:** the pull of 1001 listings took 16 sessions and about 140 s. Storing caused no `loop stalled` line, and the task watchdog never fired while storing.
+- **Growth:** the turn still grows a little, about 0.3 s more per turn over 1000 more held listings. That is about 0.04 ms per held listing for each stored listing. The first run measured 3.4 ms, so the new cost is about 100 times lower.
+- **Heap during the pull:** 106,944 to 124,368 free, largest 90,112 to 98,304.
+
+### I6: what is still over budget at 1200 held
+
+These are single loop turns at about 1200 held. The task watchdog fires (IDLE1 starved) on every turn over about 5 s.
+
+| Action at about 1200 held | First run (c90758f, listings held) | Re-bench (0fed318) |
+| --- | --- | --- |
+| Net Files page 1 draw, first open (caller side, screenshot rebench/2) | 0.75 to 1.41 s (195) | 8.2 s turn (watchdog), 8.87 s at the caller |
+| Net Files next or previous page | not measured | 4.0 to 4.2 s turn every time (4 runs) |
+| Net Files page 1, a later open | not measured | 4.38 s at the caller |
+| Opening Files (the area list, screenshot rebench/1), going back to the menu | 1.8 s (195) | 1.9 to 2.1 s |
+| A replace from the peer (re-list, higher seq) | not reached | 10.7 s and 8.0 s turns (watchdog) |
+| A removal on board 1 (`@FREN`, `@FDEL`) | 3.95 to 4.31 s (262) | 8.7 s, 8.3 s, 8.2 s turns (watchdog) |
+| A removal from the peer (`unlist`) | not reached | 11.7 s turn (watchdog) |
+| An append (board 1's own upload listed) | 1.1 s (262) | 0.61 s |
+| `@NET` (its file count) | not measured | 2.4 s (712), 3.9 s (1160), 5.1 s (1201) |
+| `@NET FILES` | not measured | 4.1 to 8.2 s |
+| The daily trim after the restore boot (real build) | 2.2 s (257) | 13.9 s (watchdog twice) |
+
+- **Where the time goes** (decoded backtraces):
+  - The page draw runs `NetCore::listingsPage`, which calls `eachListing`, a whole `scanHeaders` of `nf_list` for every page.
+  - A replace or removal runs `FileMessageStore::drop` from `takeListing`, which rewrites all of `nf_list` in one turn.
+  - The boot trim runs `trimListings`, an `eachListing` scan followed by a `drop`.
+- **The index rebuild is stepped.** After the removal's 8.3 s drop turn, the index was rebuilt over about 6.5 s of turns of 0.10 to 0.21 s each (idle is 0.06 to 0.09 s), with no long turn.
+- **Sessions during the rebuild:** board 1 dialed no session for about 10 s after the drop, so none ran during the rebuild. Afterwards, the peer's two new listings (F1001, F1002) and the replaced F0500 were all taken, and no `store` refusal showed on either side. **Not tested:** a session that waits out a rebuild with its listing lines parked and then takes them. Every session here carried a single changed line, and no session ran during a rebuild. A next bench could have the peer queue one re-list, then two new files a second apart, then sync once.
+
+### Fetches
+
+| Check | First run | Re-bench (0fed318) |
+| --- | --- | --- |
+| `@NET FETCHTEST` of the peer's 300 KB listing | 3 of 7 whole | 15 of 15 `@OK 307200 crc ok` (2.1 to 5.6 s each) |
+| Caller ZMODEM download through Net Files | 2 of 6 whole | 5 of 5 whole, md5 identical (one at area level 50) |
+| Peer fetches a 300 KB file from board 1 | 3 of 3 | 3 of 3, crc ok, md5 identical |
+| "asked again from" lines | none seen | none seen |
+| Build box `nstat` TcpExtTCPAbortOnData / TcpExtTCPAbortOnClose | not taken | 537 / 333 before, 537 / 333 after (flat) |
+
+To download the peer's file, a caller has to page to it, because `D` and a name finds only files on the page shown. With 1200 listings, the first 300 KB listing was on the last page. Three download tries stopped at `No file by that name in this area` before any fetch, so the peer re-listed the file to bring it to page 1.
+
+### Strict level and gone
+
+- With `p3bench` at level 50 and the caller at 20, board 1's own P3BIG.BIN was refused with `that file is in an area closed to your account` (screenshot rebench/3). The peer's BIG300K.BIN still downloaded whole at that level.
+- After the peer's `unlist F1002.TXT` and one sync, `@NET FETCHTEST` of its id gave `@ERR gone`. The replaced old BIG300K.BIN id also gave `@ERR gone`.
+
+### Heap
+
+- Idle on the bench build: 131,888 to 132,264 free, largest 110,592.
+- During the pull: 106,944 to 124,368 free, largest 90,112 to 98,304.
+- During Net Files page draws at 1201: lowest free 97,844, largest 77,824.
+- After the restore: 132,356 free, largest 110,592.
+
+### Restore and residue
+
+- **Reflash:** `@NETKEY CLEAR`, then board 1 was reflashed with the real build from the main worktree (i5build "building cyd for nets/phase3 (0fed318f)", 2,125,721 B, hash verified).
+- **State under the real build:**
+  - `rev board no`, board 1 (its own id), `user net off (application pending)`.
+  - `@NET MEMBERS` is empty, and the apps are as before.
+  - A second `@NETKEY CLEAR` gave `@OK no net key was set`.
+  - `@SETTINGS` is identical to the capture at the start, and `public_host` holds its original name.
+  - `@AREAS` and `@USERS` no longer show `p3bench` or P3Bench.
+- **Bench pieces removed:** the peer was stopped. The bench area, the bench caller and board 1's two bench files are gone.
+- **Test residue, reported and not hidden:**
+  - **Listings:** `files: 400 listed`. That is 200 P3Peer listings from the first run and 200 P3Peer2 listings; the boot trim cut P3Peer2 from 1002 to 200. The bench's tombstones are also still there.
+  - **Cards:** 7 (was 5). The new ones are test board 081fbb2d9cd58175 and P3Peer2 3b3727361f2c21a3.
+  - **Link peers:** P3Peer2 is now a link peer (queue 3), so sync rotations dial its dead address.
+  - **Outlog:** it grew from 0..280 to 0..1297. The PCPEER (1291), BenchPeer (1287) and P3Peer (1079) queues hold the relayed test listings, which may go to any future link peer.
+  - **Live cost:** the real board now scans these 400 listings and the tombstones at every boot trim and daily trim, and `@NET` took 1.37 s.
+  - Board 1 is not a member or a Rev board under the real build.
+- **Cleanup:**
+  - Locally: the throwaway worktree, branch `bench/p3-testkey2` and its tracking ref were removed.
+  - On the build box: the `i5build/bench_p3-testkey2` ref, its builds folder and the peer folder (with the peer's test seed) were removed.
+  - The local test seeds and the bench caller password were deleted.
+
+### Bugs and notes from the re-bench
+
+- **I6, storing: fixed.** About 0.6 to 0.95 s a turn (peak 1.06 s) for about 8 listings, up to 1201 held, with no watchdog.
+- **I6, still over budget at about 1200 held (firmware).** The kNetListingsMax of 1000 means a full board hits these regularly:
+  - Net Files paging scans all of `nf_list` on every page (4 to 8 s, watchdog).
+  - A replace or removal runs the store's `drop`, which rewrites `nf_list` in one turn (8 to 12 s, watchdog).
+  - The daily trim took 13.9 s.
+  - `@NET` and `@NET FILES` took 4 to 8 s.
+- **Bug 2 (short fetches): not seen.** 23 of 23 fetches that ran were whole: 15 FETCHTEST runs, 5 caller downloads and 3 peer fetches from board 1. The build box abort counters stayed flat.
+- **Minor:**
+  - Each session with the peer logs `3 out` on board 1 while the peer logs `0 in`, every time.
+  - Listings the peer made before its first link to board 1 were not sent to it (seen once, not traced; board 1 already had `history done`).
+  - `D` by name finds only files on the page shown.
