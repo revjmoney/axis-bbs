@@ -96,6 +96,22 @@ stopped. A native build drops the CYD's memory limits and runs at full PC speed.
 
 ### Code layout
 
+**Amended 2026-11-17 after a spike (supersedes the layout below where they differ).** The native program
+compiles the board's own `src/main.cpp` unchanged against a small Linux host layer that provides the
+Arduino and ESP-IDF calls it uses, instead of moving `main.cpp`'s logic into the core. Reasons: the AXIS nets
+work is editing `main.cpp` now (a refactor would collide with it), the board image is near its flash line
+(moving code risks the board), and compiling the same `main.cpp` means the Linux AXIS cannot drift from
+the boards (the anti-goal). The spike on the i5 parsed `main.cpp` with empty board headers: what is missing
+is the usual Arduino surface (`String`, `millis`/`delay`, `WiFiServer`/`WiFiClient`/`IPAddress`, `Serial`/
+`Print`, `File`/`LittleFS`/`SD`, `Preferences`, `ESP`/`heap_caps`, `esp_random`, mDNS, LED pins). The
+board's screen library, LovyanGFX 1.3.0, has an SDL2 panel (`Panel_sdl`, mouse as touch), so the window
+shows the board's real screens. The terminal mode is the board's existing serial WFC (`handleSerial`,
+`serialWfc`, a full WFC Node) on stdin and stdout. The host layer lives in `src/platform/linux/`.
+The board's `platform/cyd/*.cpp` are replaced by Linux versions there; the cluster is compiled out
+(`AXIS_CLUSTER=0`) until plan 2.
+
+Original layout (kept for reference):
+
 - `src/platform/native/` (new): everything OS-specific for the PC program.
   - `netloop.*`: the epoll event loop (Linux); listeners, connections, timers.
   - `linenet.*`: telnet lines (wraps the existing `net/telnet` + `TelnetStream` logic over non-blocking
@@ -151,6 +167,11 @@ stopped. A native build drops the CYD's memory limits and runs at full PC speed.
 - Headless: no WFC; status lines go to the log.
 
 ### Testing
+
+Rev: "please do not write a million tests for this. save all the main testing for the end." Build tasks
+end with a clean build and a commit; testing is one final task, mostly live on the i5, with only a few
+new automated tests where a check can't be done by hand. The list below is what that final task covers,
+not a list of unit tests to write.
 
 - All existing host tests still pass.
 - New host tests: start-mode detection, config file, connection limits and bans (driven through a fake clock
