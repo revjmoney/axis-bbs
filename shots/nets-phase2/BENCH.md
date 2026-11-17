@@ -14,5 +14,6 @@ Board 1 (MAC checked before writing) flashed with nets/phase2 at f426af0 (image 
 | 8 Restore | `net_user=0`, `net_first_peer` cleared, peer stopped. The test applications stay in the record and `/net/apps.txt` (append only). |
 
 Notes:
-- With `net_user=0` the `@NET` status line still says `user net pending` (it reports the tally, which still holds the application), not `off`.
-- `axis_netpeer` only answers a call while it is woken by a line on stdin (fed by `tail -f` here, calls got "no answer" until a line arrived).
+- First run (f426af0): with `net_user=0` the `@NET` status line said `user net pending`. Fixed in the final fix wave; rechecked on board 1 with 9cf2102: `user net off (application pending)`.
+- The "no answer from PCPEER" lines are board 1's older link peer from the Phase 1 bench (no longer running). `@NET SYNC` takes the link peers in turn, so every other sync dials it. With the PC peer's stdin idle, a sync after the final fixes went through on the first try.
+- After the bench, board 1 runs 9cf2102 (87.5% of the app slot), with `net_user=0` and no first peer.
