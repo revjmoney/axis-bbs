@@ -4353,22 +4353,38 @@ static void netFetchJobNote(const void* j, std::string& note) {
 }
 
 #if AXIS_FILES
-static_assert(kNetFetchBusy == axis::bbs::NetFilesView::kBusy && kNetFetchGone == axis::bbs::NetFilesView::kGone &&
+static_assert(kNetFetchStarted == axis::bbs::NetFilesView::kStarted && kNetFetchBusy == axis::bbs::NetFilesView::kBusy &&
+                  kNetFetchGone == axis::bbs::NetFilesView::kGone && kNetFetchUnreachable == axis::bbs::NetFilesView::kUnreachable &&
                   kNetFetchOff == axis::bbs::NetFilesView::kOff && kNetFetchOwn == axis::bbs::NetFilesView::kOwn,
               "NetFilesView mirrors NetFetchBegin");
 
-// The caller's Net Files list (NetFilesView::page): every text in it comes from another board, made safe here.
+// The caller's Net Files list (NetFilesView::page): every text in it comes from another board, made safe here. A row
+// whose home board cannot be dialed (no host on its card) says so in place of its description.
 static int netFilesView(int skip, int max, std::vector<axis::bbs::FileEntry>& out, std::vector<std::string>& ids,
                         std::vector<std::string>& homes) {
     NetHost* h = netHost.get();
-    if (!h || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) return -1;
+    if (!h) return -1;
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) return axis::bbs::NetFilesView::kShort;
     const axis::net::NetState& st = h->core->state();
     return h->core->listingsPage(skip, max, [&](const axis::net::NetListing& l) {
-        out.push_back({netLogText(l.name), l.size, netSafe(l.desc), l.date});
+        bool reach = l.board == h->core->board() || netFetchReach(*h, l);
+        out.push_back({netLogText(l.name), l.size, reach ? netSafe(l.desc) : std::string("(can't be reached)"), l.date});
         ids.push_back(axis::net::listingId(l));
         homes.push_back(netSafe(netCardName(st.card(l.board)).c_str()));
         if (homes.back().empty()) homes.back() = l.board;
     });
+}
+
+// NetFilesView::callerRadioBps: -1 for a caller not on radio, else the modem's reported bps, else (no report yet) the
+// rate of the caller's LoRa tier, else the slowest tier's (SF12), so a radio caller is always told the time. Tier rates
+// are sf * 400000 / 2^sf: the LoRa raw rate (SF * BW / 2^SF, times the coding rate) fitted to the LFD3K modem's own
+// reports on the 2026-11-12 radio bench, SF5 62500 and SF10 3906 bps (the SF10 call is in docs/FEATURES.md); SF12
+// gives 1171.
+static int32_t netCallerBps(const axis::net::LinkInfo& k) {
+    if (!k.radio()) return -1;
+    if (k.bps > 0) return k.bps;
+    int sf = k.sf() ? k.sf() : 12;
+    return (int32_t)(400000u * (uint32_t)sf >> sf);
 }
 
 // NetFilesView::begin for a caller here (owner: their Node). This board's own listing is downloaded from its area, so
@@ -5725,7 +5741,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
             axis::bbs::NetFilesView v;
             v.page = netFilesView;
             v.unreachable = netFetchUnreachable;
-            v.callerRadioBps = [n] { return n->link().radio() ? n->link().bps : (int32_t)-1; };
+            v.callerRadioBps = [n] { return netCallerBps(n->link()); };
             v.begin = [n](const std::string& id, std::string& area, std::string& name) { return netFilesBegin(n, id, area, name); };
             v.poll = [n](uint32_t& size, const char*& word) { return netFetchPoll(n, size, word); };
             v.release = [n] { netFetchRelease(n); };

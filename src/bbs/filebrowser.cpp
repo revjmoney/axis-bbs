@@ -146,11 +146,15 @@ void FileBrowser::showPage(int at) {
     size_t begin = (size_t)page_ * kPerPage;
     size_t end = begin + kPerPage;
     if (end > files_.size()) end = files_.size();
+    const char* empty = "(nothing here yet)";
+#if AXIS_NET_FILES
+    if (net() && next_ == NetFilesView::kShort) empty = "Net Files are busy right now, try again in a minute";
+#endif
     if (!bars_) {
         usingList_ = false;
         if (files_.empty()) {
             out_ += DIM;
-            out_ += "   (nothing here yet)\r\n";
+            out_ += std::string("   ") + empty + "\r\n";
         }
         for (size_t i = begin; i < end; i++) {
             const FileEntry& f = files_[i];
@@ -172,7 +176,7 @@ void FileBrowser::showPage(int at) {
     if (rows.empty()) {
         usingList_ = false;
         out_ += listScreenTop(title(), head);
-        out_ += std::string("   ") + theme::TEXT + "(nothing here yet)\r\n";
+        out_ += std::string("   ") + theme::TEXT + empty + "\r\n";
         listPrompt();
         return;
     }
@@ -390,7 +394,7 @@ void FileBrowser::netStart() {
         refuse(netWhy(r == NetFilesView::kBusy ? "busy" : r == NetFilesView::kGone ? "gone" : ""));
         return;
     }
-    out_ += std::string("\r\n   ") + DIM + "Connecting to " + netHome_ + "..." + HI;
+    out_ += std::string("\r\n   ") + DIM + "Connecting to " + netHome_.substr(0, 30) + "..." + HI;
     st_ = St::NetConnect;
 }
 
@@ -398,7 +402,10 @@ void FileBrowser::netPoll() {
     uint32_t    size = 0;
     const char* word = "stopped";
     int         r = net_.poll ? net_.poll(size, word) : -1;
-    if (r > 0) startTransfer();
+    if (r > 0) {
+        if (size) netSize_ = size;  // (the home board's answer over the listing's)
+        startTransfer();
+    }
     if (r >= 0) return;
     if (net_.release) net_.release();  // (a failed fetch frees the board's slot now, not after its idle minute)
     out_ += "\r\n";
@@ -609,7 +616,8 @@ void FileBrowser::startTransfer() {
 #endif
         char est[48];
         std::snprintf(est, sizeof est, "about %u s at 24 KB/s", (unsigned)(size / 24576 + 1));
-        out_ += theme::window("DOWNLOAD", {{"file", req_.name}, {"size", fileSizeText(size) + "  (" + std::to_string(size) + " bytes)"},
+        out_ += theme::window("DOWNLOAD", {{"file", req_.name.substr(0, 45)},  // (the window's value width)
+{"size", fileSizeText(size) + "  (" + std::to_string(size) + " bytes)"},
                                            {"protocol", proto}, {"time", est}});
         out_ += "\r\n  " + theme::fade("Start your terminal's download now.") + "  " + theme::key("Ctrl-X", " x5 cancels") + "\r\n";
     }

@@ -56,6 +56,9 @@ public:
     bool banned(const std::string& board) const;
     bool held(const std::string& postId) const;
     bool killed(const std::string& postId) const;
+    // Moves whenever a notice is applied, notices are pruned or the state is loaded: what banned, held and killed
+    // answer may have changed (NetCore's cached count of live listings).
+    uint32_t gen() const { return gen_; }
     uint32_t highSeq() const { return highSeq_; }
     // The highest notice seq ever applied here, kept across pruning and restarts (save writes it as "H <seq>");
     // a new notice from Rev's board takes the one after max(this, highSeq), so no seq is ever used twice.
@@ -110,6 +113,7 @@ private:
     std::vector<Entry> rotates_;                                     // seq order, at most kMaxRotates
     std::function<bool(const std::string&)> pinned_;
     uint64_t counter_ = 0;
+    uint32_t gen_ = 0;
     uint32_t highSeq_ = 0;
     uint32_t usedSeq_ = 0;  // never lowered
     uint32_t posts_ = kDefaultPostsPerDay;

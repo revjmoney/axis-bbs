@@ -552,6 +552,7 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     m.date = netDateText(clockSet() && l.date > now_() ? now_() : l.date);  // as storePost
     m.net = line;
     if (!idxHead(false)) return res(Took::Rejected, "rejected store", kNakStore);
+    liveCount_ = -1;  // (the count of live listings is taken again)
     int num = store_.post(kNetFilesArea, m);
     if (!num) {
         idx_ = Idx::Unknown;
@@ -625,12 +626,18 @@ std::string NetCore::originateListing(NetListing l) {
 
 int NetCore::listingsPage(int skip, int max, FnRef<void(const NetListing&)> each) {
     if (skip < 0 || max <= 0) return -1;
-    // Newest first: one scan counts the live ones, the next takes the page (positions oldest first).
-    int n = 0, i = 0;
-    eachListing([&](const Message&, const NetListing& l) {
-        n += shown(l);
-        return true;
-    });
+    // Newest first, positions oldest first. The count of live listings is kept until the area or the notices change
+    // (liveCount_), so a page is one scan, which stops once the page is in.
+    if (liveCount_ < 0 || liveGen_ != state_.gen()) {
+        int c = 0;
+        eachListing([&](const Message&, const NetListing& l) {
+            c += shown(l);
+            return true;
+        });
+        liveCount_ = c;
+        liveGen_ = state_.gen();
+    }
+    int n = liveCount_, i = 0;
     int lo = n - skip - max, hi = n - skip;
     if (hi <= 0) return -1;
     std::vector<NetListing> page;
@@ -740,6 +747,7 @@ void NetCore::trimListings(uint32_t nowDay, bool clock) {
     uint32_t n = 0;
     std::vector<uint32_t> gone;  // the numbers dropped, ascending (store order), for the index
     if (!idxHead(false)) return;
+    liveCount_ = -1;
     int dropped = store_.drop(kNetFilesArea, [&](const Message& m) {
         NetListing l;
         if (!decode(m.net, l)) return false;

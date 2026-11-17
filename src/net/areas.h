@@ -477,6 +477,10 @@ private:
     uint32_t idxPos_ = 0;  // where a rebuild goes on in the area
     std::function<void(void*, size_t)> idxRandom_;
     uint8_t listingDrops_ = 0;  // this session's (listingSessionStart)
+    // Live listings in kNetFilesArea for listingsPage, -1 to count again (every post or drop there sets it), taken at
+    // state gen liveGen_ (a notice can change what is shown).
+    int      liveCount_ = -1;
+    uint32_t liveGen_ = 0;
     uint8_t listingDropsToday_ = 0;  // this day's, across sessions (listingDropAllowed)
     uint32_t listingDropsDay_ = 0;   // the day it counts (day(), with the clock set; trim resets it without one)
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;

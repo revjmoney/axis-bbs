@@ -24,7 +24,9 @@ namespace axis::bbs {
 // which the host runs over its fetch slot. Every text in it is peer text the host has already made safe (netSafe).
 struct NetFilesView {
     enum : int { kStarted = 0, kBusy, kGone, kUnreachable, kOff, kOwn };  // begin's answers (the host's NetFetchBegin)
-    // one page, newest first: files (name, size, description), their listing ids and home board names; next skip or -1
+    static constexpr int kShort = -2;  // page's answer when the board is short of memory now (nothing listed)
+    // one page, newest first: files (name, size, description), their listing ids and home board names; next skip, -1
+    // for none, or kShort
     std::function<int(int skip, int max, std::vector<FileEntry>& out, std::vector<std::string>& ids,
                       std::vector<std::string>& homes)>
                                                       page;

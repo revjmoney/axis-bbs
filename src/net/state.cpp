@@ -229,6 +229,7 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
     Group g = groupOf(n);
     if (g == Group::None) return false;
     if (!verifyAt(n)) return false;
+    gen_++;  // (what banned, held and killed say may change)
 
     if (g == Group::Rotate) {
         if (rotates_.size() >= kMaxRotates) return false;
@@ -304,6 +305,7 @@ void NetState::restamp(uint32_t nowDay) {
 
 void NetState::prune(uint32_t nowDay) {
     restamp(nowDay);
+    gen_++;
     for (auto i = notices_.begin(); i != notices_.end();) {
         if (i->first.first == "post" && nowDay > i->second.day &&
             nowDay - i->second.day > kPostNoticeDays)
@@ -403,6 +405,7 @@ std::string NetState::save() const {
 }
 
 void NetState::load(const std::string& text, uint32_t nowDay) {
+    gen_++;
     cards_.clear();
     notices_.clear();
     rotates_.clear();
