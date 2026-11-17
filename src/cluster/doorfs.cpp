@@ -62,7 +62,8 @@ std::string DoorFsServer::handle(const std::string& request) {
     if (req.empty()) return no();
     char op = req[0];
     auto f = splitN(req.size() > 1 ? req.substr(2) : std::string(), op == 'w' ? 2 : 8);
-    auto a = [&](size_t i) { return i < f.size() ? f[i] : std::string(); };
+    if (f.size() < 8) f.resize(8);  // (missing fields read empty)
+    auto a = [&](size_t i) -> const std::string& { return f[i]; };
     if (op == 'B') {  // begin a door: its folder
         if (!fs_ || door_ != a(0)) {
             fs_ = open_(a(0));

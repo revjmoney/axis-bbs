@@ -259,7 +259,8 @@ std::string serveMessages(MessageStore& st, const std::string& req) {
     if (req.size() < 3 || req[0] != 'M') return "0";
     char op = req[1];
     auto f = split(req.substr(3), kSep, op == 'p' ? 6 : 3);
-    auto a = [&](size_t i) { return i < f.size() ? f[i] : std::string(); };
+    if (f.size() < 8) f.resize(8);  // (missing fields read empty)
+    auto a = [&](size_t i) -> const std::string& { return f[i]; };
     if (op == 'h') {
         std::string out = "1";
         for (const Message& m : st.headers(a(0)))
