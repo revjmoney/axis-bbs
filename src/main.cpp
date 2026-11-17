@@ -3959,9 +3959,11 @@ static axis::net::ServeFile netServeCheck(NetHost& h, const axis::net::NetFetch&
     return r;
 }
 
+static void netServePump(NetHost& h);
 // axisServe read "AXISFILE 1 ": one fetch call served at a time, apart from the sync sessions.
 static void netServeAccept(WiFiClient& c, const std::string& got) {
     NetHost* h = netHost.get();
+    if (h && h->serve.closing) netServePump(*h);  // a half-closed call whose dialer closed frees the slot (a redial can come first)
     uint32_t ip = (uint32_t)c.remoteIP();
     bool     ok = h && h->appsLoaded && boardCfg->netSysop && !asFollower() && !h->serve.s && h->core->listingIndexReady() && netHeapOk() &&
               !netBackedOff(ip);

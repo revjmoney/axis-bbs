@@ -405,6 +405,48 @@ TEST_CASE("fetch: a call closed short is asked again from where the sender reads
     CHECK(c.cli->verified());
 }
 
+// A call that closes after OK and before its first data byte has no checkpoint yet: main's redial (checkpoint at or below
+// where the sender reads) starts again from the pass's own start with its start state, so the crc stays on (never a
+// forward, unverified download) and a home copy changed under the second call is still caught.
+TEST_CASE("fetch: a call closed short before any byte is asked again with the crc still on; a changed byte then fails crc") {
+    for (bool flip : {false, true}) {
+        CAPTURE(flip);
+        Call c(40000);
+        c.start(0);
+        for (int i = 0; i < 50 && c.cli->state() != St::Streaming; i++) {  // the handshake; only the OK line reaches it
+            std::string o = c.cli->takeOut();
+            if (o.compare(0, 11, "AXISFILE 1 ") == 0) o.erase(0, 11);
+            if (!o.empty()) c.srv->feed(o.data(), o.size());
+            std::string in = c.srv->takeOut(4096);
+            size_t      ok = in.find("OK ");
+            if (ok != std::string::npos) in.resize(in.find("\r\n", ok) + 2);  // then the socket closes
+            c.cli->feed(in.data(), in.size());
+        }
+        REQUIRE(c.cli->state() == St::Streaming);
+        CHECK(c.cli->reached() == 0);
+        uint32_t at = 1, cs = 0;
+        REQUIRE(c.cli->checkpoint(c.cli->aimed(), at, cs));  // as netFetchRedial: not the forward (unchecked) branch
+        CHECK(at == 0);
+        CHECK(cs == 0xFFFFFFFFu);
+        FetchClient::CrcMarks marks = c.cli->takeMarks();
+        if (flip) c.flipAt = 30000;
+        c.start(at, cs, at);
+        c.cli->giveMarks(std::move(marks));
+        c.cli->aim(0);
+        c.connect();
+        REQUIRE(c.cli->state() == St::Streaming);
+        CHECK(c.cli->crcPos() != kFetchNoCrc);
+        std::vector<uint8_t> got = c.drain(0, 1000);
+        if (!flip) {
+            CHECK(got == c.file);
+            CHECK(c.cli->verified());
+        } else {
+            CHECK(c.cli->state() == St::Failed);
+            CHECK(std::string(c.cli->why()) == "crc");
+        }
+    }
+}
+
 TEST_CASE("fetch: an offset past the listing's size fails size before any call") {
     Call c(5000);
     FetchClient f(c.l, pubOf(homeKey()), "Caller", myKey(), boardOf(myKey()), nonce(0x51), 5001);

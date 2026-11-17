@@ -173,8 +173,9 @@ public:
         End     ends[kFetchRetries + 1];  // where each earlier call stopped, and its state there
         uint8_t nEnds = 0;
     };
-    // The checkpoint at or below off (and at or below crcPos): its offset and state. False when there is none (the crc
-    // is not on).
+    // The checkpoint at or below off (and at or below crcPos): its offset and state. Before any byte of a pass came, that
+    // is the pass's own start (so a call that closed after OK and before the first byte is asked again still checked).
+    // False when there is none (the crc is not on).
     bool     checkpoint(uint32_t off, uint32_t& at, uint32_t& state) const;
     CrcMarks takeMarks();           // for the next client of a re-request (the table itself moves, with this pass's end)
     void     giveMarks(CrcMarks m);  // from the last client: its checkpoints and the calls' ends, checked as this pass goes

@@ -232,7 +232,12 @@ void FetchClient::hash(const uint8_t* p, size_t n) {
 }
 
 bool FetchClient::checkpoint(uint32_t off, uint32_t& at, uint32_t& state) const {
-    if (!crcOn_ || !marks_.count) return false;
+    if (!crcOn_) return false;
+    if (!marks_.count) {  // no byte came on this pass (any byte records the first): its own start, with its start state
+        at = crcPos_;
+        state = crc_;
+        return crcPos_ == start_ && start_ <= off;
+    }
     size_t i = std::min<size_t>({off / marks_.step, crcPos_ / marks_.step, (size_t)marks_.count - 1});  // (one this pass checked)
     at = (uint32_t)(i * marks_.step);
     state = marks_.state[i];

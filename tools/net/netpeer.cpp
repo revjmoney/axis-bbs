@@ -1304,6 +1304,8 @@ int main(int argc, char** argv) {
             if (auto c = listener->accept(busy ? 0 : 20, false)) {
                 std::string first = sniff(*c, 200);  // a fetch call (AXISFILE 1) or a sync (AXISNET 2)
                 if (first.compare(0, 11, "AXISFILE 1 ") == 0) {
+                    // an ended call whose dialer has closed frees the slot first (its redial may come before the next pump)
+                    if (serve.s && serve.ending) pumpServe(serve);
                     if (serve.s) {
                         const char no[] = "NO busy\r\n";
                         c->write((const uint8_t*)no, sizeof no - 1);
