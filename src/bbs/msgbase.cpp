@@ -161,6 +161,16 @@ std::string FileMessageStore::path(const std::string& area) const {
     return root_ + "/" + a + ".msg";
 }
 
+// post, scanHeaders, scanHeadersFrom and readAt share one scan (a function and its context, not a lambda type each).
+namespace {
+struct Visit {
+    bool (*fn)(void* ctx, Message& m);
+    void* ctx;
+    bool  operator()(Message& m) const { return fn(ctx, m); }
+};
+bool visitEach(void* each, Message& m) { return (*(const std::function<bool(const Message&)>*)each)(m); }
+}  // namespace
+
 std::vector<Message> FileMessageStore::headers(const std::string& area) {
     std::vector<Message> v;
     scan(path(area), kCut, [&](const Message& m) {
@@ -208,10 +218,12 @@ int FileMessageStore::drop(const std::string& area, const std::function<bool(con
 
 int FileMessageStore::post(const std::string& area, const Message& m) {
     int last = 0;
-    scan(path(area), kCut, [&](const Message& h) {
-        if (h.num > last) last = h.num;
-        return true;
-    });
+    scan(path(area), kCut, Visit{[](void* ctx, Message& h) {
+                                     int& last = *(int*)ctx;
+                                     if (h.num > last) last = h.num;
+                                     return true;
+                                 },
+                                 &last});
     return FileMessageStore::postAfter(area, last, m);
 }
 
@@ -222,16 +234,6 @@ int FileMessageStore::postAfter(const std::string& area, int last, const Message
     ok = std::fclose(out) == 0 && ok;
     return ok ? last + 1 : 0;
 }
-
-// scanHeaders, scanHeadersFrom and readAt share one scan (a function and its context, not a lambda type each).
-namespace {
-struct Visit {
-    bool (*fn)(void* ctx, Message& m);
-    void* ctx;
-    bool  operator()(Message& m) const { return fn(ctx, m); }
-};
-bool visitEach(void* each, Message& m) { return (*(const std::function<bool(const Message&)>*)each)(m); }
-}  // namespace
 
 void FileMessageStore::scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) {
     scan(path(area), kListing, Visit{visitEach, (void*)&each});
