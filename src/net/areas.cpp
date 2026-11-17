@@ -460,6 +460,16 @@ bool NetCore::listingIndexStep() {
 
 // ---- taking and making listings ----
 
+// The daily count is keyed on day() as ingress is, with the clock set; without one, day() does not move and trim (run
+// once per day of uptime) resets it.
+bool NetCore::listingDropAllowed() {
+    if (clockSet() && day() != listingDropsDay_) {
+        listingDropsDay_ = day();
+        listingDropsToday_ = 0;
+    }
+    return listingDrops_ < kNetListingDropsPerSession && listingDropsToday_ < kNetListingDropsPerDay;
+}
+
 NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromPeer, bool history, const char** nak) {
     syncLimits();
     std::string id = listingId(l);
@@ -520,15 +530,14 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
         seen_.add(id, day());
         return res(Took::Duplicate, removed ? "duplicate removed" : "duplicate replaced", nullptr);
     }
+    // A peer's listing that replaces or removes one held costs a rewrite of the area: a few a session and a few more
+    // a day, then the transient "store" (before ingress is charged and before anything is stored, so a name never
+    // holds two records). This board's own are not counted.
+    if (!lower.empty() && !fromPeer.empty() && !listingDropAllowed()) return res(Took::Rejected, "rejected store", kNakStore);
     // 8. ingress, counting the line (history pulls are capped by the session; Rev's boards and this board are not)
     uint32_t today = day();
     if (!history && l.board != myBoard_ && !isRevBoard(l.board) && !ingress_.allow(l.board, line.size(), today))
         return res(Took::Limited, "limited", kNakLimited);
-    // A peer's listing that replaces or removes one held costs a rewrite of the area: a few a session, then the
-    // transient "store" (before anything is stored, so a name never holds two records). This board's own are not
-    // counted.
-    if (!lower.empty() && !fromPeer.empty() && listingDrops_ >= kNetListingDropsPerSession)
-        return res(Took::Rejected, "rejected store", kNakStore);
     // 9. store, with the index marked unclean around the change (a reset in between rebuilds it)
     Message m;
     m.from = l.uploader;
@@ -544,7 +553,10 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     }
     seen_.add(id, today);
     if (!lower.empty()) {
-        if (!fromPeer.empty()) listingDrops_++;
+        if (!fromPeer.empty()) {
+            listingDrops_++;
+            listingDropsToday_++;
+        }
         // It replaces the records of its name below it: one rewrite of the area, then the index built again (every
         // offset after the first one dropped moved). A count that is not what was asked leaves the index unclean.
         if (store_.drop(kNetFilesArea, [&](const Message& x) {
@@ -1070,6 +1082,7 @@ std::string NetCore::saveCursors() const {
     if (history_ >= 0) out += history_ ? "history 1\n" : "history 0\n";
     out += userHistory_ ? "uhistory 1\n" : "uhistory 0\n";
     out += filesHistory_ ? "fhistory 1\n" : "fhistory 0\n";
+    if (!filesHistory_ && filesHeld_) out += "fheld " + std::to_string(filesHeld_) + "\n";
     return out;
 }
 
@@ -1077,6 +1090,7 @@ void NetCore::loadCursors(const std::string& text) {
     links_.clear();
     history_ = -1;
     userHistory_ = filesHistory_ = false;
+    filesHeld_ = 0;
     size_t pos = 0;
     while (pos < text.size()) {
         size_t e = text.find('\n', pos);
@@ -1091,6 +1105,10 @@ void NetCore::loadCursors(const std::string& text) {
         }
         if (t.size() == 2 && (t[0] == "uhistory" || t[0] == "fhistory") && (t[1] == "0" || t[1] == "1")) {
             (t[0][0] == 'u' ? userHistory_ : filesHistory_) = t[1] == "1";
+            continue;
+        }
+        if (t.size() == 2 && t[0] == "fheld" && t[1].size() == 1 && t[1][0] >= '0' && t[1][0] <= '9') {
+            filesHeld_ = (uint8_t)std::min<uint32_t>((uint32_t)(t[1][0] - '0'), kNetFilesHeldPulls);
             continue;
         }
         Link l;
@@ -1159,6 +1177,7 @@ void NetCore::trim(uint32_t nowUnix) {
     bool clock = nowUnix > kNetClockSet;
     if (clock && nowDay == lastTrimDay_) return;  // once a day: the area rewrites below touch the SD card
     lastTrimDay_ = nowDay;
+    if (!clock) listingDropsToday_ = 0;  // a day of uptime: the daily listing drop budget is full again
     state_.prune(nowDay);
     seen_.prune(nowDay);
     log_.trimTo(kOutLogKeep);

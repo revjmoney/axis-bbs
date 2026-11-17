@@ -177,7 +177,7 @@ private:
     bool userGot_ = false;  // a U line this side took or already held: only then does UEND mark the pull done
     // The listings pull this side asked for (un_files in its UWANT to a net3 peer); UEND F marks it done. U listing
     // lines taken this session.
-    bool uAskFiles_ = false, uFilesHeld_ = false;  // held: an L U line was refused with a transient word
+    bool uAskFiles_ = false, uFilesHeld_ = false;  // held: an L U line was refused "store"
     uint32_t userListsTaken_ = 0;
     uint32_t postsSent_ = 0, postsTaken_ = 0, naks_ = 0, naksSent_ = 0;
 };

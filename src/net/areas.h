@@ -76,6 +76,8 @@ constexpr uint32_t kNetGoneKeepDays = 120;      // a tombstone is kept this long
 constexpr uint32_t kNetGoneKeepCount = 200;     // without a clock, the newest this many tombstones are kept
 constexpr uint32_t kNetIndexStep = 32;          // listings a rebuild of the listing index takes per call
 constexpr uint32_t kNetListingDropsPerSession = 8;  // listings from peers that may replace or remove one held, per session
+constexpr uint32_t kNetListingDropsPerDay = 64;     // the same, per day across every session (uptime days without a clock)
+constexpr uint32_t kNetFilesHeldPulls = 3;          // listings pulls in a row that may end held before fhistory is done anyway
 
 // The words a receiver puts after NAK <index>. Permanent ones move the sender's cursor past the entry;
 // transient ones (nocard, store) do not: the sender sends nothing more that session and tries the
@@ -223,7 +225,8 @@ public:
         idx_ = Idx::Unknown;
     }
     // A session starts: the budget of listings from peers that may replace or remove a held one (each a rewrite of
-    // the area) is full again. Past it such a listing is refused with the transient "store", before it is stored.
+    // the area) is full again. Past it, or past the daily budget (kNetListingDropsPerDay, which a session start does
+    // not reset), such a listing is refused with the transient "store", before ingress and before it is stored.
     void listingSessionStart() { listingDrops_ = 0; }
     // One bounded piece of index work (a look at the head, or a piece of a rebuild); the host calls it from its idle
     // tick. True while more is to do.
@@ -268,7 +271,8 @@ public:
     bool nakedTransient(const std::string& peer, uint32_t index);
     // "<peer> <index> <last sync unix> <out|in> <completed sessions>" per line, "history <0|1>" once
     // whether the history pull is done is known, "uhistory <0|1>" (the User Net pull) and "fhistory <0|1>" (the
-    // listings pull). On load the pool field is optional: without it a
+    // listings pull), and "fheld <n>" while that pull is open and has ended held n times in a row (filesHistoryHeld).
+    // On load the pool field is optional: without it a
     // peer goes to the outbound pool while it has room, else the inbound one. Without the sessions
     // field (an older file) a peer counts as trusted: it was a link peer before this build.
     std::string saveCursors() const;
@@ -297,13 +301,24 @@ public:
     // board becomes a member or starts carrying another area.
     bool needUserHistory() const { return !userHistory_; }
     void userHistoryGot() { userHistory_ = true; }
-    void resetUserHistory() { userHistory_ = filesHistory_ = false; }  // the listings pull too
+    void resetUserHistory() {  // the listings pull too
+        userHistory_ = filesHistory_ = false;
+        filesHeld_ = 0;
+    }
     // The listings pull (asked with UWANT of a net3 peer while this board is a member carrying un_files), its own
     // flag, so a board upgraded from Phase 2 with uhistory done still gets the listings held before: done when a
-    // pull reached "UEND F" (the peer sent every listing it holds) with none refused for now and the session's
+    // pull reached "UEND F" (the peer sent every listing it holds) with none refused "store" and the session's
     // listing cap not reached (NetSession). Saved with the cursors as "fhistory".
     bool needFilesHistory() const { return !filesHistory_; }
-    void filesHistoryGot() { filesHistory_ = true; }
+    void filesHistoryGot() {
+        filesHistory_ = true;
+        filesHeld_ = 0;
+    }
+    // A pull reached "UEND F" with a listing refused "store" (say past a drop budget): counted, saved with the cursors
+    // as "fheld <n>"; the kNetFilesHeldPulls-th in a row marks the pull done anyway, so it cannot repeat forever.
+    void filesHistoryHeld() {
+        if (++filesHeld_ >= kNetFilesHeldPulls) filesHistoryGot();
+    }
     // The apps file line at off, if it is a record held now (members().holds). For a User Net pull, which
     // walks members().offsets().
     bool userRecord(uint32_t off, std::string& line);
@@ -387,6 +402,7 @@ private:
     void eachListing(const std::function<bool(const bbs::Message& m, const NetListing& l)>& each);
     bool shown(const NetListing& l) const;  // live, and not held, killed or from a banned board
     void trimListings(uint32_t nowDay, bool clock);
+    bool listingDropAllowed();  // both drop budgets, this session's and this day's, have room
     // The listing index (setListingIndex). key: the keyed hash of "<board>|<area>|<name>", board: the keyed hash of
     // the board id, flags 1 for a tombstone, at where the message starts in the area.
     struct IdxRec {
@@ -444,12 +460,15 @@ private:
     uint32_t idxPos_ = 0;  // where a rebuild goes on in the area
     std::function<void(void*, size_t)> idxRandom_;
     uint8_t listingDrops_ = 0;  // this session's (listingSessionStart)
+    uint8_t listingDropsToday_ = 0;  // this day's, across sessions (listingDropAllowed)
+    uint32_t listingDropsDay_ = 0;   // the day it counts (day(), with the clock set; trim resets it without one)
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;
     std::string firstPeer_;
     int8_t history_ = -1;  // see historyState
     bool userHistory_ = false;  // a User Net pull reached UEND
     bool filesHistory_ = false;  // a listings pull reached UEND F
+    uint8_t filesHeld_ = 0;      // listings pulls in a row that ended held (filesHistoryHeld)
     std::vector<std::string> userAreas_;
     std::function<bool(const std::string&, uint32_t&)> appsAppend_;
     std::function<void(const AppsLineFn&)> appsScan_;

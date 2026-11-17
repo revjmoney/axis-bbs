@@ -35,9 +35,9 @@
 // (as HEND). A sender that sent the listings ends with "UEND F" (only ever to a net3 peer, so a Phase 2
 // board never sees it). The listings pull has its own flag (NetCore::needFilesHistory, saved as fhistory):
 // a member carrying un_files sends UWANT to a net3 peer until a pull ends with UEND F (the peer sent every
-// listing it holds; one refused for good here would be refused again), with no L line refused for now
-// (a transient word, say past NetCore's per-session drop budget) and the session's listing cap not
-// reached. So a board upgraded from Phase 2, whose User Net pull was done long ago, still pulls the
+// listing it holds; one refused for good here would be refused again), with no L line refused "store"
+// (say past one of NetCore's drop budgets; "nocard" does not hold it) and the session's listing cap not
+// reached; after kNetFilesHeldPulls such held pulls in a row it is done anyway. So a board upgraded from Phase 2, whose User Net pull was done long ago, still pulls the
 // listings once. A, V and L records go out only on E and U lines, never on S or H lines; E lines with A, V
 // or un_ posts go only to a net2 peer, and L lines only to a net3 peer (before an L line, its home
 // board's card goes on an S line as for a post). At most kSyncUserEMax A, V and L E lines are taken
@@ -354,8 +354,12 @@ void NetSession::syncLine(std::string& l) {
         // nothing to give (a stranger, a fresh board, or one answering UEND at once) leaves it to the next.
         if (userGot_) core_.userHistoryGot();
         // The listings: done, the peer sent every one it holds (one refused for good would be refused again), unless
-        // one was refused for now (say past the drop budget) or the session's listing cap was reached.
-        if (rest == "F" && uAskFiles_ && !uFilesHeld_ && userListsTaken_ < kSyncUserListingsMax) core_.filesHistoryGot();
+        // the session's listing cap was reached. One refused "store" (say past a drop budget) holds it open, for at
+        // most kNetFilesHeldPulls pulls in a row; the last of them marks it done anyway.
+        if (rest == "F" && uAskFiles_ && userListsTaken_ < kSyncUserListingsMax) {
+            if (uFilesHeld_) core_.filesHistoryHeld();
+            else core_.filesHistoryGot();
+        }
         return;
     }
     if (!rest.empty()) return fail("bad line", "bad");
@@ -532,7 +536,9 @@ void NetSession::takeUser(std::string_view rec, std::string& line) {
         const char* why = nullptr;
         NetCore::Took t = core_.takeListing(l, peer_, true, &why);
         if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userGot_ = true;
-        if (why && netNakTransient(why)) uFilesHeld_ = true;  // one this side may take later: the pull is not done
+        // Refused "store": one this side may take later, so the pull is not done. Not "nocard": a U sender sends no
+        // card first, and a home card missing here may never come, so it must not hold the pull open.
+        if (why && std::string_view(why) == kNakStore) uFilesHeld_ = true;
         return;
     }
     if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {
