@@ -39,6 +39,11 @@ constexpr uint32_t    kDrainMs = 15000;      // AXIS's last screen going out bef
 constexpr uint32_t    kAnswerMs = 5000;      // a call AXIS has not answered by now is logged
 constexpr size_t      kToAxisMax = 8192;     // the caller's bytes waiting for AXIS: past this the tty is not read
 constexpr size_t      kLineMax = 512;        // one modem result line, at most
+constexpr uint32_t    kEscapeTries = 3;      // +++ tries per hang-up, the guard doubled each time
+constexpr uint32_t    kGuardMaxMs = 10000;   // a doubled guard, at most
+constexpr uint32_t    kStopGuardMs = 1500;   // a stop's guard, at most: guard, +++, guard, ATH and its answer fit the
+                                             // shutdown's 4.5 s radio wait (main_linux.cpp) inside its 5 s alarm
+constexpr uint32_t    kStrandRetryMs = 60000;  // a stranded call: +++ is tried again this often
 
 constexpr uint8_t IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240;
 constexpr uint8_t kOptLink = 90;  // LFD3K-LINK
@@ -46,14 +51,16 @@ constexpr uint8_t kOptLink = 90;  // LFD3K-LINK
 enum class St {
     Off,     // no modem asked for
     Closed,  // the tty is not open: tried again every kRetryMs
-    Settle,  // just opened: input thrown away for kSettleMs
+    Settle,  // just opened: input thrown away for kSettleMs, then guard, +++, guard, ATH (M.opening) before AT&V
     Probe,   // AT&V sent: the station name read, RING still answered
     Idle,    // result lines: RING answered with ATA, CONNECT starts a call
     Call,    // bytes pumped between the tty and AXIS's socket
     Drain,   // AXIS hung up: its last bytes go out to the caller
     Guard1,  // quiet before +++
-    Guard2,  // +++ sent: quiet after it
+    Guard2,  // +++ sent: quiet after it, the modem's OK awaited
     Ath,     // ATH sent: its answer awaited
+    Stranded,  // the hang-up failed, the modem may still be online with the caller: its bytes are thrown away (no RING
+               // or CONNECT is acted on) until a framed NO CARRIER; +++ is tried again every kStrandRetryMs
 };
 
 struct ModemLine {
@@ -68,7 +75,12 @@ struct ModemLine {
     std::string station;  // AT&V's NAME
     std::string lines;    // modem output not yet split into lines (Probe, Idle)
     std::string toTty;    // bytes waiting for the tty
-    std::string reply;    // ATH's answer so far
+    std::string reply;    // the answer to +++ or ATH so far
+    // the hang-up
+    uint32_t    tries = 0;            // +++ tries that got no OK, this hang-up
+    bool        opening = false;      // the hang-up run on every open, before AT&V (ATH goes even with no OK to +++)
+    bool        carrierGone = false;  // a framed NO CARRIER came during the hang-up: the modem is in command mode
+    bool        openUnsure = false;   // the open's ATH got no OK or NO CARRIER: AT&V must get an answer, or stranded
     // the call
     int         sock = -1;  // this end of the socketpair; AXIS has the other
     std::string toAxis;     // bytes waiting for AXIS (caller keys, telnet answers, link reports)
@@ -370,10 +382,45 @@ std::string counts() {
     return s + ")";
 }
 
+const std::string kOk = "\r\nOK\r\n", kError = "\r\nERROR\r\n";
+
+// Guard time for this +++ try: modem_guard_ms doubled for each try that got no OK, and clamped while stopping.
+uint32_t guardNow() {
+    uint32_t g = M.guardMs;
+    for (uint32_t i = 0; i < M.tries && g < kGuardMaxMs; i++) g *= 2;
+    g = std::min(g, kGuardMaxMs);
+    return stopping ? std::min(g, kStopGuardMs) : g;
+}
+
+void beginHangUp(uint32_t now) {  // drain, guard, +++, guard, ATH
+    M.tries = 0;
+    M.opening = M.carrierGone = false;
+    enter(St::Drain, now);
+}
+
+void escapeAgain(uint32_t now, bool opening) {  // guard, +++, guard, ATH, with no call bytes to drain
+    M.tries = 0;
+    M.opening = opening;
+    M.carrierGone = false;
+    M.held.clear();
+    M.toTty.clear();
+    enter(St::Guard1, now);
+}
+
+void strand(uint32_t now, const std::string& why) {
+    say("WARNING: " + why + ": the modem may still be online with the caller. Its bytes are ignored now (no RING or "
+        "CONNECT is acted on) until its NO CARRIER" + (stopping ? std::string("") : ", and +++ is tried again every minute"));
+    M.lines.clear();
+    M.held.clear();
+    M.toTty.clear();
+    M.opening = false;
+    enter(St::Stranded, now);
+}
+
 void hangUp(uint32_t now, const std::string& why) {  // AXIS ended the call: drain, guard, +++, guard, ATH
     say(why + " " + counts() + ", hanging up");
     endCall();
-    enter(St::Drain, now);
+    beginHangUp(now);
 }
 
 void noCarrier(uint32_t now) {  // the caller hung up (or the link dropped): AXIS's socket closes, back to result lines
@@ -388,7 +435,7 @@ void startCall(uint32_t now, const std::string& connect, const std::string& rest
     int sv[2];
     if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, sv) < 0) {
         say(std::string("no socket for the call (") + std::strerror(errno) + "), hanging up");
-        enter(St::Guard1, now);
+        beginHangUp(now);
         return;
     }
     M.sock = sv[0];
@@ -436,6 +483,7 @@ void resultLines(uint32_t now, const std::string& data) {
             for (size_t i = 0; i + 1 < w.size(); i++)
                 if (w[i] == "NAME") M.station = w[i + 1];
             if (text == "OK" || text == "ERROR") {
+                M.openUnsure = false;
                 say("station " + (M.station.empty() ? std::string("unknown") : printable(M.station)) +
                     ", answering radio calls");
                 enter(St::Idle, now);
@@ -452,7 +500,7 @@ void resultLines(uint32_t now, const std::string& data) {
             if (stopping) {  // answered just before the stop: hang it straight up
                 say(printable(text) + " while axis is stopping, hanging up");
                 M.lines.clear();
-                enter(St::Drain, now);
+                beginHangUp(now);
                 return;
             }
             if (M.st == St::Probe) say("station " + (M.station.empty() ? std::string("unknown") : printable(M.station)));
@@ -478,10 +526,9 @@ void step(uint32_t now) {
     switch (M.st) {
     case St::Settle:
         if (!ttyRead(now, got, 65536)) return;
-        if (now - M.since >= kSettleMs) {
-            M.toTty += "AT&V\r";  // reads the settings, changes none
-            M.lines.clear();
-            enter(St::Probe, now);
+        if (now - M.since >= kSettleMs) {  // a call left up by the last run (a crash, a restart) is hung up first
+            say("guard, +++, guard, ATH before AT&V (in case a call was left up)");
+            escapeAgain(now, true);
         }
         break;
     case St::Probe:
@@ -489,6 +536,11 @@ void step(uint32_t now) {
         if (!ttyRead(now, got, 4096)) return;
         if (!got.empty()) resultLines(now, got);
         if (M.st == St::Probe && now - M.since >= kProbeMs) {
+            if (M.openUnsure) {  // neither ATH nor AT&V was answered: a call may be up that ignored the +++
+                M.openUnsure = false;
+                strand(now, "neither ATH nor AT&V got an answer at the start");
+                break;
+            }
             say("station " + (M.station.empty() ? std::string("unknown (no AT&V answer)") : printable(M.station)) +
                 ", answering radio calls");
             enter(St::Idle, now);
@@ -556,6 +608,7 @@ void step(uint32_t now) {
         if (!ttyRead(now, got, 4096)) return;
         if (std::string fwd; scanCarrier(got, now, fwd)) {  // the caller went first: +++ and ATH still go (harmless)
             say("NO CARRIER while hanging up (still sending +++ and ATH)");
+            M.carrierGone = true;
             M.toTty.clear();
         }
         if (now - M.since >= kDrainMs) M.toTty.clear();  // the radio has stopped taking bytes: give up on them
@@ -564,38 +617,106 @@ void step(uint32_t now) {
         break;
     case St::Guard1:
         if (!ttyRead(now, got, 4096)) return;
-        if (std::string fwd; scanCarrier(got, now, fwd)) say("NO CARRIER while hanging up (still sending +++ and ATH)");
-        if (now - M.since >= M.guardMs) {
+        if (std::string fwd; scanCarrier(got, now, fwd)) {
+            if (!M.opening) say("NO CARRIER while hanging up (still sending +++ and ATH)");
+            M.carrierGone = true;
+        }
+        if (now - M.since >= guardNow()) {
             M.toTty += "+++";
+            M.reply.clear();
+            M.held.clear();
             enter(St::Guard2, now);
         }
         break;
-    case St::Guard2:
-        if (!ttyRead(now, got, 4096)) return;
-        if (now - M.since >= M.guardMs) {
-            M.toTty += "ATH\r";
-            M.reply.clear();
-            enter(St::Ath, now);
-        }
-        break;
-    case St::Ath: {
+    case St::Guard2: {
+        // Nothing is written while the guard runs (a host byte would restart the modem's guard). Only a framed OK
+        // counts: in data mode a failed escape brings nothing back (the +++ went to the caller as call bytes).
         if (!ttyRead(now, got, 4096)) return;
         M.reply += got;
         if (M.reply.size() > kLineMax) M.reply.erase(0, M.reply.size() - kLineMax);
-        size_t code = std::min({M.reply.find("OK"), M.reply.find("ERROR"), M.reply.find("NO CARRIER")});
-        if (code != std::string::npos || now - M.since >= kAthMs) {
-            // The reply up to the end of the result code's line; all of it when no code came (the 3 s timeout) or
-            // its line has no end yet. (Only a '\n' that was found moves the cut past itself.)
-            size_t      nl = code == std::string::npos ? std::string::npos : M.reply.find('\n', code);
-            size_t      cut = nl == std::string::npos ? M.reply.size() : nl + 1;
-            std::string r = printable(M.reply.substr(0, cut)), after = M.reply.substr(cut);
-            while (r.find("  ") != std::string::npos) r.erase(r.find("  "), 1);
-            size_t a = r.find_first_not_of(' '), b = r.find_last_not_of(' ');
-            say("hang up: " + (a == std::string::npos ? std::string("no answer") : r.substr(a, b - a + 1)));
+        bool ok = M.reply.find(kOk) != std::string::npos;
+        if (M.reply.find(kNoCarrier) != std::string::npos) M.carrierGone = true;
+        if (!ok && now - M.since < guardNow()) break;
+        std::string bare;  // a modem in command mode with echo on gives back just the +++ (it is no escape there)
+        for (char c : M.reply)
+            if (c != '\r' && c != '\n' && c != ' ') bare.push_back(c);
+        if (ok || M.carrierGone || M.opening || bare == "+++") {
+            // The CR first ends any line a +++ left in a modem in command mode ("+++ATH" would be ERROR).
+            M.toTty += "\rATH\r";
+            M.reply.clear();
+            enter(St::Ath, now);
+        } else if (!stopping && ++M.tries < kEscapeTries) {
+            say("+++ got no OK (try " + std::to_string(M.tries) + " of " + std::to_string(kEscapeTries) +
+                "), trying again with a " + std::to_string(guardNow()) + " ms guard");
+            enter(St::Guard1, now);
+        } else {
+            strand(now, stopping ? std::string("+++ got no OK while axis is stopping, ATH not sent")
+                                 : "+++ got no OK after " + std::to_string(kEscapeTries) + " tries, ATH not sent");
+        }
+        break;
+    }
+    case St::Ath: {
+        // Only a framed result line counts (the caller's bytes are never taken for one). ATH answers NO CARRIER when
+        // it ended a call and OK when there was none.
+        if (!ttyRead(now, got, 4096)) return;
+        M.reply += got;
+        if (M.reply.size() > kLineMax) M.reply.erase(0, M.reply.size() - kLineMax);
+        size_t nc = M.reply.find(kNoCarrier), ok = M.reply.find(kOk);
+        if (nc != std::string::npos || ok != std::string::npos) {
+            bool        isNc = nc < ok;
+            size_t      end = isNc ? nc + kNoCarrier.size() : ok + kOk.size();
+            std::string after = M.reply.substr(end), code = isNc ? "NO CARRIER" : "OK";
             M.lines.clear();
             M.held.clear();
-            enter(St::Idle, now);
-            if (!after.empty()) resultLines(now, after);  // a RING right behind the OK is answered, not lost
+            M.reply.clear();
+            if (M.opening) {
+                say(isNc ? "a call left up from before is hung up (NO CARRIER)" : "on-hook (ATH: OK)");
+                M.opening = M.openUnsure = false;
+                M.toTty += "AT&V\r";  // reads the settings, changes none
+                enter(St::Probe, now);
+            } else {
+                say("hang up: " + code);
+                enter(St::Idle, now);
+            }
+            if (!after.empty()) resultLines(now, after);  // a RING right behind the code is answered, not lost
+        } else if (now - M.since >= kAthMs) {
+            bool err = M.reply.find(kError) != std::string::npos;
+            M.reply.clear();
+            if (M.opening) {  // AT&V may still settle it (an answer means command mode); none means stranded
+                say(std::string("ATH got ") + (err ? "ERROR" : "no answer") + " at the start, AT&V all the same");
+                M.opening = false;
+                M.openUnsure = true;
+                M.lines.clear();
+                M.toTty += "\rAT&V\r";
+                enter(St::Probe, now);
+            } else if (err) {  // the modem answered, so it is in command mode (ATH itself never answers ERROR)
+                say("hang up: ERROR (the modem did not confirm the hang-up, but it is in command mode)");
+                M.lines.clear();
+                M.held.clear();
+                enter(St::Idle, now);
+            } else {
+                strand(now, "the modem did not confirm the hang-up (no answer to ATH)");
+            }
+        }
+        break;
+    }
+    case St::Stranded: {
+        if (!ttyRead(now, got, 4096)) return;
+        std::string fwd;  // the caller's bytes: thrown away
+        if (scanCarrier(got, now, fwd)) {
+            say("NO CARRIER: the radio call that would not hang up is over, answering radio calls again");
+            M.lines.clear();
+            M.held.clear();
+            M.toTty += "\r";  // ends any line an unanswered +++ left in the modem's command line
+            if (M.station.empty()) {
+                M.toTty += "AT&V\r";
+                enter(St::Probe, now);
+            } else {
+                enter(St::Idle, now);
+            }
+        } else if (!stopping && now - M.since >= kStrandRetryMs) {
+            say("still stranded, trying +++ again");
+            escapeAgain(now, false);
         }
         break;
     }
@@ -611,6 +732,10 @@ void delayHook() { modemLinePoll(millis()); }
 void modemLineStart(const std::string& path) {
     mainThread = std::this_thread::get_id();
     M.guardMs = (uint32_t)hostConfInt("modem_guard_ms", 1200, 100, 10000);
+    if (!path.empty() && M.guardMs > kStopGuardMs)
+        say("modem_guard_ms is " + std::to_string(M.guardMs) + ": a stop (Ctrl-C, SIGTERM) uses " +
+            std::to_string(kStopGuardMs) + " ms guards to finish in time, so its +++ works only if the modem's own "
+            "guard (S12) is shorter than that");
     if (path.empty()) {
         say("none (give --modem /dev/ttyUSB0 or modem= in axis.conf for the " + std::string(kModemName) + ")");
         return;
@@ -621,27 +746,34 @@ void modemLineStart(const std::string& path) {
     modemLinePoll(millis());
 }
 
-bool modemLineBusy() {
-    return M.st == St::Call || M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2 || M.st == St::Ath;
+bool modemLineBusy() {  // a stranded call counts until the stop's own try at it has failed
+    return M.st == St::Call || M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2 || M.st == St::Ath ||
+           (M.st == St::Stranded && !stopping);
 }
 
 void modemLineHangUp() {
-    stopping = true;
     uint32_t now = millis();
+    bool     wasStranded = M.st == St::Stranded;
+    stopping = true;  // from here: guards clamped to kStopGuardMs, and one +++ try only
     if (M.st == St::Call) {
         say("axis is stopping, hanging up the radio caller " + counts());
         endCall();
+        beginHangUp(now);
     }
-    if (M.st == St::Call || M.st == St::Drain) {
-        M.toTty.clear();     // AXIS's last screen is dropped: the guard and +++ start as soon as the tty is quiet
-        enter(St::Drain, now);
+    if (M.st == St::Drain) M.toTty.clear();  // AXIS's last screen is dropped: the guard starts once the tty is quiet
+    if (wasStranded) {
+        say("axis is stopping: one more +++ for the call that would not hang up");
+        escapeAgain(now, false);
     }
 }
 
 void modemLineFinish() {
     if (M.fd >= 0 && !M.toTty.empty()) ttyFlush(millis());  // an ATH still queued goes out before the exit
-    if (M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2)
-        say("the hang-up did not finish before the exit: the modem may still be online");
+    if (M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2 || M.st == St::Ath)
+        say("WARNING: the hang-up did not finish before the exit: the modem may still be online (the next start hangs "
+            "it up)");
+    else if (M.st == St::Stranded)
+        say("WARNING: exiting with the modem still online with the caller (the next start hangs it up)");
 }
 
 void modemLinePoll(uint32_t nowMs) {
