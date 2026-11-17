@@ -1328,3 +1328,38 @@ TEST_CASE("fhistory: a held pull then a clean one is done, and the held count is
     CHECK(countPrefix(p.cursors(), "fheld") == 0);
     CHECK(p.r3.liveSeqs("NAME.ZIP") == std::vector<uint32_t>{5});
 }
+
+TEST_CASE("fhistory: a pull that reaches the session's listing cap counts as held; three in a row end it") {
+    RevKeys rk;
+    // A hand-driven net3 peer answers r3's UWANT with kSyncUserListingsMax listings (from x, whose card r3 does not
+    // hold: each is read, counted and refused nocard), then UEND F. A cap reached is not every listing the peer holds.
+    FNode     r3(0xE3);
+    RawDialer r(0xE4);
+    const KeyPair x = keyOf(0xE5);
+    r.card.links = kNetCardLinks;
+    REQUIRE(signCard(r.card, r.key));
+    r3.admit({&r3.board, &r.card.board});
+    REQUIRE(r3.seal("admit", boardOf(x), 90));
+    std::vector<std::string> us;
+    for (uint32_t i = 0; i < kSyncUserListingsMax; i++) us.push_back("U " + encode(makeListing(x, i + 1, "C" + std::to_string(i))));
+    for (int pull = 1; pull <= 3; pull++) {
+        NetSession s(r3.core, r3.card, r3.key, nonce((uint8_t)(10 + pull)), false, "");
+        r.handshake(s);
+        REQUIRE(s.proven());
+        s.tick(0, true);
+        CHECK(hasLine(s.takeOut(), "UWANT un_chat,un_tech,un_games,un_files"));
+        RawDialer::say(s, "SEQ 0");
+        RawDialer::say(s, "SEND");
+        for (const std::string& u : us) RawDialer::say(s, u);
+        RawDialer::say(s, "UEND F");
+        s.tick(10, true);
+        CHECK_FALSE(s.failed());
+        if (pull < 3) {
+            CHECK(r3.core.needFilesHistory());
+            CHECK(hasLine(r3.core.saveCursors(), "fheld " + std::to_string(pull)));
+        }
+    }
+    CHECK_FALSE(r3.core.needFilesHistory());
+    CHECK(hasLine(r3.core.saveCursors(), "fhistory 1"));
+    CHECK(countPrefix(r3.core.saveCursors(), "fheld") == 0);
+}

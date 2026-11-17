@@ -4,7 +4,12 @@
 // caps and the trim, what is shown, the listing index (/net/files.idx) and its rebuilds, and the drop budgets.
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 
+#include "bbs/features.h"
+#include "bbs/uploadproc.h"
+#include "bbs/zipreader.h"
 #include "net/crc.h"
 #include "net_testutil.h"
 
@@ -718,3 +723,206 @@ TEST_CASE("listings: the pull reads nf_list in batches that resume where they st
     CHECK(g.gone);
     CHECK(g.name == "B1.ZIP");
 }
+
+TEST_CASE("listings: blocked and hidden listings are not shown, found or pulled; the count follows either list") {
+    RevKeys rk;
+    FNode r(0xBB), a(0xBC), b(0xBD);
+    r.knows(a), r.knows(b);
+    r.admit({&r.board, &a.board, &b.board});
+    std::vector<std::string> blocks, hides;
+    r.core.setLocalFilter([&](const std::string& x) { return std::find(blocks.begin(), blocks.end(), x) != blocks.end(); },
+                          [&](const std::string& id) { return std::find(hides.begin(), hides.end(), id) != hides.end(); });
+    for (uint32_t s = 1; s <= 2; s++) REQUIRE(r.core.takeListing(makeListing(a.key, s, "A" + std::to_string(s)), a.board) == Took::Stored);
+    REQUIRE(r.core.takeListing(makeListing(b.key, 1, "B1"), b.board) == Took::Stored);
+    std::string a1 = a.board + "-1", a2 = a.board + "-2", b1 = b.board + "-1";
+    auto pulled = [&] {
+        std::vector<std::string> lines, ids;
+        uint32_t pos = 0;
+        while (!r.core.listingLines(pos, false, lines)) {
+        }
+        for (const std::string& line : lines) {
+            NetListing l;
+            REQUIRE(decode(line, l));
+            ids.push_back(listingId(l));
+        }
+        return ids;
+    };
+    NetListing l;
+    CHECK(r.page() == std::vector<std::string>{b1, a2, a1});  // (the count is held from here)
+    blocks.push_back(a.board);
+    r.core.moderationChanged();
+    CHECK(r.page() == std::vector<std::string>{b1});
+    CHECK_FALSE(r.core.findListing(a1, l));
+    CHECK_FALSE(r.core.findListing(a2, l));
+    CHECK(pulled() == std::vector<std::string>{b1});
+    CHECK(r.core.takeListing(makeListing(a.key, 3, "A3"), a.board) == Took::Rejected);  // a new one is refused
+    blocks.clear();
+    r.core.moderationChanged();
+    CHECK(r.page() == std::vector<std::string>{b1, a2, a1});
+    CHECK(r.core.findListing(a1, l));
+    hides.push_back(a2);
+    r.core.moderationChanged();
+    CHECK(r.page() == std::vector<std::string>{b1, a1});
+    CHECK_FALSE(r.core.findListing(a2, l));
+    CHECK(r.core.findListing(a1, l));
+    CHECK(pulled() == std::vector<std::string>{a1, b1});
+    hides.clear();
+    r.core.moderationChanged();
+    CHECK(r.page().size() == 3);
+    CHECK(r.core.findListing(a2, l));
+}
+
+TEST_CASE("listings: listedHere is this board's own live record of that area and name, shown or not") {
+    RevKeys rk;
+    FNode h(0xBE), x(0xBF);
+    h.knows(x);
+    h.admit({&h.board, &x.board});
+    NetListing own;
+    own.area = "files";
+    own.name = "OWN.ZIP";
+    own.desc = "a file";
+    own.uploader = "Sysop";
+    own.reach = "i";
+    own.size = 10;
+    own.crc = 1;
+    std::string id = h.core.originateListing(own);
+    REQUIRE(!id.empty());
+    REQUIRE(h.core.takeListing(makeListing(x.key, 1, "THEIRS.ZIP"), x.board) == Took::Stored);
+    CHECK(h.core.listedHere("files", "OWN.ZIP"));
+    CHECK_FALSE(h.core.listedHere("other", "OWN.ZIP"));
+    CHECK_FALSE(h.core.listedHere("files", "OWN.ZIP.NEW"));
+    CHECK_FALSE(h.core.listedHere("files", "THEIRS.ZIP"));  // another board's
+    h.core.setLocalFilter(nullptr, [&](const std::string& i) { return i == id; });  // hidden here: still this board's
+    CHECK(h.core.listedHere("files", "OWN.ZIP"));
+    own.gone = true;
+    REQUIRE(!h.core.originateListing(own).empty());
+    CHECK_FALSE(h.core.listedHere("files", "OWN.ZIP"));
+}
+
+#if AXIS_TRANSFERS
+namespace {
+// The board's sharing hooks over a file library in memory, as main.cpp wires them: NetSharingFiles queues a removal,
+// and for a rename a removal then the new name (lookDesc); netFilesUploaded queues the upload with its uploader; and
+// netShareStep sends a removal only of a name listedHere, and a rename's new name only with its removal.
+struct SharingLib : axis::bbs::FileLibrary {
+    struct Item {
+        std::string name, uploader;
+        bool        gone = false, renamed = false;
+    };
+    std::map<std::string, std::string> files;  // name -> bytes, one area ("files")
+    std::vector<Item>                  q;
+    std::vector<axis::bbs::FileEntry> list(const std::string&) override {
+        std::vector<axis::bbs::FileEntry> v;
+        for (auto& f : files) v.push_back({f.first, (uint32_t)f.second.size(), ""});
+        return v;
+    }
+    bool read(const std::string&, const std::string& n, std::string& out, size_t max) override {
+        auto it = files.find(n);
+        if (it == files.end()) return false;
+        out = it->second.substr(0, max);
+        return true;
+    }
+    struct W : axis::bbs::WriteFile {
+        SharingLib* lib = nullptr;
+        std::string name, data;
+        bool        write(const uint8_t* p, size_t n) override {
+            data.append((const char*)p, n);
+            return true;
+        }
+        bool finish(bool keep) override {
+            if (keep) lib->files[name] = data;
+            return true;
+        }
+    };
+    std::unique_ptr<axis::bbs::WriteFile> create(const std::string&, const std::string& n) override {
+        std::unique_ptr<W> w(new W);
+        w->lib = this;
+        w->name = n;
+        return std::unique_ptr<axis::bbs::WriteFile>(w.release());
+    }
+    bool remove(const std::string&, const std::string& n) override {
+        if (!files.erase(n)) return false;
+        q.push_back({n, "", true, false});
+        return true;
+    }
+    bool rename(const std::string&, const std::string& from, const std::string& to) override {
+        auto it = files.find(from);
+        if (it == files.end() || files.count(to)) return false;
+        files[to] = it->second;
+        files.erase(it);
+        q.push_back({from, "", true, false});
+        q.push_back({to, "Sysop", false, true});
+        return true;
+    }
+    void uploaded(const std::string& n, const std::string& who) { q.push_back({n, who, false, false}); }
+    void drain(NetCore& core) {
+        bool goneSent = false;
+        for (const Item& it : q) {
+            if (it.gone && !(goneSent = core.listedHere("files", it.name))) continue;
+            if (it.renamed && !goneSent) continue;
+            if (!it.gone && !files.count(it.name)) continue;
+            NetListing l;
+            l.area = "files";
+            l.name = it.name;
+            l.gone = it.gone;
+            l.uploader = it.uploader;
+            l.reach = "i";
+            l.desc = "a file";
+            if (!it.gone) {
+                const std::string& f = files[it.name];
+                l.size = (uint32_t)f.size();
+                l.crc = crc32((const uint8_t*)f.data(), f.size());
+            }
+            REQUIRE(!core.originateListing(l).empty());
+        }
+        q.clear();
+    }
+};
+}  // namespace
+
+TEST_CASE("listings: a rezipped upload into a shared area is listed once by its caller, with no removal sent") {
+    RevKeys rk;
+    FNode h(0xC5);
+    h.admit({&h.board});
+    SharingLib    lib;
+    std::ifstream in(std::string(AXIS_TEST_DATA) + "/pack.zip", std::ios::binary);
+    lib.files["PACK.ZIP"] = std::string((std::istreambuf_iterator<char>(in)), {});
+    REQUIRE(lib.files["PACK.ZIP"].size() > 100);
+    std::vector<uint8_t>       ws(axis::bbs::ZipReader::kWorkspace);
+    axis::bbs::UploadProcessor p(lib, "files", "PACK.ZIP", axis::bbs::UploadInfo(), ws.data(), ws.size());
+    for (int i = 0; i < 1000 && p.step(); i++) {
+    }
+    REQUIRE(p.result() == axis::bbs::UploadProcessor::Result::Rezipped);
+    CHECK(lib.q.size() == 3);  // the hooks fired: the upload's removal, then the temp's rename (removal, new name)
+    lib.uploaded("PACK.ZIP", "Caller");
+    uint32_t seq = h.core.postSeq();
+    lib.drain(h.core);
+    std::vector<NetListing> rec = h.records();
+    REQUIRE(rec.size() == 1);
+    CHECK(rec[0].name == "PACK.ZIP");
+    CHECK_FALSE(rec[0].gone);
+    CHECK(rec[0].uploader == "Caller");
+    CHECK(rec[0].crc == crc32((const uint8_t*)lib.files["PACK.ZIP"].data(), lib.files["PACK.ZIP"].size()));  // the rezipped copy
+    CHECK(h.core.postSeq() == seq + 1);  // one seq spent
+    // A removal of a file never listed sends nothing, nor a rename of one; a listed one's rename and removal do.
+    lib.files["OLD.TXT"] = "old";
+    lib.files["NEW.TXT"] = "new";
+    REQUIRE(lib.remove("files", "OLD.TXT"));
+    REQUIRE(lib.rename("files", "NEW.TXT", "NEWER.TXT"));
+    lib.drain(h.core);
+    CHECK(h.records().size() == 1);
+    CHECK(h.core.postSeq() == seq + 1);
+    REQUIRE(lib.rename("files", "PACK.ZIP", "ART.ZIP"));
+    lib.drain(h.core);
+    CHECK(h.liveSeqs("PACK.ZIP").empty());
+    CHECK(h.liveSeqs("ART.ZIP").size() == 1);
+    CHECK_FALSE(h.core.listedHere("files", "PACK.ZIP"));
+    CHECK(h.core.listedHere("files", "ART.ZIP"));
+    REQUIRE(lib.remove("files", "ART.ZIP"));
+    lib.drain(h.core);
+    CHECK(h.liveSeqs("ART.ZIP").empty());
+    size_t tombs = 0;
+    for (const NetListing& x : h.records()) tombs += x.gone;
+    CHECK(tombs == 2);
+}
+#endif  // AXIS_TRANSFERS

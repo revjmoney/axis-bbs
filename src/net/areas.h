@@ -217,6 +217,10 @@ public:
     // banned-home and tombstoned ones. Returns the next skip, or -1 at the end.
     int listingsPage(int skip, int max, FnRef<void(const NetListing&)> each);
     bool findListing(const std::string& id, NetListing& out);  // a live one only
+    // Whether this board holds its own live listing of (area, name), shown or not (held, killed or hidden here), by
+    // the index. The host sends a removal or a rename's removal only for such a name (an upload's temp name or a ZIP
+    // its rezip replaced never was listed). False while the index is not ready.
+    bool listedHere(const std::string& area, const std::string& name);
     // For a User Net pull: the stored lines from pos on (0 to start; the store's resume point, a byte offset in the
     // file store), live listings (tombs false; not held, killed or banned-home) or tombstones younger than
     // kNetGoneKeepDays (tombs true; all of them without a clock), added to out until they reach kNetPendingBytes.
@@ -325,14 +329,15 @@ public:
     // The listings pull (asked with UWANT of a net3 peer while this board is a member carrying un_files), its own
     // flag, so a board upgraded from Phase 2 with uhistory done still gets the listings held before: done when a
     // pull reached "UEND F" (the peer sent every listing it holds) with none refused "store" and the session's
-    // listing cap not reached (NetSession). Saved with the cursors as "fhistory".
+    // listing cap not reached (NetSession; either one counts as held). Saved with the cursors as "fhistory".
     bool needFilesHistory() const { return !filesHistory_; }
     void filesHistoryGot() {
         filesHistory_ = true;
         filesHeld_ = 0;
     }
-    // A pull reached "UEND F" with a listing refused "store" (say past a drop budget): counted, saved with the cursors
-    // as "fheld <n>"; the kNetFilesHeldPulls-th in a row marks the pull done anyway, so it cannot repeat forever.
+    // A pull reached "UEND F" with a listing refused "store" (say past a drop budget) or at the session's listing
+    // cap: counted, saved with the cursors as "fheld <n>"; the kNetFilesHeldPulls-th in a row marks the pull done
+    // anyway, so it cannot repeat forever.
     void filesHistoryHeld() {
         if (++filesHeld_ >= kNetFilesHeldPulls) filesHistoryGot();
     }
@@ -355,14 +360,18 @@ public:
     // line (only for posts stored or made, cards and notices; "" otherwise).
     using EventFn = std::function<void(const std::string& who, const std::string& what, const std::string& signedLine)>;
     void setOnEvent(EventFn f) { onEvent_ = std::move(f); }
-    // This board's own moderation (never flooded): a blocked board's posts are Rejected and its sessions refused,
-    // a hidden post is not shown here (NetPostingStore) but is still passed on.
+    // This board's own moderation (never flooded): a blocked board's posts and listings are Rejected and its sessions
+    // refused; a hidden post is not shown here (NetPostingStore) but is still passed on. A blocked board's listings
+    // held from before and hidden listings are not shown, found or sent in a pull (shown). The host calls
+    // moderationChanged when either list changes (the count of live listings is taken again).
     void setLocalFilter(std::function<bool(const std::string& board)> blocked, std::function<bool(const std::string& postId)> hidden) {
         blocked_ = std::move(blocked);
         hidden_ = std::move(hidden);
+        liveCount_ = -1;
     }
     bool blockedHere(const std::string& board) const { return blocked_ && blocked_(board); }
     bool hiddenHere(const std::string& postId) const { return hidden_ && hidden_(postId); }
+    void moderationChanged() { liveCount_ = -1; }
 
     // The seq the next post from this board takes.
     uint32_t postSeq() const { return seq_; }
@@ -417,7 +426,7 @@ private:
     // Every listing and tombstone in kNetFilesArea by a header scan (which gives a listing's line whole), oldest
     // first; lines that do not decode are passed over. each returns false to stop.
     void eachListing(FnRef<bool(const bbs::Message& m, const NetListing& l)> each);
-    bool shown(const NetListing& l) const;  // live, and not held, killed or from a banned board
+    bool shown(const NetListing& l) const;  // live, not held, killed or hidden here, its board not banned or blocked here
     void trimListings(uint32_t nowDay, bool clock);
     bool listingDropAllowed();  // both drop budgets, this session's and this day's, have room
     // The listing index (setListingIndex). key: the keyed hash of "<board>|<area>|<name>", board: the keyed hash of
@@ -433,10 +442,13 @@ private:
     };
     enum class Idx : uint8_t { Unknown, Rebuild, Ready };
     uint32_t idxHash(const std::string& s) const;
+    uint32_t idxKey(const std::string& board, const std::string& area, const std::string& name) const;  // a record's key
     IdxRec idxRec(const NetListing& l, const bbs::Message& m) const;
     bool idxReady();  // looks at the head if not known yet
     bool idxHead(bool clean);
     bool idxEach(FnRef<bool(const IdxRec&)> each);  // false if a read failed
+    // The first live record of that key (key 0: of that board key and seq) that reads back and passes ok, into out.
+    bool idxLive(uint32_t key, uint32_t board, uint32_t seq, FnRef<bool(const NetListing&)> ok, NetListing& out);
     bool idxTailOk();
     void idxStart();      // a rebuild from the start, with a new key
     void idxRebuildNow();

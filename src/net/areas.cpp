@@ -334,7 +334,8 @@ void NetCore::eachListing(FnRef<bool(const Message&, const NetListing&)> each) {
 }
 
 bool NetCore::shown(const NetListing& l) const {
-    return !l.gone && !state_.banned(l.board) && !state_.held(listingId(l)) && !state_.killed(listingId(l));
+    std::string id = listingId(l);
+    return !l.gone && !state_.banned(l.board) && !blockedHere(l.board) && !state_.held(id) && !state_.killed(id) && !hiddenHere(id);
 }
 
 // ---- the listing index (/net/files.idx) ----
@@ -352,8 +353,12 @@ uint32_t NetCore::idxHash(const std::string& s) const {
     return h;
 }
 
+uint32_t NetCore::idxKey(const std::string& board, const std::string& area, const std::string& name) const {
+    return idxHash(board + "|" + area + "|" + name);
+}
+
 NetCore::IdxRec NetCore::idxRec(const NetListing& l, const Message& m) const {
-    return IdxRec{idxHash(l.board + "|" + l.area + "|" + l.name), idxHash(l.board), l.seq, (uint32_t)m.num,
+    return IdxRec{idxKey(l.board, l.area, l.name), idxHash(l.board), l.seq, (uint32_t)m.num,
                   l.gone ? 1u : 0u, m.at};
 }
 
@@ -650,25 +655,34 @@ int NetCore::listingsPage(int skip, int max, FnRef<void(const NetListing&)> each
     return lo > 0 ? hi - lo + skip : -1;
 }
 
-// By the index: the record of that board and seq, read back at its offset and checked.
-bool NetCore::findListing(const std::string& id, NetListing& out) {
-    uint32_t seq = 0;
-    if (id.size() < 18 || id[16] != '-' || !parseSeq(id.substr(17), seq) || !idxReady()) return false;
-    uint32_t bk = idxHash(id.substr(0, 16));
+// Each hit is read back at its offset and checked, so a collision costs one short read, never a wrong answer.
+bool NetCore::idxLive(uint32_t key, uint32_t board, uint32_t seq, FnRef<bool(const NetListing&)> ok, NetListing& out) {
     std::vector<IdxRec> hits;
     idxEach([&](const IdxRec& x) {
-        if (x.board == bk && x.seq == seq && !(x.flags & 1)) hits.push_back(x);
+        if (!(x.flags & 1) && (key ? x.key == key : x.board == board && x.seq == seq)) hits.push_back(x);
         return hits.size() < kIdxConfirm;
     });
     for (const IdxRec& x : hits) {
         Message m;
-        NetListing l;
-        if (store_.readAt(kNetFilesArea, x.at, (int)x.num, m) && decode(m.net, l) && listingId(l) == id && shown(l)) {
-            out = std::move(l);
-            return true;
-        }
+        if (store_.readAt(kNetFilesArea, x.at, (int)x.num, m) && decode(m.net, out) && !out.gone && ok(out)) return true;
     }
     return false;
+}
+
+// By the index: the record of that board and seq.
+bool NetCore::findListing(const std::string& id, NetListing& out) {
+    uint32_t seq = 0;
+    if (id.size() < 18 || id[16] != '-' || !parseSeq(id.substr(17), seq) || !idxReady()) return false;
+    uint32_t bk = idxHash(id.substr(0, 16));
+    return idxLive(0, bk, seq, [&](const NetListing& l) { return listingId(l) == id && shown(l); }, out);
+}
+
+// By the index: this board's record of that name.
+bool NetCore::listedHere(const std::string& area, const std::string& name) {
+    if (!idxReady()) return false;
+    NetListing l;
+    return idxLive(idxKey(myBoard_, area, name), 0, 0,
+                   [&](const NetListing& s) { return s.board == myBoard_ && s.area == area && s.name == name; }, l);
 }
 
 bool NetCore::listingLines(uint32_t& pos, bool tombs, std::vector<std::string>& out) {

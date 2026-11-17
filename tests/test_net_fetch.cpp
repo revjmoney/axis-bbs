@@ -951,4 +951,21 @@ TEST_CASE("ReadyAt false holds an XMODEM sender's block: NAKs while it waits cou
     CHECK(slice(got, 0, file.size()) == file);
 }
 
+TEST_CASE("fetchLetGo: a follower's slot with a lost e is let go once Done or Failed; a caller's job never is") {
+    int caller = 0, follower = 0, job = 0;
+    const uint32_t quiet = kFetchIdleMs + 1;
+    // begun, no transfer yet: let go after the idle time, ended or not
+    CHECK(fetchLetGo(nullptr, &caller, false, quiet));
+    CHECK(fetchLetGo(nullptr, &caller, true, quiet));
+    CHECK_FALSE(fetchLetGo(nullptr, &caller, false, kFetchIdleMs));
+    // a TransferJob here holds it (job is not the owner): never by this rule, even ended and quiet
+    CHECK_FALSE(fetchLetGo(&job, &caller, true, quiet));
+    CHECK_FALSE(fetchLetGo(&job, &caller, false, quiet));
+    // a follower's transfer holds it (job is the owner, its token): kept while the fetch runs, however quiet
+    CHECK_FALSE(fetchLetGo(&follower, &follower, false, quiet));
+    // Done or Failed and its "e" lost: let go once nobody asked (t and b) for the idle time
+    CHECK(fetchLetGo(&follower, &follower, true, quiet));
+    CHECK_FALSE(fetchLetGo(&follower, &follower, true, kFetchIdleMs - 1));
+}
+
 #endif  // AXIS_NETS && AXIS_TRANSFERS

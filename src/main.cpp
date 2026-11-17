@@ -1293,7 +1293,7 @@ static axis::bbs::FileLibrary& rawCallerFiles() {
 static void netFilesRemoved(const std::string& area, const std::string& name);
 static void netFilesRenamed(const std::string& area, const std::string& from, const std::string& to);
 // The callers' file library with Net Files on top, as NetStore is for messages: a removal or rename in a shared area
-// sends the removal of the old name's listing once it is done (a rename lists the new name too). Everything else passes
+// sends the removal of the old name's listing once it is done, if this board lists it (a rename lists the new name too). Everything else passes
 // through to the library of the moment (rawCallerFiles), so a Node may keep it for the whole call.
 struct NetSharingFiles : axis::bbs::FileLibrary {
     std::vector<axis::bbs::FileEntry> list(const std::string& a) override { return rawCallerFiles().list(a); }
@@ -2591,6 +2591,7 @@ struct NetShare {
     std::vector<uint32_t>                  allHave;     // crc32 of the names this board lists there already (skipped)
     uint32_t                               listed = 0, listedMs = 0;  // @NET status: live listings, counted at most once a minute
     bool                                   counted = false;
+    bool                                   goneSent = false;  // the last removal was sent (a rename's new name goes with it)
 };
 #endif
 #if AXIS_TRANSFERS
@@ -3708,7 +3709,8 @@ static void netFilesRemoved(const std::string& area, const std::string& name) {
     it.gone = true;
     netShareAdd(std::move(it));
 }
-// The new name is listed with the area's description, the sysop as the uploader (no uploader is kept for a file).
+// When the old name was listed (netShareStep), the new name is listed with the area's description, the sysop as the
+// uploader (no uploader is kept for a file).
 static void netFilesRenamed(const std::string& area, const std::string& from, const std::string& to) {
     netFilesRemoved(area, from);
     NetShareItem it;
@@ -3779,11 +3781,14 @@ static void netShareStep(NetHost& h) {
         NetShareItem it = std::move(sh.q.front());
         sh.q.erase(sh.q.begin());
         if (!netFilesOn(h)) return;  // left User Net meanwhile
+        // A removal only of a name this board lists (an upload's temp name, or a ZIP its rezip replaced, never was; the
+        // upload itself is listed by netFilesUploaded). A rename's new name (lookDesc, next in the queue) goes only with it.
         if (it.gone) {
-            netShareSend(h, it, 0, 0);
+            if ((sh.goneSent = h.core->listedHere(it.area, it.name))) netShareSend(h, it, 0, 0);
             return;
         }
-        if (!netFilesShared(it.area) || !(sh.file = callerFiles().open(it.area, it.name))) return;  // unshared or gone meanwhile
+        if ((it.lookDesc && !sh.goneSent) || !netFilesShared(it.area) || !(sh.file = callerFiles().open(it.area, it.name)))
+            return;  // a rename of a name never listed, unshared or gone meanwhile
         if (it.lookDesc)
             for (const axis::bbs::FileEntry& e : callerFiles().list(it.area))
                 if (e.name == it.name) {
@@ -3894,7 +3899,6 @@ static_assert(kNetServeMax == 1, "NetHost has one serve slot");
 // that sends under about 8 bytes a second.
 static constexpr uint32_t kNetFetchSlowMs = 120000;
 static constexpr uint32_t kNetFetchSlowBytes = 1024;
-static constexpr uint32_t kNetFetchIdleMs = 60000;     // a fetch with no transfer that nobody asks about this long is let go
 // netFetchBegin's answers.
 // level: the board's own listing, in an area above the caller's security level.
 enum NetFetchBegin { kNetFetchStarted = 0, kNetFetchBusy, kNetFetchGone, kNetFetchUnreachable, kNetFetchOff, kNetFetchOwn, kNetFetchLevel };
@@ -4168,8 +4172,9 @@ static void netFetchPump(NetHost& h) {
     NetFetchSlot& s = h.fetch;
     if (s.ph == FetchPh::Idle) return;
     uint32_t now = millis();
-    // begun and never taken up (its caller or follower is gone); a job (or a follower's transfer, job = its token) is not
-    if (!s.job && now - s.touchMs > kNetFetchIdleMs) {
+    // begun and never taken up (its caller or follower is gone); a job is not, nor a follower's transfer (job = its
+    // token) until the fetch ended (its "e" lost)
+    if (axis::net::fetchLetGo(s.job, s.owner, s.ph == FetchPh::Done || s.ph == FetchPh::Failed, now - s.touchMs)) {
         if (s.ph != FetchPh::Failed) netFilesLog("fetch %s let go (nobody asked for it)", axis::net::listingId(s.l).c_str());
         netFetchClear(h);
         return;
@@ -4290,6 +4295,7 @@ static int netFetchBegin(const void* owner, const std::string& id, const std::st
     NetFetchSlot& s = h.fetch;
     if (s.ph != FetchPh::Idle && s.owner == owner && !s.job) netFetchClear(h);  // the same caller again
     if (s.ph != FetchPh::Idle) return kNetFetchBusy;
+    if (h.core->blockedHere(id.substr(0, 16))) return kNetFetchUnreachable;  // never dialed (its listings are not shown)
     axis::net::NetListing l;
     if (!h.core->findListing(id, l)) return kNetFetchGone;
     if (l.board == h.core->board()) return kNetFetchOwn;
@@ -4480,7 +4486,7 @@ static std::string netFollowerOp(const void* owner, char op, const std::vector<s
         const char* word = "stopped";
         int         r = netFetchPoll(owner, size, word);
         if (r <= 0) return r ? netNo(word) : std::string("2");
-        s.job = owner;  // its transfer starts: held like a caller's job here, out of the idle rule (e, onNodeGone, slow, stall end it)
+        s.job = owner;  // its transfer starts: held like a caller's job here (e, onNodeGone, slow, stall end it; fetchLetGo once ended)
         std::snprintf(num, sizeof num, "1%u\x1f", (unsigned)size);
         return num + s.home;
     }
@@ -5087,6 +5093,7 @@ static void netCommand(const String& cmd, Print& out) {
         } else if (it != v.end()) {
             v.erase(it);
         }
+        h.core->moderationChanged();  // (Net Files: what is shown changed)
         ok = netLocalSave(h);
         for (char& ch : word) ch = (char)std::tolower((unsigned char)ch);
         netNote(word.substr(4) + " " + a);

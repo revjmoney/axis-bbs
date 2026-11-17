@@ -34,6 +34,14 @@ constexpr int      kFetchRetries = 3;                // re-requests at a new off
 constexpr uint32_t kFetchNoCrc = 0xFFFFFFFFu;        // crcPos() when the crc can no longer be checked
 constexpr size_t   kFetchMaxLine = 1024;             // a longer line fails the call (HI is 165, GET about 260)
 constexpr size_t   kFetchCrcMarks = 256;             // crc checkpoints kept per download (4 bytes each)
+constexpr uint32_t kFetchIdleMs = 60000;             // the host lets go a fetch nobody asks about this long (fetchLetGo)
+
+// The host's one fetch slot is let go once nobody asked about it for kFetchIdleMs (quietMs): while no transfer holds it
+// (job null), and, when a follower's transfer holds it (job is the owner, the follower's token, since a TransferJob
+// here is never its owner), once the fetch is Done or Failed (ended), so a follower's lost "e" cannot keep it.
+inline bool fetchLetGo(const void* job, const void* owner, bool ended, uint32_t quietMs) {
+    return (!job || (job == owner && ended)) && quietMs > kFetchIdleMs;
+}
 static_assert((kFetchWindow & (kFetchWindow - 1)) == 0, "the ring indexes by offset");
 
 // What the host found for a request.
@@ -89,7 +97,9 @@ private:
 //
 // The listing's signed crc (CRC-32 of the whole file) is checked: the client keeps a running CRC over
 // the bytes it takes, and when the last byte arrives a mismatch fails the call "crc" before the last
-// block is readable, so the caller's program never gets the end of a changed file. On the way it keeps
+// block is readable, so the caller's program never gets the end of a damaged file or one changed at
+// home after it was listed. (CRC-32 over plain TCP is no defence against a deliberate change on the
+// path: whoever knows the file can keep the CRC.) On the way it keeps
 // the CRC state at checkpoints: every kFetchWindow of the file from offset 0, at most kFetchCrcMarks of
 // them (when full, every other one goes and the spacing doubles, so they never take more than 1 KB),
 // and where each earlier call stopped with its state there (at most kFetchRetries + 1 of them).

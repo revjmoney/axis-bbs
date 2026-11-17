@@ -778,6 +778,24 @@ TEST_CASE("Net Files: begin's refusals and poll's failures read as the caller's 
     }
 }
 
+TEST_CASE("Net Files: a radio caller's download window has no 24 KB/s time; other callers keep it") {
+    for (int32_t bps : {-1, 3906}) {
+        CAPTURE(bps);
+        NetBrowser t;
+        t.net.bps = bps;
+        t.net.pollAnswers = {1};
+        t.net.pollSize = 340 * 1024;
+        t.pick("NET0.ZIP");
+        t.typeIn(bps > 0 ? "yz" : "z");
+        t.b.tick(0, 0);
+        REQUIRE(t.b.wantsTransfer());
+        std::string p = t.take();
+        CHECK(p.find("D O W N L O A D") != std::string::npos);
+        CHECK(p.find("348160 bytes") != std::string::npos);
+        CHECK((p.find("24 KB/s") != std::string::npos) == (bps < 0));
+    }
+}
+
 TEST_CASE("Net Files: a ready poll opens the download window with the polled size; a key while connecting gives it up") {
     {
         NetBrowser t;

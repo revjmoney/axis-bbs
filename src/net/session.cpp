@@ -353,11 +353,12 @@ void NetSession::syncLine(std::string& l) {
         // As for HEND: done only if at least one U line was taken or already held here. A peer with
         // nothing to give (a stranger, a fresh board, or one answering UEND at once) leaves it to the next.
         if (userGot_) core_.userHistoryGot();
-        // The listings: done, the peer sent every one it holds (one refused for good would be refused again), unless
-        // the session's listing cap was reached. One refused "store" (say past a drop budget) holds it open, for at
-        // most kNetFilesHeldPulls pulls in a row; the last of them marks it done anyway.
-        if (rest == "F" && uAskFiles_ && userListsTaken_ < kSyncUserListingsMax) {
-            if (uFilesHeld_) core_.filesHistoryHeld();
+        // The listings: done, the peer sent every one it holds (one refused for good would be refused again). One
+        // refused "store" (say past a drop budget), or the session's listing cap reached, holds it open, for at most
+        // kNetFilesHeldPulls pulls in a row; the last of them marks it done anyway (a peer holding more than the cap
+        // would otherwise be pulled from the start every session).
+        if (rest == "F" && uAskFiles_) {
+            if (uFilesHeld_ || userListsTaken_ >= kSyncUserListingsMax) core_.filesHistoryHeld();
             else core_.filesHistoryGot();
         }
         return;

@@ -617,9 +617,14 @@ void FileBrowser::startTransfer() {
 #endif
         char est[48];
         std::snprintf(est, sizeof est, "about %u s at 24 KB/s", (unsigned)(size / 24576 + 1));
-        out_ += theme::window("DOWNLOAD", {{"file", req_.name.substr(0, 45)},  // (the window's value width)
-{"size", fileSizeText(size) + "  (" + std::to_string(size) + " bytes)"},
-                                           {"protocol", proto}, {"time", est}});
+        std::vector<std::pair<std::string, std::string>> rows = {{"file", req_.name.substr(0, 45)},  // (the window's value width)
+                                                                 {"size", fileSizeText(size) + "  (" + std::to_string(size) + " bytes)"},
+                                                                 {"protocol", proto},
+                                                                 {"time", est}};
+#if AXIS_NET_FILES
+        if (net() && tripBps() > 0) rows.pop_back();  // a radio caller: no 24 KB/s guess (the radio question gave the time)
+#endif
+        out_ += theme::window("DOWNLOAD", rows);
         out_ += "\r\n  " + theme::fade("Start your terminal's download now.") + "  " + theme::key("Ctrl-X", " x5 cancels") + "\r\n";
     }
     out_ += theme::RESET;
