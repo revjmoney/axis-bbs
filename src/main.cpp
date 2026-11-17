@@ -4113,6 +4113,9 @@ static void netFetchDial(NetHost& h) {
 }
 
 
+// A fetch's crc checkpoint table (FetchClient::CrcMarks), counted with its window in the heap checks.
+constexpr size_t kNetFetchMarksBytes = axis::net::kFetchCrcMarks * sizeof(uint32_t);
+
 // A new client from a new offset (the caller's sender asked outside the window). While the crc is on, it asks again from
 // the crc checkpoint at or below that offset (for a seek ahead, the last one reached), with its state and the checkpoints,
 // so every byte from there is checked in order and the sender reads from its offset; with the crc off (a caller resuming
@@ -4127,7 +4130,7 @@ static void netFetchRedial(NetHost& h) {
     cp = s.forward ? axis::net::kFetchNoCrc : at;
     netFetchDrop(s);
     s.f.reset();  // (its window first, then the new one)
-    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kNetHeapFloor + axis::net::kFetchWindow)
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kNetHeapFloor + axis::net::kFetchWindow + kNetFetchMarksBytes)
         s.f.reset(new (std::nothrow) axis::net::FetchClient(s.l, s.homePub, s.handle, h.key, h.core->board(), netNonce(), at, cs, cp));
     if (!s.f) {
         netFetchFail(h, "memory");
@@ -4291,7 +4294,7 @@ static int netFetchBegin(const void* owner, const std::string& id, const std::st
     if (!h.core->findListing(id, l)) return kNetFetchGone;
     if (l.board == h.core->board()) return kNetFetchOwn;
     if (!netFetchReach(h, l)) return kNetFetchUnreachable;
-    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor + axis::net::kFetchWindow) return kNetFetchBusy;
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor + axis::net::kFetchWindow + kNetFetchMarksBytes) return kNetFetchBusy;
     const axis::net::NetCard& card = *h.core->state().card(l.board);
     s.f.reset(new (std::nothrow) axis::net::FetchClient(l, card.pub, who, h.key, h.core->board(), netNonce(), offset));
     if (!s.f) return kNetFetchBusy;

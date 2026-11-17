@@ -73,6 +73,7 @@ struct Call {
     bool                         carryUp = true;  // the client's bytes reach the server
     long                         flipAt = -1;     // the home board's file has this byte changed
     int                          flipCalls = 0;   // ... only in calls up to this one (0: in every call)
+    int                          flipCall = 0;    // ... only in this call (0: any)
     const char*                  refuse = nullptr;  // the check's NO word
     long                         serveSize = -1;    // the check's file size, if not the file's
     uint32_t                     now = 0;
@@ -100,7 +101,7 @@ struct Call {
         s.size = serveSize >= 0 ? (uint32_t)serveSize : (uint32_t)file.size();
         s.read = [this](uint32_t off, uint8_t* buf, size_t k) {
             if ((size_t)off + k > file.size()) return false;
-            for (size_t i = 0; i < k; i++) buf[i] = (long)(off + i) == flipAt && (!flipCalls || calls <= flipCalls) ? (uint8_t)(file[off + i] ^ 0x5A) : file[off + i];
+            for (size_t i = 0; i < k; i++) buf[i] = (long)(off + i) == flipAt && (!flipCalls || calls <= flipCalls) && (!flipCall || calls == flipCall) ? (uint8_t)(file[off + i] ^ 0x5A) : file[off + i];
             return true;
         };
         return s;
@@ -644,6 +645,73 @@ TEST_CASE("fetch: a plain rewind fails crc when the byte differed only in the fi
     }
 }
 
+TEST_CASE("fetch: a byte changed between the last checkpoint and where the first call stopped fails crc on the rewind") {
+    Call c(40000);
+    c.flipAt = 30000;  // past the last checkpoint the first call reached (24,576), before where it stopped
+    c.flipCalls = 1;
+    c.start(0);
+    c.connect();
+    uint32_t             off = 0;
+    std::vector<uint8_t> b(1000);
+    for (int i = 0; i < 4000 && off < 25000; i++)
+        if (c.readyAt(off, 1000) && c.readAt(off, b.data(), 1000)) off += 1000;
+    REQUIRE(off == 25000);
+    REQUIRE(c.cli->crcPos() > 30000);
+    uint32_t at = 0, state = 0;
+    REQUIRE(c.cli->checkpoint(c.cli->crcPos(), at, state));
+    REQUIRE(at < 30000);
+    CHECK_FALSE(c.readyAt(4000, 1000));
+    c.drain(4000, 1000);
+    CHECK(c.cli->state() == St::Failed);
+    CHECK(std::string(c.cli->why()) == "crc");  // the second call's state where the first stopped is not the first's
+}
+
+TEST_CASE("fetch: with 16 KB checkpoints, a byte that differed only in the second call fails crc after a second rewind") {
+    for (bool flip : {true, false}) {
+        CAPTURE(flip);
+        const size_t big = 3 * 1024 * 1024;
+        Call         c(big, 13);
+        const uint32_t S = 16384, j = 61, r2 = j * S + 1076;  // a 16 KB checkpoint, and a place just past it
+        if (flip) {
+            c.flipAt = r2 - 300;  // the caller gets this byte from the second call only
+            c.flipCall = 2;
+        }
+        c.start(0);
+        c.connect();
+        uint32_t             off = 0;
+        std::vector<uint8_t> b(4096);
+        for (int i = 0; i < 200000 && off < 2600000; i++)  // the first call: well past 2 MB, so the spacing is 16 KB
+            if (c.readyAt(off, 4096) && c.readAt(off, b.data(), 4096)) off += 4096;
+        REQUIRE(off >= 2600000);
+        // First rewind, a little before r2: the second call starts at the checkpoint j * S.
+        uint32_t t1 = j * S + 500;
+        CHECK_FALSE(c.readyAt(t1, 1000));
+        REQUIRE(c.calls == 2);
+        REQUIRE(c.lastAt == j * S);
+        // The caller reads on to about 7 KB, the second call stopping short of the next checkpoint.
+        off = t1;
+        std::vector<uint8_t> k(1000);
+        for (int i = 0; i < 4000 && off < j * S + 7000; i++)
+            if (c.readyAt(off, 1000) && c.readAt(off, k.data(), 1000)) off += 1000;
+        REQUIRE(c.calls == 2);
+        uint32_t p2 = c.cli->crcPos();
+        CHECK(p2 < (j + 1) * S);  // the second call never reached a checkpoint the first one recorded
+        CHECK(r2 + kFetchWindow < p2);
+        // Second rewind, to r2: the third call starts at j * S again and must match where the second stopped.
+        CHECK_FALSE(c.readyAt(r2, 1000));
+        REQUIRE(c.calls == 3);
+        CHECK(c.lastAt == j * S);
+        std::vector<uint8_t> rest = c.drain(r2, 4096, 400000);
+        if (flip) {
+            CHECK(c.cli->state() == St::Failed);
+            CHECK(std::string(c.cli->why()) == "crc");
+        } else {
+            CHECK(rest == slice(c.file, r2, big));
+            CHECK(c.cli->verified());
+        }
+    }
+}
+
 TEST_CASE("fetch: a resumed fetch stays unverified across a re-request") {
     Call c(40000);
     c.start(10000);
@@ -725,7 +793,7 @@ TEST_CASE("fetch: a ZMODEM sender over a client resumes through a re-request aft
     CHECK(got == c.file);
     // The rewind went past the window (a new call from the checkpoint below 5,000); the receiver then asked for its own
     // place again, past the new window (one more call, from the last checkpoint the second call reached). Each call
-    // carried the crc state, the checkpoints and the farthest point, and matched them as it went.
+    // carried the crc state, the checkpoints and where each earlier call stopped, and matched them as it went.
     CHECK(c.calls == 3);
     CHECK_FALSE(c.forward);
     CHECK(c.cli->verified());  // checked end to end across the calls

@@ -171,8 +171,6 @@ FetchClient::FetchClient(const NetListing& l, const std::string& homePub, const 
     : me_(me), board_(l.board), homePub_(homePub), handle_(handle), myBoard_(myBoard), dial_(dialNonce16),
       id_(listingId(l)), size_(l.size), start_(offset), hi_(offset), listCrc_(l.crc), crc_(crcState),
       crcPos_(crcPos), crcOn_(crcPos == offset && crcPos <= l.size), want_(offset) {
-    hash(nullptr, 0);  // the checkpoint at 0, for a download from the start
-    if (st_ == St::Failed) return;
     if (offset > l.size) {
         fail("size");
         return;
@@ -219,8 +217,11 @@ void FetchClient::hash(const uint8_t* p, size_t n) {
             mark_++;
             continue;
         }
-        if (crcPos_ && crcPos_ == m.endPos && crc_ != m.endState) return fail("crc");  // the farthest point, likewise
-        uint64_t stop = m.endPos > crcPos_ && m.endPos < next ? m.endPos : next;
+        uint64_t stop = next;
+        for (uint8_t e = 0; e < m.nEnds; e++) {  // where an earlier call stopped: its state there, likewise
+            if (m.ends[e].pos == crcPos_ && m.ends[e].state != crc_) return fail("crc");
+            if (m.ends[e].pos > crcPos_ && m.ends[e].pos < stop) stop = m.ends[e].pos;
+        }
         size_t   k = stop > crcPos_ && stop - crcPos_ < n ? (size_t)(stop - crcPos_) : n;
         if (!k) return;
         crc_ = crc32Update(crc_, p, k);
@@ -239,11 +240,15 @@ bool FetchClient::checkpoint(uint32_t off, uint32_t& at, uint32_t& state) const 
 }
 
 FetchClient::CrcMarks FetchClient::takeMarks() {
-    if (crcOn_ && crcPos_ >= marks_.endPos) {
-        marks_.endPos = crcPos_;
-        marks_.endState = crc_;
+    CrcMarks& m = marks_;
+    if (crcOn_ && crcPos_) {
+        if (m.nEnds == kFetchRetries + 1) {  // (more calls than a download makes: the oldest end goes)
+            for (uint8_t e = 1; e < m.nEnds; e++) m.ends[e - 1] = m.ends[e];
+            m.nEnds--;
+        }
+        m.ends[m.nEnds++] = {crcPos_, crc_};
     }
-    return std::move(marks_);
+    return std::move(m);
 }
 
 void FetchClient::giveMarks(CrcMarks m) {
