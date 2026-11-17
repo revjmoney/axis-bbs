@@ -13,11 +13,17 @@
 //   peers                          known boards and link peers
 //   sync                           dial now (dial mode)
 //   list <area>                    posts in an area
+//   user on|off                    carry the four User Net areas (and say net2 on the card), or stop
+//   apply <blurb>                  apply to User Net (needs user on); \n in the blurb is a line break
+//   vote <board> y|n [comment]     vote on an applicant (this node must be a member)
+//   apps                           the applications held, with their counts
+//   members                        the User Net members this node counts
 //   quit
 //
 // Without --seed the node makes its own seed in <dir>/seed.txt the first time and keeps it. The seed is
 // never printed. Everything else lives in <dir> too: msgs/, outlog.txt, state.txt, seen.txt,
-// cursors.txt, card.txt, postseq.txt and (dial mode) firstpeer.txt.
+// cursors.txt, card.txt, postseq.txt, appseq.txt, voteseq.txt, user.txt, apps.txt (the signed User Net
+// applications and votes) and (dial mode) firstpeer.txt.
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -234,6 +240,45 @@ std::string word(std::string& rest) {
     return w;
 }
 
+bool isBoardId(const std::string& s) {
+    return s.size() == 16 && s.find_first_not_of("0123456789abcdef") == std::string::npos;
+}
+
+// A field from another board, shown with control bytes as '?'.
+std::string safe(const std::string& s) {
+    std::string o = s;
+    for (char& c : o)
+        if ((unsigned char)c < 0x20 || c == 0x7f) c = '?';
+    return o;
+}
+
+// Printable text, at most max bytes (line breaks kept only if keepNl).
+std::string field(const std::string& s, size_t max, bool keepNl) {
+    std::string o;
+    for (char c : s)
+        if (((unsigned char)c >= 0x20 && c != 0x7f) || (keepNl && c == '\n'))
+            if (o.size() < max) o.push_back(c);
+    return o;
+}
+
+// The line starting at pos (no line break), pos moved past it. A line over a frame comes back empty. False at the end.
+bool nextLine(std::istream& f, uint32_t& pos, std::string& line) {
+    line.clear();
+    bool any = false, over = false;
+    for (int c; (c = f.get()) != EOF;) {
+        any = true;
+        pos++;
+        if (c == '\n') break;
+        if (line.size() > kNetMaxFrame) over = true;
+        if (!over) line.push_back((char)c);
+    }
+    if (over) std::string().swap(line);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    return any;
+}
+
+constexpr uint32_t kDenyWaitDays = 30;  // as on the board: a denied board waits before applying again
+
 class Peer {
 public:
     Peer(const fs::path& dir, const KeyPair& key, std::string name, std::string host, int port)
@@ -252,16 +297,26 @@ public:
         core_.state().load(readFile(dir_ / "state.txt"), day);
         core_.seen().load(readFile(dir_ / "seen.txt"));
         core_.loadCursors(readFile(dir_ / "cursors.txt"));  // before the first peer is set
+        userOn_ = readFile(dir_ / "user.txt").compare(0, 1, "1") == 0;
+        core_.setAppsFile([this](const std::string& l, uint32_t& off) { return appsAppend(l, off); },
+                          [this](const NetCore::AppsLineFn& each) { appsScan(each); },
+                          [this](uint32_t off, std::string& l) { return appsReadAt(off, l); });
+        loadApps();
         core_.needHistory();  // a missing history flag is decided before any session adds posts (saved below)
         // The post counter, as the board keeps it: the next seq is saved before a post is stored, and with no
         // saved counter and a set clock it starts from the clock.
         std::string seqText = readFile(dir_ / "postseq.txt");
         core_.setPostSeq(netSeqStart((uint32_t)std::strtoul(seqText.c_str(), nullptr, 10), !seqText.empty(), unixNow()));
         core_.setSeqReserve([this](uint32_t next) { return writeFile(dir_ / "postseq.txt", std::to_string(next) + "\n"); });
+        std::string as = readFile(dir_ / "appseq.txt"), vs = readFile(dir_ / "voteseq.txt");
+        appSeq_ = netSeqStart((uint32_t)std::strtoul(as.c_str(), nullptr, 10), !as.empty(), unixNow());
+        voteSeq_ = netSeqStart((uint32_t)std::strtoul(vs.c_str(), nullptr, 10), !vs.empty(), unixNow());
         core_.setOnEvent([](const std::string& who, const std::string& what, const std::string&) {
             say("event: %s %s", who.empty() ? "local" : who.c_str(), what.c_str());  // never the signed line
         });
+        applyAreas();
         if (!makeCard()) return false;
+        wasMember_ = core_.selfMember();
         say("board %s (%s)", core_.board().c_str(), name_.c_str());
         core_.trim(unixNow());
         save();
@@ -319,10 +374,196 @@ public:
         while (std::getline(in, l)) say("  %s", l.c_str());
     }
 
+    // user on|off: carries all four User Net areas and says net2 on the card (kept in user.txt).
+    bool setUser(bool on) {
+        if (!writeFile(dir_ / "user.txt", on ? "1\n" : "0\n")) {
+            say("user.txt could not be written");
+            return false;
+        }
+        bool was = userOn_;
+        userOn_ = on;
+        applyAreas();
+        if (on && !was) core_.resetUserHistory();  // a new area carried: the User Net pull is asked for again
+        if (!makeCard()) return false;
+        save();
+        say("User Net %s (%u areas carried)", on ? "on" : "off", (unsigned)core_.userAreas().size());
+        return true;
+    }
+
+    // After a command or a turn: this node became a member, so it asks for the User Net pull again.
+    void userTick() {
+        bool member = core_.selfMember();
+        if (member && !wasMember_) {
+            core_.resetUserHistory();
+            say("this node is now a User Net member");
+            save();
+        }
+        wasMember_ = member;
+    }
+
+    void apply(const std::string& blurbText) {
+        using S = NetMembers::Status;
+        S st = core_.members().status(core_.board());
+        const char* no = !userOn_ ? "user is off (user on first)" : st == S::Member ? "already a member" : st == S::Pending ? "already applied" :
+                         st == S::Vetoed ? "vetoed" : nullptr;
+        if (!no && st == S::Denied && unixNow() > kNetClockSet) {
+            uint32_t d = core_.state().memberNoticeDay(core_.board());
+            if (d < kNetClockDay) d = unixNow() / 86400;
+            if (unixNow() / 86400 < d + kDenyWaitDays) no = "denied less than 30 days ago";
+        }
+        if (no) {
+            say("apply refused: %s", no);
+            return;
+        }
+        NetApp a;
+        a.pub = toHex(key_.pub, 32);
+        a.board = core_.board();
+        a.name = field(name_, 36, false);
+        a.sysop = "PC peer";
+        a.location = "PC";
+        a.blurb = field(blurbText, kNetMaxBlurb, true);
+        a.date = unixNow();
+        a.seq = appSeq_;
+        if (!writeFile(dir_ / "appseq.txt", std::to_string(a.seq + 1) + "\n")) {  // saved before it is used
+            say("appseq.txt could not be written");
+            return;
+        }
+        appSeq_ = a.seq + 1;
+        if (!signApp(a, key_) || !core_.takeApp(a, "")) {
+            say("apply not taken");
+            return;
+        }
+        save();
+        say("applied as %s-a%u", a.board.c_str(), (unsigned)a.seq);
+    }
+
+    void vote(const std::string& board, const std::string& yn, const std::string& comment) {
+        uint32_t off, appSeq = 0;
+        const char* no = !core_.selfMember() ? "this node is not a member" :
+                         !isBoardId(board) || (yn != "y" && yn != "n") ? "usage: vote <board id> y|n [comment]" :
+                         board == core_.board() ? "not on this node's own application" :
+                         !core_.members().heldApp(board, off, &appSeq) ? "no application held from that board" : nullptr;
+        if (no) {
+            say("vote refused: %s", no);
+            return;
+        }
+        NetVote v;
+        v.voter = core_.board();
+        v.pub = toHex(key_.pub, 32);
+        v.app = board;
+        v.appSeq = appSeq;
+        v.seq = voteSeq_;
+        v.date = unixNow();
+        v.yes = yn == "y";
+        v.comment = field(comment, kNetMaxComment, false);
+        if (!writeFile(dir_ / "voteseq.txt", std::to_string(v.seq + 1) + "\n")) {
+            say("voteseq.txt could not be written");
+            return;
+        }
+        voteSeq_ = v.seq + 1;
+        if (!signVote(v, key_) || !core_.takeVote(v, "")) {
+            say("vote not taken");
+            return;
+        }
+        save();
+        say("voted %s on %s", v.yes ? "yes" : "no", board.c_str());
+    }
+
+    // One line per held application: board | name | sysop | location | mac | status | yes n no n | you yes|no|-
+    void apps() {
+        const NetMembers& mem = core_.members();
+        const NetState& st = core_.state();
+        std::vector<std::string> in = mem.members(), dn = mem.denied();
+        std::string line;
+        bool any = false;
+        for (uint32_t off : mem.offsets()) {
+            NetApp a;
+            NetVote v;
+            uint32_t vo;
+            if (!appsReadAt(off, line)) continue;
+            if (line[0] != 'A') break;  // the votes come after the applications
+            if (!decode(line, a)) continue;
+            const NetNotice* n = st.memberNotice(a.board);
+            NetMembers::Tally t = mem.tally(a.board);
+            const char* is = st.banned(a.board) ? "banned" : has(in, a.board) ? "member" : has(dn, a.board) ? "denied" :
+                             n && n->kind == "veto" ? "vetoed" : "pending";
+            const char* mine = mem.heldVote(core_.board(), a.board, vo) && appsReadAt(vo, line) && decode(line, v) && v.appSeq == a.seq
+                                   ? (v.yes ? "yes" : "no") : "-";
+            say("%s | %s | %s | %s | %s | %s | yes %u no %u | you %s", a.board.c_str(), safe(a.name).c_str(), safe(a.sysop).c_str(),
+                safe(a.location).c_str(), safe(a.mac).c_str(), is, (unsigned)t.yes, (unsigned)t.no, mine);
+            any = true;
+        }
+        if (!any) say("no applications held");
+    }
+
+    void members() {
+        for (const std::string& b : core_.members().members()) {
+            const NetCard* c = core_.state().card(b);
+            say("%s %s%s", b.c_str(), c ? safe(c->name).c_str() : "-", core_.isRevBoard(b) ? " (Rev)" : "");
+        }
+    }
+
     const NetCard& card() const { return card_; }
     const KeyPair& key() const { return key_; }
 
 private:
+    static bool has(const std::vector<std::string>& v, const std::string& b) { return std::find(v.begin(), v.end(), b) != v.end(); }
+
+    // The areas carried follow user on|off: all four, or none.
+    void applyAreas() {
+        std::vector<std::string> v;
+        if (userOn_)
+            for (const NetArea& a : userNetAreas()) v.push_back(a.id);
+        core_.setUserAreas(std::move(v));
+    }
+
+    // apps.txt: the signed applications and votes, one line each, read back a line at a time (as /net/apps.txt on a board).
+    bool appsAppend(const std::string& line, uint32_t& off) {
+        fs::path p = dir_ / "apps.txt";
+        std::error_code ec;
+        uint64_t at = fs::exists(p, ec) ? (uint64_t)fs::file_size(p, ec) : 0;
+        std::string pre;
+        if (at > 0) {  // a torn append: end it first
+            std::ifstream f(p, std::ios::binary);
+            f.seekg((std::streamoff)at - 1);
+            if (f.get() != '\n') {
+                pre = "\n";
+                at++;
+            }
+        }
+        std::ofstream f(p, std::ios::binary | std::ios::app);
+        if (!(f << pre << line << '\n') || !f.flush()) return false;
+        off = (uint32_t)at;
+        return true;
+    }
+    void appsScan(const NetCore::AppsLineFn& each) {
+        std::ifstream f(dir_ / "apps.txt", std::ios::binary);
+        uint32_t pos = 0;
+        std::string line;
+        while (nextLine(f, pos, line))
+            if (!line.empty() && !each(line)) break;
+    }
+    bool appsReadAt(uint32_t off, std::string& line) {
+        std::ifstream f(dir_ / "apps.txt", std::ios::binary);
+        if (!f) return false;
+        f.seekg((std::streamoff)off);
+        uint32_t pos = off;
+        return nextLine(f, pos, line) && !line.empty();
+    }
+    void loadApps() {
+        NetMembers& mem = core_.members();
+        std::ifstream f(dir_ / "apps.txt", std::ios::binary);
+        mem.beginLoad();
+        uint32_t pos = 0;
+        std::string line;
+        for (;;) {
+            uint32_t at = pos;
+            if (!nextLine(f, pos, line)) break;
+            if (!line.empty()) mem.loadLine(line, at);
+        }
+        mem.endLoad();
+    }
+
     // The card held in the state when nothing changed, else a new one one past any seq used before.
     bool makeCard() {
         NetCard c;
@@ -334,7 +575,7 @@ private:
         c.mac = "";
         c.sysop = "PC peer";
         c.location = "PC";
-        c.links = "internet";
+        c.links = userOn_ ? "internet,net2" : "internet";  // net2: a Phase 2 board, peers send it UWANT
         const NetCard* held = core_.state().card(c.board);
         if (held && held->name == c.name && held->host == c.host && held->port == c.port && held->sysop == c.sysop &&
             held->location == c.location && held->links == c.links && held->mac == c.mac) {
@@ -366,6 +607,8 @@ private:
     FileOutLog log_;
     NetCore core_;
     NetCard card_;
+    bool userOn_ = false, wasMember_ = false;
+    uint32_t appSeq_ = 1, voteSeq_ = 1;
 };
 
 // One live session over a raw socket.
@@ -573,8 +816,33 @@ int main(int argc, char** argv) {
                     live.dialer = true;
                     say("dialing %s:%d", dialHost.c_str(), port);
                 }
+            } else if (verb == "user") {
+                std::string w = word(rest);
+                if (w != "on" && w != "off") say("usage: user on|off");
+                else if (live.s) say("a session is running (try again when it ends)");
+                else peer.setUser(w == "on");
+            } else if (verb == "apply") {
+                std::string b;
+                for (size_t i = 0; i < rest.size(); i++) {
+                    if (rest[i] == '\\' && i + 1 < rest.size() && rest[i + 1] == 'n') {
+                        b += '\n';
+                        i++;
+                    } else {
+                        b += rest[i];
+                    }
+                }
+                peer.apply(b);
+            } else if (verb == "vote") {
+                std::string board = word(rest), yn = word(rest);
+                for (char& ch : yn) ch = (char)std::tolower((unsigned char)ch);
+                peer.vote(board, yn, rest);
+            } else if (verb == "apps") {
+                peer.apps();
+            } else if (verb == "members") {
+                peer.members();
             } else if (verb == "help") {
-                say("commands: post <area> <subject> <body> | peers | sync | list <area> | quit");
+                say("commands: post <area> <subject> <body> | peers | sync | list <area> | user on|off | apply <blurb> | "
+                    "vote <board> y|n [comment] | apps | members | quit");
             } else {
                 say("unknown command: %s (try help)", verb.c_str());
             }
@@ -593,6 +861,7 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        peer.userTick();
         if (live.s) {
             pump(peer, live, firstPeerFile, firstUnknown);
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
