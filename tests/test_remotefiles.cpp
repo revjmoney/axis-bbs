@@ -428,6 +428,7 @@ TEST_CASE("follower: describe sends the caller's handle, or an empty one; a 0x1F
     lib.who = [] { return std::string("Caller"); };
     CHECK(lib.describe("ansi", "A.ZIP", "Nice"));
     CHECK(sent == "D" + S + "ansi" + S + "A.ZIP" + S + "Nice" + S + "Caller");
+#if AXIS_TRANSFERS
     // The caller types a description with 0x1F in it: the browser's line editor keeps printable bytes only.
     MemLibrary    up;
     std::string   out;
@@ -440,6 +441,7 @@ TEST_CASE("follower: describe sends the caller's handle, or an empty one; a 0x1F
     b.key('z');
     REQUIRE(b.wantsTransfer());
     CHECK(b.transfer().desc == "OneTwo");
+#endif
 }
 
 TEST_CASE("follower: netPage reads rows and the next skip; a short row is passed over; -2 passes through") {

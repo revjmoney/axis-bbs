@@ -292,3 +292,18 @@ TEST_CASE("message areas: counts are streamed (hidden writers left out, newest 2
         CHECK(std::regex_search(p, std::regex("Big Area +" + std::to_string(MessageStore::kMaxHeaders) + " msgs")));
     }
 }
+
+TEST_CASE("the message server reads missing request fields as empty") {
+    Dir               d;
+    FileMessageStore  st(d.p.string());
+    const std::string S(1, '\x1f');
+    CHECK(serveMessages(st, "Mp" + S + "cnc" + S + "Rev") == "11");  // to, subject, date and body left off
+    Message m;
+    REQUIRE(st.read("cnc", 1, m));
+    CHECK(m.from == "Rev");
+    CHECK(m.to.empty());
+    CHECK(m.subject.empty());
+    CHECK(serveMessages(st, "Mr" + S + "cnc") == "0");  // no number: none is 0
+    CHECK(serveMessages(st, "Mh" + S + "cnc").compare(0, 2, "11") == 0);
+    CHECK(serveMessages(st, "Mx" + S + "cnc") == "0");
+}

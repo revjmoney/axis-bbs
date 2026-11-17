@@ -345,6 +345,22 @@ TEST_CASE("fetch: an OK whose count disagrees with the listing fails size") {
     CHECK(std::string(c.cli->why()) == "size");
 }
 
+TEST_CASE("fetch: a home board that closes short leaves the client streaming, never Done (the host calls it closed)") {
+    Call c(40000);
+    c.start(0);
+    c.connect();
+    REQUIRE(c.cli->state() == St::Streaming);
+    c.drain(0, 1000, 30);  // some way in, then the home board's socket closes: nothing more arrives
+    c.srv.reset(new FetchServer(c.l.board, homeKey(), nonce(0x3B), [](const NetFetch&) { return ServeFile(); }));
+    c.wire.clear();
+    for (int i = 0; i < 100; i++) {
+        c.cli->tick(c.now);
+        c.now += 10;
+    }
+    CHECK(c.cli->state() == St::Streaming);
+    CHECK_FALSE(c.cli->verified());
+}
+
 TEST_CASE("fetch: an offset past the listing's size fails size before any call") {
     Call c(5000);
     FetchClient f(c.l, pubOf(homeKey()), "Caller", myKey(), boardOf(myKey()), nonce(0x51), 5001);
