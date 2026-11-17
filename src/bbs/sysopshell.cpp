@@ -868,6 +868,9 @@ void SysopShell::lookPick(Layer& l, const std::string& key, bool follow) {
 SysopShell::Item SysopShell::netAsk(const std::string& label, const std::string& value, const std::string& cmd) {
     return {label, value, [this, cmd] { ask(cmd, cmd.find("first_peer") != std::string::npos, [this, cmd](const std::string& v) { did(run_(cmd + v)); }); }};
 }
+SysopShell::Item SysopShell::runRow(const std::string& label, const std::string& value, std::string cmd) {
+    return {label, value, [this, cmd] { did(run_(cmd)); }};
+}
 SysopShell::Item SysopShell::netShow(const std::string& label, const std::string& cmd) {
     return {label, "", [this, label, cmd] { pushText(label, run_(cmd)); }};
 }
@@ -991,15 +994,15 @@ void SysopShell::userNet(Layer& l) {
     l.items.push_back(page("Areas carried", areas.empty() ? "none" : areas, "AREAS CARRIED", [this](Layer& x) {
         uint8_t m = userNetMask(setting("net_user_areas"));
         for (unsigned i = 0; i < 4; i++)
-            x.items.push_back({userNetList((uint8_t)(1u << i)), m >> i & 1 ? "on" : "off", [this, m, i] {
-                                   did(run_("@SET net_user_areas=" + userNetList((uint8_t)(m ^ (1u << i)))));
-                               }});
+            x.items.push_back(runRow(userNetList((uint8_t)(1u << i)), m >> i & 1 ? "on" : "off", "@SET net_user_areas=" + userNetList((uint8_t)(m ^ (1u << i)))));
     }));
     l.items.push_back(netAsk("Caller level", setting("net_user_level"), "@SET net_user_level="));
     {  // Net Files: pick the file areas to share, see how many are listed, set the size a radio caller is asked about
         std::string sh = setting("net_files_areas");
         l.items.push_back(page("Net Files", sh.empty() ? "none shared" : sh, "NET FILES", [this](Layer& x) {
-            std::string cur = "," + setting("net_files_areas") + ",";  // ",a,b,"
+            std::string cur = setting("net_files_areas");
+            cur.erase(std::remove(cur.begin(), cur.end(), ' '), cur.end());  // a hand-edited "a, b"
+            cur = "," + cur + ",";  // ",a,b,"
             for (auto& line : lines("@AREAS")) {
                 auto f = split(line, '|');
                 if (f.size() < 3) continue;
@@ -1009,9 +1012,8 @@ void SysopShell::userNet(Layer& l) {
                 else next.erase(at, key.size() - 1);
                 next.erase(0, next.find_first_not_of(','));
                 if (!next.empty()) next.pop_back();
-                x.items.push_back({f[2], at == std::string::npos ? "not shared" : "shared", [this, next] { did(run_("@SET net_files_areas=" + next)); }});
+                x.items.push_back(runRow(f[2], at == std::string::npos ? "not shared" : "shared", "@SET net_files_areas=" + next));
             }
-            x.items.push_back({"Listed", after(lines("@NET"), "files:"), nullptr});
             x.items.push_back(netAsk("Radio size limit (KB)", setting("net_files_radio_kb"), "@SET net_files_radio_kb="));
         }));
     }

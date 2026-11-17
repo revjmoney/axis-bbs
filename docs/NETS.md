@@ -160,7 +160,7 @@ Net Files lets a caller on one board download a file that lives on another board
 
 ### Sharing
 
-Pick the file areas to share with `net_files_areas`, a comma list of file area ids. Blank shares nothing. Example: `@SET net_files_areas=freeware,gcode`. The sysop menu has the same choice under System, User Net, Net Files: each file area is a row that flips between shared and not shared. The page also shows how many files are listed and sets the radio size limit.
+Pick the file areas to share with `net_files_areas`, a comma list of file area ids. Blank shares nothing. Example: `@SET net_files_areas=freeware,gcode`. The sysop menu has the same choice under System, User Net, Net Files: each file area is a row that flips between shared and not shared. The page also sets the radio size limit. The count of listed files is on the `files:` line of `@NET` (the Status row).
 
 | Setting | Meaning |
 | --- | --- |
@@ -184,7 +184,7 @@ Pick the file areas to share with `net_files_areas`, a comma list of file area i
 | What | Limit |
 | --- | --- |
 | Live listings held | 1000 (100 on a board with no SD card) |
-| Live listings from one home board | 200 |
+| Live listings from one home board | 200 (100 on a board with no SD card). This board's own listings are not held to it. |
 | A removal (tombstone) is kept | 120 days (200 removals on a board with no clock) |
 | Listings from peers that replace or remove one already held | 8 a session and 64 a day |
 | A description | 120 characters |
@@ -197,7 +197,7 @@ Listings live in a hidden message area (`nf_list`) that no caller sees, one mess
 
 Finding a listing by name would mean reading the whole listing area. So the board keeps `/net/files.idx` on the storage root: a small head, then one fixed record for each listing and each removal, holding a keyed hash of its home board, area and name, its seq and where its message is. A lookup reads this file and then only the one message it points at. The hash key is random, made when the index is built and kept in its head, so nobody can choose names that collide.
 
-The index is rebuilt from the listing area when it is missing, when its head says a change was cut short (a reset), when its tail does not match the area, or when a read or write fails. It is also rebuilt after listings are dropped. The rebuild runs a few listings at a time in the board's idle time. While it runs, listings from peers are refused with `store` (they come again on a later call), nothing new is listed here, and a fetch call is answered `NO busy`. It is safe to delete the file.
+The index is rebuilt from the listing area when it is missing, when its head says a change was cut short (a reset), when its tail does not match the area, or when a read or write fails. It is also rebuilt after listings are dropped. A missing or unclean index is rebuilt a few listings at a time in the board's idle time. After listings are dropped it is rebuilt at once. While it is being built, listings from peers are refused with `store` (they come again on a later call), nothing new is listed here, and a fetch call is answered `NO busy`. It is safe to delete the file.
 
 ### The fetch call
 
@@ -213,7 +213,7 @@ server: OK <bytes from the offset to the end>
 
 - `HI` is signed with the home board's key over both nonces. The dialer checks it against the home board's card before it sends `GET`.
 - `GET` is signed with the calling board's key. The home board checks that signature against the calling board's card. It checks that the listing is live and its own, that its area is still shared, that the calling board is a member and neither banned nor blocked, and that the file's size is what was listed.
-- A refusal is `NO <word>` and the call ends. The words are `busy` (the serve slot is taken, the board is short of memory, or its index is being rebuilt), `gone` (no such live listing, or the file is missing), `size` (the file changed after it was listed), `member` (the calling board is not a member), `banned` (the calling board is banned or blocked) and `sig` (the signature does not check). A request that does not parse is `bad`.
+- A refusal is `NO <word>` and the call ends. The words are `busy` (the serve slot is taken, the board is short of memory, its index is being rebuilt, this board is not serving at all (net off, still loading, or a follower), or the dialer's address is backed off after failed calls), `gone` (no such live listing, or the file is missing), `size` (the file changed after it was listed), `member` (the calling board is not a member), `banned` (the calling board is banned or blocked) and `sig` (the signature does not check). A request that does not parse is `bad`.
 - A call that moves nothing for 20 seconds ends. While the bytes stream, the caller's board sends a one-byte keepalive every 10 seconds, so a slow radio caller (TCP held back at the far end) is not taken for a dead dialer.
 - The caller's board checks the listing's CRC-32 as the bytes arrive, and before the last block goes to the caller's ZMODEM or XMODEM sender. A file that does not match fails the call with `crc`, so the caller never gets the end of a changed file. A `crc` failure is not retried.
 - A sender may ask to go back (a ZMODEM re-position). The board keeps an 8 KB window; if the sender goes behind it, the board makes a new call at the new offset and keeps checking the same CRC. That is done at most 3 times for one download, then the fetch ends `retries`.
@@ -265,11 +265,11 @@ The peer keeps the signed lines in `apps.txt` in its folder, and its application
 The peer also speaks Net Files, with the same portable code the board uses (the listings in NetCore, the fetch server and the fetch client), so it works as the bench partner. Its card says `net3`. It needs `user on` and to be a member before it can list a file.
 
 - `share <folder>` serves the files in a folder as the area `pc`. The folder is kept in `share.txt`. `share` alone says what is shared. Nothing is offered until a file is listed.
-- `list <file> [desc]` lists a file of that folder (name, size, CRC-32 and the description). A first word that is an area name (`support`, `announce`, `updates`, `bugs`) still lists that area's posts, as before.
+- `list <file> [desc]` lists a file of that folder (name, size, CRC-32 and the description). A first word that is an area name (`support`, `announce`, `updates`, `bugs`, or the `sn_` form such as `sn_support`) with nothing after it still lists that area's posts, as before.
 - `unlist <file>` sends the removal of its listing.
 - `files` lists the live listings it holds, its own and other boards'.
-- `fetch <id> <outfile>` fetches a listing from its home board's card host and port, checks the CRC and writes the file. A failed fetch leaves no file.
-- While it listens, it answers `AXISFILE 1` fetch calls for the files it listed, with the same checks and `NO` words as a board. A dialing peer has no listener, so it only fetches.
+- `fetch <id> <outfile>` fetches a listing from its home board's card host and port, checks the CRC and writes the file. It writes `<outfile>.part` and renames it on success, so a failed fetch leaves no file and never touches an existing one.
+- While it listens, it answers `AXISFILE 1` fetch calls for the files it listed, with the same checks and `NO` words as a board (signature, banned or blocked, member, this node carries `un_files` and is a member, the listing, the file, its size). The one difference: it answers `busy` only when a call is already running, not for an unready index or low memory. A dialing peer has no listener, so it only fetches.
 
 Example:
 
@@ -281,7 +281,7 @@ files
 fetch 0123456789abcdef-12 got.bin
 ```
 
-It keeps the listing index in `files.idx` in its folder. It prints no MAC and no key material.
+It keeps the listing index in `files.idx` in its folder. It prints no MAC and no key material. Its card says `net2,net3` with `user on`, and plain `internet` with it off, so a peer with user off is not a Net Files peer. A fetch call is served without holding up the loop, so a slow caller does not stall a sync.
 
 ## Files
 

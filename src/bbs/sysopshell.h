@@ -112,6 +112,7 @@ private:
     void userVoting(Layer& l);                                                         // New Board Voting
     void userApp(Layer& l, const std::string& board);  // one applicant, and the vote
     Item netAsk(const std::string& label, const std::string& value, const std::string& cmd);  // asks, then runs cmd + answer
+    Item runRow(const std::string& label, const std::string& value, std::string cmd);  // a row that runs one command
     Item netShow(const std::string& label, const std::string& cmd);                           // a text page of cmd's answer
 #endif
 

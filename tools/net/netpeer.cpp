@@ -677,9 +677,9 @@ public:
         NetListing l;
         std::error_code ec;
         std::shared_ptr<std::ifstream> file;
-        if (core_.state().banned(f.board)) r.no = "banned";
+        if (core_.state().banned(f.board) || core_.blockedHere(f.board)) r.no = "banned";
         else if (core_.members().status(f.board) != NetMembers::Status::Member) r.no = "member";
-        else if (share_.empty() || !core_.findListing(f.listing, l) || l.board != core_.board() || l.gone || l.area != kShareArea ||
+        else if (!core_.carries(kNetFilesUserArea) || !core_.selfMember() || share_.empty() || !core_.findListing(f.listing, l) || l.board != core_.board() || l.gone || l.area != kShareArea ||
                  !axis::bbs::safeFileName(l.name) || !fs::is_regular_file(share_ / l.name, ec))
             r.no = "gone";
         else if (fs::file_size(share_ / l.name, ec) != l.size || ec) r.no = "size";
@@ -793,7 +793,7 @@ private:
         c.mac = "";
         c.sysop = "PC peer";
         c.location = "PC";
-        c.links = userOn_ ? "net2,net3" : "internet,net3";  // net2: a Phase 2 board, peers send it UWANT; net3: listings
+        c.links = userOn_ ? "net2,net3" : "internet";  // net2: a Phase 2 board, peers send it UWANT; net3: listings
         const NetCard* held = core_.state().card(c.board);
         if (held && held->name == c.name && held->host == c.host && held->port == c.port && held->sysop == c.sysop &&
             held->location == c.location && held->links == c.links && held->mac == c.mac) {
@@ -881,29 +881,45 @@ struct Serve {
     std::unique_ptr<axis::pc::TcpStream> sock;
     std::unique_ptr<FetchServer> s;
     std::unique_ptr<ServeNote> note;  // (the server's check points at it)
+    std::string pend;                 // taken from the server, not yet taken by the socket
+    uint32_t endMs = 0;               // when the call was over but pend was still waiting (0: not yet)
 };
+
+// Sends what the socket takes now; the rest stays in pend. Never waits (a slow caller must not hold the loop).
+void flushServe(Serve& v) {
+    size_t w = v.pend.empty() ? 0 : v.sock->writeSome((const uint8_t*)v.pend.data(), v.pend.size());
+    v.pend.erase(0, w);
+}
 
 // One turn of a served call. True while it runs; false once it ended (and was logged).
 bool pumpServe(Serve& v) {
     std::string in = v.sock->takeAll();
     if (!in.empty()) v.s->feed(in.data(), in.size());
-    for (int i = 0; i < 4; i++) {  // up to four pieces a turn
-        std::string out = v.s->takeOut(kFetchChunk + 64);
-        if (out.empty()) break;
-        v.sock->write((const uint8_t*)out.data(), out.size());
+    flushServe(v);
+    for (int i = 0; i < 4 && v.pend.empty(); i++) {  // up to four pieces a turn, each taken only once the last is out
+        v.pend = v.s->takeOut(kFetchChunk + 64);
+        flushServe(v);
     }
     v.s->tick(msNow());
     bool end = v.s->failed() || v.s->finished();
     bool closed = !end && !v.sock->carrier();
     if (!end && !closed) return true;
-    std::string last = v.s->takeOut(256);  // a NO line still to go
-    if (!last.empty()) v.sock->write((const uint8_t*)last.data(), last.size());
+    if (end && v.sock->carrier()) {
+        if (v.pend.empty()) v.pend = v.s->takeOut(256);  // a NO line still to go
+        flushServe(v);
+        if (!v.pend.empty()) {  // the caller is not taking it: wait a little, then let it go
+            if (!v.endMs) v.endMs = msNow() | 1u;
+            if (msNow() - v.endMs < 3000) return true;
+        }
+    }
     bool done = v.s->finished() && !v.s->failed() && v.note->served;
     if (done) say("fetch served %s to board %s", v.note->id.c_str(), v.note->from.c_str());
     else say("fetch %s from %s %s (%s)", v.note->id.empty() ? "call" : v.note->id.c_str(), v.note->from.empty() ? "?" : v.note->from.c_str(),
              v.note->served ? "stopped" : "refused", closed ? "closed" : v.s->why());
     v.s.reset();
     v.sock.reset();
+    v.pend.clear();
+    v.endMs = 0;
     return false;
 }
 
@@ -919,9 +935,16 @@ struct Get {
 
 void endGet(Get& g, const char* fail) {
     g.out.close();
+    std::error_code ec;
+    fs::path part = g.path;
+    part += ".part";
+    if (!fail) {  // only a whole, checked file takes the name
+        fs::remove(g.path, ec);
+        fs::rename(part, g.path, ec);
+        if (ec) fail = "rename";
+    }
     if (fail) {
-        std::error_code ec;
-        fs::remove(g.path, ec);  // no half file left behind
+        fs::remove(part, ec);  // no half file left behind (an old file of that name stays)
         say("fetch %s failed (%s)", g.id.c_str(), fail);
     } else {
         say("fetched %s: %u bytes to %s (%s)", g.id.c_str(), (unsigned)g.pos, g.path.string().c_str(),
@@ -1140,6 +1163,11 @@ int main(int argc, char** argv) {
             if (verb.empty()) continue;
             if (verb == "quit" || verb == "exit") {
                 if (live.s) say("quitting with a session open");
+                if (get.f) {
+                    get.out.close();
+                    std::error_code qec;
+                    fs::remove(get.path.string() + ".part", qec);
+                }
                 peer.save();
                 say("bye");
                 std::fflush(stdout);
@@ -1182,7 +1210,7 @@ int main(int argc, char** argv) {
                     say("a fetch is already running");
                 } else if (peer.planFetch(id, plan)) {
                     std::string h = plan.home.host == "localhost" ? "127.0.0.1" : plan.home.host;
-                    std::ofstream o(outFile, std::ios::binary | std::ios::trunc);
+                    std::ofstream o(outFile + ".part", std::ios::binary | std::ios::trunc);
                     if (!o) {
                         say("fetch refused: cannot write %s", outFile.c_str());
                         continue;
@@ -1191,7 +1219,7 @@ int main(int argc, char** argv) {
                     if (!sock) {
                         o.close();
                         std::error_code rec;
-                        fs::remove(outFile, rec);
+                        fs::remove(outFile + ".part", rec);
                         say("fetch failed: no answer from that board");
                         continue;
                     }
@@ -1263,7 +1291,7 @@ int main(int argc, char** argv) {
         if (listener) {
             bool busy = live.s || serve.s;
             if (auto c = listener->accept(busy ? 0 : 20, false)) {
-                std::string first = sniff(*c, 1000);  // a fetch call (AXISFILE 1) or a sync (AXISNET 2)
+                std::string first = sniff(*c, 200);  // a fetch call (AXISFILE 1) or a sync (AXISNET 2)
                 if (first.compare(0, 11, "AXISFILE 1 ") == 0) {
                     if (serve.s) {
                         const char no[] = "NO busy\r\n";

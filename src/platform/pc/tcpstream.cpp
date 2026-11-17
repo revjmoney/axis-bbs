@@ -153,6 +153,14 @@ void TcpStream::write(const uint8_t* p, size_t n) {
     if (!sendAll(sock_, w.data(), w.size(), sendTimeoutMs_)) up_ = false;  // the caller stopped reading
 }
 
+size_t TcpStream::writeSome(const uint8_t* p, size_t n) {
+    if (!up_ || telnetOn_ || !n) return 0;
+    int w = ::send((decltype(socket(0, 0, 0)))sock_, (const char*)p, (int)n, 0);
+    if (w > 0) return (size_t)w;
+    if (!(w < 0 && wouldBlock())) up_ = false;  // the connection broke
+    return 0;
+}
+
 bool TcpStream::carrier() {
     pump();
     return up_;

@@ -26,6 +26,8 @@ public:
     void write(const uint8_t* p, size_t n) override;
     bool carrier() override;
     std::string takeAll();  // every byte that has arrived (no wait)
+    // Raw streams only: sends what the socket takes now and returns how many bytes (0 when it is full). Never waits.
+    size_t writeSome(const uint8_t* p, size_t n);
     void setSendTimeout(int ms) { sendTimeoutMs_ = ms; }  // a caller that stops reading is treated as gone
 
 private:
