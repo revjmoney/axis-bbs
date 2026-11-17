@@ -2537,7 +2537,7 @@ struct NetHost {
     std::string                             firstKey, firstBoard;  // /net/firstpeer.txt: "host:port", its board
     bool                                    logSaid = false, dirty = false, postDue = false;
     uint32_t                                logTryMs = 0, minuteMs = 0, saveMs = 0, dialMs = 0, postMs = 0;
-    uint32_t                                postSeq = 0, appendFails = 0, houseDay = 0;
+    uint32_t                                postSeq = 0, appendFails = 0, appsFails = 0, houseDay = 0;
     bool                                    seqFloorDue = false;  // no counters found and no clock: floored once it is set
     bool                                    cardSeqFree = false;  // cardSeq was saved but no card went out with it
     uint32_t                                crc[3] = {0, 0, 0};  // what state, seen and cursors last wrote
@@ -3540,9 +3540,12 @@ static void netStatus(NetHost& h, Print& out) {
     out.printf("history %s\n", hist > 0 ? "done" : hist == 0 ? "not done" : "not asked yet");
     using S = axis::net::NetMembers::Status;
     S us = h.appsLoaded ? core.members().status(core.board()) : S::None;
-    out.printf("user net %s", !h.appsLoaded ? "loading" : us == S::Member ? "member" : us == S::Pending ? "pending" : us == S::Denied ? "denied" :
-                              us == S::Vetoed ? "vetoed" : boardCfg->netUser ? "not applied" : "off");
-    if (us == S::Pending) {
+    // With net_user off: "off", then what the tally still holds for this board in brackets.
+    const char* held = us == S::Member ? "member" : us == S::Pending ? "application pending" : us == S::Denied ? "denied" : us == S::Vetoed ? "vetoed" : nullptr;
+    if (!h.appsLoaded) out.print("user net loading");
+    else if (!boardCfg->netUser) out.printf("user net off%s%s%s", held ? " (" : "", held ? held : "", held ? ")" : "");
+    else out.printf("user net %s", us == S::Pending ? "pending" : held ? held : "not applied");
+    if (h.appsLoaded && boardCfg->netUser && us == S::Pending) {
         axis::net::NetMembers::Tally t = core.members().tally(core.board());
         out.printf(", yes %u of %u, no %u of %u", (unsigned)t.yes, (unsigned)core.state().votesYes(), (unsigned)t.no, (unsigned)core.state().votesNo());
     }
@@ -3571,7 +3574,8 @@ static void netPeers(NetHost& h, Print& out) {
 
 // ---- User Net (net/members.h): applying, voting, the lists, and Rev's admit, deny, veto and votes
 
-// The seq of the board's application held now, as admit and deny name it ("1" when none is held).
+// The seq of the board's application held now, as admit and deny name it ("1" when none is held; @NETADMIT and
+// @NETDENY refuse that case first, and the seals due always have one).
 static std::string netAppSeq(const NetHost& h, const std::string& board) {
     uint32_t off, seq = 1;
     h.core->members().heldApp(board, off, &seq);
@@ -3666,10 +3670,11 @@ static bool netUserCommand(NetHost& h, const std::string& word, const std::strin
     if (!no && rev) {
         if (!netIsBoard(t) || t == core.board() || core.isRevBoard(t)) no = "bad board id (never this board or Rev's)";
         else if (core.state().memberNoticeCount() >= axis::net::kMaxMemberNotices && !core.state().memberNotice(t)) no = "the member table is full (64 boards)";
+        else if (!veto && !mem.heldApp(t, off)) no = "no application held from that board (admit and deny name the application they decide)";
         else if (veto && rest != "YES") {
             out.printf("axis: a veto keeps %s out of User Net for good; to send: @NETVETO %s YES\n", t.c_str(), t.c_str());
             return true;
-        } else {  // admit and deny name the application they decide (none held: 1)
+        } else {  // admit and deny name the application they decide, the one held now
             netNotice(h, veto ? "veto" : word == "@NETADMIT" ? "admit" : "deny", t, veto ? std::string() : netAppSeq(h, t), &out);
             return true;
         }
@@ -3678,9 +3683,16 @@ static bool netUserCommand(NetHost& h, const std::string& word, const std::strin
         no = !boardCfg->netUser ? "net_user is off" : st == S::Member ? "already a member" : st == S::Pending ? "already applied" :
              st == S::Vetoed ? "vetoed" : h.seqFloorDue ? "waiting for the clock" : nullptr;
         if (!no && st == S::Denied && now > axis::net::kNetClockSet) {  // 30 days after a deny (from the day it was applied here)
-            uint32_t d = core.state().memberNoticeDay(core.board());
-            if (d < axis::net::kNetClockDay) d = now / 86400;  // no deny notice yet (denied by the count), or from before the clock
-            if (now / 86400 < d + 30) no = "denied less than 30 days ago";
+            const axis::net::NetNotice* dn = core.state().memberNotice(core.board());
+            uint32_t heldSeq = 0;
+            bool     hasApp = mem.heldApp(core.board(), off, &heldSeq);
+            if (!dn || dn->kind != "deny" || (hasApp && dn->value != std::to_string(heldSeq))) {
+                no = "denied by the vote count, waiting for Rev's seal";  // no deny notice names the application held now
+            } else {
+                uint32_t d = core.state().memberNoticeDay(core.board());
+                if (d < axis::net::kNetClockDay) d = now / 86400;  // a deny from before the clock
+                if (now / 86400 < d + 30) no = "denied less than 30 days ago";
+            }
         }
         if (!no) {
             axis::net::NetApp ap;
@@ -3999,7 +4011,7 @@ static void netAppsCompact(NetHost& h) {
 
 // User Net upkeep, at most once a pass and only when something changed (net_user, net_user_areas, net_user_level, or
 // an app, vote, card or notice taken): the areas carried, whether this board is a member (one tally), the areas callers
-// get, a new User Net pull when this board became a member or carries a new area, and on Rev's board the seals due
+// get, a new User Net pull when this board became a member or carries a new area, and on Rev's board the admits due
 // (four notices a pass at most; each one taken brings this back next pass).
 static void netUserTick(NetHost& h) {
     const axis::bbs::BbsConfig& c = *boardCfg;
@@ -4031,13 +4043,19 @@ static void netUserTick(NetHost& h) {
         if (cluster && cluster->role() == axis::cluster::Role::Main) cluster->shareSettings();  // the followers' callers too
     }
     if (netRevSlot(h) < 0) return;
+    // Only admits are signed: a deny by the count is already a tally fact on every board, and a signed deny would
+    // use one of the 64 member notice slots for each applicant turned down. Rev denies by hand (@NETDENY).
     int n = 0;
-    for (const auto& d : core.members().sealsDue())
-        if (n < 4 && netNotice(h, d.second == axis::net::NetMembers::Status::Member ? "admit" : "deny", d.first, netAppSeq(h, d.first), nullptr)) n++;
-        else if (n < 4 && !h.sealSaid) {  // (the next change tries again)
+    for (const auto& d : core.members().sealsDue()) {
+        if (d.second != axis::net::NetMembers::Status::Member) continue;
+        if (n < 4 && netNotice(h, "admit", d.first, netAppSeq(h, d.first), nullptr)) {
+            n++;
+            h.sealSaid = false;  // a later failure is logged again
+        } else if (n < 4 && !h.sealSaid) {  // (the next change tries again)
             logEvent(String("net: seal for ") + d.first.c_str() + " not taken");
             h.sealSaid = true;
         }
+    }
 }
 
 static bool netStart() {
@@ -4160,6 +4178,7 @@ static bool netStart() {
     core.setRetention((uint32_t)boardCfg->netKeepPosts, (uint32_t)boardCfg->netKeepDays);
     netCardUpdate(*h);
     h->appendFails = core.appendFailures();
+    h->appsFails = core.appsFailures();
     h->minuteMs = h->saveMs = h->trimMs = millis();
     h->dialMs = millis() - (uint32_t)boardCfg->netSyncMin * 60000u + 30000u;  // the first dial 30 s from now
     netHost = std::move(h);
@@ -4225,6 +4244,10 @@ static void netTick() {
         if (core.appendFailures() > h.appendFails) {
             logEvent(String("net: ") + String(core.appendFailures() - h.appendFails) + " outbound log entries could not be written");
             h.appendFails = core.appendFailures();
+        }
+        if (core.appsFailures() > h.appsFails) {
+            logEvent(String("net: ") + String(core.appsFailures() - h.appsFails) + " application or vote lines could not be written to apps.txt");
+            h.appsFails = core.appsFailures();
         }
         if ((h.dirty || h.in.s || h.out.s) && netSave(h)) h.dirty = h.in.s || h.out.s;
     }

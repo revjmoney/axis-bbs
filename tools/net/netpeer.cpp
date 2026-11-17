@@ -62,6 +62,7 @@
 #include <sys/stat.h>
 #else
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -660,6 +661,8 @@ bool pump(Peer& peer, Live& l, const std::string& firstPeerFile, bool firstUnkno
 std::mutex g_mu;
 std::deque<std::string> g_cmds;
 
+#ifdef _WIN32
+// Windows cannot poll a console or pipe handle like a socket: a thread waits for the lines instead.
 void readStdin() {
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -668,8 +671,41 @@ void readStdin() {
         g_cmds.push_back(line);
     }
 }
+#else
+// Whatever stdin holds now, read without waiting (poll with no timeout), so the loop keeps answering calls
+// and running a session while no line comes (stdin fed by tail -f, say). Complete lines become commands.
+std::string g_in;
+bool g_inEnd = false;
+
+void pollStdin() {
+    while (!g_inEnd) {
+        pollfd p{};
+        p.fd = 0;
+        p.events = POLLIN;
+        if (::poll(&p, 1, 0) <= 0 || !(p.revents & (POLLIN | POLLHUP | POLLERR))) return;
+        char buf[1024];
+        ssize_t n = ::read(0, buf, sizeof buf);
+        if (n <= 0) {
+            g_inEnd = true;  // end of input: a last line without a newline still counts
+            if (!g_in.empty()) g_in += '\n';
+        } else {
+            g_in.append(buf, (size_t)n);
+        }
+        std::lock_guard<std::mutex> g(g_mu);
+        for (size_t at; (at = g_in.find('\n')) != std::string::npos;) {
+            std::string line = g_in.substr(0, at);
+            g_in.erase(0, at + 1);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            g_cmds.push_back(line);
+        }
+    }
+}
+#endif
 
 bool nextCommand(std::string& out) {
+#ifndef _WIN32
+    pollStdin();
+#endif
     std::lock_guard<std::mutex> g(g_mu);
     if (g_cmds.empty()) return false;
     out = g_cmds.front();
@@ -761,7 +797,9 @@ int main(int argc, char** argv) {
         say("listening on port %u", (unsigned)listener->port());
     }
 
+#ifdef _WIN32
     std::thread(readStdin).detach();
+#endif
     Live live;
     bool firstUnknown = false;
     for (;;) {
@@ -774,7 +812,7 @@ int main(int argc, char** argv) {
                 peer.save();
                 say("bye");
                 std::fflush(stdout);
-                std::_Exit(0);  // the stdin reader is still blocked in getline
+                std::_Exit(0);  // (on Windows the stdin reader thread may still be blocked in getline)
             } else if (verb == "post") {
                 std::string area = areaId(word(rest)), subject = word(rest), body = rest;
                 if (area.empty() || subject.empty()) {

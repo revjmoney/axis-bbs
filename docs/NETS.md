@@ -85,7 +85,7 @@ Turn it on with `@SET net_user=1`, choose the areas with `net_user_areas` and th
 @NETAPPLY <blurb>
 ```
 
-The application carries the board's id, its public key, the card's name, sysop and location, the board's MAC, your blurb (up to 240 printable characters; line breaks are dropped) and a number counting that board's applications. It is signed with the board's own key and travels over Sysop Net. `@NETAPPLY` is refused when `net_user` is off, when the board is already a member or has already applied, when it is vetoed, while the clock is not yet set, and for 30 days after a deny. A reply of `@OK applied` means it was taken here and will be passed on.
+The application carries the board's id, its public key, the card's name, sysop and location, the board's MAC, your blurb (up to 240 printable characters; line breaks are dropped) and a number counting that board's applications. It is signed with the board's own key and travels over Sysop Net. `@NETAPPLY` is refused when `net_user` is off, when the board is already a member or has already applied, when it is vetoed, while its counters wait for the clock (a board whose `/netseq.txt` was lost waits for a set clock to put their floor above any number used before), and for 30 days after Rev's deny. A board turned down by the vote count with no deny notice from Rev yet is told it is waiting for Rev's seal. A reply of `@OK applied` means it was taken here and will be passed on.
 
 ### How to vote
 
@@ -101,27 +101,31 @@ The comment is up to 72 characters. A board cannot vote on its own application. 
 
 Every board tallies the signed records itself, so all boards reach the same result with no server. Only votes from boards that are members by that same tally count. By default 3 yes votes admit an applicant and 3 no votes deny it. Rev can change the two counts, each 1 to 20, with `@NETVOTES yes=<n>,no=<n>`. Only the latest application of a board counts, and a new application starts a new tally. At most 16 applications and 256 member votes are held.
 
+When the 16 are full, a new application takes the place of the oldest one that no longer matters to the tally: one Rev has admitted, denied or vetoed, or one from a banned board (a ban fixes its standing). A lift does not bring an evicted application back; the board applies again, or a pull brings it. With no such application the new one is refused. A board holds at most 16 votes from any one voter on applications it does not hold, so a member cannot fill the pool with votes on made-up boards. When the 256 member votes are full, votes on decided applications make room first, then the votes of boards that are no longer members (vetoed or banned): they stop counting at once and move to the small pool of outsider votes, as they would at the next restart.
+
 ### Rev's admit, deny and veto
 
 On Rev's board:
 
 - `@NETADMIT <board id>` admits the applicant at once.
 - `@NETDENY <board id>` denies it at once. The board may apply again after 30 days.
+
+`@NETADMIT` and `@NETDENY` name the application they decide, so they need the board's application held on Rev's board; without one they are refused.
 - `@NETVETO <board id> YES` keeps it out for good, and beats any vote count. A veto can come after a board is in, and then it leaves User Net. Without `YES` the command only explains what it would do.
 
-Each is a signed notice every board checks against Rev's public keys. Rev's board holds up to 64 such notices; past that a new board is refused, never an old one dropped.
+Each is a signed notice every board checks against Rev's public keys. Every board holds up to 64 such notices; past that a notice for a new board is refused, never an old one dropped.
 
 ### Auto seal
 
-When the count on a board admits or denies an applicant, Rev's board signs the matching admit or deny notice itself (four a pass at most), so the result is fixed for every board and does not depend on who voted later. Rev's own boards and boards Rev admitted are always members.
+When the count on a board admits an applicant, Rev's board signs the matching admit notice itself (four a pass at most), so the result is fixed for every board and does not depend on who voted later. A deny by the count is not signed: every board already reaches it from the same votes, and signing one would spend one of the 64 notices on each board turned down. Rev denies by hand with `@NETDENY` when he wants the 30 day wait to start. Rev's own boards and boards Rev admitted are always members.
 
 ### Carrying the areas
 
-A member board with `net_user` on carries the areas in `net_user_areas`. Callers at `net_user_level` or above see them in the message menu as their own User Net group. A caller whose net posts permission is off (`@PERM <handle> nets off`) cannot post to either net, and neither can a twit. A board that is not a member, or does not carry an area, refuses its posts. A board that becomes a member, or starts carrying another area, asks its peers for the User Net pull again (see below).
+A member board with `net_user` on carries the areas in `net_user_areas`. Callers at `net_user_level` or above see them in the message menu, each area name starting with `User Net: `. A caller whose net posts permission is off (`@PERM <handle> nets off`) cannot post to either net, and neither can a twit. A board that is not a member, or does not carry an area, refuses its posts. A board that becomes a member, or starts carrying another area, asks its peers for the User Net pull again (see below).
 
 ### Syncing User Net
 
-Boards that have User Net say `net2` in the links field of their card. Only a peer whose card has `net2` is sent User Net records and the User Net pull, so an older board never sees them. A new member, or a board with a new area, asks with `UWANT`; the peer answers with the applications and votes it holds as `U` lines, then the newest posts of the areas asked for, then `UEND`. The pull is asked for on each call until one reaches `UEND`. Applications and votes are passed on to every net2 peer whether or not this board is a member.
+Boards that have User Net say `net2` in the links field of their card. Only a peer whose card has `net2` is sent User Net records and the User Net pull, so an older board never sees them. A new member, or a board with a new area, asks with `UWANT`; the peer answers with the applications and votes it holds as `U` lines, then the newest posts of the areas asked for, then `UEND`. The pull is asked for on each call until one reaches `UEND` having brought at least one `U` line this board took or already held, as for the history pull. An empty answer (from a stranger, a fresh board, or a peer that answers `UEND` at once) leaves it to the next call, so the applications and votes held before a link was made still arrive. Applications and votes are passed on to every net2 peer whether or not this board is a member.
 
 ### Two more NAK words
 
@@ -174,7 +178,7 @@ In internal flash:
 
 - `/netkey.txt` is this board's own signing seed, made on first boot.
 - `/netrev.key` is Rev's seed, written by `@NETKEY SET`. It wins over `/netkey.txt` when present.
-- `/netseq.txt` holds the next post number this board will use, its card's number, and the next vote and application numbers, beside the key. It lives in internal flash so a board that boots without its SD card keeps counting where it left off; peers drop a post whose number they have already seen. The new number is written before a post is stored or sent, so a reset can skip a number but never use one twice. If the file is missing and the clock is set, both numbers start from the current time (seconds since 1970), which is above any number used before. Older boards kept these as `/net/postseq.txt` and `/net/card.txt`; those are read once as a floor.
+- `/netseq.txt` holds the next post number this board will use, its card's number, and the next vote and application numbers, beside the key. It lives in internal flash so a board that boots without its SD card keeps counting where it left off; peers drop a post whose number they have already seen. The new number is written before a post is stored or sent, so a reset can skip a number but never use one twice. If the file is missing and the clock is set, all four numbers start from the current time (seconds since 1970), which is above any number used before. Older boards kept these as `/net/postseq.txt` and `/net/card.txt`; those are read once as a floor.
 
 The key files are never shown by `@TYPE` or the other serial file commands, in any spelling of the name. A board never sends its seed anywhere.
 

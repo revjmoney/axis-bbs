@@ -4,6 +4,7 @@
 #include "bbs/node.h"
 
 #include "bbs/axisnet.h"
+#include "bbs/features.h"
 #include "bbs/ansiterm.h"
 #include "bbs/login_art.h"
 #include "bbs/password.h"
@@ -3550,9 +3551,16 @@ void Node::showUser() {
                                       {"access", std::string(u->permFiles ? "files " : "") + (u->permMessages ? "msgs " : "") + (u->permDoors ? "doors " : "") +
                                                      (u->freeDownloads ? "free-dl" : "")},
                                       {"twit", u->twit ? "YES" : "no"},
-                                      {"net posts", u->permNets ? "YES" : "no"}});
+#if AXIS_NETS
+                                      {"net posts", u->permNets ? "YES" : "no"},
+#endif
+                                     });
     out_ += "   " + theme::key("S", "ecurity  ") + theme::key("V", "alidate  ") + theme::key("D", "eny  ") + theme::key("T", "wit  ") + theme::key("F", "iles  ") +
-            theme::key("M", "sgs  ") + theme::key("O", " doors  ") + theme::key("L", " free dl  ") + theme::key("N", "et posts  ") + theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
+            theme::key("M", "sgs  ") + theme::key("O", " doors  ") + theme::key("L", " free dl  ") +
+#if AXIS_NETS
+            theme::key("N", "et posts  ") +
+#endif
+            theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
 }
 
 void Node::userEditKey(char c) {
@@ -3616,7 +3624,9 @@ void Node::userEditKey(char c) {
         case 'm': u->permMessages = !u->permMessages; break;
         case 'o': u->permDoors = !u->permDoors; break;
         case 'l': u->freeDownloads = !u->freeDownloads; break;
-        case 'n': u->permNets = !u->permNets; break;
+#if AXIS_NETS
+        case 'n': u->permNets = !u->permNets; break;  // (the nonet field is kept either way)
+#endif
         case 'q': showUsers(); return;
         default: return;
     }

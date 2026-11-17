@@ -624,4 +624,25 @@ TEST_CASE("New Board Voting with nobody waiting, and no voting row before member
     CHECK(s.find("New Board Voting") == std::string::npos);
     CHECK(s.find("Apply") != std::string::npos);
 }
+
+TEST_CASE("User Net page with net_user off: Status says off with the held standing, no Apply row") {
+    Rig p;
+    p.replies["@NET"] = "board 0123456789abcdef\nuser net off (application pending)\nrev board no\n";
+    p.shell.beginAt(axis::bbs::SysopSection::System);
+    REQUIRE(pickRow(p, "User Net"));
+    std::string s = screen(p.out);
+    CHECK(s.find("off (application pending)") != std::string::npos);
+    CHECK(s.find("Apply") == std::string::npos);
+    CHECK(s.find("New Board Voting") == std::string::npos);
+
+    Rig m;  // a member with net_user off still votes
+    m.replies["@NET"] = "board 0123456789abcdef\nuser net off (member)\nrev board no\n";
+    m.replies["@NET WAITING"] = "";
+    m.shell.beginAt(axis::bbs::SysopSection::System);
+    REQUIRE(pickRow(m, "User Net"));
+    s = screen(m.out);
+    CHECK(s.find("off (member)") != std::string::npos);
+    CHECK(s.find("New Board Voting") != std::string::npos);
+    CHECK(s.find("Apply") == std::string::npos);
+}
 #endif

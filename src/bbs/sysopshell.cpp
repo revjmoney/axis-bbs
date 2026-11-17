@@ -997,10 +997,11 @@ void SysopShell::userNet(Layer& l) {
     }));
     l.items.push_back(netAsk("Caller level", setting("net_user_level"), "@SET net_user_level="));
     if (st.empty() || st == "loading") return;  // not running here, or the applications are still loading
-    if (st == "member")
+    // With net_user off the line reads "off", the held standing in brackets: a member still votes, nobody applies.
+    if (st == "member" || st == "off (member)")
         l.items.push_back(page("New Board Voting", std::to_string(lines("@NET WAITING").size()) + " waiting", "NEW BOARD VOTING",
                                [this](Layer& x) { userVoting(x); }));
-    else
+    else if (st.rfind("off", 0) != 0)
         l.items.push_back(netAsk("Apply (a short blurb)", "", "@NETAPPLY "));
     l.items.push_back(netShow("Members", "@NET MEMBERS"));
     if (after(d, "rev board") != "yes") return;
