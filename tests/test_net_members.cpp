@@ -177,44 +177,53 @@ TEST_CASE("tally is the same in any order") {
     CHECK_MESSAGE(bad == 0, "first order that differs: " << firstBad);
 
     // The same with the app and vote tables filled to their caps by sealed apps first. The tables are
-    // filled once; each order starts from a copy (the state put back, the tally copied).
-    NetState st;
-    NetMembers base(st, isRev);
-    uint32_t seq = 0;
-    std::vector<KeyPair> fillers, voters;
-    for (size_t i = 0; i < kMaxOpenApps; i++) fillers.push_back(keyOf((uint8_t)(0x60 + i)));
-    for (size_t i = 0; i < kMaxOpenApps - 1; i++) voters.push_back(keyOf((uint8_t)(0x70 + i)));
-    for (const KeyPair& v : voters) REQUIRE(st.applyNotice(makeNotice(rev0(), 0, "admit", boardOf(v), ++seq, "1"), 1));
-    for (size_t i = 0; i < fillers.size(); i++) {
-        std::string l;
-        REQUIRE(base.takeApp(makeApp(fillers[i], 1, kNow - 1000 + (uint32_t)i), l));
-        REQUIRE(st.applyNotice(makeNotice(rev0(), 0, "deny", boardOf(fillers[i]), ++seq, "1"), 1));  // sealed
-    }
-    voters.push_back(rev0());
-    for (const KeyPair& f : fillers)
-        for (const KeyPair& v : voters) {
+    // filled once; each order starts from a copy (the state put back, the tally copied). Twice: every
+    // filler sealed by a deny, then with the oldest filler banned instead (a ban, not a seal, frees its
+    // slot, so appC evicts a banned app in every order).
+    for (int banned = 0; banned < 2; banned++) {
+        NetState st;
+        NetMembers base(st, isRev);
+        uint32_t seq = 0;
+        std::vector<KeyPair> fillers, voters;
+        for (size_t i = 0; i < kMaxOpenApps; i++) fillers.push_back(keyOf((uint8_t)(0x60 + i)));
+        for (size_t i = 0; i < kMaxOpenApps - 1; i++) voters.push_back(keyOf((uint8_t)(0x70 + i)));
+        for (const KeyPair& v : voters) REQUIRE(st.applyNotice(makeNotice(rev0(), 0, "admit", boardOf(v), ++seq, "1"), 1));
+        for (size_t i = 0; i < fillers.size(); i++) {
             std::string l;
-            REQUIRE(base.takeVote(makeVote(v, boardOf(f), 1, 1, false), l));
+            REQUIRE(base.takeApp(makeApp(fillers[i], 1, kNow - 1000 + (uint32_t)i), l));
+            if (banned && i == 0)
+                REQUIRE(st.applyNotice(makeNotice(rev0(), 0, "ban", boardOf(fillers[i]), ++seq), 1));  // settled by the ban
+            else
+                REQUIRE(st.applyNotice(makeNotice(rev0(), 0, "deny", boardOf(fillers[i]), ++seq, "1"), 1));  // sealed
         }
-    REQUIRE(base.appCount() == kMaxOpenApps);
-    REQUIRE(base.voteCount() == kMaxVotes);
-    const NetState filled = st;
+        voters.push_back(rev0());
+        for (const KeyPair& f : fillers)
+            for (const KeyPair& v : voters) {
+                std::string l;
+                REQUIRE(base.takeVote(makeVote(v, boardOf(f), 1, 1, false), l));
+            }
+        REQUIRE(base.appCount() == kMaxOpenApps);
+        REQUIRE(base.voteCount() == kMaxVotes);
+        const NetState filled = st;
+        const std::string first = boardOf(fillers[0]);
 
-    // Every order again: a copy costs no signature checks, so each order checks only its six records.
-    order = {0, 1, 2, 3, 4, 5};
-    runs = bad = 0;
-    do {
-        st = filled;
-        NetMembers m(base);
-        for (int r : order) take(st, m, r);
-        if (m.status(c) != Status::Member || m.status(d) != Status::None || m.tally(c).yes != 3 ||
-            m.appCount() != kMaxOpenApps) {
-            if (!bad++) firstBad = show(order);
-        }
-        runs++;
-    } while (std::next_permutation(order.begin(), order.end()));
-    CHECK(runs == 720);
-    CHECK_MESSAGE(bad == 0, "first order that differs (full tables): " << firstBad);
+        // Every order again: a copy costs no signature checks, so each order checks only its six records.
+        order = {0, 1, 2, 3, 4, 5};
+        runs = bad = 0;
+        do {
+            st = filled;
+            NetMembers m(base);
+            for (int r : order) take(st, m, r);
+            uint32_t off;
+            if (m.status(c) != Status::Member || m.status(d) != Status::None || m.tally(c).yes != 3 ||
+                m.appCount() != kMaxOpenApps || m.heldApp(first, off) || m.status(first) != (banned ? Status::None : Status::Denied)) {
+                if (!bad++) firstBad = show(order);
+            }
+            runs++;
+        } while (std::next_permutation(order.begin(), order.end()));
+        CHECK(runs == 720);
+        CHECK_MESSAGE(bad == 0, "first order that differs (full tables, banned " << banned << "): " << firstBad);
+    }
 }
 
 TEST_CASE("vote before its app counts once the app comes") {
@@ -499,19 +508,91 @@ TEST_CASE("caps never evict what the tally needs") {
     CHECK(t.m.status(boardOf(apps[6])) == Status::Pending);
 }
 
-TEST_CASE("a full app table with a banned pending app still refuses a new one") {
+TEST_CASE("a full app table makes room from a banned pending app") {
     RevKeys rk;
     Tally t;
-    std::vector<KeyPair> apps;
+    std::vector<KeyPair> apps, voters;
     for (size_t i = 0; i < kMaxOpenApps + 1; i++) apps.push_back(keyOf((uint8_t)(0x60 + i)));
+    for (size_t i = 0; i < 2; i++) voters.push_back(keyOf((uint8_t)(0x90 + i)));
+    for (const KeyPair& v : voters) REQUIRE(t.admit(v));
     for (size_t i = 0; i < kMaxOpenApps; i++) REQUIRE(t.app(makeApp(apps[i], 1, kNow + (uint32_t)i)));
-    REQUIRE(t.notice("ban", boardOf(apps[0])));  // a ban is no seal: a lift brings the app back
-    CHECK(t.m.status(boardOf(apps[0])) == Status::None);
-    CHECK_FALSE(t.app(makeApp(apps[kMaxOpenApps])));
+    for (const KeyPair& v : voters) REQUIRE(t.vote(makeVote(v, boardOf(apps[3]), 1, 1, true)));
+    REQUIRE(t.notice("ban", boardOf(apps[3])));  // not the oldest: a ban, not age, makes it the one to go
+    CHECK(t.m.status(boardOf(apps[3])) == Status::None);
+    // The ban fixes its status, so the tally no longer needs the app: it goes, with the votes on it.
+    CHECK(t.app(makeApp(apps[kMaxOpenApps])));
+    CHECK(t.m.appCount() == kMaxOpenApps);
     uint32_t off;
-    CHECK(t.m.heldApp(boardOf(apps[0]), off));
-    REQUIRE(t.notice("lift", boardOf(apps[0])));
-    CHECK(t.m.status(boardOf(apps[0])) == Status::Pending);
+    CHECK_FALSE(t.m.heldApp(boardOf(apps[3]), off));
+    CHECK(t.m.heldApp(boardOf(apps[kMaxOpenApps]), off));
+    CHECK(t.m.voteCount() == 0);
+    for (size_t i = 0; i < kMaxOpenApps; i++)
+        if (i != 3) CHECK(t.m.status(boardOf(apps[i])) == Status::Pending);
+    CHECK(t.m.status(boardOf(apps[kMaxOpenApps])) == Status::Pending);
+    // A lift does not bring the app back on this board: the board applies again (or a pull brings it).
+    REQUIRE(t.notice("lift", boardOf(apps[3])));
+    CHECK(t.m.status(boardOf(apps[3])) == Status::None);
+    // With no sealed or banned app left, a new one is refused as before.
+    CHECK_FALSE(t.app(makeApp(keyOf(0x9F))));
+}
+
+TEST_CASE("a member filling the pool with votes on unheld apps cannot block a real vote") {
+    RevKeys rk;
+    Tally t;
+    const KeyPair A = keyOf(0x51), C = keyOf(0x53);
+    const std::string c = boardOf(C);
+    REQUIRE(t.admit(A));
+    REQUIRE(t.app(makeApp(C)));
+    // Votes on made-up app ids: 16 are held, the 17th is refused.
+    for (uint32_t i = 0; i < kMaxOpenApps; i++) REQUIRE(t.vote(makeVote(A, idOf(0x2000 + i), 1, 1, true)));
+    CHECK_FALSE(t.vote(makeVote(A, idOf(0x2000 + kMaxOpenApps), 1, 1, true)));
+    CHECK(t.m.voteCount() == kMaxOpenApps);
+    // A newer vote on one of them replaces it (no new slot), and a vote on a held app is taken.
+    CHECK(t.vote(makeVote(A, idOf(0x2000), 1, 2, false)));
+    CHECK(t.vote(makeVote(A, c, 1, 1, true)));
+    CHECK(t.m.voteCount() == kMaxOpenApps + 1);
+    CHECK(t.m.tally(c).yes == 1);
+    // Another voter has its own 16.
+    const KeyPair B = keyOf(0x52);
+    REQUIRE(t.admit(B));
+    CHECK(t.vote(makeVote(B, idOf(0x2000 + kMaxOpenApps), 1, 1, true)));
+    // A load keeps the oldest 16 per voter on unheld apps, whatever the line order.
+    std::string text;
+    const KeyPair D = keyOf(0x54);
+    for (uint32_t i = 0; i < 20; i++) text = encode(makeVote(D, idOf(0x3000 + i), 1, 1, true, kNow + i)) + "
+" + text;
+    NetMembers again(t.st, [](const std::string& b) { return b == revBoard(); });
+    again.load(text);
+    CHECK(again.voteCount() == kMaxOpenApps);
+    for (uint32_t i = 0; i < 20; i++) CHECK(again.holds(encode(makeVote(D, idOf(0x3000 + i), 1, 1, true, kNow + i))) == (i < kMaxOpenApps));
+}
+
+TEST_CASE("a vetoed voter's votes free room in a full member pool at run time") {
+    RevKeys rk;
+    Tally t;
+    REQUIRE(t.votesNeeded(kMaxVotesNeeded, kMaxVotesNeeded));  // every app stays Pending
+    std::vector<KeyPair> apps, voters;
+    for (size_t i = 0; i < kMaxOpenApps; i++) apps.push_back(keyOf((uint8_t)(0x60 + i)));
+    for (size_t i = 0; i < kMaxOpenApps + 1; i++) voters.push_back(keyOf((uint8_t)(0x80 + i)));
+    for (const KeyPair& v : voters) REQUIRE(t.admit(v));
+    for (size_t i = 0; i < kMaxOpenApps; i++) REQUIRE(t.app(makeApp(apps[i], 1, kNow + (uint32_t)i)));
+    for (size_t a = 0; a < kMaxOpenApps; a++)
+        for (size_t v = 0; v < kMaxOpenApps; v++) REQUIRE(t.vote(makeVote(voters[v], boardOf(apps[a]), 1, 1, true)));
+    REQUIRE(t.m.voteCount() == kMaxVotes);
+    NetVote extra = makeVote(voters[kMaxOpenApps], boardOf(apps[1]), 1, 1, true);
+    CHECK_FALSE(t.vote(extra));  // full, nothing settled
+    // Rev vetoes voter 0: its 16 votes no longer count and go to the outsider pool, making room.
+    REQUIRE(t.notice("veto", boardOf(voters[0])));
+    CHECK(t.m.tally(boardOf(apps[1])).yes == kMaxOpenApps - 1);
+    CHECK(t.vote(extra));
+    CHECK(t.m.voteCount() == kMaxVotes + 1);  // 241 member votes, 16 outsider votes
+    CHECK(t.m.tally(boardOf(apps[1])).yes == kMaxOpenApps);
+    for (size_t a = 0; a < kMaxOpenApps; a++) CHECK(t.m.status(boardOf(apps[a])) == Status::Pending);
+    // Saved and loaded, the same tally.
+    NetMembers again(t.st, [](const std::string& b) { return b == revBoard(); });
+    again.load(t.m.save(t.file));
+    CHECK(again.voteCount() == kMaxVotes + 1);
+    CHECK(again.tally(boardOf(apps[1])).yes == kMaxOpenApps);
 }
 
 TEST_CASE("votes check without cards") {
@@ -551,15 +632,17 @@ TEST_CASE("votes check without cards") {
 TEST_CASE("an outsider's vote still counts once it is admitted, whatever outsider votes come later") {
     RevKeys rk;
     Tally t;
-    const KeyPair A = keyOf(0x51), C = keyOf(0x53), J = keyOf(0x5F);
+    const KeyPair A = keyOf(0x51), C = keyOf(0x53);
+    const KeyPair J[3] = {keyOf(0x5F), keyOf(0x5D), keyOf(0x5E)};
     const std::string c = boardOf(C);
     REQUIRE(t.app(makeApp(C)));
     REQUIRE(t.vote(makeVote(A, c, 1, 1, true, kNow)));  // an outsider when it came
     REQUIRE(t.admit(A));
     CHECK(t.m.tally(c).yes == 1);
-    // 40 later dated votes from a board that is no member, on applications not held: the outsider pool
-    // keeps 32, the oldest outsider vote going first, never one the tally counts.
-    for (uint32_t i = 0; i < 40; i++) t.vote(makeVote(J, idOf(0x1000 + i), 1, 1, true, kNow + 10 + i));
+    // 40 later dated votes from three boards that are no members, on applications not held (at most 16
+    // each, the cap per voter): the outsider pool keeps 32, the oldest outsider vote going first, never
+    // one the tally counts.
+    for (uint32_t i = 0; i < 40; i++) t.vote(makeVote(J[i % 3], idOf(0x1000 + i), 1, 1, true, kNow + 10 + i));
     CHECK(t.m.voteCount() == 1 + kMaxOutsiderVotes);
     CHECK(t.m.tally(c).yes == 1);
     CHECK(t.m.holds(encode(makeVote(A, c, 1, 1, true, kNow))));

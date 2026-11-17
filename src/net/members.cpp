@@ -72,6 +72,12 @@ bool NetMembers::sealed(uint64_t board, uint32_t appSeq) const {
     return (n->kind == "admit" || n->kind == "deny") && noticeSeq(*n) == appSeq;
 }
 
+// The app no longer matters to the tally: Rev has sealed it, or its board is banned (a ban fixes the
+// status at None, so neither the app nor votes on it count). Such apps and votes on them may make room.
+bool NetMembers::settled(uint64_t board, uint32_t appSeq) const {
+    return sealed(board, appSeq) || st_.banned(hex16(board));
+}
+
 // Step 4's seed: Rev's boards and boards Rev admitted, minus banned (a vetoed board has no admit).
 bool NetMembers::seedMember(uint64_t board) const {
     const std::string id = hex16(board);
@@ -205,11 +211,12 @@ bool NetMembers::takeApp(const NetApp& a, std::string& line) {
     if (!verifyApp(a)) return false;
 
     if (!held && apps_.size() >= kMaxOpenApps) {
-        // Make room only from apps Rev has sealed, the oldest (date, then board id) first.
+        // Make room only from apps Rev has sealed or whose board is banned, the oldest (date, then board
+        // id) first.
         size_t victim = apps_.size();
         for (size_t i = 0; i < apps_.size(); i++) {
             const App& x = apps_[i];
-            if (!sealed(x.board, x.seq)) continue;
+            if (!settled(x.board, x.seq)) continue;
             if (victim == apps_.size() || x.date < apps_[victim].date ||
                 (x.date == apps_[victim].date && x.board < apps_[victim].board))
                 victim = i;
@@ -271,14 +278,51 @@ bool NetMembers::makeVote(const NetVote& v, Vote& nv, std::string& enc, bool che
     return true;
 }
 
-// The oldest member-pool vote on an app Rev has sealed, or the pool size if none.
+// The oldest member-pool vote on a settled app (sealed, or its board banned), or the pool size if none.
 size_t NetMembers::sealedVictim() const {
     size_t victim = votes_.size();
     for (size_t i = 0; i < votes_.size(); i++)
-        if (sealed(votes_[i].app, votes_[i].appSeq) &&
+        if (settled(votes_[i].app, votes_[i].appSeq) &&
             (victim == votes_.size() || age(votes_[i]) < age(votes_[victim])))
             victim = i;
     return victim;
+}
+
+// The outsider pool down to its cap: the oldest vote from a voter outside M goes first. Votes the tally
+// counts (voter in M) are never dropped, so the pool may stay over its cap by those alone.
+void NetMembers::capOutsiders(const std::vector<uint64_t>& m) {
+    while (outsiders_.size() > kMaxOutsiderVotes) {
+        size_t victim = outsiders_.size();
+        for (size_t i = 0; i < outsiders_.size(); i++)
+            if (!inM(m, outsiders_[i].voter) &&
+                (victim == outsiders_.size() || age(outsiders_[i]) < age(outsiders_[victim])))
+                victim = i;
+        if (victim == outsiders_.size()) break;
+        outsiders_.erase(outsiders_.begin() + static_cast<std::ptrdiff_t>(victim));
+    }
+}
+
+// Member-pool votes whose voter is no longer in M (vetoed or banned) move to the outsider pool, where
+// endLoad would put them, then that pool is capped. None of them counts now.
+void NetMembers::demote(const std::vector<uint64_t>& m) {
+    for (size_t i = 0; i < votes_.size();) {
+        if (inM(m, votes_[i].voter)) {
+            i++;
+        } else {
+            outsiders_.push_back(votes_[i]);
+            votes_.erase(votes_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+    capOutsiders(m);
+}
+
+// The voter's held votes on apps not in the table (both pools).
+size_t NetMembers::unheldVotes(uint64_t voter) const {
+    size_t n = 0;
+    for (const auto* pool : {&votes_, &outsiders_})
+        for (const auto& x : *pool)
+            if (x.voter == voter && !findApp(x.app)) n++;
+    return n;
 }
 
 // Outsider votes whose voter is now a member by the tally move to the member pool while it has room,
@@ -313,6 +357,8 @@ bool NetMembers::takeVote(const NetVote& v, std::string& line) {
     Vote* inOutsiders = findIn(outsiders_);
     const Vote* old = inMembers ? inMembers : inOutsiders;
     if (old && (nv.seq < old->seq || (nv.seq == old->seq && nv.crc <= old->crc))) return false;
+    // A voter holds at most kMaxOpenApps votes on apps not in the table (a replacement is no new one).
+    if (!old && !findApp(nv.app) && unheldVotes(nv.voter) >= kMaxOpenApps) return false;
     if (!verifyVote(v)) return false;
 
     const std::vector<uint64_t> m = grow();
@@ -323,10 +369,14 @@ bool NetMembers::takeVote(const NetVote& v, std::string& line) {
         *same = nv;
     } else {
         if (member && pool.size() >= kMaxVotes) {
-            // Only votes on apps Rev has sealed make room, the oldest first.
+            // Votes on settled apps make room, the oldest first; with none, the votes of voters that
+            // have left M go to the outsider pool. Nothing the tally counts is dropped.
             const size_t victim = sealedVictim();
-            if (victim == pool.size()) return false;
-            pool.erase(pool.begin() + static_cast<std::ptrdiff_t>(victim));
+            if (victim < pool.size())
+                pool.erase(pool.begin() + static_cast<std::ptrdiff_t>(victim));
+            else
+                demote(m);
+            if (pool.size() >= kMaxVotes) return false;
         } else if (!member && pool.size() >= kMaxOutsiderVotes) {
             // The oldest outsider vote goes, but never one the tally counts (its voter is a member by
             // now). If none may go, or the new one is the oldest, the new one is refused.
@@ -612,6 +662,19 @@ void NetMembers::endLoad() {
                                 }),
                  staged.end());
     std::sort(staged.begin(), staged.end(), [](const Vote& x, const Vote& y) { return age(x) < age(y); });
+    // At most kMaxOpenApps votes per voter on apps not in the table, as at run time: the oldest stay.
+    {
+        std::vector<std::pair<uint64_t, size_t>> per;  // (voter, unheld votes kept)
+        staged.erase(std::remove_if(staged.begin(), staged.end(),
+                                    [&](const Vote& v) {
+                                        if (findApp(v.app)) return false;
+                                        for (auto& p : per)
+                                            if (p.first == v.voter) return ++p.second > kMaxOpenApps;
+                                        per.emplace_back(v.voter, 1);
+                                        return false;
+                                    }),
+                     staged.end());
+    }
     votes_ = std::move(staged);
     const std::vector<uint64_t> m = grow();
     for (size_t i = 0; i < votes_.size();) {
@@ -622,9 +685,10 @@ void NetMembers::endLoad() {
             votes_.erase(votes_.begin() + static_cast<std::ptrdiff_t>(i));
         }
     }
-    // Member pool: votes on sealed apps go first, oldest first (no vote on a sealed app counts toward
-    // M, so M stays the same). With none sealed left, the newest member votes move to the outsider
-    // pool, where they still count, as they would have stayed there at run time once votes_ was full.
+    // Member pool: votes on settled apps go first, oldest first (no vote on a sealed app or a banned
+    // board's app counts toward M, so M stays the same). With none settled left, the newest member votes
+    // move to the outsider pool, where they still count, as they would have stayed there at run time
+    // once votes_ was full.
     while (votes_.size() > kMaxVotes) {
         const size_t victim = sealedVictim();
         if (victim < votes_.size()) {
@@ -634,17 +698,7 @@ void NetMembers::endLoad() {
             votes_.pop_back();  // sorted oldest first, so this is the newest
         }
     }
-    // Outsider pool: the oldest vote from a voter outside M goes; votes the tally counts (voter in M)
-    // are never dropped, so the pool may stay over its cap by those alone.
-    while (outsiders_.size() > kMaxOutsiderVotes) {
-        size_t victim = outsiders_.size();
-        for (size_t i = 0; i < outsiders_.size(); i++)
-            if (!inM(m, outsiders_[i].voter) &&
-                (victim == outsiders_.size() || age(outsiders_[i]) < age(outsiders_[victim])))
-                victim = i;
-        if (victim == outsiders_.size()) break;
-        outsiders_.erase(outsiders_.begin() + static_cast<std::ptrdiff_t>(victim));
-    }
+    capOutsiders(m);  // the oldest vote from a voter outside M goes first
     votes_.shrink_to_fit();
 }
 

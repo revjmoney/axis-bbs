@@ -37,12 +37,14 @@ public:
 
     // Verified first. Keeps only the latest app per board (equal seqs: the higher line CRC wins).
     // Refused for a Rev board, a Rev admitted board or a vetoed one. A full table drops the oldest app
-    // Rev has sealed, with its votes; with none sealed the new app is refused. line gets the encoded
-    // record. False if nothing changed.
+    // Rev has sealed or whose board is banned, with its votes; with none such the new app is refused.
+    // line gets the encoded record. False if nothing changed.
     bool takeApp(const NetApp& a, std::string& line);
     // Verified against its own pub. Keeps the highest seq per (voter, app, appSeq) (equal seqs: the
     // higher line CRC wins). A vote for an app not held yet is kept; one for an app older than the
-    // held one is refused. A voter may not vote on itself. False if nothing changed.
+    // held one is refused. A voter may not vote on itself, nor hold more than kMaxOpenApps votes on
+    // apps not in the table. A full member pool makes room from votes on settled apps, else by moving
+    // the votes of voters no longer in M to the outsider pool. False if nothing changed.
     bool takeVote(const NetVote& v, std::string& line);
 
     Status status(const std::string& board) const;
@@ -101,6 +103,7 @@ private:
     };
     const App* findApp(uint64_t board) const;
     bool sealed(uint64_t board, uint32_t appSeq) const;
+    bool settled(uint64_t board, uint32_t appSeq) const;
     bool seedMember(uint64_t board) const;
     bool deniedByNotice(uint64_t board) const;
     // Every known board (applicant or voter) in M, sorted.
@@ -112,6 +115,9 @@ private:
     // checkApp: refuse a vote on an app older than the held one (a load checks that in endLoad).
     bool makeVote(const NetVote& v, Vote& nv, std::string& enc, bool checkApp = true) const;
     size_t sealedVictim() const;
+    void capOutsiders(const std::vector<uint64_t>& m);
+    void demote(const std::vector<uint64_t>& m);
+    size_t unheldVotes(uint64_t voter) const;
     void migrate();
     static std::tuple<uint32_t, uint64_t, uint64_t, uint32_t, uint32_t, uint32_t> age(const Vote& x);
 
