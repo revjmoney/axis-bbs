@@ -67,7 +67,8 @@ void NetGate::prune(uint32_t now) {
 }
 
 bool NetGate::admit(uint32_t ip, bool lan, uint32_t now) {
-    if (table_.size() >= 1024 && now - lastPrune_ >= 5000) prune(now);
+    // Forgets idle addresses every minute (every 5 s while very many call), so no old time outlives the clock's wrap.
+    if (now - lastPrune_ >= (table_.size() >= 1024 ? 5000u : kWindowMs)) prune(now);
     auto it = table_.find(ip);
     if (it == table_.end()) {
         if (table_.size() >= kMaxTracked) {
