@@ -580,7 +580,7 @@ void modemLineStart(const std::string& path) {
 }
 
 void modemLinePoll(uint32_t nowMs) {
-    if (M.st == St::Off || busy || std::this_thread::get_id() != mainThread) return;
+    if (std::this_thread::get_id() != mainThread || M.st == St::Off || busy) return;  // main thread only: nothing is locked
     busy = true;
     step(nowMs);
     busy = false;
