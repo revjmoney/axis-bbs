@@ -1,0 +1,33 @@
+[Unit]
+Description=AXIS BBS (native Linux program)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=axis
+Group=axis
+SupplementaryGroups=dialout
+ExecStart=/usr/local/bin/axis --headless --data /var/lib/axis
+# Exit code 3 is the board's ESP.restart(); on-failure restarts every non-zero exit.
+# A clean stop (exit 0) stays stopped.
+Restart=on-failure
+RestartSec=2
+# The program stops itself within 5 s of SIGTERM.
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/axis
+PrivateTmp=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Only the USB serial adapters (the LFD3K-SM modem); no other devices.
+DevicePolicy=closed
+DeviceAllow=char-ttyUSB rw
+LimitNOFILE=4096
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
