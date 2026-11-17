@@ -317,6 +317,7 @@ TEST_CASE("listings: nf_list is in no caller area list and nothing unsigned is p
     m.from = "Caller";
     m.subject = "FAKE.ZIP";
     CHECK(callers.post(kNetFilesArea, m) == 0);
+    CHECK(callers.postAfter(kNetFilesArea, 5, m) == 0);  // (the default postAfter is its post)
     CHECK(n.records().empty());
 }
 
