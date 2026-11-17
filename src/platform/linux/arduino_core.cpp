@@ -19,7 +19,13 @@
 #include <ctime>
 #include <string>
 
+#include "platform/linux/host.h"
+
 // ------------------------------------------------------------------ time
+namespace axis::host {
+void (*delayHook)() = nullptr;
+}
+
 namespace {
 uint64_t monoUs() {
     timespec ts;
@@ -43,8 +49,16 @@ void delayMicroseconds(uint32_t us) {
     }
 }
 void delay(uint32_t ms) {
-    timespec ts{(time_t)(ms / 1000u), (long)(ms % 1000u) * 1000000L};
-    while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+    void (*hook)() = axis::host::delayHook;
+    if (hook) hook();
+    for (uint32_t left = ms;;) {
+        uint32_t slice = hook ? std::min<uint32_t>(left, 10) : left;
+        timespec ts{(time_t)(slice / 1000u), (long)(slice % 1000u) * 1000000L};
+        while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+        }
+        left -= slice;
+        if (hook) hook();
+        if (!left) break;
     }
 }
 void vTaskDelay(TickType_t ticks) { delay(ticks * portTICK_PERIOD_MS); }

@@ -12,10 +12,12 @@
 #include "platform/linux/host.h"
 #include "platform/linux/hostconf.h"
 #include "platform/linux/hostnet.h"
+#include "platform/linux/modemline.h"
 #include "platform/linux/paths.h"
 
-void setup();
-void loop();
+void     setup();
+void     loop();
+uint32_t millis();
 
 namespace axis::host {
 bool        headless = false;
@@ -23,7 +25,7 @@ std::string dataDir;
 }  // namespace axis::host
 
 int main(int argc, char** argv) {
-    std::string seed;
+    std::string seed, modem;
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "--headless") == 0) {
             axis::host::headless = true;
@@ -31,8 +33,10 @@ int main(int argc, char** argv) {
             axis::host::dataDir = argv[++i];
         } else if (std::strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             seed = argv[++i];  // a board card's folder, copied into <data>/sd on the first run
+        } else if (std::strcmp(argv[i], "--modem") == 0 && i + 1 < argc) {
+            modem = argv[++i];  // the LFD3K-SM's serial port (/dev/ttyUSB0): it answers radio calls
         } else {
-            std::fprintf(stderr, "usage: axis [--headless] [--data DIR] [--seed CARD_FOLDER]\n");
+            std::fprintf(stderr, "usage: axis [--headless] [--data DIR] [--seed CARD_FOLDER] [--modem TTY]\n");
             return 2;
         }
     }
@@ -51,9 +55,11 @@ int main(int argc, char** argv) {
     std::printf("axis: data folder %s\n", axisDataDir().c_str());
     hostConfLoad(axisDataDir());  // <data>/axis.conf: ports and the accept gate's limits
     hostnetStart();
+    modemLineStart(modem.empty() ? hostConfStr("modem", "") : modem);  // --modem wins over axis.conf's modem=
     setup();
     for (;;) {
         loop();
-        hostnetPoll();  // finished DNS lookups call back here, on the main thread, between loop() turns
+        hostnetPoll();          // finished DNS lookups call back here, on the main thread, between loop() turns
+        modemLinePoll(millis());  // the radio line (also pumped from delay())
     }
 }

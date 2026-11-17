@@ -429,7 +429,7 @@ void WiFiServer::drain(int i) {
 }
 
 bool WiFiServer::hasClient() {
-    if (telnet_ && (fd_[0] >= 0 || fd_[1] >= 0)) {
+    if (telnet_) {  // radio calls: whenever the telnet server has begun, listening or not (its port may be taken)
         auto& q = injected();
         while (!q.empty()) {
             waiting_.push_back(q.front());

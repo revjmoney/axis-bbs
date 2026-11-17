@@ -308,6 +308,7 @@ if(UNIX AND NOT APPLE)
         src/platform/linux/heapscope.cpp
         src/platform/linux/hostconf.cpp
         src/platform/linux/hostnet.cpp
+        src/platform/linux/modemline.cpp
         src/platform/linux/netgate.cpp
         src/platform/cyd/config_store.cpp  # the board's own: LittleFS is the data folder's flash/ (fs.cpp)
         src/platform/cyd/sdfiles.cpp       # the board's own: its /sd/files paths go through fs_remap.cpp

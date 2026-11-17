@@ -8,4 +8,7 @@
 namespace axis::host {
 extern bool        headless;  // --headless: no window and no terminal screen
 extern std::string dataDir;   // --data DIR ("" when not given)
+// Called by delay() before and between its naps of at most 10 ms (modemline.cpp pumps the radio line from it, as
+// the board's network runs by itself while main.cpp waits inside one loop() turn). nullptr: delay() just sleeps.
+extern void (*delayHook)();
 }  // namespace axis::host
