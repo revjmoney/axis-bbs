@@ -75,6 +75,7 @@ constexpr uint32_t kNetListingsPerBoard = 200;  // live listings from one home b
 constexpr uint32_t kNetGoneKeepDays = 120;      // a tombstone is kept this long (with the clock set)
 constexpr uint32_t kNetGoneKeepCount = 200;     // without a clock, the newest this many tombstones are kept
 constexpr uint32_t kNetIndexStep = 32;          // listings a rebuild of the listing index takes per call
+constexpr uint32_t kNetListingDropsPerSession = 8;  // listings from peers that may replace or remove one held, per session
 
 // The words a receiver puts after NAK <index>. Permanent ones move the sender's cursor past the entry;
 // transient ones (nocard, store) do not: the sender sends nothing more that session and tries the
@@ -203,21 +204,27 @@ public:
     // pos is left where the next batch starts. True once the scan reached the end. Nothing while this board is not
     // a member carrying un_files.
     bool listingLines(uint32_t& pos, bool tombs, std::vector<std::string>& out);
-    // /net/files.idx, the listing index: a 28 byte head (IdxHead), then one 24 byte record per listing or tombstone
+    // /net/files.idx, the listing index: a 44 byte head (IdxHead), then one 24 byte record per listing or tombstone
     // in kNetFilesArea, in store order (IdxRec). read and write work on byte ranges of the file (a write at or past
-    // its end grows it); the host gives the file, a test a buffer. takeListing and findListing look things up in it
-    // and read just the records it points at (MessageStore::readAt), never scanning the area. Its hashes are salted
-    // with a secret salt drawn at each build, so collisions cannot be chosen. A head that is not clean (a reset
-    // during a change), a tail that does not match the area (a sysop's move into it, or a replaced file), or a failed
-    // read or write sends it to be built again from the area, kNetIndexStep listings a call to listingIndexStep;
-    // until then listings are refused with the transient "store" NAK. After a drop from the area it is built again
-    // at once (the offsets moved).
+    // its end grows it); the host gives the file, a test a buffer. random fills bytes from the host's random source
+    // (a test stubs it). takeListing and findListing look things up in it and read just the records it points at
+    // (MessageStore::readAt), never scanning the area. Its hashes are keyed BLAKE2b (32 bits kept) with a 128 bit
+    // random key drawn at each build and kept in the head, so names that collide cannot be chosen ahead; the key
+    // comes from no signing key. A head that is not clean (a reset during a change), a tail that does not match the
+    // area (a sysop's move into it, or a replaced file), or a failed read or write sends it to be built again from
+    // the area, kNetIndexStep listings a call to listingIndexStep; until then listings are refused with the
+    // transient "store" NAK. After a drop from the area it is built again at once (the offsets moved).
     void setListingIndex(std::function<bool(uint32_t off, void* p, size_t n)> read,
-                         std::function<bool(uint32_t off, const void* p, size_t n)> write) {
+                         std::function<bool(uint32_t off, const void* p, size_t n)> write,
+                         std::function<void(void* p, size_t n)> random) {
         idxRead_ = std::move(read);
         idxWrite_ = std::move(write);
+        idxRandom_ = std::move(random);
         idx_ = Idx::Unknown;
     }
+    // A session starts: the budget of listings from peers that may replace or remove a held one (each a rewrite of
+    // the area) is full again. Past it such a listing is refused with the transient "store", before it is stored.
+    void listingSessionStart() { listingDrops_ = 0; }
     // One bounded piece of index work (a look at the head, or a piece of a rebuild); the host calls it from its idle
     // tick. True while more is to do.
     bool listingIndexStep();
@@ -293,7 +300,8 @@ public:
     void resetUserHistory() { userHistory_ = filesHistory_ = false; }  // the listings pull too
     // The listings pull (asked with UWANT of a net3 peer while this board is a member carrying un_files), its own
     // flag, so a board upgraded from Phase 2 with uhistory done still gets the listings held before: done when a
-    // pull reached "UEND F" (the peer sent every listing it holds). Saved with the cursors as "fhistory".
+    // pull reached "UEND F" (the peer sent every listing it holds) with none refused for now and the session's
+    // listing cap not reached (NetSession). Saved with the cursors as "fhistory".
     bool needFilesHistory() const { return !filesHistory_; }
     void filesHistoryGot() { filesHistory_ = true; }
     // The apps file line at off, if it is a record held now (members().holds). For a User Net pull, which
@@ -379,15 +387,16 @@ private:
     void eachListing(const std::function<bool(const bbs::Message& m, const NetListing& l)>& each);
     bool shown(const NetListing& l) const;  // live, and not held, killed or from a banned board
     void trimListings(uint32_t nowDay, bool clock);
-    // The listing index (setListingIndex). key: the salted crc32 of "<board>|<area>|<name>", board: the salted
-    // crc32 of the board id, flags 1 for a tombstone, at where the message starts in the area.
+    // The listing index (setListingIndex). key: the keyed hash of "<board>|<area>|<name>", board: the keyed hash of
+    // the board id, flags 1 for a tombstone, at where the message starts in the area.
     struct IdxRec {
         uint32_t key, board, seq, num, flags, at;
     };
-    // magic "NFX2", clean (1) or not, records, salt, and the area's last message (any, junk too): its number,
-    // where it starts, and where the area ends after it (to tell the area changed behind the index's back).
+    // magic "NFX3", clean (1) or not, records, the hash key, and the area's last message (any, junk too): whether
+    // there is one, its number, where it starts, and where the area ends after it (to tell the area changed behind
+    // the index's back).
     struct IdxHead {
-        uint32_t magic, clean, count, salt, lastNum, lastAt, end;
+        uint32_t magic, clean, count, key[4], hasLast, lastNum, lastAt, end;
     };
     enum class Idx : uint8_t { Unknown, Rebuild, Ready };
     uint32_t idxHash(const std::string& s) const;
@@ -396,7 +405,7 @@ private:
     bool idxHead(bool clean);
     bool idxEach(const std::function<bool(const IdxRec&)>& each);  // false if a read failed
     bool idxTailOk();
-    void idxStart();      // a rebuild from the start, with a new salt
+    void idxStart();      // a rebuild from the start, with a new key
     void idxRebuildNow();
     Res resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet, bool peerNet3);
     Res readRecord(bool held, uint32_t off, std::string& line);
@@ -433,7 +442,8 @@ private:
     Idx idx_ = Idx::Unknown;
     IdxHead hd_ = {};
     uint32_t idxPos_ = 0;  // where a rebuild goes on in the area
-    uint32_t saltDraws_ = 0;
+    std::function<void(void*, size_t)> idxRandom_;
+    uint8_t listingDrops_ = 0;  // this session's (listingSessionStart)
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;
     std::string firstPeer_;

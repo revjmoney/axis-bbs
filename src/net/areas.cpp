@@ -10,7 +10,7 @@
 #include <ctime>
 #include <initializer_list>
 
-#include "net/crc.h"
+#include "monocypher.h"
 #include "net/revkeys.h"
 
 namespace axis::net {
@@ -340,15 +340,16 @@ bool NetCore::shown(const NetListing& l) const {
 // ---- the listing index (/net/files.idx) ----
 
 namespace {
-constexpr uint32_t kIdxMagic = 0x3258464Eu;  // "NFX2"
-constexpr uint32_t kIdxHead = sizeof(uint32_t) * 7, kIdxRec = sizeof(uint32_t) * 6;
+constexpr uint32_t kIdxMagic = 0x3358464Eu;  // "NFX3"
+constexpr uint32_t kIdxHead = sizeof(uint32_t) * 11, kIdxRec = sizeof(uint32_t) * 6;
 constexpr size_t kIdxChunk = 16;   // records read at once (384 bytes)
 constexpr size_t kIdxConfirm = 4;  // records a take reads back at most; past that it is refused "store"
 }  // namespace
 
 uint32_t NetCore::idxHash(const std::string& s) const {
-    uint32_t c = crc32Update(0xFFFFFFFFu, (const uint8_t*)&hd_.salt, sizeof hd_.salt);
-    return ~crc32Update(c, (const uint8_t*)s.data(), s.size());
+    uint32_t h = 0;
+    crypto_blake2b_keyed((uint8_t*)&h, sizeof h, (const uint8_t*)hd_.key, sizeof hd_.key, (const uint8_t*)s.data(), s.size());
+    return h;
 }
 
 NetCore::IdxRec NetCore::idxRec(const NetListing& l, const Message& m) const {
@@ -388,21 +389,24 @@ bool NetCore::idxEach(const std::function<bool(const IdxRec&)>& each) {
 
 // The area from the last message the head knows: exactly that one, ending where the head says.
 bool NetCore::idxTailOk() {
-    uint32_t pos = hd_.lastNum ? hd_.lastAt : 0, seen = 0;
+    uint32_t pos = hd_.hasLast ? hd_.lastAt : 0, seen = 0;
     bool ok = true;
     store_.scanHeadersFrom(kNetFilesArea, pos, [&](const Message& m) {
-        ok = hd_.lastNum && !seen++ && (uint32_t)m.num == hd_.lastNum && m.at == hd_.lastAt;
+        ok = hd_.hasLast && !seen++ && (uint32_t)m.num == hd_.lastNum && m.at == hd_.lastAt;
         return ok;
     });
-    return ok && seen == (hd_.lastNum ? 1u : 0u) && pos == hd_.end;
+    return ok && seen == (hd_.hasLast ? 1u : 0u) && pos == hd_.end;
 }
 
-// A new salt from this board's secret key, the clock and a counter: nobody else can know it ahead.
+// A new hash key from the host's random source: nobody else can know it ahead. No random source: no index.
 void NetCore::idxStart() {
-    uint32_t mix[2] = {now_(), ++saltDraws_};
-    uint32_t c = crc32Update(0xFFFFFFFFu, me_.secret, sizeof me_.secret);
-    hd_ = IdxHead{kIdxMagic, 0, 0, ~crc32Update(c, (const uint8_t*)mix, sizeof mix), 0, 0, 0};
+    hd_ = IdxHead{};
     idxPos_ = 0;
+    if (!idxRandom_) {
+        idx_ = Idx::Unknown;
+        return;
+    }
+    idxRandom_(hd_.key, sizeof hd_.key);
     idx_ = idxHead(false) ? Idx::Rebuild : Idx::Unknown;
 }
 
@@ -434,7 +438,8 @@ bool NetCore::listingIndexStep() {
         bool listing = decode(m.net, l) && m.num > 0;
         if (listing && n == kNetIndexStep) return end = false;
         if (listing) buf[n++] = idxRec(l, m);
-        h.lastNum = (uint32_t)m.num;  // the last message, junk too
+        h.hasLast = 1;  // the last message, junk too
+        h.lastNum = (uint32_t)m.num;
         h.lastAt = m.at;
         return true;
     });
@@ -443,6 +448,7 @@ bool NetCore::listingIndexStep() {
         return false;
     }
     hd_.count += n;
+    hd_.hasLast = h.hasLast;
     hd_.lastNum = h.lastNum;
     hd_.lastAt = h.lastAt;
     idxPos_ = pos;
@@ -518,6 +524,11 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     uint32_t today = day();
     if (!history && l.board != myBoard_ && !isRevBoard(l.board) && !ingress_.allow(l.board, line.size(), today))
         return res(Took::Limited, "limited", kNakLimited);
+    // A peer's listing that replaces or removes one held costs a rewrite of the area: a few a session, then the
+    // transient "store" (before anything is stored, so a name never holds two records). This board's own are not
+    // counted.
+    if (!lower.empty() && !fromPeer.empty() && listingDrops_ >= kNetListingDropsPerSession)
+        return res(Took::Rejected, "rejected store", kNakStore);
     // 9. store, with the index marked unclean around the change (a reset in between rebuilds it)
     Message m;
     m.from = l.uploader;
@@ -533,6 +544,7 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     }
     seen_.add(id, today);
     if (!lower.empty()) {
+        if (!fromPeer.empty()) listingDrops_++;
         // It replaces the records of its name below it: one rewrite of the area, then the index built again (every
         // offset after the first one dropped moved). A count that is not what was asked leaves the index unclean.
         if (store_.drop(kNetFilesArea, [&](const Message& x) {
@@ -554,6 +566,7 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
         });
         if (ok && idxWrite_(kIdxHead + hd_.count * kIdxRec, &rec, kIdxRec)) {
             hd_.count++;
+            hd_.hasLast = 1;
             hd_.lastNum = (uint32_t)num;
             hd_.lastAt = rec.at;
             hd_.end = pos;
@@ -717,7 +730,8 @@ void NetCore::trimListings(uint32_t nowDay, bool clock) {
         if (go) gone.push_back((uint32_t)m.num);
         return go;
     });
-    if (dropped == (int)gone.size()) idxRebuildNow();  // every offset after the first drop moved
+    if (!dropped && gone.empty()) idxHead(true);           // nothing went after all: the index stands
+    else if (dropped == (int)gone.size()) idxRebuildNow();  // every offset after the first drop moved
     else idx_ = Idx::Unknown;                          // the head stays unclean: the next look rebuilds
 }
 

@@ -35,8 +35,10 @@
 // (as HEND). A sender that sent the listings ends with "UEND F" (only ever to a net3 peer, so a Phase 2
 // board never sees it). The listings pull has its own flag (NetCore::needFilesHistory, saved as fhistory):
 // a member carrying un_files sends UWANT to a net3 peer until a pull ends with UEND F (the peer sent every
-// listing it holds; one refused here would be refused again). So a board upgraded from Phase 2, whose User
-// Net pull was done long ago, still pulls the listings once. A, V and L records go out only on E and U lines, never on S or H lines; E lines with A, V
+// listing it holds; one refused for good here would be refused again), with no L line refused for now
+// (a transient word, say past NetCore's per-session drop budget) and the session's listing cap not
+// reached. So a board upgraded from Phase 2, whose User Net pull was done long ago, still pulls the
+// listings once. A, V and L records go out only on E and U lines, never on S or H lines; E lines with A, V
 // or un_ posts go only to a net2 peer, and L lines only to a net3 peer (before an L line, its home
 // board's card goes on an S line as for a post). At most kSyncUserEMax A, V and L E lines are taken
 // per session; past that they are answered NAK store. At most kSyncUserRecordsMax A and V U lines and
@@ -272,6 +274,7 @@ void NetSession::enterSync() {
     // contact; adding it first pins its card so the card is never evicted for room. A board we dialed
     // goes into the outbound pool, one that dialed us into the inbound pool.
     if (trusted_) deadline_ = kSyncDeadlineMs;
+    core_.listingSessionStart();  // this session's budget of listings that replace or remove one held
     core_.addLinkPeer(peer_, dialer_);
     core_.takeCard(peerCard_, peer_);
     peerCard_ = NetCard();
@@ -350,8 +353,9 @@ void NetSession::syncLine(std::string& l) {
         // As for HEND: done only if at least one U line was taken or already held here. A peer with
         // nothing to give (a stranger, a fresh board, or one answering UEND at once) leaves it to the next.
         if (userGot_) core_.userHistoryGot();
-        // The listings: done, the peer sent every one it holds (any this side refused would be refused again).
-        if (rest == "F" && uAskFiles_) core_.filesHistoryGot();
+        // The listings: done, the peer sent every one it holds (one refused for good would be refused again), unless
+        // one was refused for now (say past the drop budget) or the session's listing cap was reached.
+        if (rest == "F" && uAskFiles_ && !uFilesHeld_ && userListsTaken_ < kSyncUserListingsMax) core_.filesHistoryGot();
         return;
     }
     if (!rest.empty()) return fail("bad line", "bad");
@@ -525,8 +529,10 @@ void NetSession::takeUser(std::string_view rec, std::string& line) {
         if (userListsTaken_ >= kSyncUserListingsMax || !decode(rec, l)) return;
         userListsTaken_++;
         // Stored now or held already (a duplicate, or one a tombstone here removed): the pull got something real.
-        NetCore::Took t = core_.takeListing(l, peer_, true);
+        const char* why = nullptr;
+        NetCore::Took t = core_.takeListing(l, peer_, true, &why);
         if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userGot_ = true;
+        if (why && netNakTransient(why)) uFilesHeld_ = true;  // one this side may take later: the pull is not done
         return;
     }
     if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {

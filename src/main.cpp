@@ -4133,7 +4133,12 @@ static bool netStart() {
         core.setLocalFilter([hp](const std::string& b) { return netHas(hp->blocks, b); },
                             [hp](const std::string& id) { return netHas(hp->hides, id); });
         core.setAppsFile(netAppsAppend, netAppsScan, netAppsReadAt);
-        core.setListingIndex(netIdxRead, netIdxWrite);
+        core.setListingIndex(netIdxRead, netIdxWrite, [](void* p, size_t n) {
+            for (size_t i = 0; i < n; i += 4) {
+                uint32_t r = esp_random();
+                std::memcpy((uint8_t*)p + i, &r, std::min<size_t>(4, n - i));
+            }
+        });
     }
     core.state().load(netFileRead("state.txt"), day);
     {  // /net/apps.txt is read a few lines a pass from the loop (netAppsLoadStep). A compaction stopped by a reset: with no
