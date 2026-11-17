@@ -264,24 +264,15 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
         uint64_t now = now_(), date = p.date;
         if (date + (uint64_t)keepDays_ * 86400 < now || date > now + 86400) return res(Took::Rejected, "rejected date", kNakDate);
     }
-    // 2. banned board
-    if (state_.banned(p.board)) return res(Took::Banned, "banned", kNakBanned);
-    if (blockedHere(p.board)) return res(Took::Rejected, "rejected blocked here", kNakRejected);
-    // 3. a known card, and the post signed by its key
-    const NetCard* c = state_.card(p.board);
-    // No card is transient (the peer sends it, or it comes later): the sender keeps the post for another session.
-    if (!c) return res(Took::Rejected, "rejected signature", kNakNoCard);
-    if (!verifyPost(p, c->pub)) return res(Took::Rejected, "rejected signature", kNakSig);
+    // 2. banned board, 3. a known card, and the post signed by its key
+    Refusal r;
+    if (refusedOrigin(p.board, [&](const std::string& pub) { return verifyPost(p, pub); }, r)) return res(r.t, r.why, r.word);
     // 4. a net area, and Rev's board only for the revOnly ones. A User Net area only while this board
-    // carries it and is a member, from a board that is a member by this board's tally. Both refusals
-    // are permanent: a transient one would hold the sender's whole cursor, Sysop Net posts included.
+    // carries it and is a member, from a board that is a member by this board's tally.
     const NetArea* area = netArea(p.area);
     if (!area) return res(Took::Rejected, "rejected area", kNakBad);
     if (area->revOnly && !isRevBoard(p.board)) return res(Took::Rejected, "rejected area", kNakRevOnly);
-    if (isUserNetArea(p.area)) {
-        if (!carries(p.area) || !selfMember()) return res(Took::Rejected, "rejected area", kNakArea);
-        if (members_.status(p.board) != NetMembers::Status::Member) return res(Took::Rejected, "rejected member", kNakMember);
-    }
+    if (isUserNetArea(p.area) && refusedUser(p.area, p.board, r)) return res(r.t, r.why, r.word);
     // 5. killed
     if (state_.killed(p.id)) return res(Took::Rejected, "rejected killed", kNakKilled);
     // 6. dedupe (it is marked seen only once stored, below). A history post below the seen window
@@ -310,6 +301,241 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
     if (onEvent_) onEvent_(fromPeer, "post stored " + p.id + " " + p.area, line);
     log("P " + p.area + " " + std::to_string(num) + " " + p.id + " " + excludeList({fromPeer, p.path, p.board}));
     return Took::Stored;
+}
+
+bool NetCore::refusedOrigin(const std::string& board, const std::function<bool(const std::string&)>& signedBy,
+                            Refusal& r) const {
+    const NetCard* c = state_.card(board);
+    if (state_.banned(board)) r = {Took::Banned, "banned", kNakBanned};
+    else if (blockedHere(board)) r = {Took::Rejected, "rejected blocked here", kNakRejected};
+    // No card is transient (the peer sends it, or it comes later): the sender keeps the record for another session.
+    else if (!c) r = {Took::Rejected, "rejected signature", kNakNoCard};
+    else if (!signedBy(c->pub)) r = {Took::Rejected, "rejected signature", kNakSig};
+    else return false;
+    return true;
+}
+
+// Both refusals are permanent: a transient one would hold the sender's whole cursor, Sysop Net posts included.
+bool NetCore::refusedUser(const std::string& area, const std::string& board, Refusal& r) const {
+    if (!carries(area) || !selfMember()) r = {Took::Rejected, "rejected area", kNakArea};
+    else if (members_.status(board) != NetMembers::Status::Member) r = {Took::Rejected, "rejected member", kNakMember};
+    else return false;
+    return true;
+}
+
+// ---- Net Files listings ----
+
+void NetCore::eachListing(const std::function<bool(const Message&, const NetListing&)>& each) {
+    store_.scanHeaders(kNetFilesArea, [&](const Message& m) {
+        NetListing l;
+        return !decode(m.net, l) || each(m, l);  // junk (a sysop's move into the area) is passed over
+    });
+}
+
+bool NetCore::shown(const NetListing& l) const {
+    return !l.gone && !state_.banned(l.board) && !state_.held(listingId(l)) && !state_.killed(listingId(l));
+}
+
+NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromPeer, bool history, const char** nak) {
+    syncLimits();
+    std::string id = listingId(l);
+    auto res = [&](Took t, const char* why, const char* word) {
+        if (nak) *nak = word;
+        if (onEvent_) onEvent_(fromPeer, std::string("listing ") + why + " " + id, std::string());
+        return t;
+    };
+    if (nak) *nak = nullptr;
+    // 1. valid (the fields, and a signature of the right form), as it is stored and passed on
+    std::string line = encode(l);
+    if (line.empty() || l.sig.empty()) return res(Took::Rejected, "rejected bad", kNakBad);
+    // 2. banned, blocked, 3. the home board's card and its signature, 4. un_files carried and both members
+    Refusal r;
+    if (refusedOrigin(l.board, [&](const std::string& pub) { return verifyListing(l, pub); }, r) ||
+        refusedUser(kNetFilesUserArea, l.board, r))
+        return res(r.t, r.why, r.word);
+    // 5. killed
+    if (state_.killed(id)) return res(Took::Rejected, "rejected killed", kNakKilled);
+    // 6. dedupe, as for posts: a history listing below the seen window is a duplicate only if it is held here.
+    bool look = history && seen_.belowWindow(id);
+    if (seen_.has(id) && !look) return res(Took::Duplicate, "duplicate", nullptr);
+    // 7. tombstones, by one header scan of the listings of this name from this board: a removal with a higher seq
+    // refuses a live listing (it was removed already, whatever the order they came in), and a removal drops the
+    // live listings below it.
+    bool held = false, removed = false, below = false;
+    store_.scanHeaders(kNetFilesArea, [&](const Message& m) {
+        NetListing s;
+        if (m.to != l.board || !decode(m.net, s) || s.board != l.board) return true;
+        if (s.seq == l.seq) held = true;  // this id (whatever its name)
+        if (s.area != l.area || s.name != l.name) return true;
+        if (s.gone && s.seq > l.seq) removed = true;
+        if (!s.gone && s.seq < l.seq) below = true;
+        return true;
+    });
+    if (held) return res(Took::Duplicate, "duplicate", nullptr);
+    if (removed && !l.gone) return res(Took::Duplicate, "duplicate removed", nullptr);
+    // 8. ingress, counting the line (history pulls are capped by the session; Rev's boards and this board are not)
+    uint32_t today = day();
+    if (!history && l.board != myBoard_ && !isRevBoard(l.board) && !ingress_.allow(l.board, line.size(), today))
+        return res(Took::Limited, "limited", kNakLimited);
+    // 9. store
+    Message m;
+    m.from = l.uploader;
+    m.to = l.board;
+    m.subject = l.name;
+    m.date = netDateText(clockSet() && l.date > now_() ? now_() : l.date);  // as storePost
+    m.net = line;
+    int num = store_.post(kNetFilesArea, m);
+    if (!num) return res(Took::Rejected, "rejected store", kNakStore);
+    seen_.add(id, today);
+    if (l.gone && below)  // one rewrite of the area for the removal, only when it has something to drop
+        store_.drop(kNetFilesArea, [&](const Message& x) {
+            NetListing s;
+            return x.to == l.board && x.subject == l.name && decode(x.net, s) && !s.gone && s.board == l.board &&
+                   s.area == l.area && s.name == l.name && s.seq < l.seq;
+        });
+    if (onEvent_) onEvent_(fromPeer, (fromPeer.empty() ? "listing made " : "listing stored ") + id, line);
+    log("L " + std::to_string(num) + " " + id + " " + excludeList({fromPeer, l.board}));
+    return Took::Stored;
+}
+
+std::string NetCore::originateListing(NetListing l) {
+    const NetCard* own = state_.card(myBoard_);
+    if (!own || !carries(kNetFilesUserArea) || !selfMember()) return "";
+    l.board = myBoard_;
+    l.seq = seq_;
+    l.date = now_();
+    if (l.gone) {
+        l.size = l.crc = 0;
+        l.desc.clear();
+    }
+    for (std::string* f : {&l.desc, &l.uploader})
+        for (char& ch : *f)
+            if ((unsigned char)ch < 0x20 || ch == 0x7f) ch = '?';
+    if (l.desc.size() > kNetListDesc) l.desc.resize(kNetListDesc);
+    if (l.uploader.size() > 30) l.uploader.resize(30);
+    if (!signListing(l, me_) || !verifyListing(l, own->pub)) return "";
+    // The seq is used up from here, stored or not, as for originate.
+    uint32_t next = seq_ == 0xFFFFFFFFu ? 1 : seq_ + 1;
+    if (reserve_ && !reserve_(next)) return "";
+    seq_ = next;
+    std::string id = listingId(l);
+    if (seen_.has(id)) return "";  // the counter was set back
+    return takeListing(l, "") == Took::Stored ? id : "";
+}
+
+int NetCore::listingsPage(int skip, int max, const std::function<void(const NetListing&)>& each) {
+    if (skip < 0 || max <= 0) return -1;
+    // Newest first: one scan counts the live ones, the next takes the page (positions oldest first).
+    int n = 0, i = 0;
+    eachListing([&](const Message&, const NetListing& l) {
+        n += shown(l);
+        return true;
+    });
+    int lo = n - skip - max, hi = n - skip;
+    if (hi <= 0) return -1;
+    std::vector<NetListing> page;
+    eachListing([&](const Message&, const NetListing& l) {
+        if (!shown(l)) return true;
+        if (i >= lo) page.push_back(l);
+        return ++i < hi;
+    });
+    for (size_t k = page.size(); k > 0; k--) each(page[k - 1]);
+    return lo > 0 ? hi - lo + skip : -1;
+}
+
+bool NetCore::findListing(const std::string& id, NetListing& out) {
+    bool found = false;
+    eachListing([&](const Message& m, const NetListing& l) {
+        if (id.compare(0, 16, m.to) != 0 || listingId(l) != id) return true;
+        if ((found = shown(l))) out = l;
+        return false;  // ids are unique
+    });
+    return found;
+}
+
+int NetCore::listingLines(int after, bool tombs, std::vector<std::string>& out) {
+    if (!carries(kNetFilesUserArea) || !selfMember()) return -1;
+    uint32_t now = now_();
+    bool clock = clockSet();
+    int last = -1;
+    size_t bytes = 0;
+    eachListing([&](const Message& m, const NetListing& l) {
+        if (m.num <= after) return true;
+        if (tombs ? !l.gone || state_.banned(l.board) || state_.killed(listingId(l)) : !shown(l)) return true;
+        if (tombs && clock) {
+            uint32_t t = netDateUnix(m.date);
+            if (t && t + (uint64_t)kNetGoneKeepDays * 86400 < now) return true;
+        }
+        if (bytes && bytes + m.net.size() > kNetPendingBytes) {
+            last = after;  // a full batch: the next call goes on from the last one taken
+            return false;
+        }
+        after = m.num;
+        bytes += m.net.size();
+        out.push_back(m.net);
+        return true;
+    });
+    return last;
+}
+
+// Drops killed listings and tombstones past kNetGoneKeepDays (by count without a clock: the newest kNetGoneKeepCount
+// stay), then holds live listings to the caps. A board's oldest listing is its lowest seq, so arrival order does not
+// change what goes. Two header scans count, a third (only for boards past a cap) finds the seqs, then one rewrite.
+void NetCore::trimListings(uint32_t nowDay, bool clock) {
+    auto old = [&](const Message& m) {
+        uint32_t t = netDateUnix(m.date);
+        return clock && t && nowDay > t / 86400 && nowDay - t / 86400 > kNetGoneKeepDays;
+    };
+    std::map<std::string, uint32_t> live, cut;  // live per home board; then, per board past a cap, how many go
+    uint32_t total = 0, tombs = 0;
+    bool drops = false;
+    eachListing([&](const Message& m, const NetListing& l) {
+        if (state_.killed(listingId(l))) drops = true;
+        else if (!l.gone) live[l.board]++, total++;
+        else if (old(m)) drops = true;
+        else tombs++;
+        return true;
+    });
+    uint32_t tombCut = !clock && tombs > kNetGoneKeepCount ? tombs - kNetGoneKeepCount : 0;
+    for (auto& kv : live)
+        if (kv.first != myBoard_ && kv.second > listingsPerBoard_) {
+            cut[kv.first] = kv.second - listingsPerBoard_;
+            total -= kv.second - listingsPerBoard_;
+            kv.second = listingsPerBoard_;
+        }
+    while (total > listingsMax_) {  // one at a time from the board holding the most (ties: the lowest id)
+        auto most = live.end();
+        for (auto it = live.begin(); it != live.end(); ++it)
+            if (it->first != myBoard_ && it->second && (most == live.end() || it->second > most->second)) most = it;
+        if (most == live.end()) break;  // only this board's own are left
+        most->second--;
+        cut[most->first]++;
+        total--;
+    }
+    std::map<std::string, uint32_t>().swap(live);
+    // Each cut board's seq at the cut: its lowest seqs up to there go.
+    for (auto& kv : cut) {
+        std::vector<uint32_t> seqs;
+        eachListing([&](const Message&, const NetListing& l) {
+            if (l.board == kv.first && !l.gone && !state_.killed(listingId(l))) {
+                size_t j = seqs.size();
+                seqs.push_back(l.seq);
+                for (; j > 0 && seqs[j - 1] > l.seq; j--) std::swap(seqs[j], seqs[j - 1]);  // insertion, ascending
+            }
+            return true;
+        });
+        kv.second = kv.second <= seqs.size() ? seqs[kv.second - 1] : 0xFFFFFFFFu;
+    }
+    if (!drops && !tombCut && cut.empty()) return;
+    uint32_t n = 0;
+    store_.drop(kNetFilesArea, [&](const Message& m) {
+        NetListing l;
+        if (!decode(m.net, l)) return false;
+        if (state_.killed(listingId(l))) return true;
+        if (l.gone) return old(m) || (!clock && n++ < tombCut);
+        auto c = cut.find(l.board);
+        return c != cut.end() && l.seq <= c->second;
+    });
 }
 
 bool NetCore::takeCard(const NetCard& c, const std::string& fromPeer) {
@@ -501,13 +727,24 @@ void NetCore::setFirstPeer(const std::string& board) {
 
 // What to send for a log entry. Skip only when it is excluded for this peer or confirmed gone;
 // Retry when the post could not be read (the caller stops there and tries again later).
-NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet) {
+NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet,
+                              bool peerNet3) {
     line.clear();
     std::vector<std::string> t = tokens(entry);
     if (t.empty() || inList(t.back(), peer)) return Res::Skip;
-    // Applications, votes and User Net posts never go to a peer that would only refuse them: no read.
+    // Applications, votes, User Net posts and listings never go to a peer that would only refuse them: no read.
     if (!peerUserNet && (t[0] == "A" || t[0] == "V" || (t[0] == "P" && t.size() > 1 && isUserNetArea(t[1]))))
         return Res::Skip;
+    if (t[0] == "L") {
+        if (!peerNet3 || t.size() != 4 || t[2].size() < 17 || state_.killed(t[2]) || state_.banned(t[2].substr(0, 16)))
+            return Res::Skip;
+        Message m;
+        if (!store_.read(kNetFilesArea, std::atoi(t[1].c_str()), m)) return Res::Retry;
+        NetListing l;
+        if (!decode(m.net, l) || listingId(l) != t[2]) return Res::Skip;  // that number now holds another record
+        line = std::move(m.net);
+        return Res::Ready;
+    }
     if (t[0] == "P" && t.size() == 5) {
         const std::string& id = t[3];
         if (id.size() < 17 || state_.killed(id) || state_.banned(id.substr(0, 16)) || !netArea(t[1]))
@@ -558,7 +795,8 @@ bool NetCore::userRecord(uint32_t off, std::string& line) {
     return false;
 }
 
-std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::string& peer, size_t max, bool peerUserNet) {
+std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::string& peer, size_t max, bool peerUserNet,
+                                                                 bool peerNet3) {
     std::vector<std::pair<uint32_t, std::string>> out;
     auto it = links_.find(peer);
     if (it == links_.end() || !log_.ok()) return out;  // a log not open yet leaves cursors alone
@@ -569,7 +807,7 @@ std::vector<std::pair<uint32_t, std::string>> NetCore::pendingFor(const std::str
     size_t bytes = 0;
     for (uint32_t i = link.cursor; i < log_.next() && out.size() < max; i++) {
         if (!log_.read(i, entry)) break;  // try again next time
-        Res r = resolve(entry, peer, line, peerUserNet);
+        Res r = resolve(entry, peer, line, peerUserNet, peerNet3);
         if (r == Res::Retry) {
             // A post that cannot be read. Usually a short failure; but a post trimmed away from its
             // area reads the same, so after kNetReadStrikes calls stuck on it, it counts as gone.
@@ -728,6 +966,7 @@ void NetCore::trim(uint32_t nowUnix) {
     log_.trimTo(kOutLogKeep);
     for (const NetArea& a : sysopNetAreas()) trimArea(a.id, nowDay, clock);
     for (const NetArea& a : userNetAreas()) trimArea(a.id, nowDay, clock);
+    trimListings(nowDay, clock);
 }
 
 bool NetCore::historyNext(HistoryCursor& c, uint32_t sinceUnix, std::string& line) {
@@ -848,6 +1087,7 @@ bool NetPostingStore::read(const std::string& area, int num, Message& out) {
 }
 
 int NetPostingStore::post(const std::string& area, const Message& m) {
+    if (area == kNetFilesArea) return 0;  // only NetCore writes listings, signed
     if (!isNetAreaId(area)) return inner_.post(area, m);
     int num = 0;
     return core_.originate(area, m, &num).empty() ? 0 : num;

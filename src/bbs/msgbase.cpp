@@ -11,7 +11,7 @@ namespace axis::bbs {
 
 namespace {
 constexpr char   kSep = '\x1f', kSub = '\x1e';
-constexpr size_t kHeadLine = 256;  // what a headers-only scan keeps of a line
+constexpr size_t kHeadLine = 448;  // what a headers-only scan keeps of a line (a whole Net Files listing, at most 434 with "net=")
 
 std::string oneLine(std::string s) {
     for (char& c : s)
@@ -61,6 +61,7 @@ void scan(const std::string& path, bool bodies, F visit) {
                 else if (k == "date") m.date = v;
                 else if (k == "net") {
                     if (bodies) m.net = v;
+                    else if (v.compare(0, 2, "L") == 0) m.net = v;  // a Net Files listing (at most 430): whole
                     else {  // headers only: keep "P<sep><id>", not the whole (up to 9 KB) line
                         size_t a = v.find(kSep), b = a == std::string::npos ? a : v.find(kSep, a + 1);
                         m.net = b == std::string::npos ? v : v.substr(0, b);

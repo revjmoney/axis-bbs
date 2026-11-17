@@ -1226,7 +1226,8 @@ struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for
     int post(const std::string& area, const axis::bbs::Message& m) override {
         int n = axis::bbs::FileMessageStore::post(area, m);
 #if AXIS_NETS
-        if (n && area != "email" && !axis::net::isNetAreaId(area)) countPost();  // net posts are not this board's
+        // net posts and Net Files listings are not this board's
+        if (n && area != "email" && !axis::net::isNetAreaId(area) && area != axis::net::kNetFilesArea) countPost();
 #else
         if (n && area != "email") countPost();
 #endif
@@ -2767,7 +2768,7 @@ static axis::net::NetCard netCardNow(const NetHost& h) {
     c.mac = netField(WiFi.macAddress().c_str(), 17);
     c.sysop = netField(boardCfg->netSysopName.empty() ? boardCfg->sysopHandle : boardCfg->netSysopName, 40);
     c.location = netField(boardCfg->netLocation, 40);
-    c.links = "internet,net2";  // net2: a Phase 2 board (User Net); peers send it UWANT
+    c.links = "internet,net2,net3";  // net2: a Phase 2 board (User Net), peers send it UWANT; net3: listings
     return c;
 }
 

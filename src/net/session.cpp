@@ -28,11 +28,15 @@
 // The User Net pull has its own flag (NetCore::needUserHistory): UWANT goes out, before SEND, only to a
 // peer whose card has the token net2 in its links (a v0.53 board never sees UWANT or U). <areas> is a
 // comma list of the un_ areas this board carries while it is a member, or "-". The peer answers with U
-// lines: every application and vote it holds, then up to 100 posts per asked area it carries from the
-// last 30 days, oldest first, then UEND, which marks the pull done if at least one U line was taken or
-// already held (as HEND). A and V records go out only on E and U lines, never on S or H lines, and E
-// lines with A, V or un_ posts go only to a net2 peer. At most kSyncUserEMax A and V E lines are taken
-// per session; past that they are answered NAK store.
+// lines: every application and vote it holds, then (only to a peer whose card has net3, when it asked
+// for un_files and this board is a member carrying it) every live Net Files listing and the tombstones
+// younger than kNetGoneKeepDays, then up to 100 posts per asked area it carries from the last 30 days,
+// oldest first, then UEND, which marks the pull done if at least one U line was taken or already held
+// (as HEND). A, V and L records go out only on E and U lines, never on S or H lines; E lines with A, V
+// or un_ posts go only to a net2 peer, and L lines only to a net3 peer (before an L line, its home
+// board's card goes on an S line as for a post). At most kSyncUserEMax A, V and L E lines are taken
+// per session; past that they are answered NAK store. At most kSyncUserRecordsMax A, V and L U lines
+// are taken per session; the rest are read and dropped.
 // BYE <reason> ends the session at any point.
 #include "net/session.h"
 
@@ -139,6 +143,7 @@ void NetSession::fail(const char* why, const char* bye) {
     std::vector<std::string>().swap(cardsSent_);
     hist_ = HistoryCursor();
     std::vector<uint32_t>().swap(uOffs_);
+    std::vector<std::string>().swap(uLines_);
     peerCard_ = NetCard();
 }
 
@@ -237,6 +242,7 @@ bool NetSession::hello(const std::string& l) {
     trusted_ = core_.trustedPeer(peer_);
     peerNonce_ = nonce;
     peerNet2_ = hasToken(c.links, "net2");  // a Phase 2 board: it gets UWANT (the card is let go at enterSync)
+    peerNet3_ = hasToken(c.links, "net3");  // a Phase 3 board: it gets listings
     peerCard_ = std::move(c);
     return true;
 }
@@ -382,12 +388,14 @@ void NetSession::ack(std::string_view idx, bool nak, std::string_view reason) {
     core_.acked(peer_, i);
 }
 
-// Before an origin's first post this session: its card on an S line, so the receiver can check the
-// post. Not for this board or the peer (the handshake gave those), nor a card already sent. True when
-// the peer has the origin's card from this session (so a nocard NAK may yet be cured), false when this
-// side has no card to give.
+// Before an origin's first post or listing this session: its card on an S line, so the receiver can
+// check the record. Not for this board or the peer (the handshake gave those), nor a card already sent.
+// True when the peer has the origin's card from this session (so a nocard NAK may yet be cured), false
+// when this side has no card to give.
 bool NetSession::cardAhead(const std::string& postLine) {
-    std::string origin = netPostId(postLine).substr(0, 16);
+    // A listing's home board is its first field, a post's the start of its id.
+    std::string origin = postLine[0] == (char)NetKind::Listing ? postLine.substr(2, postLine.size() > 18 ? 16 : 0)
+                                                               : netPostId(postLine).substr(0, 16);
     if (origin.size() != 16) return false;
     if (origin == me_.board || origin == peer_) return true;
     if (std::find(cardsSent_.begin(), cardsSent_.end(), origin) != cardsSent_.end()) return true;
@@ -431,14 +439,21 @@ void NetSession::takeEntry(std::string_view idx, std::string_view rec, std::stri
         NetNotice nn;
         if (!decode(rec, nn)) reason = kNakBad;
         else core_.takeNotice(nn, peer_);  // a stale notice is still handled
-    } else if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {
-        // Capped per session (each costs a check, an append and a log entry): past it the transient
-        // "store" stops the sender, which goes on from there next session.
+    } else if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote || rec[0] == (char)NetKind::Listing) {
+        // Capped per session (each costs a check, a scan or an append and a log entry): past it the
+        // transient "store" stops the sender, which goes on from there next session.
+        NetListing nl;
         if (userETaken_ >= kSyncUserEMax) {
             reason = kNakStore;
         } else {
             userETaken_++;
-            if (!takeRecord(rec)) reason = kNakBad;  // one held already (or refused by the tally) is ACKed
+            if (rec[0] != (char)NetKind::Listing) {
+                if (!takeRecord(rec)) reason = kNakBad;  // one held already (or refused by the tally) is ACKed
+            } else if (!decode(rec, nl)) {
+                reason = kNakBad;
+            } else {
+                core_.takeListing(nl, peer_, false, &reason);  // a duplicate or one removed already is ACKed
+            }
         }
     } else {
         reason = kNakBad;
@@ -493,11 +508,20 @@ bool NetSession::takeRecord(std::string_view rec) {
     return true;
 }
 
-// A U line: an application or vote, or a post in a User Net area, taken as history (the ingress limit
+// A U line: an application, vote or listing, or a post in a User Net area, taken as history (the ingress limit
 // skipped, every other check kept). Each kind is capped per session, like H lines; past the cap the
 // rest are read and dropped.
 void NetSession::takeUser(std::string_view rec, std::string& line) {
     if (rec.empty()) return;
+    if (rec[0] == (char)NetKind::Listing) {
+        NetListing l;
+        if (userRecsTaken_ >= kSyncUserRecordsMax || !decode(rec, l)) return;
+        userRecsTaken_++;
+        // Stored now or held already (a duplicate, or one a tombstone here removed): the pull got something real.
+        NetCore::Took t = core_.takeListing(l, peer_, true);
+        if (t == NetCore::Took::Stored || t == NetCore::Took::Duplicate) userGot_ = true;
+        return;
+    }
     if (rec[0] == (char)NetKind::App || rec[0] == (char)NetKind::Vote) {
         if (userRecsTaken_ >= kSyncUserRecordsMax) return;
         userRecsTaken_++;
@@ -616,11 +640,12 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
     }
 
     // 2b. The User Net pull, if the peer asked for it: the held applications and votes (the offsets of
-    // the held ones, listed from RAM once, each line read back and checked), then the posts of the asked
-    // areas this board carries, then UEND. It runs after the history walk, with the same cursor, so a
-    // session never runs two walks at once.
+    // the held ones, listed from RAM once, each line read back and checked), then for a net3 peer that
+    // asked for un_files the live listings and young tombstones (a batch of lines per scan of the hidden
+    // area), then the posts of the asked areas this board carries, then UEND. It runs after the history
+    // walk, with the same cursor, so a session never runs two walks at once.
     if (peerUwant_ && !uDone_) {
-        if (!uPosts_) {
+        if (uStage_ == 0) {
             if (!uListed_) {
                 uOffs_ = core_.members().offsets();
                 uListed_ = true;
@@ -634,10 +659,38 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
             }
             if (uAt_ >= uOffs_.size()) {
                 std::vector<uint32_t>().swap(uOffs_);
-                uPosts_ = true;
+                const std::vector<NetArea>& areas = userNetAreas();
+                bool files = false;
+                for (size_t i = 0; i < areas.size(); i++)
+                    if (areas[i].id == kNetFilesUserArea) files = (uMask_ >> i & 1) != 0;
+                uStage_ = peerNet3_ && files ? 1 : 3;
             }
         }
-        if (uPosts_) uDone_ = sendWalk(budget, streamed, true);
+        while (uStage_ == 1 || uStage_ == 2) {
+            if (uLineAt_ >= uLines_.size()) {  // the batch went: the next one, or the next round
+                uLines_.clear();
+                uLineAt_ = 0;
+                if (uAfter_ < 0) {
+                    uStage_++;
+                    uAfter_ = 0;
+                    continue;
+                }
+                uAfter_ = core_.listingLines(uAfter_, uStage_ == 2, uLines_);
+                continue;
+            }
+            if (!budget || !roomForData()) break;
+            std::string& l = uLines_[uLineAt_++];
+            if (fits(l)) {
+                send("U ", l);
+                budget--;
+                streamed = true;
+            }
+            std::string().swap(l);
+        }
+        if (uStage_ == 3) {
+            std::vector<std::string>().swap(uLines_);
+            uDone_ = sendWalk(budget, streamed, true);
+        }
         if (streamed) lastRxMs_ = nowMs;
         if (!uDone_) return;
     }
@@ -648,7 +701,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
     bool nothingPending = held_;  // held by a transient NAK: nothing more this session
     if (!held_ && fetched_.empty() && inFlight_.empty()) {
         // The cursor only moves on acks, so fetching with lines in flight would fetch them again.
-        auto got = core_.pendingFor(peer_, kSyncInFlight, peerNet2_);
+        auto got = core_.pendingFor(peer_, kSyncInFlight, peerNet2_, peerNet3_);
         nothingPending = got.empty();
         for (auto& e : got) fetched_.emplace_back(e.first, std::move(e.second));
     }
@@ -665,7 +718,7 @@ void NetSession::tick(uint32_t nowMs, bool heapOk) {
         auto e = std::move(front);
         fetched_.pop_front();
         bool post = e.second[0] == (char)NetKind::Post;
-        bool curable = post && cardAhead(e.second);
+        bool curable = (post || e.second[0] == (char)NetKind::Listing) && cardAhead(e.second);
         send("E " + std::to_string(e.first) + " ", e.second);
         inFlight_.emplace_back(e.first, curable);
         if (post) postsSent_++;

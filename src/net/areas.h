@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // The Sysop Net and User Net message areas and NetCore, each board's share of the net: it takes
-// posts, cards, Rev's notices, User Net applications and votes from peers, makes this board's own
-// posts, stores them in the message base and logs what to pass on for its link peers.
+// posts, cards, Rev's notices, User Net applications, votes and Net Files listings from peers, makes this
+// board's own posts and listings, stores them in the message base and logs what to pass on for its link peers.
 // NetPostingStore wraps the board's message store so posting into a net area goes out on the net
 // and held or killed posts stay hidden.
 #pragma once
@@ -66,6 +66,15 @@ constexpr size_t kNetUserHistoryPerArea = 100;  // posts per User Net area a Use
 constexpr uint8_t kNetNakStrikes = 3;           // sessions in a row a transient NAK may hold an entry
 constexpr uint8_t kNetTrustSessions = 2;        // completed sessions before an inbound-only link peer is trusted
 
+// Net Files: each listing or tombstone (a removal) is one message in the hidden area kNetFilesArea, never in a
+// caller's area list (isNetAreaId is false for it). Listings are gated on the User Net area kNetFilesUserArea.
+constexpr const char* kNetFilesArea = "nf_list";
+constexpr const char* kNetFilesUserArea = "un_files";
+constexpr uint32_t kNetListingsMax = 1000;      // live listings held (the host sets 100 without an SD card)
+constexpr uint32_t kNetListingsPerBoard = 200;  // live listings from one home board
+constexpr uint32_t kNetGoneKeepDays = 120;      // a tombstone is kept this long (with the clock set)
+constexpr uint32_t kNetGoneKeepCount = 200;     // without a clock, the newest this many tombstones are kept
+
 // The words a receiver puts after NAK <index>. Permanent ones move the sender's cursor past the entry;
 // transient ones (nocard, store) do not: the sender sends nothing more that session and tries the
 // entry again next time. Any other word (an older board's) counts as permanent.
@@ -103,6 +112,7 @@ struct HistoryCursor {
 //   N R <seq> <exclude>                    a rotate notice from the chain
 //   A <board> <exclude>                    the board's User Net application held now
 //   V <app> <voter> <exclude>              the voter's vote on that applicant held now
+//   L <msgnum> <id> <exclude>              a listing or tombstone, read back from kNetFilesArea
 // Applications and votes are read back from the apps file (setAppsFile), never held whole in RAM.
 // exclude is a comma list of boards not to send it to, or "-". Each link peer reads the log from
 // its own cursor; RAM stays small whatever the number of posts or boards.
@@ -170,6 +180,32 @@ public:
     // member and carries it.
     std::string originate(const std::string& area, const bbs::Message& m, int* num = nullptr);
 
+    // Net Files listings. Each is one message in kNetFilesArea: subject the name, from the uploader, to the home
+    // board, date as for posts, no body, net the encoded line. A tombstone (gone) drops every live listing of its
+    // (board, area, name) with a lower seq, and a live one that comes later with a lower seq is Duplicate.
+    // A listing from a peer, or made here (fromPeer ""). Same order of checks as take(NetPost):
+    // valid, banned, blocked, card and signature, this board carries un_files and is a member, the home
+    // board is a member (NAK area / member), killed, dedupe, tombstone, ingress (line size), store.
+    // This board's own listings skip the ingress limit.
+    Took takeListing(const NetListing& l, const std::string& fromPeer, bool history = false, const char** nak = nullptr);
+    // This board's own listing for a file in a shared area, or its removal (gone). Signs with this board's
+    // key and the next post seq. Returns the id, or "" when this board is not a member carrying un_files.
+    std::string originateListing(NetListing l);
+    // Live listings, newest first, from skip on, at most max; each gives the stored line. Skips held, killed,
+    // banned-home and tombstoned ones. Returns the next skip, or -1 at the end.
+    int listingsPage(int skip, int max, const std::function<void(const NetListing&)>& each);
+    bool findListing(const std::string& id, NetListing& out);  // a live one only
+    // For a User Net pull: the stored lines after message number `after`, live listings (tombs false; not held,
+    // killed or banned-home) or tombstones younger than kNetGoneKeepDays (tombs true; all of them without a
+    // clock), added to out until they reach kNetPendingBytes. Returns the number to pass as after next time, or
+    // -1 once the scan reached the end. Nothing while this board is not a member carrying un_files.
+    int listingLines(int after, bool tombs, std::vector<std::string>& out);
+    // The caps the daily trim holds live listings to (kNetListingsMax and kNetListingsPerBoard by default).
+    void setListingCaps(uint32_t total, uint32_t perBoard) {
+        listingsMax_ = total;
+        listingsPerBoard_ = perBoard;
+    }
+
     // A board we sync with, in one of two pools. Outbound (kMaxOutboundPeers): boards this board
     // dials, and the first peer; only the host's dialing adds to it. Inbound (kMaxInboundPeers):
     // boards that dialed us and proved who they are. A full pool loses the one in it synced
@@ -192,8 +228,9 @@ public:
     // it or confirmed gone (killed, banned origin, card or notice no longer held, post not in the
     // area) are skipped. A read failure stops the list there; it is tried again next time.
     // peerUserNet false (a peer whose card lacks net2): applications, votes and User Net posts are
-    // skipped with no read, since such a peer would only refuse them.
-    std::vector<std::pair<uint32_t, std::string>> pendingFor(const std::string& peer, size_t max, bool peerUserNet = true);
+    // skipped with no read, since such a peer would only refuse them. peerNet3 false (no net3): listings are.
+    std::vector<std::pair<uint32_t, std::string>> pendingFor(const std::string& peer, size_t max, bool peerUserNet = true,
+                                                             bool peerNet3 = true);
     // The peer has the entry at index: its cursor moves past it (acks come in order).
     void acked(const std::string& peer, uint32_t index);
     // The peer answered the entry at index with a transient NAK: the cursor stays, unless that entry
@@ -271,8 +308,10 @@ public:
         keepPosts_ = keepPosts;
         keepDays_ = keepDays;
     }
-    // Once a day at most: retention for every Sysop Net area, pruning of the state and the seen
-    // set, and trimming the outbound log. Without a clock (nowUnix not past kNetClockSet) it runs
+    // Once a day at most: retention for every Sysop Net and User Net area, pruning of the state and the seen
+    // set, trimming the outbound log, and for Net Files: killed listings and old tombstones dropped, then the
+    // caps (a home board past its cap loses its own lowest seqs; past the total, the board holding the most
+    // does; never this board's own, never a tombstone). Without a clock (nowUnix not past kNetClockSet) it runs
     // whenever called, by count only: the host calls it once per 24 hours of uptime.
     void trim(uint32_t nowUnix);
 
@@ -295,7 +334,24 @@ private:
     void log(const std::string& entry);
     enum class Res { Ready, Skip, Retry };  // send it; excluded or gone for good; try again later
     int storePost(NetPost& p, std::string& line);
-    Res resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet);
+    // A refusal: what a take gives back, the record's why and the NAK word.
+    struct Refusal {
+        Took t;
+        const char* why;
+        const char* word;
+    };
+    // The checks a post and a listing share. Origin: its board banned, blocked here, its card held and the record
+    // signed by that card's key (signedBy). User: this board carries the User Net area and is a member, and the
+    // board is a member by the tally. True on a refusal, with r set.
+    bool refusedOrigin(const std::string& board, const std::function<bool(const std::string& pub)>& signedBy,
+                       Refusal& r) const;
+    bool refusedUser(const std::string& area, const std::string& board, Refusal& r) const;
+    // Every listing and tombstone in kNetFilesArea by a header scan (which gives a listing's line whole), oldest
+    // first; lines that do not decode are passed over. each returns false to stop.
+    void eachListing(const std::function<bool(const bbs::Message& m, const NetListing& l)>& each);
+    bool shown(const NetListing& l) const;  // live, and not held, killed or from a banned board
+    void trimListings(uint32_t nowDay, bool clock);
+    Res resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet, bool peerNet3);
     Res readRecord(bool held, uint32_t off, std::string& line);
     // Who is a member and who is denied, before a change, to note what the change did (empty without a
     // record callback).
@@ -324,6 +380,7 @@ private:
     uint32_t seq_ = 1;
     std::function<bool(uint32_t)> reserve_;
     uint32_t keepPosts_ = kNetKeepPosts, keepDays_ = kNetKeepDays;
+    uint32_t listingsMax_ = kNetListingsMax, listingsPerBoard_ = kNetListingsPerBoard;
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;
     std::string firstPeer_;

@@ -16,7 +16,8 @@ struct Message {
     std::string from, to, subject, date, body;  // body lines separated by '\n'
     // A Sysop Net post: its encoded NetPost line (one line, fields joined by 0x1F). Empty for local
     // posts. read() gives the whole line; headers() give only its start, "P" 0x1F "<post id>", to save
-    // memory. The file store writes it as a "net=" header line only when it is non-empty.
+    // memory, except a Net Files listing ("L", at most 430 bytes), which they give whole. The file store
+    // writes it as a "net=" header line only when it is non-empty.
     std::string net;
 };
 
