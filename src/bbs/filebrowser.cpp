@@ -5,6 +5,7 @@
 #include "bbs/features.h"
 #if AXIS_FILES
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +26,7 @@ const char* const YEL = "\x1b[1;37m";
 const char* const MAG = "\x1b[1;30m";
 const char* const GRN = "\x1b[0;37m";
 #define AMBER theme::ORANGE
+const char* const kNetRow = "Net Files (User Net)";
 
 bool sameName(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
@@ -69,6 +71,11 @@ void FileBrowser::showAreas() {
                           (unsigned)n, n == 1 ? "" : "s");
             out_ += b;
         }
+        if (netRow()) {
+            char b[64];
+            std::snprintf(b, sizeof b, "   %s[%2u]%s %s\r\n", CYAN, (unsigned)(areas_.size() + 1), HI, kNetRow);
+            out_ += b;
+        }
         out_ += DIM;
         out_ += "\r\n   " + theme::key("N", "ew files since your last call   ") + theme::key("/", " search") + DIM +
                 "\r\n   Area number (Enter for the main menu): ";
@@ -83,11 +90,12 @@ void FileBrowser::showAreas() {
         std::snprintf(b, sizeof b, "%-40.40s %4u file%s", areas_[i].name.c_str(), (unsigned)n, n == 1 ? "" : "s");
         rows.emplace_back(b);
     }
+    if (netRow()) rows.emplace_back(kNetRow);
     list_.setItems(std::move(rows));
     usingList_ = true;
     out_ += listScreenTop("FILE AREAS", "Area                                      Files");
     out_ += list_.draw();
-    out_ += listScreenStatus(areas_.empty() ? "" : areas_[0].name);
+    out_ += listScreenStatus(areas_.empty() ? netRow() ? kNetRow : "" : areas_[0].name);
     out_ += listScreenKeys("arrows move   Enter opens   number+Enter   " + theme::key("N", "ew") + "  " + theme::key("/", "search") + "  " +
                            theme::key("Q", "uit") + " or Esc");
 }
@@ -95,22 +103,42 @@ void FileBrowser::showAreas() {
 void FileBrowser::openArea(size_t i) {
     area_ = i;
     page_ = 0;
-    files_ = lib_.list(areas_[i].id);
+#if AXIS_NET_FILES
+    skip_ = 0;
+#endif
+    if (!net()) files_ = lib_.list(areas_[i].id);
     st_ = St::List;
     showPage();
 }
 
+std::string FileBrowser::title() const { return net() ? std::string(kNetRow) : areas_[area_].name; }
+
 void FileBrowser::showPage(int at) {
     int pages = ((int)files_.size() + kPerPage - 1) / kPerPage;
+#if AXIS_NET_FILES
+    if (net()) {  // one page at a time from the host: page_ stays 0, and N/P (page_ +1 or -1) move the skip
+        int skip = page_ > 0 ? (next_ >= 0 ? next_ : skip_) : page_ < 0 ? std::max(0, skip_ - kPerPage) : skip_;
+        files_.clear();
+        ids_.clear();
+        homes_.clear();
+        next_ = net_.page(skip, kPerPage, files_, ids_, homes_);
+        skip_ = skip;
+        page_ = 0;
+        pages = 1;
+    }
+#endif
     if (pages == 0) pages = 1;
     if (page_ >= pages) page_ = pages - 1;
     if (page_ < 0) page_ = 0;
     st_ = St::List;
-    char b[160];
+    char pg[24], b[160];
+    std::snprintf(pg, sizeof pg, bars_ ? "page %d/%d" : "page %d of %d", page_ + 1, pages);
+#if AXIS_NET_FILES
+    if (net()) std::snprintf(pg, sizeof pg, "page %d%s", skip_ / kPerPage + 1, next_ >= 0 ? ", more" : "");
+#endif
     if (!bars_) {
         out_ += CLS;
-        std::snprintf(b, sizeof b, "\r\n   %s%s%s   page %d of %d, %u files\r\n", YEL, areas_[area_].name.c_str(), DIM, page_ + 1, pages,
-                      (unsigned)files_.size());
+        std::snprintf(b, sizeof b, "\r\n   %s%s%s   %s, %u files\r\n", YEL, title().c_str(), DIM, pg, (unsigned)files_.size());
         out_ += b;
         out_ += MAG;
         out_ += "   \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
@@ -126,9 +154,8 @@ void FileBrowser::showPage(int at) {
         }
         for (size_t i = begin; i < end; i++) {
             const FileEntry& f = files_[i];
-            std::string      desc = fileAbout(f.desc, 50);
             std::snprintf(b, sizeof b, "   %s%-13s%s%7s  %s%s\r\n", HI, f.name.substr(0, 13).c_str(), GRN, fileSizeText(f.size).c_str(), DIM,
-                          desc.c_str());
+                          about(i, 50).c_str());
             out_ += b;
         }
         listPrompt();
@@ -138,13 +165,13 @@ void FileBrowser::showPage(int at) {
     rows.reserve(end - begin);
     for (size_t i = begin; i < end; i++) {  // this page only, not the whole area
         const FileEntry& f = files_[i];
-        std::string      desc = fileAbout(f.desc, 40);
-        std::snprintf(b, sizeof b, "%-12.12s %7s  %s", f.name.c_str(), fileSizeText(f.size).c_str(), desc.c_str());
+        std::snprintf(b, sizeof b, "%-12.12s %7s  %s", f.name.c_str(), fileSizeText(f.size).c_str(), about(i, 40).c_str());
         rows.emplace_back(b);
     }
+    const char* head = net() ? "Name          Size   From         About" : "Name          Size   About";
     if (rows.empty()) {
         usingList_ = false;
-        out_ += listScreenTop(areas_[area_].name, "Name          Size   About");
+        out_ += listScreenTop(title(), head);
         out_ += std::string("   ") + theme::TEXT + "(nothing here yet)\r\n";
         listPrompt();
         return;
@@ -153,29 +180,53 @@ void FileBrowser::showPage(int at) {
     if (at >= (int)rows.size()) at = (int)rows.size() - 1;
     list_.setItems(std::move(rows), (size_t)at);
     usingList_ = true;
-    std::snprintf(b, sizeof b, "Name          Size   About                         page %d/%d", page_ + 1, pages);
-    out_ += listScreenTop(areas_[area_].name, b);
+    std::snprintf(b, sizeof b, "%-51s%s", head, pg);
+    out_ += listScreenTop(title(), b);
     out_ += list_.draw();
-    size_t ix = (size_t)page_ * kPerPage + (size_t)list_.current();
-    std::string about = ix < files_.size() ? files_[ix].name + "  " + fileSizeText(files_[ix].size) + "  " + files_[ix].desc : "";
-    out_ += listScreenStatus(about);
-#if AXIS_TRANSFERS
-    out_ += listScreenKeys(theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
-                           theme::key("D", "ownload  ") + theme::key("U", "pload  ") + theme::key("Q", "uit") + "   Enter selects");
-#else  // (no downloads or uploads in this firmware)
-    out_ += listScreenKeys(theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
-                           theme::key("Q", "uit") + "   Enter selects");
+    out_ += listScreenStatus(status((size_t)page_ * kPerPage + (size_t)list_.current()));
+    out_ += listScreenKeys(keyText() + "   Enter selects");
+}
+
+// The About column, width w: the description, or on Net Files the home board's name (12) and then the description.
+std::string FileBrowser::about(size_t i, size_t w) const {
+#if AXIS_NET_FILES
+    if (net()) {
+        char b[16];
+        std::snprintf(b, sizeof b, "%-12.12s ", homes_[i].c_str());
+        return b + fileAbout(files_[i].desc, w - 13);
+    }
 #endif
+    return fileAbout(files_[i].desc, w);
+}
+
+std::string FileBrowser::status(size_t ix) const {
+    if (ix >= files_.size()) return "";
+    return files_[ix].name + "  " + fileSizeText(files_[ix].size) + "  " + (net() ? about(ix, 60) : files_[ix].desc);
+}
+
+std::string FileBrowser::keyText() const {
+    std::string k = theme::key("N", "ext  ") + theme::key("P", "rev  ");
+    if (!net()) k += theme::key("V", "iew  ") + theme::key("I", "nfo  ");
+#if AXIS_TRANSFERS
+    k += theme::key("D", "ownload  ");
+    if (!net()) k += theme::key("U", "pload  ");
+#endif
+    return k + theme::key("Q", "uit");
+}
+
+void FileBrowser::refuse(const std::string& why) {
+    out_ += AMBER;
+    out_ += "   " + why + "\r\n";
+    st_ = St::List;
+    listPrompt();
 }
 
 void FileBrowser::selectFile(size_t index) {
     if (index >= files_.size()) return;
     const FileEntry& f = files_[index];
-    if (isTextFile(f.name)) {
+    if (isTextFile(f.name) && !net()) {  // (a Net Files text file is downloaded: it is on another board)
         if (std::string why = gate_ ? gate_(0) : std::string(); !why.empty()) {
-            out_ += AMBER;
-            out_ += "   " + why + "\r\n";
-            listPrompt();
+            refuse(why);
             return;
         }
         view(f.name);
@@ -186,11 +237,15 @@ void FileBrowser::selectFile(size_t index) {
         return;
     }
     if (std::string why = gate_ ? gate_(f.size) : std::string(); !why.empty()) {
-        out_ += AMBER;
-        out_ += "   " + why + "\r\n";
-        listPrompt();
+        refuse(why);
         return;
     }
+#if AXIS_NET_FILES
+    if (net()) {
+        netGet(index);
+        return;
+    }
+#endif
     req_ = TransferRequest();
     req_.area = areas_[area_].id;
     req_.name = f.name;
@@ -199,7 +254,9 @@ void FileBrowser::selectFile(size_t index) {
 }
 
 bool FileBrowser::listCommand(char c) {
-    switch (c | 0x20) {
+    char k = (char)(c | 0x20);
+    if (net() && (k == 'u' || k == 'v' || k == 'i')) return false;  // Net Files: next, prev, download and quit only
+    switch (k) {
         case 'n':
             page_++;
             showPage();
@@ -258,6 +315,12 @@ bool FileBrowser::listCommand(char c) {
 }
 
 bool FileBrowser::tick(uint32_t now, uint32_t lastInput) {
+#if AXIS_NET_FILES
+    if (st_ == St::NetConnect) {
+        netPoll();
+        return true;
+    }
+#endif
     if (!bars_ || !usingList_ || !list_.midKey() || now - lastInput <= 300) return true;
     list_.keyTimeout();
     if (!list_.escaped()) return true;
@@ -267,8 +330,81 @@ bool FileBrowser::tick(uint32_t now, uint32_t lastInput) {
 }
 
 std::string FileBrowser::where() const {
-    return st_ == St::Areas || area_ >= areas_.size() ? "area list" : areas_[area_].name;
+    return st_ == St::Areas || (area_ >= areas_.size() && !net()) ? "area list" : title();
 }
+
+#if AXIS_NET_FILES
+namespace {
+const char* netWhy(const std::string& word) {  // a refused or failed fetch, for the caller
+    if (word == "busy") return "that board is busy, try again in a minute";
+    if (word == "gone" || word == "size") return "that file is no longer there";
+    return "that board can't be reached right now";
+}
+}  // namespace
+
+int32_t FileBrowser::tripBps() const {
+    // The slowest leg the bytes cross that is radio. Phase 4 adds the board-to-board leg here (a second bps, the lower
+    // of the two wins); Phase 3's board-to-board trip is always internet.
+    return net_.callerRadioBps ? net_.callerRadioBps() : -1;
+}
+
+void FileBrowser::netGet(size_t i) {
+    const FileEntry& f = files_[i];
+    if (std::string why = net_.unreachable ? net_.unreachable(ids_[i]) : std::string(); !why.empty()) {
+        refuse(why);
+        return;
+    }
+    req_ = TransferRequest();
+    req_.name = f.name;
+    req_.net = true;
+    netId_ = ids_[i];
+    netHome_ = homes_[i];
+    netSize_ = f.size;
+    usingList_ = false;
+    int32_t bps = tripBps();
+    if (bps > 0 && f.size > (uint64_t)net_.radioLimitKb * 1024) {
+        uint64_t bits = (uint64_t)f.size * 8;
+        uint32_t min = (uint32_t)((bits + (uint64_t)bps * 30) / ((uint64_t)bps * 60));  // to the nearest minute
+        if (!min) min = 1;
+        char b[160];
+        std::snprintf(b, sizeof b, "\r\n   This file is %u KB. Over the radio link at %ld bps that's about %u minute%s. Fetch it anyway? (Y/N) ",
+                      (unsigned)((f.size + 1023) / 1024), (long)bps, (unsigned)min, min == 1 ? "" : "s");
+        out_ += AMBER;
+        out_ += b;
+        out_ += HI;
+        st_ = St::NetWarn;
+        return;
+    }
+    askProtocol();
+}
+
+void FileBrowser::netStart() {
+    int r = net_.begin ? net_.begin(netId_, req_.area, req_.name) : NetFilesView::kOff;
+    if (r == NetFilesView::kOwn) {  // this board's own file: from its area here, like any other download
+        req_.net = false;
+        startTransfer();
+        return;
+    }
+    out_ += "\r\n";
+    if (r != NetFilesView::kStarted) {
+        refuse(netWhy(r == NetFilesView::kBusy ? "busy" : r == NetFilesView::kGone ? "gone" : ""));
+        return;
+    }
+    out_ += std::string("\r\n   ") + DIM + "Connecting to " + netHome_ + "..." + HI;
+    st_ = St::NetConnect;
+}
+
+void FileBrowser::netPoll() {
+    uint32_t    size = 0;
+    const char* word = "stopped";
+    int         r = net_.poll ? net_.poll(size, word) : -1;
+    if (r > 0) startTransfer();
+    if (r >= 0) return;
+    if (net_.release) net_.release();  // (a failed fetch frees the board's slot now, not after its idle minute)
+    out_ += "\r\n";
+    refuse(netWhy(word ? word : ""));
+}
+#endif
 
 void FileBrowser::search(const std::string& what) {
     auto lower = [](std::string s) {
@@ -320,13 +456,7 @@ void FileBrowser::showNewFiles() {
 }
 
 void FileBrowser::listPrompt() {
-    out_ += "\r\n   ";
-#if AXIS_TRANSFERS
-    out_ += theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") +
-            theme::key("D", "ownload  ") + theme::key("U", "pload  ") + theme::key("Q", "uit");
-#else
-    out_ += theme::key("N", "ext  ") + theme::key("P", "rev  ") + theme::key("V", "iew  ") + theme::key("I", "nfo  ") + theme::key("Q", "uit");
-#endif
+    out_ += "\r\n   " + keyText();
     out_ += theme::WHITE;
     out_ += ": ";
 }
@@ -474,6 +604,9 @@ void FileBrowser::startTransfer() {
         uint32_t size = 0;
         for (auto& f : files_)
             if (f.name == req_.name) size = f.size;
+#if AXIS_NET_FILES
+        if (net()) size = netSize_;  // (two boards may list one name: the row picked)
+#endif
         char est[48];
         std::snprintf(est, sizeof est, "about %u s at 24 KB/s", (unsigned)(size / 24576 + 1));
         out_ += theme::window("DOWNLOAD", {{"file", req_.name}, {"size", fileSizeText(size) + "  (" + std::to_string(size) + " bytes)"},
@@ -494,7 +627,7 @@ void FileBrowser::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::
     if (!ok) rows.push_back({"why", note.empty() ? "stopped" : note});
     out_ += "\r\n\r\n";
     out_ += theme::window(ok ? (req_.upload ? "UPLOAD COMPLETE" : "DOWNLOAD COMPLETE") : "TRANSFER FAILED", rows);
-    files_ = lib_.list(areas_[area_].id);  // an upload is in the list now
+    if (!net()) files_ = lib_.list(areas_[area_].id);  // an upload is in the list now (Net Files: showPage asks again)
     if (bars_) showPage();
     else {
         st_ = St::List;
@@ -523,7 +656,7 @@ bool FileBrowser::key(char c) {
                 if (line_.empty()) return false;  // Enter alone: back to the main menu
                 int n = std::atoi(line_.c_str());
                 line_.clear();
-                if (n >= 1 && (size_t)n <= areas_.size()) openArea((size_t)n - 1);
+                if (n >= 1 && (size_t)n <= areas_.size() + netRow()) openArea((size_t)n - 1);
                 else showAreas();
                 return true;
             }
@@ -543,9 +676,10 @@ bool FileBrowser::key(char c) {
             {
                 int pick = list_.key(c);
                 out_ += list_.takeRedraw();
-                if (list_.size() && (size_t)list_.current() < areas_.size()) out_ += listScreenStatus(areas_[(size_t)list_.current()].name);
+                if (list_.size() && (size_t)list_.current() < areas_.size() + netRow())
+                    out_ += listScreenStatus((size_t)list_.current() < areas_.size() ? areas_[(size_t)list_.current()].name : std::string(kNetRow));
                 if (list_.escaped()) return false;
-                if (pick >= 0 && (size_t)pick < areas_.size()) openArea((size_t)pick);
+                if (pick >= 0 && (size_t)pick < areas_.size() + netRow()) openArea((size_t)pick);
             }
             return true;
         case St::Search:
@@ -569,11 +703,7 @@ bool FileBrowser::key(char c) {
                 int shown = (int)list_.size();
                 int pick = list_.key(c);
                 out_ += list_.takeRedraw();
-                {
-                    size_t ix = (size_t)page_ * kPerPage + (size_t)list_.current();
-                    if (ix < files_.size())
-                        out_ += listScreenStatus(files_[ix].name + "  " + fileSizeText(files_[ix].size) + "  " + files_[ix].desc);
-                }
+                if (size_t ix = (size_t)page_ * kPerPage + (size_t)list_.current(); ix < files_.size()) out_ += listScreenStatus(status(ix));
                 if (list_.escaped()) {
                     showAreas();
                     return true;
@@ -582,68 +712,24 @@ bool FileBrowser::key(char c) {
                     selectFile((size_t)page_ * kPerPage + (size_t)pick);
                     return true;
                 }
-                int pages = ((int)files_.size() + kPerPage - 1) / kPerPage;
-                if (list_.clamped() > 0 && shown > 0 && before == shown - 1 && page_ + 1 < pages) {
+                int  pages = ((int)files_.size() + kPerPage - 1) / kPerPage;
+                bool more = page_ + 1 < pages, less = page_ > 0;
+#if AXIS_NET_FILES
+                if (net()) {
+                    more = next_ >= 0;
+                    less = skip_ > 0;
+                }
+#endif
+                if (list_.clamped() > 0 && shown > 0 && before == shown - 1 && more) {
                     page_++;
                     showPage();
-                } else if (list_.clamped() < 0 && before == 0 && page_ > 0) {
+                } else if (list_.clamped() < 0 && before == 0 && less) {
                     page_--;
                     showPage(kPerPage);
                 }
                 return true;
             }
-            switch (c | 0x20) {
-                case 'n':
-                    page_++;
-                    showPage();
-                    break;
-                case 'p':
-                    page_--;
-                    showPage();
-                    break;
-                case 'd':
-                    if (!AXIS_TRANSFERS) break;
-                    out_ += "d\r\n   ";
-                    out_ += DIM;
-                    out_ += "File name: ";
-                    out_ += HI;
-                    line_.clear();
-                    req_ = TransferRequest();
-                    st_ = St::DownName;
-                    break;
-                case 'u':
-                    if (!AXIS_TRANSFERS) break;
-                    out_ += "u\r\n   ";
-                    out_ += DIM;
-                    out_ += "Describe it in one line (Enter to cancel): ";
-                    out_ += HI;
-                    line_.clear();
-                    req_ = TransferRequest();
-                    req_.upload = true;
-                    st_ = St::UpDesc;
-                    break;
-                case 'v':
-                    out_ += "v\r\n   ";
-                    out_ += DIM;
-                    out_ += "File name: ";
-                    out_ += HI;
-                    line_.clear();
-                    st_ = St::ViewName;
-                    break;
-                case 'i':
-                    out_ += "i\r\n   ";
-                    out_ += DIM;
-                    out_ += "File name: ";
-                    out_ += HI;
-                    line_.clear();
-                    st_ = St::InfoName;
-                    break;
-                case 'q':
-                    showAreas();
-                    break;
-                default:
-                    break;
-            }
+            listCommand(c);  // (the same keys as on the lightbar)
             return true;
         case St::InfoName:
             if (!lineKey(c, 40)) return true;
@@ -665,10 +751,7 @@ bool FileBrowser::key(char c) {
                 std::string name = line_;
                 line_.clear();
                 if (std::string why = gate_ ? gate_(0) : std::string(); !why.empty()) {
-                    out_ += AMBER;
-                    out_ += "   " + why + "\r\n";
-                    st_ = St::List;
-                    listPrompt();
+                    refuse(why);
                     return true;
                 }
                 view(name);
@@ -691,12 +774,15 @@ bool FileBrowser::key(char c) {
                 return true;
             }
             if (std::string why = gate_ ? gate_(f->size) : std::string(); !why.empty()) {
-                out_ += AMBER;
-                out_ += "   " + why + "\r\n";
-                st_ = St::List;
-                listPrompt();
+                refuse(why);
                 return true;
             }
+#if AXIS_NET_FILES
+            if (net()) {
+                netGet((size_t)(f - files_.data()));
+                return true;
+            }
+#endif
             req_.area = areas_[area_].id;
             req_.name = f->name;
             askProtocol();
@@ -730,12 +816,39 @@ bool FileBrowser::key(char c) {
                     out_ += HI;
                     line_.clear();
                     st_ = St::UpName;
-                } else {
-                    startTransfer();
                 }
+#if AXIS_NET_FILES
+                else if (req_.net)
+                    netStart();
+#endif
+                else
+                    startTransfer();
             }
             return true;
         }
+#if AXIS_NET_FILES
+        case St::NetWarn:  // the radio question: Y fetches, N or Enter goes back to the list
+            if ((c | 0x20) == 'y') {
+                out_ += "Y\r\n";
+                askProtocol();
+            } else if ((c | 0x20) == 'n' || c == '\r') {
+                out_ += "N\r\n";
+                st_ = St::List;
+                listPrompt();
+            }
+            return true;
+        case St::NetConnect:  // any key but Enter gives the fetch up (tick polls the host meanwhile)
+            if (c == '\r' || c == '\n' || !c) return true;  // (an Enter after the protocol letter is not a stop)
+            if (net_.release) net_.release();
+            out_ += "\r\n";
+            st_ = St::List;
+            listPrompt();
+            return true;
+#else
+        case St::NetWarn:
+        case St::NetConnect:
+            return true;
+#endif
         case St::UpName:
             if (!lineKey(c, 40)) return true;
             if (line_.empty()) {

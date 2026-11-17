@@ -2433,6 +2433,18 @@ void Node::key(char c) {
                     if (!mayDownload(*u)) return "Downloads open up once you've uploaded something: [U]pload first.";
                     return size ? ratioBlock(*u, size, cfg_->ratio, cfg_->freeKb) : std::string();
                 });
+#if AXIS_NET_FILES
+            if (netFiles_.page) {  // listings travel in User Net: Files, so the caller sees them when they may read it
+                int level = securityLevel();
+                for (const FileArea& a : cfg_->msgAreas)
+                    if (a.id == "un_files" && a.minSecurity <= level) {
+                        NetFilesView v = netFiles_;
+                        v.radioLimitKb = (uint32_t)std::max(0, cfg_->netFilesRadioKb);
+                        browser_->setNetFiles(std::move(v));
+                        break;
+                    }
+            }
+#endif
             browser_->setNewSince(prevCall_ ? prevCall_ : (unixNow_ && unixNow_() > 7 * 86400 ? unixNow_() - 7 * 86400 : 0));
             browser_->begin();
             break;
@@ -3741,9 +3753,13 @@ void Node::poll(uint32_t nowMs) {
         net_.reset();
         showMainMenu();
     }
-    if (state_ == State::Files && browser_ && !browser_->tick(nowMs, lastInput_)) {
-        closeFiles();
-        showMainMenu();
+    if (state_ == State::Files && browser_) {
+        if (!browser_->tick(nowMs, lastInput_)) {
+            closeFiles();
+            showMainMenu();
+        } else if (browser_->wantsTransfer()) {
+            state_ = State::Transfer;  // a Net Files fetch ready (tick polls the host while it connects)
+        }
     }
     if (state_ == State::Messages && msgs_ && !msgs_->tick(nowMs, lastInput_)) {
         closeMsgs();

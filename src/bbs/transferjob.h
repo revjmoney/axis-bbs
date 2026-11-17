@@ -19,6 +19,9 @@ struct TransferRequest {
     bool        upload = false;
     std::string area, name, desc;  // name: the file to send, or the name to save an XMODEM upload as
     char        proto = 'Z';       // Z ZMODEM, X XMODEM (CRC, 128), K XMODEM-1K
+#if AXIS_NETS
+    bool net = false;  // a Net Files download: the host makes the job over its fetch slot (name: for its log and screen)
+#endif
 };
 
 std::string cleanUploadName(const std::string& name);  // upper case, safe characters, no path

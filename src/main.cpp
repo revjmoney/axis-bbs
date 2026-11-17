@@ -4352,6 +4352,40 @@ static void netFetchJobNote(const void* j, std::string& note) {
     }
 }
 
+#if AXIS_FILES
+static_assert(kNetFetchBusy == axis::bbs::NetFilesView::kBusy && kNetFetchGone == axis::bbs::NetFilesView::kGone &&
+                  kNetFetchOff == axis::bbs::NetFilesView::kOff && kNetFetchOwn == axis::bbs::NetFilesView::kOwn,
+              "NetFilesView mirrors NetFetchBegin");
+
+// The caller's Net Files list (NetFilesView::page): every text in it comes from another board, made safe here.
+static int netFilesView(int skip, int max, std::vector<axis::bbs::FileEntry>& out, std::vector<std::string>& ids,
+                        std::vector<std::string>& homes) {
+    NetHost* h = netHost.get();
+    if (!h || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) return -1;
+    const axis::net::NetState& st = h->core->state();
+    return h->core->listingsPage(skip, max, [&](const axis::net::NetListing& l) {
+        out.push_back({netLogText(l.name), l.size, netSafe(l.desc), l.date});
+        ids.push_back(axis::net::listingId(l));
+        homes.push_back(netSafe(netCardName(st.card(l.board)).c_str()));
+        if (homes.back().empty()) homes.back() = l.board;
+    });
+}
+
+// NetFilesView::begin for a caller here (owner: their Node). This board's own listing is downloaded from its area, so
+// it is answered before the slot is asked (a busy slot never refuses a local file); only while the area is still
+// shared, as the serve check asks (unsharing does not take the listings back).
+static int netFilesBegin(const axis::bbs::Node* n, const std::string& id, std::string& area, std::string& name) {
+    axis::net::NetListing l;
+    if (netHost && netHost->core->findListing(id, l) && l.board == netHost->core->board()) {
+        if (!netFilesShared(l.area)) return kNetFetchGone;
+        area = l.area;
+        name = l.name;
+        return kNetFetchOwn;
+    }
+    return netFetchBegin(n, id, n->handle(), 0);
+}
+#endif
+
 // "@NET FETCHTEST <id>" (the bench): the listing fetched to nowhere, read in order as a sender would, a few KB a loop turn
 // (netFetchTestStep, from netTick) so the board goes on meanwhile; at most 10 minutes. The result goes to the event log
 // (and so to Serial); "@NET FETCHTEST" alone prints the last one.
@@ -5685,6 +5719,19 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
             WifiStream* l = (size_t)slot < sessions.size() ? sessionLine((size_t)slot) : nullptr;
             return l && l->backlog() >= axis::net::TelnetStream::kHoldLow;
         });
+#if AXIS_NETS && AXIS_FILES && AXIS_TRANSFERS
+        if (!asFollower()) {  // Net Files, fetched by this board (the owner of the fetch slot: this caller's Node)
+            const axis::bbs::Node*   n = node.get();
+            axis::bbs::NetFilesView v;
+            v.page = netFilesView;
+            v.unreachable = netFetchUnreachable;
+            v.callerRadioBps = [n] { return n->link().radio() ? n->link().bps : (int32_t)-1; };
+            v.begin = [n](const std::string& id, std::string& area, std::string& name) { return netFilesBegin(n, id, area, name); };
+            v.poll = [n](uint32_t& size, const char*& word) { return netFetchPoll(n, size, word); };
+            v.release = [n] { netFetchRelease(n); };
+            node->setNetFiles(std::move(v));
+        }
+#endif
         if (panelConsoleNew) {  // the sysop, from the panel: no password asked, and the WFC is the first screen
             node->beginLocal(millis());
             node->openWfc(millis());
@@ -7823,6 +7870,18 @@ static void serviceSession(int i) {
                                            std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion};
                 noteDoing(String(node->transfer().upload ? "upload " : "download ") + node->transfer().name.c_str() + " by " +
                           node->handle().c_str());
+#if AXIS_NETS
+                if (node->transfer().net) {  // a Net Files download: over the fetch slot its connect left ready
+                    job.reset(netFetchJob(node.get(), callerFiles(), node->transfer(), *line));
+                    if (!job) {  // (no memory for the job right after ready: the fetch stopped)
+                        netFetchRelease(node.get());
+                        node->transferDone(false, 0, 0, "stopped", millis());
+                        noteDoing("idle");
+                        sendApp(node->takeOutput());
+                    }
+                    return;
+                }
+#endif
                 job.reset(new axis::bbs::TransferJob(callerFiles(), node->transfer(), *line, info));
                 return;
             }

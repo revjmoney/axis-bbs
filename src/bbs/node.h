@@ -142,6 +142,10 @@ public:
     // Whether this caller's line is backed up (a slow radio caller): while it is, the login sequence does not start its next
     // step or the menu after it (poll does once there is room), so one turn draws at most one screen.
     void        setBackedUp(std::function<bool()> backedUp) { backedUp_ = std::move(backedUp); }
+#if AXIS_NET_FILES
+    // The host's Net Files: Files ends with a "Net Files (User Net)" row while the caller may read User Net: Files.
+    void        setNetFiles(NetFilesView v) { netFiles_ = std::move(v); }
+#endif
     // With direct set, a screen leaves in pieces of about this size as it is drawn, instead of piling up whole in the output.
     static constexpr size_t kOutSpill = 2048;
     void        begin(uint32_t nowMs);
@@ -427,6 +431,9 @@ private:
     std::unique_ptr<NewUserApp> app_;
     FileLibrary*              files_;
     std::unique_ptr<FileBrowser> browser_;
+#if AXIS_NET_FILES
+    NetFilesView                 netFiles_;
+#endif
     std::unique_ptr<AxisNetMenu> net_;
     net::LinkInfo                link_;
     std::shared_ptr<bool>        liteNow_ = std::make_shared<bool>(false);  // lite(), for the art loaders (survives a move)
