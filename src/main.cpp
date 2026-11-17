@@ -2892,7 +2892,7 @@ static axis::net::NetCard netCardNow(const NetHost& h) {
     c.mac = netField(WiFi.macAddress().c_str(), 17);
     c.sysop = netField(boardCfg->netSysopName.empty() ? boardCfg->sysopHandle : boardCfg->netSysopName, 40);
     c.location = netField(boardCfg->netLocation, 40);
-    c.links = "internet,net2,net3";  // net2: a Phase 2 board (User Net), peers send it UWANT; net3: listings
+    c.links = "net2,net3";  // net2: a Phase 2 board (User Net), peers send it UWANT; net3: listings (a card field is 16 characters at most: "internet,net2,net3" was refused, so no card was made)
     return c;
 }
 

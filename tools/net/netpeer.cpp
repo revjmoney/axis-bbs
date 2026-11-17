@@ -18,12 +18,22 @@
 //   vote <board> y|n [comment]     vote on an applicant (this node must be a member)
 //   apps                           the applications held, with their counts
 //   members                        the User Net members this node counts
+//   share <folder>                 serve the files in a folder as this node's Net Files area "pc" (kept in share.txt)
+//   list <file> [desc]             list a file of the shared folder (needs user on and a member). A first word that
+//                                  is an area (support, announce, updates, bugs) still lists that area's posts
+//   unlist <file>                  remove this node's listing of a file
+//   files                          every live Net Files listing this node holds (its own marked)
+//   fetch <id> <outfile>           fetch a listed file from its home board into a file (one fetch at a time)
 //   quit
 //
 // Without --seed the node makes its own seed in <dir>/seed.txt the first time and keeps it. The seed is
 // never printed. Everything else lives in <dir> too: msgs/, outlog.txt, state.txt, seen.txt,
 // cursors.txt, card.txt, postseq.txt, appseq.txt, voteseq.txt, user.txt, apps.txt (the signed User Net
-// applications and votes) and (dial mode) firstpeer.txt.
+// applications and votes), files.idx (the Net Files listing index), share.txt (the shared folder) and (dial
+// mode) firstpeer.txt.
+//
+// Net Files: while it runs it answers AXISFILE 1 fetch calls for files it listed (the board's FetchServer);
+// fetch dials a home board's card host and port with the board's FetchClient.
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -44,8 +54,11 @@
 #include <thread>
 #include <vector>
 
+#include "bbs/filelib.h"
 #include "bbs/msgbase.h"
 #include "net/areas.h"
+#include "net/crc.h"
+#include "net/fetch.h"
 #include "net/outlog.h"
 #include "net/record.h"
 #include "net/session.h"
@@ -279,6 +292,14 @@ bool nextLine(std::istream& f, uint32_t& pos, std::string& line) {
 }
 
 constexpr uint32_t kDenyWaitDays = 30;  // as on the board: a denied board waits before applying again
+constexpr const char* kShareArea = "pc";  // the Net Files area this node lists its shared folder under
+constexpr const char* kFetchHandle = "netpeer";
+
+// What one inbound fetch call turned out to be (for the log line when it ends).
+struct ServeNote {
+    std::string id, from;
+    bool proven = false, served = false;
+};
 
 class Peer {
 public:
@@ -315,6 +336,36 @@ public:
         core_.setOnEvent([](const std::string& who, const std::string& what, const std::string&) {
             say("event: %s %s", who.empty() ? "local" : who.c_str(), what.c_str());  // never the signed line
         });
+        // The listing index (files.idx), the same ranged reads and writes the board does; the key is drawn from the OS.
+        core_.setListingIndex(
+            [this](uint32_t off, void* p, size_t n) {
+                std::ifstream f(dir_ / "files.idx", std::ios::binary);
+                if (!f) return false;
+                f.seekg((std::streamoff)off);
+                f.read(static_cast<char*>(p), (std::streamsize)n);
+                return (size_t)f.gcount() == n;
+            },
+            [this](uint32_t off, const void* p, size_t n) {
+                fs::path path = dir_ / "files.idx";
+                std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
+                if (!f) f.open(path, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);  // first use
+                if (!f) return false;
+                f.seekp((std::streamoff)off);
+                f.write(static_cast<const char*>(p), (std::streamsize)n);
+                return (bool)f.flush();
+            },
+            [](void* p, size_t n) {
+                if (!randomBytes(static_cast<uint8_t*>(p), n)) {  // (no random source: the clock, better than nothing for a bench tool)
+                    uint64_t t = (uint64_t)std::chrono::high_resolution_clock::now().time_since_epoch().count();
+                    for (size_t i = 0; i < n; i++) static_cast<uint8_t*>(p)[i] = (uint8_t)(t >> ((i % 8) * 8)) ^ (uint8_t)(i * 31);
+                }
+            });
+        indexSteps();
+        {
+            std::string sh = readFile(dir_ / "share.txt");
+            while (!sh.empty() && (sh.back() == '\n' || sh.back() == '\r')) sh.pop_back();
+            if (!sh.empty()) share_ = sh;
+        }
         applyAreas();
         if (!makeCard()) return false;
         wasMember_ = core_.selfMember();
@@ -504,6 +555,172 @@ public:
         }
     }
 
+    // ---- Net Files
+
+    // The listing index looks at its head or builds a piece of itself; called until it is ready, and from the loop.
+    void indexSteps() {
+        for (int i = 0; i < 100000 && !core_.listingIndexReady() && core_.listingIndexStep(); i++) {
+        }
+    }
+
+    // share <folder>: the files in it are served as area "pc" (only the ones listed are offered).
+    void share(const std::string& d) {
+        std::error_code ec;
+        if (d.empty()) {
+            if (share_.empty()) say("nothing is shared (share <folder>)");
+            else say("sharing %s as area %s", share_.string().c_str(), kShareArea);
+            return;
+        }
+        if (!fs::is_directory(d, ec)) {
+            say("share refused: %s is not a folder", d.c_str());
+            return;
+        }
+        share_ = fs::absolute(d, ec);
+        if (!writeFile(dir_ / "share.txt", share_.string() + "\n")) say("warning: share.txt could not be written");
+        unsigned n = 0;
+        for (const auto& e : fs::directory_iterator(share_, ec))
+            if (e.is_regular_file(ec) && axis::bbs::safeFileName(e.path().filename().string())) n++;
+        say("sharing %u files as area %s (list <file> to offer one)", n, kShareArea);
+    }
+
+    // list <file> [desc]: signs and stores this node's listing of a file in the shared folder.
+    void listFile(const std::string& name, const std::string& desc) {
+        std::error_code ec;
+        if (share_.empty()) {
+            say("list refused: share a folder first (share <folder>)");
+            return;
+        }
+        fs::path p = share_ / name;
+        if (!axis::bbs::safeFileName(name) || !fs::is_regular_file(p, ec)) {
+            say("list refused: no file %s in the shared folder", name.c_str());
+            return;
+        }
+        uint64_t size = fs::file_size(p, ec);
+        if (ec || size > 0xFFFFFFFFull) {
+            say("list refused: %s is too big", name.c_str());
+            return;
+        }
+        std::ifstream f(p, std::ios::binary);
+        uint32_t crc = 0xFFFFFFFFu;
+        char buf[4096];
+        uint64_t got = 0;
+        while (f.read(buf, sizeof buf) || f.gcount() > 0) {
+            crc = crc32Update(crc, (const uint8_t*)buf, (size_t)f.gcount());
+            got += (uint64_t)f.gcount();
+        }
+        if (got != size) {
+            say("list refused: %s could not be read", name.c_str());
+            return;
+        }
+        NetListing l;
+        l.area = kShareArea;
+        l.name = name;
+        l.desc = field(desc, kNetListDesc, false);
+        l.uploader = "Sysop";
+        l.reach = "i";
+        l.size = (uint32_t)size;
+        l.crc = ~crc;
+        std::string id = core_.originateListing(l);
+        save();
+        if (id.empty()) say("list refused: this node must be a member carrying the Net Files area (user on, then a member), or a field is bad");
+        else say("listed %s as %s (%u bytes)", name.c_str(), id.c_str(), (unsigned)size);
+    }
+
+    // unlist <file>: the removal (a tombstone) of this node's live listing of that name.
+    void unlistFile(const std::string& name) {
+        bool have = false;
+        for (int skip = 0; skip >= 0;)
+            skip = core_.listingsPage(skip, 50, [&](const NetListing& l) {
+                if (l.board == core_.board() && l.area == kShareArea && l.name == name) have = true;
+            });
+        if (!have) {
+            say("unlist refused: no live listing of %s here", name.c_str());
+            return;
+        }
+        NetListing l;
+        l.area = kShareArea;
+        l.name = name;
+        l.uploader = "Sysop";
+        l.reach = "i";
+        l.gone = true;
+        std::string id = core_.originateListing(l);
+        save();
+        if (id.empty()) say("unlist refused");
+        else say("unlisted %s (removal %s)", name.c_str(), id.c_str());
+    }
+
+    // files: the live listings held, newest first: id | home | area/name | bytes | description
+    void files() {
+        unsigned n = 0;
+        for (int skip = 0; skip >= 0;)
+            skip = core_.listingsPage(skip, 50, [&](const NetListing& l) {
+                const NetCard* c = core_.state().card(l.board);
+                std::string home = l.board == core_.board() ? std::string("this node") : c ? safe(c->name) : l.board;
+                say("  %s | %s | %s/%s | %u | %s", listingId(l).c_str(), home.c_str(), safe(l.area).c_str(), safe(l.name).c_str(),
+                    (unsigned)l.size, safe(l.desc).c_str());
+                n++;
+            });
+        say("%u files listed%s", n, share_.empty() ? "" : " (a folder is shared)");
+    }
+
+    // check (FetchServer): who is asking, then the listing and the file. Nothing lasting beyond opening the file.
+    ServeFile checkFetch(const NetFetch& f, ServeNote& note) {
+        ServeFile r;
+        note.id = f.listing;
+        note.from = f.board;
+        const NetCard* card = core_.state().card(f.board);
+        if (!card || !verifyFetch(f, card->pub)) {
+            r.no = "sig";
+            return r;
+        }
+        note.proven = true;
+        NetListing l;
+        std::error_code ec;
+        std::shared_ptr<std::ifstream> file;
+        if (core_.state().banned(f.board)) r.no = "banned";
+        else if (core_.members().status(f.board) != NetMembers::Status::Member) r.no = "member";
+        else if (share_.empty() || !core_.findListing(f.listing, l) || l.board != core_.board() || l.gone || l.area != kShareArea ||
+                 !axis::bbs::safeFileName(l.name) || !fs::is_regular_file(share_ / l.name, ec))
+            r.no = "gone";
+        else if (fs::file_size(share_ / l.name, ec) != l.size || ec) r.no = "size";
+        else if (!(file = std::make_shared<std::ifstream>(share_ / l.name, std::ios::binary)) || !*file) r.no = "gone";
+        else {
+            r.ok = true;
+            r.size = l.size;
+            r.read = [file](uint32_t off, uint8_t* buf, size_t n) {
+                file->clear();
+                file->seekg((std::streamoff)off);
+                file->read(reinterpret_cast<char*>(buf), (std::streamsize)n);
+                return (size_t)file->gcount() == n;
+            };
+            note.served = true;
+        }
+        return r;
+    }
+
+    // What a fetch needs from the node: the listing, its home board's card, and the way to dial it.
+    struct FetchPlan {
+        NetListing l;
+        NetCard home;
+    };
+    bool planFetch(const std::string& id, FetchPlan& out) {
+        if (!core_.findListing(id, out.l)) {
+            say("fetch refused: no live listing %s (files lists them)", id.c_str());
+            return false;
+        }
+        if (out.l.board == core_.board()) {
+            say("fetch refused: that listing is this node's own");
+            return false;
+        }
+        const NetCard* c = core_.state().card(out.l.board);
+        if (!c || c->host.empty() || c->port <= 0 || out.l.reach.find('i') == std::string::npos) {
+            say("fetch refused: that board can't be reached (no host on its card)");
+            return false;
+        }
+        out.home = *c;
+        return true;
+    }
+
     const NetCard& card() const { return card_; }
     const KeyPair& key() const { return key_; }
 
@@ -576,7 +793,7 @@ private:
         c.mac = "";
         c.sysop = "PC peer";
         c.location = "PC";
-        c.links = userOn_ ? "internet,net2" : "internet";  // net2: a Phase 2 board, peers send it UWANT
+        c.links = userOn_ ? "net2,net3" : "internet,net3";  // net2: a Phase 2 board, peers send it UWANT; net3: listings
         const NetCard* held = core_.state().card(c.board);
         if (held && held->name == c.name && held->host == c.host && held->port == c.port && held->sysop == c.sysop &&
             held->location == c.location && held->links == c.links && held->mac == c.mac) {
@@ -608,6 +825,7 @@ private:
     FileOutLog log_;
     NetCore core_;
     NetCard card_;
+    fs::path share_;
     bool userOn_ = false, wasMember_ = false;
     uint32_t appSeq_ = 1, voteSeq_ = 1;
 };
@@ -656,6 +874,117 @@ bool pump(Peer& peer, Live& l, const std::string& firstPeerFile, bool firstUnkno
     l.s.reset();
     l.sock.reset();
     return false;
+}
+
+// One inbound fetch call (AXISFILE 1): the board's FetchServer over a socket.
+struct Serve {
+    std::unique_ptr<axis::pc::TcpStream> sock;
+    std::unique_ptr<FetchServer> s;
+    std::unique_ptr<ServeNote> note;  // (the server's check points at it)
+};
+
+// One turn of a served call. True while it runs; false once it ended (and was logged).
+bool pumpServe(Serve& v) {
+    std::string in = v.sock->takeAll();
+    if (!in.empty()) v.s->feed(in.data(), in.size());
+    for (int i = 0; i < 4; i++) {  // up to four pieces a turn
+        std::string out = v.s->takeOut(kFetchChunk + 64);
+        if (out.empty()) break;
+        v.sock->write((const uint8_t*)out.data(), out.size());
+    }
+    v.s->tick(msNow());
+    bool end = v.s->failed() || v.s->finished();
+    bool closed = !end && !v.sock->carrier();
+    if (!end && !closed) return true;
+    std::string last = v.s->takeOut(256);  // a NO line still to go
+    if (!last.empty()) v.sock->write((const uint8_t*)last.data(), last.size());
+    bool done = v.s->finished() && !v.s->failed() && v.note->served;
+    if (done) say("fetch served %s to board %s", v.note->id.c_str(), v.note->from.c_str());
+    else say("fetch %s from %s %s (%s)", v.note->id.empty() ? "call" : v.note->id.c_str(), v.note->from.empty() ? "?" : v.note->from.c_str(),
+             v.note->served ? "stopped" : "refused", closed ? "closed" : v.s->why());
+    v.s.reset();
+    v.sock.reset();
+    return false;
+}
+
+// One outbound fetch: the board's FetchClient over a socket, written to a file as the bytes become readable.
+struct Get {
+    std::unique_ptr<axis::pc::TcpStream> sock;
+    std::unique_ptr<FetchClient> f;
+    std::ofstream out;
+    fs::path path;
+    std::string id, inbuf;
+    uint32_t pos = 0, size = 0;
+};
+
+void endGet(Get& g, const char* fail) {
+    g.out.close();
+    if (fail) {
+        std::error_code ec;
+        fs::remove(g.path, ec);  // no half file left behind
+        say("fetch %s failed (%s)", g.id.c_str(), fail);
+    } else {
+        say("fetched %s: %u bytes to %s (%s)", g.id.c_str(), (unsigned)g.pos, g.path.string().c_str(),
+            g.f->verified() ? "crc ok" : "crc not checked");
+    }
+    g.f.reset();
+    g.sock.reset();
+}
+
+// One turn of a fetch. True while it runs.
+bool pumpGet(Get& g) {
+    bool up = g.sock->carrier();
+    g.inbuf += g.sock->takeAll();
+    std::string o = g.f->takeOut();
+    if (!o.empty()) g.sock->write((const uint8_t*)o.data(), o.size());
+    while (!g.inbuf.empty()) {  // only what the window has room for; the rest waits
+        size_t room = g.f->room();
+        if (!room) break;
+        size_t n = g.f->feed(g.inbuf.data(), std::min(room, g.inbuf.size()));
+        if (!n) break;
+        g.inbuf.erase(0, n);
+    }
+    g.f->tick(msNow());
+    o = g.f->takeOut();  // the keepalive, or the GET after the HI
+    if (!o.empty()) g.sock->write((const uint8_t*)o.data(), o.size());
+    using St = FetchClient::St;
+    if (g.f->state() == St::Failed) {
+        endGet(g, g.f->why());
+        return false;
+    }
+    if (g.f->state() == St::Streaming || g.f->state() == St::Done) {
+        uint8_t buf[4096];
+        while (g.pos < g.size) {  // in order, whatever has arrived whole
+            size_t n = std::min<size_t>(sizeof buf, g.size - g.pos);
+            if (!g.f->ready(g.pos, n)) break;
+            if (!g.f->read(g.pos, buf, n) || !g.out.write((const char*)buf, (std::streamsize)n)) {
+                endGet(g, "write");
+                return false;
+            }
+            g.pos += (uint32_t)n;
+        }
+        if (g.pos >= g.size && g.f->state() == St::Done) {
+            endGet(g, nullptr);
+            return false;
+        }
+    }
+    if (!up && g.inbuf.empty() && g.f->state() != St::Done) {  // closed before all of it came
+        endGet(g, "closed");
+        return false;
+    }
+    return true;
+}
+
+// The first bytes of a new connection (up to 11, or a line), waiting at most ms: tells a fetch call from a sync.
+std::string sniff(axis::pc::TcpStream& c, int ms) {
+    std::string got;
+    for (int t = 0; t <= ms && got.size() < 11 && got.find('\n') == std::string::npos; t += 5) {
+        got += c.takeAll();
+        if (got.size() >= 11 || !c.carrier()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    got += c.takeAll();
+    return got;
 }
 
 std::mutex g_mu;
@@ -801,6 +1130,8 @@ int main(int argc, char** argv) {
     std::thread(readStdin).detach();
 #endif
     Live live;
+    Serve serve;
+    Get get;
     bool firstUnknown = false;
     for (;;) {
         std::string cmd;
@@ -830,9 +1161,51 @@ int main(int argc, char** argv) {
                 }
                 if (!peer.post(area, subject, b)) say("post refused (Rev-only area, or a bad field)");
             } else if (verb == "list") {
-                std::string area = areaId(word(rest));
-                if (area.empty()) say("usage: list <area>");
-                else peer.list(area);
+                std::string first = word(rest), area = areaId(first);
+                if (first.empty()) say("usage: list <area> (posts) or list <file> [desc] (Net Files)");
+                else if (!area.empty() && rest.empty()) peer.list(area);
+                else peer.listFile(first, rest);
+            } else if (verb == "share") {
+                peer.share(word(rest));
+            } else if (verb == "unlist") {
+                std::string name = word(rest);
+                if (name.empty()) say("usage: unlist <file>");
+                else peer.unlistFile(name);
+            } else if (verb == "files") {
+                peer.files();
+            } else if (verb == "fetch") {
+                std::string id = word(rest), outFile = word(rest);
+                Peer::FetchPlan plan;
+                if (id.empty() || outFile.empty()) {
+                    say("usage: fetch <listing id> <outfile>");
+                } else if (get.f) {
+                    say("a fetch is already running");
+                } else if (peer.planFetch(id, plan)) {
+                    std::string h = plan.home.host == "localhost" ? "127.0.0.1" : plan.home.host;
+                    std::ofstream o(outFile, std::ios::binary | std::ios::trunc);
+                    if (!o) {
+                        say("fetch refused: cannot write %s", outFile.c_str());
+                        continue;
+                    }
+                    auto sock = axis::pc::TcpStream::dial(h.c_str(), (uint16_t)plan.home.port, false);
+                    if (!sock) {
+                        o.close();
+                        std::error_code rec;
+                        fs::remove(outFile, rec);
+                        say("fetch failed: no answer from that board");
+                        continue;
+                    }
+                    get.sock = std::move(sock);
+                    get.out = std::move(o);
+                    get.path = outFile;
+                    get.id = id;
+                    get.inbuf.clear();
+                    get.pos = 0;
+                    get.size = plan.l.size;
+                    get.f.reset(new FetchClient(plan.l, plan.home.pub, kFetchHandle, peer.key(), peer.board(), nonceHex(), 0));
+                    get.f->tick(msNow());  // its connect clock starts now
+                    say("fetching %s (%u bytes) from %s", id.c_str(), (unsigned)plan.l.size, plan.l.board.c_str());
+                }
             } else if (verb == "peers") {
                 peer.peers();
             } else if (verb == "sync") {
@@ -880,28 +1253,50 @@ int main(int argc, char** argv) {
                 peer.members();
             } else if (verb == "help") {
                 say("commands: post <area> <subject> <body> | peers | sync | list <area> | user on|off | apply <blurb> | "
-                    "vote <board> y|n [comment] | apps | members | quit");
+                    "vote <board> y|n [comment] | apps | members | share <folder> | list <file> [desc] | unlist <file> | "
+                    "files | fetch <id> <outfile> | quit");
             } else {
                 say("unknown command: %s (try help)", verb.c_str());
             }
         }
 
         if (listener) {
-            if (auto c = listener->accept(live.s ? 0 : 20, false)) {
-                if (live.s) {
+            bool busy = live.s || serve.s;
+            if (auto c = listener->accept(busy ? 0 : 20, false)) {
+                std::string first = sniff(*c, 1000);  // a fetch call (AXISFILE 1) or a sync (AXISNET 2)
+                if (first.compare(0, 11, "AXISFILE 1 ") == 0) {
+                    if (serve.s) {
+                        const char no[] = "NO busy\r\n";
+                        c->write((const uint8_t*)no, sizeof no - 1);
+                    } else {
+                        serve.note.reset(new ServeNote());
+                        ServeNote* note = serve.note.get();
+                        serve.sock = std::move(c);
+                        serve.s.reset(new FetchServer(peer.board(), peer.key(), nonceHex(),
+                                                      [&peer, note](const NetFetch& f) { return peer.checkFetch(f, *note); }));
+                        serve.s->feed(first.data(), first.size());
+                        say("a fetch call came in");
+                    }
+                } else if (live.s) {
                     const char bye[] = "BYE busy\n";
                     c->write((const uint8_t*)bye, sizeof bye - 1);
                 } else {
                     live.sock = std::move(c);
                     live.s.reset(new NetSession(peer.core(), peer.card(), peer.key(), nonceHex(), false, std::string()));
+                    if (!first.empty()) live.s->feed(first.data(), first.size());
                     live.dialer = false;
                     say("a board dialed in");
                 }
             }
         }
         peer.userTick();
+        peer.indexSteps();
+        if (serve.s) pumpServe(serve);
+        if (get.f) pumpGet(get);
         if (live.s) {
             pump(peer, live, firstPeerFile, firstUnknown);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } else if (serve.s || get.f) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         } else if (!listener) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));

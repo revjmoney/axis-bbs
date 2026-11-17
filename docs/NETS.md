@@ -25,6 +25,8 @@ Set them with `@SET name=value` over serial, the sysop menu, or the setup pages.
 | `net_user` | Off unless 1. Set 1 for this board to apply to User Net and carry its areas once it is a member. |
 | `net_user_areas` | The User Net areas this board carries, a comma list of `un_chat`, `un_tech`, `un_games`, `un_files`. Default all four. Rev's board always carries all four. |
 | `net_user_level` | The lowest security level that may read and post in the User Net areas. Default 20. |
+| `net_files_areas` | The file areas shared on User Net (see "Net Files"). Blank shares nothing. |
+| `net_files_radio_kb` | KB over which a caller on a radio link is asked before a Net Files fetch. Default 64. |
 
 The `@board` part of `net_first_peer` is the first peer's board id, 16 hex characters (shown by `@NET` on that board). With it set, a call to that address must prove it is that board or the call is dropped. Without it, this board trusts whichever board answers the first time and remembers that board id for later calls. The value is never shown in clear on screen; the sysop pages say `set (hidden)`.
 
@@ -39,6 +41,7 @@ Status:
 - `@NET PEERS` lists known peers and when each was last reached. Example: `@NET PEERS`
 - `@NET RECORD [n [skip]]` shows the newest n lines of the net record (default 20, most 100), newest first. The optional second number skips that many of the newest lines first, so you can page back through older ones. Examples: `@NET RECORD 50`, and `@NET RECORD 20 20` for the 20 lines before the newest 20
 - `@NET LOCAL` lists what this board has hidden or blocked.
+- `@NET FILES [skip]`, `@NET LISTALL <area>` and `@NET FETCHTEST <id>` are for Net Files (see "Net Files" below).
 - `@NET RECORD FIND <text> [n [skip]]` searches the net record for text. `@NET RECORD KIND votes|members|actions|all [n [skip]]` lists one kind. `@NET RECORD MONTHS` lists the record files. `@NET RECORD SHOW <index>` or `@NET RECORD SHOW <file>:<offset>:<time>` shows one line field by field and whether its signature checks. See "The record browser" below.
 
 User Net (see "User Net" below):
@@ -151,6 +154,103 @@ Listings are newest first, at most 100 lines, with `older from <index>` when mor
 
 The signed application and vote lines are kept whole in `/net/apps.txt` on the storage root, one line each, appended as they are taken. The board holds only compact fields in RAM and reads a line back by its byte offset, so the file is never read whole at run time. It is read two lines a pass at boot. Past twice the size of what is held (and 64 KB), the file is rewritten with only the lines still held, streamed through a temp file; the old file steps aside as `apps.old` until the new one is in place, and a restart after a cut puts the right one back.
 
+## Net Files
+
+Net Files lets a caller on one board download a file that lives on another board. A board lists some of its file areas on User Net. Every member board that carries `un_files` holds those listings, and its callers browse them in the Files menu under **Net Files (User Net)**. A download goes from the home board (the board that has the file) through the caller's board to the caller. Nothing is stored on the way. Net Files needs User Net: a board lists and fetches only while it is a member that carries `un_files`.
+
+### Sharing
+
+Pick the file areas to share with `net_files_areas`, a comma list of file area ids. Blank shares nothing. Example: `@SET net_files_areas=freeware,gcode`. The sysop menu has the same choice under System, User Net, Net Files: each file area is a row that flips between shared and not shared. The page also shows how many files are listed and sets the radio size limit.
+
+| Setting | Meaning |
+| --- | --- |
+| `net_files_areas` | The file area ids shared on User Net, a comma list. Blank shares nothing. |
+| `net_files_radio_kb` | A caller on a radio link is asked before a fetch of a file over this many KB. Default 64. 0 asks for any file that has something in it. |
+
+- A new upload into a shared area is listed once it is stored, with the uploader's handle. Removing or renaming a file in a shared area sends the removal (a rename also lists the new name).
+- Files that were in the area before you shared it are not listed on their own. Use `@NET LISTALL <area>` once to list them.
+- A listing is signed with this board's key. It names the file, its size and CRC-32, the area, a description (up to 120 characters), the uploader, and that the board can be reached over the internet.
+- A row for a board whose card has no host reads `(can't be reached)` in place of its description.
+
+### Commands
+
+- `@NET FILES [skip]` lists the live listings this board holds, 20 a page, one a line: `<id> <home board name> <area> <name> <size>`. When more are left it ends with `more with @NET FILES <n>`. Example: `@NET FILES 20`
+- `@NET LISTALL <area>` lists every file already in a shared area that this board has not listed. The area must be in `net_files_areas`. It works through the area a few files at a time, so the board stays responsive. Names this board already lists are skipped.
+- `@NET FETCHTEST <id>` is for the bench. It fetches a listing to the board itself, reads it through as a caller's sender would, and puts the result in the event log: `@OK <bytes> crc ok`, `@OK <size> crc bad` or `@ERR <word>`. It runs across loop turns and never blocks the board. With no id it shows the last result. Example: `@NET FETCHTEST 0123456789abcdef-12`
+- `@NET` has a line `files: <n> listed, <m> shared areas`. The count includes listings that are held or killed.
+
+### Caps and limits
+
+| What | Limit |
+| --- | --- |
+| Live listings held | 1000 (100 on a board with no SD card) |
+| Live listings from one home board | 200 |
+| A removal (tombstone) is kept | 120 days (200 removals on a board with no clock) |
+| Listings from peers that replace or remove one already held | 8 a session and 64 a day |
+| A description | 120 characters |
+
+The caps are applied once a day, when the net trims, so between trims a board can hold a few more. A listing past the drop budget is refused with the `store` NAK and comes again on a later call. That keeps a peer from making this board rewrite its listing file over and over. One listing is kept for each name: a newer listing of the same name replaces an older one, and a removal beats any older listing of its name, whichever arrives first. A board's own listings are never held back by the budget.
+
+Listings live in a hidden message area (`nf_list`) that no caller sees, one message each. They travel on the same calls as posts, but only to a peer whose card says `net3` in its links. A board that becomes a member (or starts to carry `un_files`) asks its peers for the listings they hold, as it does for applications and votes.
+
+### The listing index: /net/files.idx
+
+Finding a listing by name would mean reading the whole listing area. So the board keeps `/net/files.idx` on the storage root: a small head, then one fixed record for each listing and each removal, holding a keyed hash of its home board, area and name, its seq and where its message is. A lookup reads this file and then only the one message it points at. The hash key is random, made when the index is built and kept in its head, so nobody can choose names that collide.
+
+The index is rebuilt from the listing area when it is missing, when its head says a change was cut short (a reset), when its tail does not match the area, or when a read or write fails. It is also rebuilt after listings are dropped. The rebuild runs a few listings at a time in the board's idle time. While it runs, listings from peers are refused with `store` (they come again on a later call), nothing new is listed here, and a fetch call is answered `NO busy`. It is safe to delete the file.
+
+### The fetch call
+
+A fetch is its own call to the home board's telnet port. It opens with `AXISFILE 1` where a sync opens with `AXISNET 2`, and it uses no sync slot. A board serves one fetch call at a time and has one fetch of its own running at a time.
+
+```
+dialer: AXISFILE 1 <dialer nonce>
+server: HI <server board> <server nonce> <signature>
+dialer: GET <listing id, the caller's handle, offset, signature>
+server: OK <bytes from the offset to the end>
+        then the raw bytes, and the home board closes
+```
+
+- `HI` is signed with the home board's key over both nonces. The dialer checks it against the home board's card before it sends `GET`.
+- `GET` is signed with the calling board's key. The home board checks that signature against the calling board's card. It checks that the listing is live and its own, that its area is still shared, that the calling board is a member and neither banned nor blocked, and that the file's size is what was listed.
+- A refusal is `NO <word>` and the call ends. The words are `busy` (the serve slot is taken, the board is short of memory, or its index is being rebuilt), `gone` (no such live listing, or the file is missing), `size` (the file changed after it was listed), `member` (the calling board is not a member), `banned` (the calling board is banned or blocked) and `sig` (the signature does not check). A request that does not parse is `bad`.
+- A call that moves nothing for 20 seconds ends. While the bytes stream, the caller's board sends a one-byte keepalive every 10 seconds, so a slow radio caller (TCP held back at the far end) is not taken for a dead dialer.
+- The caller's board checks the listing's CRC-32 as the bytes arrive, and before the last block goes to the caller's ZMODEM or XMODEM sender. A file that does not match fails the call with `crc`, so the caller never gets the end of a changed file. A `crc` failure is not retried.
+- A sender may ask to go back (a ZMODEM re-position). The board keeps an 8 KB window; if the sender goes behind it, the board makes a new call at the new offset and keeps checking the same CRC. That is done at most 3 times for one download, then the fetch ends `retries`.
+- A caller's program that resumes its own partial file (an offset past the start) cannot be checked. That download is **unverified**: it is allowed, and `unverified (resumed)` is written to the event log and the net record.
+- A home board that trickles (under about 1 KB in 2 minutes while the caller's side has room) is cut off `slow`. A fetch that nobody asks about for 60 seconds before its transfer starts is let go.
+
+When a fetch is served, the home board writes `fetch served <id> to <handle>@<board>` to the net record and the event log. A refused or stopped call goes to the event log only.
+
+### What a caller sees
+
+In Files, the last row of the area list is **Net Files (User Net)**. It shows for callers who may open `un_files`. The list is 15 a page, with the name, size, home board name and description. A caller picks a file and the board runs the normal download gate (the same checks and refusals as for a local file). Then:
+
+1. A caller on a radio link, for a file over `net_files_radio_kb`, is asked: `This file is <n> KB. Over the radio link at <bps> bps that's about <m> minutes. Fetch it anyway? (Y/N)`. If the modem has not reported its rate, the rate of the caller's LoRa tier is used, or the slowest tier's.
+2. The caller picks ZMODEM or XMODEM.
+3. The board says `Connecting to <home>...`. When the home board answers, the transfer starts.
+
+The messages: `that board is busy, try again in a minute` (busy), `that file is no longer there` (gone or size), and `that board can't be reached right now` for everything else (no host, no answer, a failed call). A transfer that stops part way says `the file transfer from <home> stopped`.
+
+### Strict area levels
+
+A file this board lists itself is not fetched. It goes straight from the local area, and the area's own security level applies as for any local file: a caller below the area's lowest level is refused with `that file is in an area closed to your account`. The sysop passes. The same holds for a caller on a follower. A listing from another board has no local level (the home board decided), so it is not affected.
+
+### Followers
+
+A follower's callers get Net Files through the main board. The follower asks the main with four requests: `G <skip> <max>` for a page of the list, `b` to begin a fetch for a caller and to ask how it is going, `t` for a piece (up to 2 KB) of the file as it arrives, and `e` to let the fetch go. The ops are named `G`, `b`, `t` and `e` because `B`, `T` and `E` were already taken by other follower requests. The main has one fetch slot, so one caller in the whole cluster fetches at a time; a second hears `busy`. A follower that leaves gives up its fetch. A fetch that is ready is held through its transfer, and ends when the follower says `e`, leaves, or the transfer stalls or goes slow.
+
+A file a caller uploads on a follower into a shared area is listed with that caller's handle as the uploader, once the main has the final file (a ZIP's repack included). An older follower that sends no handle gets the sysop's handle. A main that is older, or has nets off, gives a follower no Net Files row.
+
+### Decisions
+
+- **No relay yet.** A board whose card has no host cannot be fetched from. Relaying through Rev's board is Phase 4.
+- **Old files are listed only by `@NET LISTALL`.** Turning sharing on does not list what is already there.
+- **Fetches are logged, not counted.** A served fetch is a line in the net record. A listing has no download counter.
+- **Followers are included**, as above.
+- **Area levels are strict**, as above.
+- A listing's reach is always internet in this phase.
+
 ## The PC test peer
 
 `axis_netpeer` (built with the PC build) is a net node on the PC, for testing a board against something other than a board. Besides `post`, `peers`, `sync` and `list`, it speaks User Net with these commands, one per line on stdin:
@@ -162,6 +262,27 @@ The signed application and vote lines are kept whole in `/net/apps.txt` on the s
 
 The peer keeps the signed lines in `apps.txt` in its folder, and its application and vote counters in `appseq.txt` and `voteseq.txt`. It uses the board's own tally, so it counts exactly as a board does. It is never one of Rev's boards, so it does not seal.
 
+The peer also speaks Net Files, with the same portable code the board uses (the listings in NetCore, the fetch server and the fetch client), so it works as the bench partner. Its card says `net3`. It needs `user on` and to be a member before it can list a file.
+
+- `share <folder>` serves the files in a folder as the area `pc`. The folder is kept in `share.txt`. `share` alone says what is shared. Nothing is offered until a file is listed.
+- `list <file> [desc]` lists a file of that folder (name, size, CRC-32 and the description). A first word that is an area name (`support`, `announce`, `updates`, `bugs`) still lists that area's posts, as before.
+- `unlist <file>` sends the removal of its listing.
+- `files` lists the live listings it holds, its own and other boards'.
+- `fetch <id> <outfile>` fetches a listing from its home board's card host and port, checks the CRC and writes the file. A failed fetch leaves no file.
+- While it listens, it answers `AXISFILE 1` fetch calls for the files it listed, with the same checks and `NO` words as a board. A dialing peer has no listener, so it only fetches.
+
+Example:
+
+```
+user on
+share ./pcfiles
+list tool.nc a G-code test
+files
+fetch 0123456789abcdef-12 got.bin
+```
+
+It keeps the listing index in `files.idx` in its folder. It prints no MAC and no key material.
+
 ## Files
 
 Under `/net/` on the storage root:
@@ -171,6 +292,7 @@ Under `/net/` on the storage root:
 - `local.txt` holds this board's own hide and block lines.
 - `firstpeer.txt` remembers the first peer's address and the board id learned from it.
 - `apps.txt` holds the signed User Net applications and votes (see "/net/apps.txt").
+- `files.idx` is the Net Files listing index (see "The listing index"). It can be deleted and is rebuilt.
 
 Also under `/net/`: `state.txt` (cards and Rev's notices), `seen.txt` (which posts this board has seen) and `cursors.txt` (how far each link peer has been sent, how many calls with it completed, and whether this board's history pull is done).
 

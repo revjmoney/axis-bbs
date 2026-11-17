@@ -996,6 +996,25 @@ void SysopShell::userNet(Layer& l) {
                                }});
     }));
     l.items.push_back(netAsk("Caller level", setting("net_user_level"), "@SET net_user_level="));
+    {  // Net Files: pick the file areas to share, see how many are listed, set the size a radio caller is asked about
+        std::string sh = setting("net_files_areas");
+        l.items.push_back(page("Net Files", sh.empty() ? "none shared" : sh, "NET FILES", [this](Layer& x) {
+            std::string cur = "," + setting("net_files_areas") + ",";  // ",a,b,"
+            for (auto& line : lines("@AREAS")) {
+                auto f = split(line, '|');
+                if (f.size() < 3) continue;
+                std::string key = "," + f[1] + ",", next = cur;
+                size_t      at = next.find(key);
+                if (at == std::string::npos) next += f[1] + ",";
+                else next.erase(at, key.size() - 1);
+                next.erase(0, next.find_first_not_of(','));
+                if (!next.empty()) next.pop_back();
+                x.items.push_back({f[2], at == std::string::npos ? "not shared" : "shared", [this, next] { did(run_("@SET net_files_areas=" + next)); }});
+            }
+            x.items.push_back({"Listed", after(lines("@NET"), "files:"), nullptr});
+            x.items.push_back(netAsk("Radio size limit (KB)", setting("net_files_radio_kb"), "@SET net_files_radio_kb="));
+        }));
+    }
     if (st.empty() || st == "loading") return;  // not running here, or the applications are still loading
     // With net_user off the line reads "off", the held standing in brackets: a member still votes, nobody applies.
     if (st == "member" || st == "off (member)")
