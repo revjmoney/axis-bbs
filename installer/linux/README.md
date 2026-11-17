@@ -65,6 +65,51 @@ As your own user (the program refuses to run as root), with its own data folder:
 Add `--modem /dev/ttyUSB0` to use the modem, and `--seed DIR` on the first run.
 Stop the service first if it holds the same modem or ports: `sudo systemctl stop axis`.
 
+## Hardening the i5
+
+`harden-i5.sh` locks down the box itself (the unit below only locks down the program).
+Look at the plan first; a dry run needs no sudo and changes nothing:
+
+    ./harden-i5.sh --dry-run
+    sudo ./harden-i5.sh
+
+What it does, in this order:
+
+1. Works out the LAN subnet from the default route's interface, the Remote Desktop server in
+   use (xrdp or GNOME Remote Desktop) and its port, any VPN interface (tailscale, wg, zt, tun),
+   and `lan_port` and `public_port` from `/var/lib/axis/axis.conf`. It prints all of it, and what
+   else is listening that gets no rule.
+2. Asks you to confirm the LAN subnet (y/N). `--yes` skips only the second "apply?" question,
+   never this one.
+3. Installs fail2ban (and ufw or unattended-upgrades if missing) with apt.
+4. SSH: only if your `~/.ssh/authorized_keys` has a key, writes
+   `/etc/ssh/sshd_config.d/10-axis-hardening.conf` (no passwords, no keyboard-interactive,
+   no root login), checks it with `sshd -t`, and reloads ssh. Open sessions stay up. If the
+   check fails, the file is removed and the script stops.
+5. Firewall (ufw), only adding rules, each tagged `axis-harden`: SSH and Remote Desktop from
+   the LAN (and on a VPN interface if there is one), the LAN BBS port, panel 2326 and cluster
+   UDP 2325 from the LAN, and the public BBS port from anywhere only if `public_port` is set.
+   Then default deny incoming, allow outgoing, and enable. The allow rules always go in first.
+6. fail2ban `sshd` jail: 1 hour ban after 5 failures.
+7. Automatic security updates (unattended-upgrades).
+8. Prints `ss -tulpn`.
+
+After it runs, open a new SSH session and a Remote Desktop connection before closing the old one.
+
+To undo:
+
+    sudo ufw status numbered               # rules tagged axis-harden were added by the script
+    sudo ufw delete N                      # remove one, or: sudo ufw disable (turns the firewall off)
+    sudo rm /etc/ssh/sshd_config.d/10-axis-hardening.conf && sudo systemctl reload ssh
+    sudo systemctl disable --now fail2ban  # or unban one address:
+    sudo fail2ban-client set sshd unbanip ADDRESS
+
+ufw may have been on before the script ran, so `ufw disable` can turn off more than the
+script turned on; deleting the tagged rules is the exact undo.
+
+To go public, forward the public port on the router straight to this box (a direct port
+forward). That is the supported way; a tunnel or proxy makes every caller look like one address.
+
 ## What the unit locks down
 
 Runs as user `axis`, no new privileges, no capabilities, read-only system, no home folders,
