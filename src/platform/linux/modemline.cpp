@@ -584,8 +584,10 @@ void step(uint32_t now) {
         if (M.reply.size() > kLineMax) M.reply.erase(0, M.reply.size() - kLineMax);
         size_t code = std::min({M.reply.find("OK"), M.reply.find("ERROR"), M.reply.find("NO CARRIER")});
         if (code != std::string::npos || now - M.since >= kAthMs) {
-            size_t      cut = code == std::string::npos ? M.reply.size() : M.reply.find('\n', code);
-            cut = cut == std::string::npos ? M.reply.size() : cut + 1;
+            // The reply up to the end of the result code's line; all of it when no code came (the 3 s timeout) or
+            // its line has no end yet. (Only a '\n' that was found moves the cut past itself.)
+            size_t      nl = code == std::string::npos ? std::string::npos : M.reply.find('\n', code);
+            size_t      cut = nl == std::string::npos ? M.reply.size() : nl + 1;
             std::string r = printable(M.reply.substr(0, cut)), after = M.reply.substr(cut);
             while (r.find("  ") != std::string::npos) r.erase(r.find("  "), 1);
             size_t a = r.find_first_not_of(' '), b = r.find_last_not_of(' ');
