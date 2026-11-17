@@ -107,7 +107,12 @@ if [ -z "$iface" ]; then
     echo "no IPv4 default route found, so the LAN subnet cannot be worked out. Stopping." >&2
     exit 1
 fi
-subnet="$(ip -4 route show dev "$iface" scope link 2>/dev/null | awk '$1 ~ /\// {print $1; exit}')"
+subnets="$(ip -4 route show dev "$iface" proto kernel scope link 2>/dev/null | awk '$1 ~ /\// {print $1}' | sort -u)"
+if [ "$(printf '%s\n' "$subnets" | grep -c .)" -gt 1 ]; then
+    echo "$iface has more than one LAN subnet ($(echo $subnets)); not sure which is the LAN. Stopping." >&2
+    exit 1
+fi
+subnet="$subnets"
 if [ -z "$subnet" ] || ! [[ "$subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/([0-9]+)$ ]]; then
     echo "could not find the LAN subnet on $iface. Stopping." >&2
     exit 1
@@ -128,7 +133,7 @@ if [ "$ufw_ipv6" = "yes" ] && ip -6 addr show dev "$iface" 2>/dev/null | grep -q
     lan6+=("fe80::/10")
     while read -r p; do
         [ -n "$p" ] && [[ "$p" != fe80:* ]] && lan6+=("$p")
-    done < <(ip -6 route show dev "$iface" 2>/dev/null | awk '$1 ~ /\// && $1 !~ /^default/ {print $1}' | sort -u)
+    done < <(ip -6 route show dev "$iface" 2>/dev/null | awk '$1 ~ /\// && $1 !~ /^default/ && !/ via / {print $1}' | sort -u)
 fi
 if [ ${#lan6[@]} -gt 0 ]; then
     say "LAN prefixes (IPv6):     ${lan6[*]}"
@@ -148,10 +153,19 @@ else
 fi
 
 # Where this session comes from, if it can be seen. Abort if it is outside the LAN and no VPN.
+# sudo usually drops SSH_CONNECTION, so look for it in the parent processes too.
 client=""
 if [ -n "${SSH_CONNECTION:-}" ]; then
     client="${SSH_CONNECTION%% *}"
 else
+    pid=$PPID
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ -z "$client" ]; do
+        sc="$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^SSH_CONNECTION=//p' | head -n1 || true)"
+        [ -n "$sc" ] && client="${sc%% *}"
+        pid="$(awk '/^PPid:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)"
+    done
+fi
+if [ -z "$client" ]; then
     client="$(who -m 2>/dev/null | sed -n 's/.*(\(.*\)).*/\1/p' || true)"
 fi
 if [ -n "$client" ] && [[ "$client" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -256,14 +270,15 @@ command -v ufw >/dev/null 2>&1 || ufw_ok=0
 if [ "$ufw_ok" -eq 0 ]; then
     say "ufw is not installed; it will be installed"
 elif [ "$is_root" -eq 1 ]; then
-    ufw status verbose || true
-    if ufw status | grep -q '^Status: active' && ufw status verbose | grep -q 'deny (incoming)'; then
+    ufwv="$(ufw status verbose 2>&1 || true)"
+    printf '%s\n' "$ufwv"
+    if printf '%s\n' "$ufwv" | grep -q '^Status: active' && printf '%s\n' "$ufwv" | grep -q 'deny (incoming)'; then
         say "Incoming is already deny by default, no change there."
     else
         say "Incoming is not deny yet: it will become deny AFTER the allow rules below are in."
     fi
     # Existing rules that open SSH or Remote Desktop to everyone (this script will not delete them).
-    broad="$(ufw status | grep -E "^($SSH_PORT|OpenSSH|$(IFS='|'; echo "${rdp_ports[*]}"))(/tcp)?([[:space:]]|\(v6\))" | grep -E 'Anywhere[[:space:]]*$|Anywhere \(v6\)[[:space:]]*$' | grep -v ' on ' || true)"
+    broad="$(printf '%s\n' "$ufwv" | grep -E "^($SSH_PORT|OpenSSH|$(IFS='|'; echo "${rdp_ports[*]}"))(/tcp)?([[:space:]]|\(v6\))" | grep -E 'Anywhere[[:space:]]*$|Anywhere \(v6\)[[:space:]]*$' | grep -v ' on ' || true)"
     if [ -n "$broad" ]; then
         warn "these existing rules open SSH or Remote Desktop to any address, not just the LAN:"
         printf '%s\n' "$broad" | sed 's/^/    /'
@@ -389,8 +404,9 @@ PermitRootLogin no"
     fi
     if [ "$dry" -eq 0 ]; then
         say "  Effective settings now:"
-        sshd -T 2>/dev/null | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication|permitrootlogin) ' | sed 's/^/    /'
-        if ! sshd -T 2>/dev/null | grep -qi '^passwordauthentication no'; then
+        eff="$(sshd -T 2>/dev/null || true)"
+        printf '%s\n' "$eff" | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication|permitrootlogin) ' | sed 's/^/    /' || true
+        if ! printf '%s\n' "$eff" | grep -qi '^passwordauthentication no'; then
             warn "PasswordAuthentication is still on; an earlier drop-in or sshd_config sets it first"
         fi
     fi
@@ -433,8 +449,8 @@ bantime = 1h
 maxretry = 5"
 [ "$dry" -eq 0 ] && mkdir -p "$(dirname "$F2B_JAIL")"
 write_file "$F2B_JAIL" "$jail" || true
-run systemctl enable fail2ban
-run systemctl restart fail2ban
+run systemctl enable fail2ban || warn "could not enable fail2ban"
+run systemctl restart fail2ban || warn "fail2ban did not restart; see 'journalctl -u fail2ban'"
 if [ "$dry" -eq 0 ]; then
     sleep 2
     fail2ban-client status sshd || warn "the sshd jail did not come up; see 'journalctl -u fail2ban'. The rest is done."
@@ -448,8 +464,8 @@ if [ -r "$AUTO_UPG" ] && grep -q 'Update-Package-Lists "1"' "$AUTO_UPG" && grep 
 else
     write_file "$AUTO_UPG" "$upg" || true
 fi
-run systemctl enable --now unattended-upgrades
-run systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+run systemctl enable --now unattended-upgrades || warn "could not enable unattended-upgrades"
+run systemctl enable --now apt-daily.timer apt-daily-upgrade.timer || warn "could not enable the apt timers"
 
 head_ "Listening services (ss -tulpn)"
 if [ "$is_root" -eq 1 ]; then ss -tulpn; else ss -tuln; say "(process names show only with sudo)"; fi
