@@ -95,7 +95,7 @@ const char kNotSetUp[] =
         else Serial.print(kNotSetUp);
     }
     while (!hostShutdownRequested()) {
-        if (running && !*running) {  // the window's close box: the same shutdown as SIGTERM
+        if (running && !*running) {  // the window is gone (its close box normally starts the shutdown itself)
             std::printf("axis: the window was closed\n");
             hostRequestShutdown();
             break;

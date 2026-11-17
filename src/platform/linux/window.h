@@ -10,7 +10,8 @@
 // thread. The shutdown signals are blocked on the SDL thread (and every SDL thread made after windowOpen()), so they
 // arrive on the AXIS thread as they would on the main thread, and a delay() in progress sees EINTR there.
 //
-// Closing the window is SIGTERM: hostRequestShutdown(), then the usual shutdown.
+// Closing the window is SIGTERM: an SDL event watch calls hostRequestShutdown() the moment the close arrives (which
+// arms the 5 s backstop), then the AXIS thread runs the usual shutdown.
 #pragma once
 #include <string>
 

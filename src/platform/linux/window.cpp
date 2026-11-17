@@ -59,6 +59,17 @@ bool probe(std::string& why) {
     return true;
 }
 
+// The close box (or the session ending): the shutdown starts here, at once, as a SIGTERM's does, so the 5 s backstop
+// is armed even if the AXIS thread is inside a long loop() turn. Runs on the SDL thread as the event arrives.
+int onEvent(void*, SDL_Event* e) {
+    bool close = e->type == SDL_QUIT || (e->type == SDL_WINDOWEVENT && e->window.event == SDL_WINDOWEVENT_CLOSE);
+    if (close && !hostShutdownRequested()) {
+        std::printf("axis: the window was closed\n");
+        hostRequestShutdown();
+    }
+    return 1;
+}
+
 int axisThread(bool* running) {
     sigset_t s = stopSignals();
     pthread_sigmask(SIG_UNBLOCK, &s, nullptr);
@@ -108,6 +119,7 @@ bool windowOpen(const std::string& bbsName, int scale, std::string& why) {
 
 void windowRun(void (*fn)(const volatile bool*)) {
     axisMain = fn;
+    SDL_AddEventWatch(onEvent, nullptr);
     // SDL's events and the window's drawing on this thread until the window is gone, the AXIS code on a second one.
     // 0: LovyanGFX's debugger-step mode stays off (it would make a slow turn wait on every draw).
     int rc = lgfx::Panel_sdl::main(axisThread, 0);
