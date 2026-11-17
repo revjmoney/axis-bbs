@@ -2603,6 +2603,8 @@ struct NetServe {
     std::string                              from;  // the calling board
     uint32_t                                 ip = 0;
     bool                                     proven = false, served = false;  // the GET's signature checked; check passed
+    // noexcept (WiFiClient() cannot throw): NetHost's constructor then needs no unwinding code for the members before it.
+    NetServe() noexcept {}
 };
 // The Net Files fetch slot: one outbound fetch call at a time for a caller here (or a follower's, or @NET FETCHTEST).
 enum class FetchPh : uint8_t { Idle, Looking, Live, Done, Failed };
@@ -2621,6 +2623,7 @@ struct NetFetchSlot {
     int                                      retries = 0;
     bool                                     redial = false, forward = false;
     const char*                              why = "";
+    NetFetchSlot() noexcept {}  // (as NetServe)
 };
 #endif
 struct NetSlot {
@@ -3634,6 +3637,20 @@ static void netFilesLog(const char* fmt, ...) {
     logEvent(String("net files: ") + b);
 }
 
+#if AXIS_TRANSFERS
+// The same line in the event log and in the net record, about board.
+static void netFilesNote(NetHost& h, const std::string& board, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
+static void netFilesNote(NetHost& h, const std::string& board, const char* fmt, ...) {
+    char    b[256];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    netFilesLog("%s", b);
+    if (h.record) h.record->note(board, b, std::string());
+}
+#endif
+
 // Closes a socket after reading what is left in it, so lwIP closes it cleanly rather than answering with a reset.
 static void netDrainStop(WiFiClient& c) {
     uint8_t b[64];
@@ -3890,7 +3907,9 @@ static axis::net::ServeFile netServeCheck(NetHost& h, const axis::net::NetFetch&
     axis::net::NetCore&  core = *h.core;
     v.id = f.listing;
     v.from = f.board;
-    v.who = netLogText(f.handle) + "@" + f.board;
+    v.who = netLogText(f.handle);
+    v.who += '@';
+    v.who += f.board;
     const axis::net::NetCard* card = core.state().card(f.board);
     if (!card || !axis::net::verifyFetch(f, card->pub)) {
         r.no = "sig";
@@ -3955,11 +3974,8 @@ static void netServeClose(NetHost& h, const char* why) {
     netDrainStop(v.c);
     bool        done = v.s && v.s->finished() && !v.s->failed() && v.served;
     std::string word = why ? why : v.s ? v.s->why() : "";
-    if (done) {
-        std::string what = "fetch served " + v.id + " to " + v.who;
-        netFilesLog("%s", what.c_str());
-        if (h.record) h.record->note(v.from, what, std::string());
-    } else
+    if (done) netFilesNote(h, v.from, "fetch served %s to %s", v.id.c_str(), v.who.c_str());
+    else
         netFilesLog("fetch %s from %s %s (%s)", v.id.empty() ? "call" : v.id.c_str(), v.who.c_str(), v.served ? "stopped" : "refused", word.c_str());
     if (!v.proven && (word == "sig" || word == "bad" || word == "timeout")) netStrike(v.ip);  // never proved who it is
     else if (v.proven) netProven(v.ip);
@@ -4087,10 +4103,6 @@ static void netFetchDial(NetHost& h) {
     }
 }
 
-static void netFetchNote(NetHost& h, const std::string& what) {
-    netFilesLog("%s", what.c_str());
-    if (h.record) h.record->note(h.fetch.l.board, what, std::string());
-}
 
 // A new client from a new offset (the caller's sender asked outside the window). The running crc goes on with it.
 static void netFetchRedial(NetHost& h) {
@@ -4126,7 +4138,7 @@ static void netFetchDone(NetHost& h) {
             netFetchFail(h, "crc");
             return;
         }
-        netFetchNote(h, "fetch " + axis::net::listingId(s.l) + " for " + s.handle + " unverified (resumed)");
+        netFilesNote(h, s.l.board, "fetch %s for %s unverified (resumed)", axis::net::listingId(s.l).c_str(), s.handle.c_str());
     }
     netFetchDrop(s);
     s.ph = FetchPh::Done;
@@ -4285,7 +4297,7 @@ static int netFetchBegin(const void* owner, const std::string& id, const std::st
     s.why = "";
     s.ph = FetchPh::Looking;
     s.f->tick(millis());  // its connect clock starts now (it covers the lookup too)
-    netFetchNote(h, "fetch " + id + " for " + who);
+    netFilesNote(h, l.board, "fetch %s for %s", id.c_str(), who.c_str());
     netFetchDial(h);
     return kNetFetchStarted;
 }
@@ -4333,7 +4345,11 @@ static axis::bbs::TransferJob* netFetchJob(const void* owner, axis::bbs::FileLib
 
 // serviceJob: a Net Files download that ended because the fetch stopped gets a clear message, not the sender's "read error".
 static void netFetchJobNote(const void* j, std::string& note) {
-    if (netHost && netHost->fetch.ph == FetchPh::Failed && netHost->fetch.job == j) note = "the file transfer from " + netHost->fetch.home + " stopped";
+    if (netHost && netHost->fetch.ph == FetchPh::Failed && netHost->fetch.job == j) {
+        note = "the file transfer from ";
+        note += netHost->fetch.home;
+        note += " stopped";
+    }
 }
 
 // "@NET FETCHTEST <id>" (the bench): the listing fetched to nowhere, read in order as a sender would, a few KB a loop turn

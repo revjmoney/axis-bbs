@@ -219,22 +219,40 @@ int FileMessageStore::post(const std::string& area, const Message& m) {
     return ok ? last + 1 : 0;
 }
 
+// scanHeaders, scanHeadersFrom and readAt share one scan (a function and its context, not a lambda type each).
+namespace {
+struct Visit {
+    bool (*fn)(void* ctx, Message& m);
+    void* ctx;
+    bool  operator()(Message& m) const { return fn(ctx, m); }
+};
+bool visitEach(void* each, Message& m) { return (*(const std::function<bool(const Message&)>*)each)(m); }
+}  // namespace
+
 void FileMessageStore::scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) {
-    scan(path(area), kListing, [&](const Message& m) { return each(m); });
+    scan(path(area), kListing, Visit{visitEach, (void*)&each});
 }
 
 void FileMessageStore::scanHeadersFrom(const std::string& area, uint32_t& pos,
                                        const std::function<bool(const Message&)>& each) {
-    scan(path(area), kListing, [&](const Message& m) { return each(m); }, pos, &pos);
+    scan(path(area), kListing, Visit{visitEach, (void*)&each}, pos, &pos);
 }
 
 bool FileMessageStore::readAt(const std::string& area, uint32_t at, int num, Message& out) {
-    bool found = false;
-    scan(path(area), kWhole, [&](Message& m) {
-        if ((found = m.num == num && m.at == at)) out = std::move(m);
-        return false;  // only the record that starts there
-    }, at);
-    return found;
+    struct Want {
+        uint32_t at;
+        int      num;
+        Message& out;
+        bool     found;
+    } w{at, num, out, false};
+    scan(path(area), kWhole, Visit{[](void* ctx, Message& m) {
+                                       Want& w = *(Want*)ctx;
+                                       if ((w.found = m.num == w.num && m.at == w.at)) w.out = std::move(m);
+                                       return false;  // only the record that starts there
+                                   },
+                                   &w},
+         at);
+    return w.found;
 }
 
 std::string serveMessages(MessageStore& st, const std::string& req) {

@@ -304,7 +304,7 @@ NetCore::Took NetCore::take(NetPost p, const std::string& fromPeer, bool history
     return Took::Stored;
 }
 
-bool NetCore::refusedOrigin(const std::string& board, const std::function<bool(const std::string&)>& signedBy,
+bool NetCore::refusedOrigin(const std::string& board, FnRef<bool(const std::string&)> signedBy,
                             Refusal& r) const {
     const NetCard* c = state_.card(board);
     if (state_.banned(board)) r = {Took::Banned, "banned", kNakBanned};
@@ -326,7 +326,7 @@ bool NetCore::refusedUser(const std::string& area, const std::string& board, Ref
 
 // ---- Net Files listings ----
 
-void NetCore::eachListing(const std::function<bool(const Message&, const NetListing&)>& each) {
+void NetCore::eachListing(FnRef<bool(const Message&, const NetListing&)> each) {
     store_.scanHeaders(kNetFilesArea, [&](const Message& m) {
         NetListing l;
         return !decode(m.net, l) || each(m, l);  // junk (a sysop's move into the area) is passed over
@@ -371,7 +371,7 @@ bool NetCore::idxReady() {
     return idx_ == Idx::Ready;
 }
 
-bool NetCore::idxEach(const std::function<bool(const IdxRec&)>& each) {
+bool NetCore::idxEach(FnRef<bool(const IdxRec&)> each) {
     static_assert(sizeof(IdxRec) == kIdxRec && sizeof(IdxHead) == kIdxHead, "index records are words");
     IdxRec buf[kIdxChunk];
     for (uint32_t i = 0; i < hd_.count;) {
@@ -475,7 +475,13 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     std::string id = listingId(l);
     auto res = [&](Took t, const char* why, const char* word) {
         if (nak) *nak = word;
-        if (onEvent_) onEvent_(fromPeer, std::string("listing ") + why + " " + id, std::string());
+        if (onEvent_) {
+            std::string w = "listing ";
+            w += why;
+            w += ' ';
+            w += id;
+            onEvent_(fromPeer, w, std::string());
+        }
         return t;
     };
     if (nak) *nak = nullptr;
@@ -617,7 +623,7 @@ std::string NetCore::originateListing(NetListing l) {
     return takeListing(l, "") == Took::Stored ? id : "";
 }
 
-int NetCore::listingsPage(int skip, int max, const std::function<void(const NetListing&)>& each) {
+int NetCore::listingsPage(int skip, int max, FnRef<void(const NetListing&)> each) {
     if (skip < 0 || max <= 0) return -1;
     // Newest first: one scan counts the live ones, the next takes the page (positions oldest first).
     int n = 0, i = 0;

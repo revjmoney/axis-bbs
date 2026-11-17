@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <initializer_list>
 #include <new>
 
 #include "net/crc.h"
@@ -21,8 +22,21 @@ bool hex16(const std::string& s, size_t at) {
     return true;
 }
 
+// Appends the words joined by sep, then end (one append each, not a chain of temporary strings).
+void addLine(std::string& out, std::initializer_list<const std::string*> words, char sep, const char* end) {
+    bool first = true;
+    for (const std::string* w : words) {
+        if (!first) out += sep;
+        first = false;
+        out += *w;
+    }
+    out += end;
+}
+
 std::string hiText(const std::string& dial, const std::string& serv, const std::string& board) {
-    return "axisfile|" + dial + "|" + serv + "|" + board;
+    std::string s = "axisfile|";
+    addLine(s, {&dial, &serv, &board}, '|', "");
+    return s;
 }
 
 // One CR LF line at a time from p; false (and the buffer dropped) once a line runs past kFetchMaxLine.
@@ -81,7 +95,8 @@ void FetchServer::line(const std::string& l) {
         dial_ = l.substr(11);
         std::string sig = signHex(key_, hiText(dial_, serv_, board_));
         wipe(key_);  // HI is the only thing this call signs
-        out_ += "HI " + board_ + " " + serv_ + " " + sig + "\r\n";
+        out_ += "HI ";
+        addLine(out_, {&board_, &serv_, &sig}, ' ', "\r\n");
         st_ = St::Get;
         return;
     }
@@ -98,7 +113,9 @@ void FetchServer::line(const std::string& l) {
         return refuse("size");
     }
     pos_ = f.offset;
-    out_ += "OK " + std::to_string(file_.size - pos_) + "\r\n";
+    std::string n = std::to_string(file_.size - pos_);
+    out_ += "OK ";
+    addLine(out_, {&n}, ' ', "\r\n");
     st_ = St::Serving;
 }
 
@@ -158,7 +175,8 @@ FetchClient::FetchClient(const NetListing& l, const std::string& homePub, const 
         fail("size");
         return;
     }
-    out_ = "AXISFILE 1 " + dial_ + "\r\n";
+    out_ = "AXISFILE 1 ";
+    addLine(out_, {&dial_}, ' ', "\r\n");
 }
 
 FetchClient::~FetchClient() { wipe(me_); }
@@ -246,7 +264,8 @@ void FetchClient::line(const std::string& l) {
         wipe(me_);  // the GET is the only thing this call signs
         std::string g = signedOk ? encode(f) : std::string();
         if (g.empty()) return fail("bad");
-        out_ += "GET " + g + "\r\n";
+        out_ += "GET ";
+        addLine(out_, {&g}, ' ', "\r\n");
         st_ = St::Asked;
         return;
     }

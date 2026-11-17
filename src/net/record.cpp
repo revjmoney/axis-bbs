@@ -347,19 +347,24 @@ std::string encode(const NetVote& v) {
     return line.size() > kNetMaxFrame ? std::string() : line;
 }
 
-std::string encode(const NetListing& l) {
-    if (!validFields(l)) return "";
-    if (!l.sig.empty() && !sigOk(l.sig)) return "";
-    std::string line = signedPart(l) + kSep + l.sig;
-    return line.size() > kNetMaxFrame ? std::string() : line;
-}
+// Listings and fetches share their encode, sign and verify bodies: the record is passed with its signed part (made only
+// once the checks before it pass) as a function, so each kind adds a few words, not a copy of the body.
+namespace {
+using PartFn = std::string (*)(const void* rec);
+std::string partListing(const void* r) { return signedPart(*(const NetListing*)r); }
+std::string partFetch(const void* r) { return signedPart(*(const NetFetch*)r); }
 
-std::string encode(const NetFetch& f) {
-    if (!validFields(f)) return "";
-    if (!f.sig.empty() && !sigOk(f.sig)) return "";
-    std::string line = signedPart(f) + kSep + f.sig;
+std::string encodeRec(bool valid, const std::string& sig, PartFn part, const void* r) {
+    if (!valid) return "";
+    if (!sig.empty() && !sigOk(sig)) return "";
+    std::string line = part(r) + kSep + sig;
     return line.size() > kNetMaxFrame ? std::string() : line;
 }
+}  // namespace
+
+std::string encode(const NetListing& l) { return encodeRec(validFields(l), l.sig, partListing, &l); }
+
+std::string encode(const NetFetch& f) { return encodeRec(validFields(f), f.sig, partFetch, &f); }
 
 // ---- decode ----------------------------------------------------------------------------
 
@@ -597,36 +602,40 @@ bool verifyVote(const NetVote& v) {
     return verifyHex(v.pub, signedPart(v), v.sig);
 }
 
-bool signListing(NetListing& l, const KeyPair& k) {
-    if (boardId(toHex(k.pub, 32)) != l.board || !validFields(l)) return false;
-    l.sig.assign(128, '0');  // final length, to check the frame cap before signing
-    if (encode(l).empty()) {
-        l.sig.clear();
+namespace {
+// k must be the key of board. enc: the record's encode (with sig set to its final length, to check the frame cap).
+bool signRec(const std::string& board, bool valid, std::string& sig, const KeyPair& k, std::string (*enc)(const void*),
+             PartFn part, const void* r) {
+    if (boardId(toHex(k.pub, 32)) != board || !valid) return false;
+    sig.assign(128, '0');  // final length, to check the frame cap before signing
+    if (enc(r).empty()) {
+        sig.clear();
         return false;
     }
-    l.sig = signHex(k, signedPart(l));
-    return !l.sig.empty();
+    sig = signHex(k, part(r));
+    return !sig.empty();
+}
+bool verifyRec(const std::string& pubHex, const std::string& board, bool valid, const std::string& sig, PartFn part,
+               const void* r) {
+    if (!isLowerHex(pubHex, 64) || !valid || !sigOk(sig) || boardId(pubHex) != board) return false;
+    return verifyHex(pubHex, part(r), sig);
+}
+std::string encodeListing(const void* r) { return encode(*(const NetListing*)r); }
+std::string encodeFetch(const void* r) { return encode(*(const NetFetch*)r); }
+}  // namespace
+
+bool signListing(NetListing& l, const KeyPair& k) {
+    return signRec(l.board, validFields(l), l.sig, k, encodeListing, partListing, &l);
 }
 
 bool verifyListing(const NetListing& l, const std::string& pubHex) {
-    if (!isLowerHex(pubHex, 64) || !validFields(l) || !sigOk(l.sig) || boardId(pubHex) != l.board) return false;
-    return verifyHex(pubHex, signedPart(l), l.sig);
+    return verifyRec(pubHex, l.board, validFields(l), l.sig, partListing, &l);
 }
 
-bool signFetch(NetFetch& f, const KeyPair& k) {
-    if (boardId(toHex(k.pub, 32)) != f.board || !validFields(f)) return false;
-    f.sig.assign(128, '0');
-    if (encode(f).empty()) {
-        f.sig.clear();
-        return false;
-    }
-    f.sig = signHex(k, signedPart(f));
-    return !f.sig.empty();
-}
+bool signFetch(NetFetch& f, const KeyPair& k) { return signRec(f.board, validFields(f), f.sig, k, encodeFetch, partFetch, &f); }
 
 bool verifyFetch(const NetFetch& f, const std::string& pubHex) {
-    if (!isLowerHex(pubHex, 64) || !validFields(f) || !sigOk(f.sig) || boardId(pubHex) != f.board) return false;
-    return verifyHex(pubHex, signedPart(f), f.sig);
+    return verifyRec(pubHex, f.board, validFields(f), f.sig, partFetch, &f);
 }
 
 }  // namespace axis::net

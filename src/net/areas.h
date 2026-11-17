@@ -11,6 +11,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -23,6 +24,22 @@
 #include "net/state.h"
 
 namespace axis::net {
+
+// A callable passed down a call and used only during it: a pointer to it and one call function, so a lambda costs no
+// std::function (no manager, no heap copy of its captures).
+template <typename Sig>
+class FnRef;
+template <typename R, typename... A>
+class FnRef<R(A...)> {
+public:
+    template <typename F, typename = std::enable_if_t<!std::is_same<std::decay_t<F>, FnRef>::value>>
+    FnRef(F&& f) : obj_((void*)&f), call_([](void* o, A... a) -> R { return (*(std::remove_reference_t<F>*)o)(a...); }) {}
+    R operator()(A... a) const { return call_(obj_, a...); }
+
+private:
+    void* obj_;
+    R (*call_)(void*, A...);
+};
 
 struct NetArea {
     std::string id, name;
@@ -198,7 +215,7 @@ public:
     std::string originateListing(NetListing l);
     // Live listings, newest first, from skip on, at most max; each gives the stored line. Skips held, killed,
     // banned-home and tombstoned ones. Returns the next skip, or -1 at the end.
-    int listingsPage(int skip, int max, const std::function<void(const NetListing&)>& each);
+    int listingsPage(int skip, int max, FnRef<void(const NetListing&)> each);
     bool findListing(const std::string& id, NetListing& out);  // a live one only
     // For a User Net pull: the stored lines from pos on (0 to start; the store's resume point, a byte offset in the
     // file store), live listings (tombs false; not held, killed or banned-home) or tombstones younger than
@@ -394,12 +411,12 @@ private:
     // The checks a post and a listing share. Origin: its board banned, blocked here, its card held and the record
     // signed by that card's key (signedBy). User: this board carries the User Net area and is a member, and the
     // board is a member by the tally. True on a refusal, with r set.
-    bool refusedOrigin(const std::string& board, const std::function<bool(const std::string& pub)>& signedBy,
+    bool refusedOrigin(const std::string& board, FnRef<bool(const std::string& pub)> signedBy,
                        Refusal& r) const;
     bool refusedUser(const std::string& area, const std::string& board, Refusal& r) const;
     // Every listing and tombstone in kNetFilesArea by a header scan (which gives a listing's line whole), oldest
     // first; lines that do not decode are passed over. each returns false to stop.
-    void eachListing(const std::function<bool(const bbs::Message& m, const NetListing& l)>& each);
+    void eachListing(FnRef<bool(const bbs::Message& m, const NetListing& l)> each);
     bool shown(const NetListing& l) const;  // live, and not held, killed or from a banned board
     void trimListings(uint32_t nowDay, bool clock);
     bool listingDropAllowed();  // both drop budgets, this session's and this day's, have room
@@ -419,7 +436,7 @@ private:
     IdxRec idxRec(const NetListing& l, const bbs::Message& m) const;
     bool idxReady();  // looks at the head if not known yet
     bool idxHead(bool clean);
-    bool idxEach(const std::function<bool(const IdxRec&)>& each);  // false if a read failed
+    bool idxEach(FnRef<bool(const IdxRec&)> each);  // false if a read failed
     bool idxTailOk();
     void idxStart();      // a rebuild from the start, with a new key
     void idxRebuildNow();
