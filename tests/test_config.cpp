@@ -398,3 +398,16 @@ TEST_CASE("sysop_telnet defaults on and round trips") {
     CHECK_FALSE(parseConfig(formatConfig(off)).sysopTelnet);
     CHECK(parseConfig(formatConfig(BbsConfig{})).sysopTelnet);
 }
+
+TEST_CASE("Net Files settings round trip; net_files from a main's settings frame is never kept") {
+    BbsConfig d = parseConfig("net_files_areas=axis,gcode\nnet_files_radio_kb=128\nnet_files=1\n");
+    std::string out = formatConfig(d);
+    CHECK(out.find("net_files_areas=axis,gcode") != std::string::npos);
+    CHECK(out.find("net_files_radio_kb=128") != std::string::npos);
+    CHECK(out.find("net_files=1") == std::string::npos);
+#if AXIS_NETS
+    CHECK(d.netFilesAreas == "axis,gcode");
+    CHECK(d.netFilesRadioKb == 128);
+    CHECK(parseConfig("net_files_radio_kb=-5\n").netFilesRadioKb == 0);
+#endif
+}

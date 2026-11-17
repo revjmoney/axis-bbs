@@ -684,3 +684,37 @@ TEST_CASE("listings: a page draw is one scan once the count is held; a store, a 
     r.core.trim(r.now);  // drops the killed one
     CHECK(draw() == 2);
 }
+
+TEST_CASE("listings: the pull reads nf_list in batches that resume where they stopped, never a whole-area scan") {
+    RevKeys rk;
+    CountedNode r(0xB9);
+    UNode       h(0xBA);
+    REQUIRE(r.core.takeCard(h.card, ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", r.card.board, 1, "1"), ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", h.board, 2, "1"), ""));
+    for (uint32_t s = 1; s <= 100; s++)
+        REQUIRE(r.core.takeListing(makeListing(h.key, s, "B" + std::to_string(s) + ".ZIP"), h.board, true) == Took::Stored);
+    REQUIRE(r.core.takeListing(makeListing(h.key, 101, "B1.ZIP", true), h.board, true) == Took::Stored);  // one removal
+    r.store.reset();
+    std::vector<std::string> live, tombs;
+    uint32_t                 pos = 0;
+    int                      batches = 0;
+    for (bool end = false; !end && batches < 100; batches++) {
+        size_t before = live.size(), bytes = 0;
+        end = r.core.listingLines(pos, false, live);
+        for (size_t i = before; i < live.size(); i++) bytes += live[i].size();
+        CHECK(bytes <= kNetPendingBytes);
+    }
+    CHECK(live.size() == 99);
+    CHECK(batches >= 2);
+    CHECK(r.store.scansFrom == batches);  // one resumed scan a batch
+    CHECK(r.store.scans == 0);
+    pos = 0;
+    while (!r.core.listingLines(pos, true, tombs)) {
+    }
+    REQUIRE(tombs.size() == 1);
+    NetListing g;
+    REQUIRE(decode(tombs[0], g));
+    CHECK(g.gone);
+    CHECK(g.name == "B1.ZIP");
+}

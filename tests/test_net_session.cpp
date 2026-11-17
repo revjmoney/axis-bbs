@@ -1032,3 +1032,296 @@ TEST_CASE("unknown record kind is NAKed and the session goes on") {
         CHECK(a.core.pendingFor(old.board, 64, false).empty());  // passed over, never read again
     }
 }
+
+// Net Files on the wire: L lines on E and U lines, the listings pull (fhistory) and its holds.
+
+namespace {
+struct Said {
+    std::string fromDialer, fromAnswerer;
+};
+
+// One session, d dialing a, run to the end; both must finish.
+Said syncFiles(Node& d, Node& a, uint8_t n) {
+    NetSession sd(d.core, d.card, d.key, nonce(n), true, a.board);
+    NetSession sa(a.core, a.card, a.key, nonce((uint8_t)(n + 1)), false, "");
+    Said s;
+    runBoth(sd, sa, s.fromDialer, s.fromAnswerer);
+    CHECK_MESSAGE(sd.done(), sd.why());
+    CHECK_MESSAGE(sa.done(), sa.why());
+    return s;
+}
+
+// Lines of out that start with prefix ("E " or "U ") and carry a listing record.
+size_t listingLinesIn(const std::string& out, const std::string& prefix) {
+    size_t n = 0;
+    for (const auto& l : lines(out)) {
+        if (l.compare(0, prefix.size(), prefix) != 0) continue;
+        size_t at = prefix == "E " ? l.find(' ', 2) + 1 : prefix.size();
+        if (at < l.size() && l.compare(at, 2, "L\x1F") == 0) n++;
+    }
+    return n;
+}
+
+// Every pull of this board is done (history, User Net, listings).
+void pullsDone(NetCore& c) {
+    c.historyGot();
+    c.userHistoryGot();
+    c.filesHistoryGot();
+}
+
+// A receiver r3 holding seq 2 of NAME.ZIP from h, while h holds seq 5 (its pull replaces r3's), and r3's daily drop
+// budget spent by y's re-listings: each pull's NAME.ZIP is refused "store".
+struct HeldPull {
+    FNode h, r3, y;
+    HeldPull(uint8_t a, uint8_t b, uint8_t c) : h(a), r3(b), y(c) {
+        for (FNode* n : {&h, &r3}) n->admit({&h.board, &r3.board, &y.board});
+        r3.knows(y);
+        r3.knows(h);
+        h.core.setPostSeq(5);
+        REQUIRE(!h.core.originateListing(makeListing(h.key, 1, "NAME.ZIP")).empty());
+        REQUIRE(r3.core.takeListing(makeListing(h.key, 2, "NAME.ZIP"), h.board) == Took::Stored);
+        uint32_t seq = 1;
+        REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Stored);
+        for (int k = 0; k < 8; k++) {
+            r3.core.listingSessionStart();
+            for (int i = 0; i < 8; i++) REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Stored);
+        }
+        r3.core.listingSessionStart();
+        REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Rejected);
+    }
+    std::string cursors() { return r3.core.saveCursors(); }
+};
+}  // namespace
+
+TEST_CASE("listings go on E lines only to a net3 peer, the home board's card ahead; a Phase 2 peer gets none") {
+    RevKeys rk;
+    FNode h(0xC1), r3(0xC2), x(0xC3);
+    UNode r2(0xC4);  // a Phase 2 board: net2, no net3
+    for (FNode* n : {&h, &r3}) n->admit({&h.board, &r3.board, &x.board, &r2.board});
+    REQUIRE(r2.seal("admit", h.board, 1));
+    REQUIRE(r2.seal("admit", r2.board, 2));
+    REQUIRE(r2.seal("admit", x.board, 3));
+    h.knows(x);
+    pullsDone(r3.core);
+    pullsDone(r2.core);
+    h.core.addLinkPeer(r3.board, true);
+    h.core.addLinkPeer(r2.board, true);
+    REQUIRE(!h.post().empty());  // h holds a post, so it asks for no history
+    std::string own = h.core.originateListing(makeListing(h.key, 1, "HOME.ZIP"));
+    REQUIRE(!own.empty());
+    REQUIRE(h.core.takeListing(makeListing(x.key, 7, "RELAY.ZIP"), x.board) == Took::Stored);  // from x, passed on
+    {
+        Said s = syncFiles(h, r3, 1);
+        CHECK(listingLinesIn(s.fromDialer, "E ") == 2);
+        CHECK(countPrefix(s.fromAnswerer, "NAK") == 0);
+        CHECK(r3.core.state().card(x.board) != nullptr);  // x's card went ahead of its listing
+        NetListing l;
+        CHECK(r3.core.findListing(own, l));
+        CHECK(r3.core.findListing(x.board + "-7", l));
+        CHECK(r3.page().size() == 2);
+    }
+    {
+        Said s = syncFiles(h, r2, 3);
+        CHECK(listingLinesIn(s.fromDialer, "E ") == 0);
+        CHECK(listingLinesIn(s.fromDialer, "U ") == 0);
+        CHECK(countPrefix(s.fromAnswerer, "NAK") == 0);
+        CHECK(r2.ids(kNetFilesArea).empty());
+        CHECK(h.core.pendingFor(r2.board, 64, true, false).empty());
+    }
+}
+
+TEST_CASE("a U pull that asks for un_files gets live listings and young tombstones, then UEND F; a Phase 2 peer gets UEND") {
+    RevKeys rk;
+    FNode h(0xC5), r3(0xC6), old(0xC8);
+    UNode r2(0xC7);
+    for (FNode* n : {&h, &r3}) n->admit({&h.board, &r3.board, &r2.board, &old.board});
+    REQUIRE(r2.seal("admit", h.board, 1));
+    REQUIRE(r2.seal("admit", r2.board, 2));
+    h.knows(old);
+    r3.knows(old);
+    for (int i = 1; i <= 3; i++) REQUIRE(!h.core.originateListing(makeListing(h.key, 1, "LIVE" + std::to_string(i))).empty());
+    REQUIRE(!h.core.originateListing(makeListing(h.key, 1, "GONE", true)).empty());  // a young tombstone
+    // an old tombstone, as one relayed long after it was made
+    REQUIRE(h.core.takeListing(makeListing(old.key, 3, "AGED", true, kNow - 200 * kDay), old.board) == Took::Stored);
+    REQUIRE(r3.core.needFilesHistory());
+    {
+        Said s = syncFiles(r3, h, 1);
+        CHECK(hasLine(s.fromDialer, "UWANT un_chat,un_tech,un_games,un_files"));
+        CHECK(listingLinesIn(s.fromAnswerer, "U ") == 4);
+        CHECK(hasLine(s.fromAnswerer, "UEND F"));
+        CHECK_FALSE(r3.core.needFilesHistory());
+        CHECK(hasLine(r3.core.saveCursors(), "fhistory 1"));
+        CHECK(r3.page().size() == 3);
+        std::vector<std::string> names;
+        for (const auto& l : r3.records()) names.push_back(l.name + (l.gone ? "-gone" : ""));
+        std::sort(names.begin(), names.end());
+        CHECK(names == std::vector<std::string>{"GONE-gone", "LIVE1", "LIVE2", "LIVE3"});
+    }
+    {  // done: a second session asks for no listings
+        Said s = syncFiles(r3, h, 3);
+        CHECK(countPrefix(s.fromDialer, "UWANT") == 0);
+        CHECK(listingLinesIn(s.fromAnswerer, "U ") == 0);
+    }
+    {  // a Phase 2 board's pull: no L lines and a plain UEND
+        Said s = syncFiles(r2, h, 5);
+        CHECK(countPrefix(s.fromDialer, "UWANT") == 1);
+        CHECK(listingLinesIn(s.fromAnswerer, "U ") == 0);
+        CHECK(hasLine(s.fromAnswerer, "UEND"));
+        CHECK_FALSE(hasLine(s.fromAnswerer, "UEND F"));
+    }
+}
+
+TEST_CASE("a peer that holds no listings ends the pull with UEND F and that marks it done") {
+    RevKeys rk;
+    FNode h(0xC9), r3(0xCA);
+    for (FNode* n : {&h, &r3}) n->admit({&h.board, &r3.board});
+    REQUIRE(r3.core.needFilesHistory());
+    Said s = syncFiles(r3, h, 1);
+    CHECK(listingLinesIn(s.fromAnswerer, "U ") == 0);
+    CHECK(hasLine(s.fromAnswerer, "UEND F"));
+    CHECK_FALSE(r3.core.needFilesHistory());
+}
+
+TEST_CASE("an upgraded Phase 2 board with uhistory done and no fhistory line asks for the listings once") {
+    RevKeys rk;
+    FNode h(0xCB), r3(0xCC);
+    for (FNode* n : {&h, &r3}) n->admit({&h.board, &r3.board});
+    REQUIRE(!h.core.originateListing(makeListing(h.key, 1, "OLDER.ZIP")).empty());
+    r3.core.loadCursors("history 1\nuhistory 1\n");
+    CHECK_FALSE(r3.core.needUserHistory());
+    CHECK(r3.core.needFilesHistory());
+    Said s = syncFiles(r3, h, 1);
+    CHECK(countPrefix(s.fromDialer, "UWANT") == 1);
+    CHECK(listingLinesIn(s.fromAnswerer, "U ") == 1);
+    CHECK(hasLine(s.fromAnswerer, "UEND F"));
+    CHECK(hasLine(r3.core.saveCursors(), "fhistory 1"));
+}
+
+TEST_CASE("a pull of 600 listings is past the 512 cap on applications and votes and still reaches UEND F") {
+    RevKeys rk;
+    FNode h(0xCD), r3(0xCE);
+    for (FNode* n : {&h, &r3}) n->admit({&h.board, &r3.board});
+    for (int i = 0; i < 600; i++) REQUIRE(!h.core.originateListing(makeListing(h.key, 1, "M" + std::to_string(i))).empty());
+    Said s = syncFiles(r3, h, 1);
+    CHECK(listingLinesIn(s.fromAnswerer, "U ") == 600);
+    CHECK(hasLine(s.fromAnswerer, "UEND F"));
+    CHECK(r3.records().size() == 600);
+    CHECK_FALSE(r3.core.needFilesHistory());
+    Said again = syncFiles(r3, h, 3);
+    CHECK(countPrefix(again.fromDialer, "UWANT") == 0);
+}
+
+TEST_CASE("A, V and L E lines share the per-session cap; past it NAK store") {
+    RevKeys rk;
+    FNode b(0xD0), x(0xD2);
+    RawDialer r(0xD1);
+    b.knows(x);
+    b.admit({&b.board, &x.board, &r.card.board});
+    NetSession s(b.core, b.card, b.key, nonce(2), false, "");
+    r.handshake(s);
+    REQUIRE(s.proven());
+    s.tick(0, true);
+    s.takeOut();
+    RawDialer::say(s, "SEQ 0");
+    uint32_t i = 0;
+    for (; i < 32; i++) RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeListing(r.key, i + 1, "R" + std::to_string(i))));
+    for (; i < kSyncUserEMax; i++) RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeListing(x.key, i + 1, "X" + std::to_string(i))));
+    std::string out = s.takeOut();
+    CHECK(countPrefix(out, "ACK ") == kSyncUserEMax);
+    RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeApp(keyOf(0xD3))));  // an application, past the cap
+    CHECK(countPrefix(s.takeOut(), "NAK " + std::to_string(i) + " store") == 1);
+    i++;
+    RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeListing(x.key, 200, "LATE")));
+    CHECK(countPrefix(s.takeOut(), "NAK " + std::to_string(i) + " store") == 1);
+    CHECK_FALSE(s.failed());
+    CHECK(b.records().size() == kSyncUserEMax);
+}
+
+TEST_CASE("on E lines the 9th replacing listing of a session is NAKed store, transient") {
+    RevKeys rk;
+    FNode b(0xD4);
+    RawDialer r(0xD5);
+    b.admit({&b.board, &r.card.board});
+    NetSession s(b.core, b.card, b.key, nonce(2), false, "");
+    r.handshake(s);
+    REQUIRE(s.proven());
+    s.tick(0, true);
+    s.takeOut();
+    RawDialer::say(s, "SEQ 0");
+    for (uint32_t i = 0; i < 10; i++) RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeListing(r.key, i + 1, "SAME.ZIP")));
+    std::string out = s.takeOut();
+    CHECK(countPrefix(out, "ACK ") == 9);  // the first, then 8 that replace
+    CHECK(countPrefix(out, "NAK 9 store") == 1);
+    CHECK(b.liveSeqs("SAME.ZIP") == std::vector<uint32_t>{9});
+}
+
+TEST_CASE("fhistory: a nocard refusal does not hold the listings pull") {
+    RevKeys rk;
+    // A hand-driven net3 peer answers r3's UWANT with a listing from x, whose card r3 does not hold (a real peer would
+    // have sent it in its snapshot), then UEND F.
+    FNode     r3(0xD7);
+    RawDialer r(0xD6);
+    const KeyPair x = keyOf(0xD8);
+    r.card.links = kNetCardLinks;
+    REQUIRE(signCard(r.card, r.key));
+    r3.admit({&r3.board, &r.card.board});
+    REQUIRE(r3.seal("admit", boardOf(x), 90));
+    NetSession s(r3.core, r3.card, r3.key, nonce(2), false, "");
+    r.handshake(s);
+    REQUIRE(s.proven());
+    s.tick(0, true);
+    std::string asked = s.takeOut();
+    CHECK(hasLine(asked, "UWANT un_chat,un_tech,un_games,un_files"));
+    RawDialer::say(s, "SEQ 0");
+    RawDialer::say(s, "SEND");
+    RawDialer::say(s, "U " + encode(makeListing(x, 1, "NOCARD.ZIP")));
+    RawDialer::say(s, "UEND F");
+    s.tick(10, true);
+    CHECK_FALSE(s.failed());
+    CHECK(r3.records().empty());  // x's card is not held here: nocard
+    CHECK_FALSE(r3.core.needFilesHistory());
+    CHECK(hasLine(r3.core.saveCursors(), "fhistory 1"));
+}
+
+TEST_CASE("fhistory: store refusals hold the pull for 3 pulls in a row, then it is done") {
+    RevKeys rk;
+    HeldPull p(0xD9, 0xDA, 0xDB);
+    syncFiles(p.r3, p.h, 1);
+    CHECK(p.r3.core.needFilesHistory());
+    CHECK(hasLine(p.cursors(), "fhistory 0"));
+    CHECK(hasLine(p.cursors(), "fheld 1"));
+    syncFiles(p.r3, p.h, 3);
+    CHECK(p.r3.core.needFilesHistory());
+    CHECK(hasLine(p.cursors(), "fheld 2"));
+    syncFiles(p.r3, p.h, 5);
+    CHECK_FALSE(p.r3.core.needFilesHistory());
+    CHECK(hasLine(p.cursors(), "fhistory 1"));
+    CHECK(countPrefix(p.cursors(), "fheld") == 0);
+    CHECK(p.r3.liveSeqs("NAME.ZIP") == std::vector<uint32_t>{2});  // never replaced: the budget stayed spent
+}
+
+TEST_CASE("fhistory: the held count survives a save and load of the cursors") {
+    RevKeys rk;
+    HeldPull p(0xDC, 0xDD, 0xDE);
+    syncFiles(p.r3, p.h, 1);
+    std::string saved = p.cursors();
+    CHECK(hasLine(saved, "fheld 1"));
+    p.r3.core.loadCursors(saved);
+    CHECK(hasLine(p.cursors(), "fheld 1"));
+    syncFiles(p.r3, p.h, 3);
+    CHECK(p.r3.core.needFilesHistory());
+    syncFiles(p.r3, p.h, 5);
+    CHECK_FALSE(p.r3.core.needFilesHistory());
+}
+
+TEST_CASE("fhistory: a held pull then a clean one is done, and the held count is cleared") {
+    RevKeys rk;
+    HeldPull p(0xE0, 0xE1, 0xE2);
+    syncFiles(p.r3, p.h, 1);
+    CHECK(hasLine(p.cursors(), "fheld 1"));
+    p.r3.now += kDay;  // a new day: the budget is back
+    syncFiles(p.r3, p.h, 3);
+    CHECK_FALSE(p.r3.core.needFilesHistory());
+    CHECK(countPrefix(p.cursors(), "fheld") == 0);
+    CHECK(p.r3.liveSeqs("NAME.ZIP") == std::vector<uint32_t>{5});
+}

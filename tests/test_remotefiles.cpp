@@ -8,6 +8,13 @@
 
 #include "doctest.h"
 #include "cluster/remotefiles.h"
+#if AXIS_NETS
+#include <deque>
+#include <vector>
+
+#include "bbs/filebrowser.h"
+#include "net/zmodem.h"
+#endif
 
 using namespace axis::bbs;
 using namespace axis::cluster;
@@ -221,5 +228,398 @@ TEST_CASE("small reads on a follower come out of one link-sized piece: one round
     CHECK(std::string((const char*)back, 4) == want.substr(100, 4));
     CHECK_FALSE(f->readAt(10000, tail, 4));
 }
+
+#if AXIS_NETS
+// Net Files through the cluster link: the main's net ops and upload hook, the follower's pages, fetch asks and
+// the fetched file a follower's sender reads.
+namespace {
+const std::string S(1, '\x1f');
+
+struct Up {
+    std::string area, name, desc, who;
+};
+std::vector<Up>& ups() {
+    static std::vector<Up> v;
+    return v;
+}
+void onUploaded(const std::string& a, const std::string& n, const std::string& d, const std::string& w) { ups().push_back({a, n, d, w}); }
+
+struct NetCall {
+    const void*              owner;
+    char                     op;
+    std::vector<std::string> fields;
+};
+std::vector<NetCall>& netCalls() {
+    static std::vector<NetCall> v;
+    return v;
+}
+std::string netReply = "1";
+std::string onNetOp(const void* owner, char op, const std::vector<std::string>& f) {
+    netCalls().push_back({owner, op, f});
+    return netReply;
+}
+
+// Sets the main's hooks for one test and clears them after.
+struct Hooks {
+    explicit Hooks(bool net = true, bool upload = true) {
+        ups().clear();
+        netCalls().clear();
+        netReply = "1";
+        FileServer::netOp = net ? onNetOp : nullptr;
+        FileServer::uploaded = upload ? onUploaded : nullptr;
+    }
+    ~Hooks() {
+        FileServer::netOp = nullptr;
+        FileServer::uploaded = nullptr;
+    }
+};
+
+struct OpenCounting : MemLibrary {
+    int opens = 0;
+    std::unique_ptr<RandomFile> open(const std::string& a, const std::string& n) override {
+        opens++;
+        return FileLibrary::open(a, n);
+    }
+};
+
+// One whole upload as a follower sends it: C, W, F keep (or not); its id.
+std::string upload(FileServer& s, const std::string& area, const std::string& name, bool keep = true) {
+    std::string id = s.handle("C" + S + area + S + name).substr(1);
+    s.handle("W" + S + id + S + "data");
+    s.handle("F" + S + id + S + (keep ? "1" : "0"));
+    return id;
+}
+
+#if AXIS_TRANSFERS
+// The caller's line on a follower: the sender writes to a, the caller's program reads from b.
+struct NetEnd : axis::door::ByteStream {
+    std::deque<uint8_t>* in;
+    std::deque<uint8_t>* out;
+    int  available() override { return (int)in->size(); }
+    int  peek() override { return in->empty() ? -1 : in->front(); }
+    int  read() override {
+        if (in->empty()) return -1;
+        int c = in->front();
+        in->pop_front();
+        return c;
+    }
+    void write(const uint8_t* p, size_t n) override { out->insert(out->end(), p, p + n); }
+    bool carrier() override { return true; }
+};
+struct NetLine {
+    std::deque<uint8_t> ab, ba;
+    NetEnd              a, b;
+    NetLine() {
+        a.in = &ba;
+        a.out = &ab;
+        b.in = &ab;
+        b.out = &ba;
+    }
+};
+#endif
+
+uint32_t fakeNow = 0;
+uint32_t fakeClock() { return fakeNow; }
+}  // namespace
+
+TEST_CASE("follower: G, b, t and e reach the main's net op with this server as owner and 8 fields; unset they answer 0") {
+    OpenCounting sd;
+    sd.areas["ansi"]["BIG.ZIP"] = std::string(6000, 'b');
+    FileServer server(sd), other(sd);
+    {
+        Hooks h;
+        netReply = "1page";
+        for (char op : {'G', 'b', 't', 'e'}) CHECK(server.handle(std::string(1, op) + S + "a" + S + "b") == "1page");
+        CHECK(other.handle("e") == "1page");
+        REQUIRE(netCalls().size() == 5);
+        for (size_t i = 0; i < 4; i++) {
+            CHECK(netCalls()[i].owner == &server);
+            CHECK(netCalls()[i].fields.size() == 8);
+            CHECK(netCalls()[i].fields[0] == "a");
+            CHECK(netCalls()[i].fields[1] == "b");
+            CHECK(netCalls()[i].fields[2].empty());
+        }
+        CHECK(netCalls()[4].owner == &other);
+        // A net op between two pieces of a download leaves the open file open.
+        CHECK(server.handle("S" + S + "ansi" + S + "BIG.ZIP") == "16000");
+        CHECK(server.handle("t" + S + "0" + S + "2048")[0] == '1');
+        CHECK(server.handle("A" + S + "ansi" + S + "BIG.ZIP" + S + "0" + S + "100") == "1" + std::string(100, 'b'));
+        CHECK(sd.opens == 1);
+    }
+    {
+        Hooks h(false, false);
+        for (char op : {'G', 'b', 't', 'e'}) CHECK(server.handle(std::string(1, op) + S + "0" + S + "15") == "0");
+        // so a follower's page and fetch read "no" from a main without Net Files
+        Rig r;
+        std::vector<FileEntry>   rows;
+        std::vector<std::string> ids, homes;
+        CHECK(r.remote.netPage(0, 15, rows, ids, homes) == -1);
+        CHECK(rows.empty());
+        std::string rest;
+        CHECK(r.remote.netFetch("0123456789abcdef-1", "Caller", 10, rest) == '0');
+    }
+}
+
+TEST_CASE("follower: a kept upload, once described, is handed to the main's upload hook once, with the caller's handle") {
+    MemLibrary sd;
+    FileServer server(sd);
+    Hooks      h;
+    upload(server, "ansi", "NEW.ZIP");
+    CHECK(ups().empty());  // not until its description
+    CHECK(server.handle("D" + S + "ansi" + S + "NEW.ZIP" + S + "A new file" + S + "Caller") == "1");
+    REQUIRE(ups().size() == 1);
+    CHECK(ups()[0].area == "ansi");
+    CHECK(ups()[0].name == "NEW.ZIP");
+    CHECK(ups()[0].desc == "A new file");
+    CHECK(ups()[0].who == "Caller");
+    CHECK(server.handle("D" + S + "ansi" + S + "NEW.ZIP" + S + "Again" + S + "Caller") == "1");  // a sysop's later @FDESC
+    CHECK(ups().size() == 1);
+    // thrown away: nothing
+    upload(server, "ansi", "LOST.ZIP", false);
+    server.handle("D" + S + "ansi" + S + "LOST.ZIP" + S + "x" + S + "Caller");
+    CHECK(ups().size() == 1);
+    // an older follower's D has three fields: the handle is empty (the main gives the sysop's)
+    upload(server, "ansi", "OLD.ZIP");
+    server.handle("D" + S + "ansi" + S + "OLD.ZIP" + S + "From an old follower");
+    REQUIRE(ups().size() == 2);
+    CHECK(ups()[1].who.empty());
+}
+
+TEST_CASE("follower: a ZIP upload's rework is handed over once under its final name; a rejected one never") {
+    MemLibrary sd;
+    FileServer server(sd);
+    Hooks      h;
+    // the processor: the upload lands as a temp, is kept, the old name goes, the temp becomes the name, then D
+    upload(server, "ansi", "UP0001.TMP");
+    sd.areas["ansi"]["GAME.ZIP"] = "old";
+    CHECK(server.handle("X" + S + "ansi" + S + "GAME.ZIP") == "1");
+    CHECK(server.handle("N" + S + "ansi" + S + "UP0001.TMP" + S + "GAME.ZIP") == "1");
+    CHECK(server.handle("D" + S + "ansi" + S + "GAME.ZIP" + S + "A game" + S + "Caller") == "1");
+    REQUIRE(ups().size() == 1);
+    CHECK(ups()[0].name == "GAME.ZIP");
+    // rejected: the temp and the name removed, nothing described
+    upload(server, "ansi", "UP0002.TMP");
+    server.handle("X" + S + "ansi" + S + "UP0002.TMP");
+    server.handle("X" + S + "ansi" + S + "BAD.ZIP");
+    server.handle("D" + S + "ansi" + S + "UP0002.TMP" + S + "x" + S + "Caller");
+    CHECK(ups().size() == 1);
+}
+
+TEST_CASE("follower: the main keeps the last 4 uploads waiting for their descriptions") {
+    MemLibrary sd;
+    FileServer server(sd);
+    Hooks      h;
+    for (int i = 0; i < 5; i++) upload(server, "ansi", "F" + std::to_string(i) + ".ZIP");
+    for (int i = 0; i < 5; i++) server.handle("D" + S + "ansi" + S + "F" + std::to_string(i) + ".ZIP" + S + "d" + S + "Caller");
+    REQUIRE(ups().size() == 4);
+    CHECK(ups()[0].name == "F1.ZIP");  // the oldest went
+    CHECK(ups()[3].name == "F4.ZIP");
+}
+
+TEST_CASE("follower: describe sends the caller's handle, or an empty one; a 0x1F typed in a description never reaches D") {
+    std::string             sent;
+    RemoteFileLibrary       lib([&](const std::string& req, std::string& reply) {
+        sent = req;
+        reply = "1";
+        return true;
+    });
+    CHECK(lib.describe("ansi", "A.ZIP", "Nice"));
+    CHECK(sent == "D" + S + "ansi" + S + "A.ZIP" + S + "Nice" + S);
+    lib.who = [] { return std::string("Caller"); };
+    CHECK(lib.describe("ansi", "A.ZIP", "Nice"));
+    CHECK(sent == "D" + S + "ansi" + S + "A.ZIP" + S + "Nice" + S + "Caller");
+    // The caller types a description with 0x1F in it: the browser's line editor keeps printable bytes only.
+    MemLibrary    up;
+    std::string   out;
+    std::vector<FileArea> areas = {{"ansi", "ANSI Art"}};
+    FileBrowser   b(areas, up, out);
+    b.setLightbars(false);
+    b.begin();
+    for (char c : std::string("1\r")) b.key(c);
+    for (char c : std::string("uOne\x1fTwo\r")) b.key(c);
+    b.key('z');
+    REQUIRE(b.wantsTransfer());
+    CHECK(b.transfer().desc == "OneTwo");
+}
+
+TEST_CASE("follower: netPage reads rows and the next skip; a short row is passed over; -2 passes through") {
+    std::string             reply;
+    RemoteFileLibrary       lib([&](const std::string&, std::string& r) {
+        r = reply;
+        return true;
+    });
+    std::vector<FileEntry>   rows;
+    std::vector<std::string> ids, homes;
+    reply = "115\n" "0123456789abcdef-1" + S + "A.ZIP" + S + "1000" + S + "First" + S + "Home One" + S + "1" + "\n" +
+            "0123456789abcdef-2" + S + "B.ZIP" + "\n" +  // short: passed over
+            "0123456789abcdef-3" + S + "C.ZIP" + S + "3000" + S + "(can't be reached)" + S + "Home Three" + S + "0";
+    CHECK(lib.netPage(0, 15, rows, ids, homes) == 15);
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].name == "A.ZIP");
+    CHECK(rows[0].size == 1000);
+    CHECK(rows[0].desc == "First");
+    CHECK(ids[0] == "0123456789abcdef-1");
+    CHECK(homes[0] == "Home One");
+    CHECK(rows[1].desc == "(can't be reached)");
+    CHECK(homes[1] == "Home Three");
+    rows.clear(), ids.clear(), homes.clear();
+    reply = "1-1";
+    CHECK(lib.netPage(15, 15, rows, ids, homes) == -1);
+    reply = "1-2";
+    CHECK(lib.netPage(0, 15, rows, ids, homes) == -2);
+    CHECK(rows.empty());
+    reply = "0";
+    CHECK(lib.netPage(0, 15, rows, ids, homes) == -1);
+}
+
+TEST_CASE("follower: netFetch sends the id, handle and caller level and gives the main's letter; no main gives 0") {
+    std::string       sent, reply = "2";
+    bool              up = true;
+    RemoteFileLibrary lib([&](const std::string& req, std::string& r) {
+        if (!up) return false;
+        sent = req;
+        r = reply;
+        return true;
+    });
+    std::string rest;
+    CHECK(lib.netFetch("0123456789abcdef-4", "Caller", 20, rest) == '2');
+    CHECK(sent == "b" + S + "0123456789abcdef-4" + S + "Caller" + S + "0" + S + "20");
+    reply = "3ansi" + S + "OWN.ZIP";
+    CHECK(lib.netFetch("0123456789abcdef-4", "", 20, rest) == '3');
+    CHECK(rest == "ansi" + S + "OWN.ZIP");
+    reply = "0level";
+    CHECK(lib.netFetch("0123456789abcdef-4", "Caller", 5, rest) == '0');
+    CHECK(rest == "level");
+    up = false;
+    CHECK(lib.netFetch("0123456789abcdef-4", "Caller", 5, rest) == 0);
+}
+
+TEST_CASE("follower: the fetched file waits on 2, reads a 2 KB piece on 1, ends on 0 or a lost main") {
+    std::vector<std::string> asked;
+    std::vector<std::string> replies;
+    bool                     up = true;
+    RemoteFileLibrary        lib([&](const std::string& req, std::string& r) {
+        if (!up) return false;
+        asked.push_back(req);
+        r = replies.empty() ? "2" : replies.front();
+        if (!replies.empty()) replies.erase(replies.begin());
+        return true;
+    });
+    fakeNow = 1000;
+    {
+        RemoteFetchFile f(lib, 5000, fakeClock);
+        CHECK_FALSE(f.ready(0, 1024));  // "2": the main has not got the bytes yet
+        REQUIRE(asked.size() == 1);
+        CHECK(asked[0] == "t" + S + "0" + S + "2048");
+        fakeNow += RemoteFetchFile::kWaitMs - 1;
+        CHECK_FALSE(f.ready(0, 1024));
+        CHECK(asked.size() == 1);  // no new ask within kWaitMs
+        fakeNow += 1;
+        replies = {"1" + std::string(2048, 'x')};
+        CHECK(f.ready(0, 1024));
+        CHECK(asked.size() == 2);
+        uint8_t b[1024];
+        CHECK(f.readAt(0, b, 1024));
+        CHECK(f.readAt(1024, b, 1024));  // inside the piece held: no new ask
+        CHECK(asked.size() == 2);
+        CHECK(b[0] == 'x');
+        CHECK(f.word().empty());
+        replies = {"1" + std::string(2048, 'y'), "1" + std::string(5000 - 4096, 'z')};
+        CHECK(f.ready(2048, 1024));
+        CHECK(asked.back() == "t" + S + "2048" + S + "2048");
+        CHECK(f.ready(4096, 904));
+        CHECK(asked.back() == "t" + S + "4096" + S + "904");  // the last piece: min(2048, size - off)
+        CHECK(f.readAt(4096, b, 904));
+        CHECK(b[0] == 'z');
+        replies = {"0stall"};
+        CHECK(f.ready(0, 1024));  // a failed fetch: ready, and reads fail
+        CHECK_FALSE(f.readAt(0, b, 1024));
+        CHECK(f.word() == "stall");
+    }
+    {
+        RemoteFetchFile f(lib, 5000, fakeClock);
+        replies = {"1abc"};  // short
+        CHECK(f.ready(0, 1024));
+        CHECK(f.word() == "closed");
+    }
+    {
+        RemoteFetchFile f(lib, 5000, fakeClock);
+        up = false;
+        CHECK(f.ready(0, 1024));
+        uint8_t b[16];
+        CHECK_FALSE(f.readAt(0, b, 16));
+        CHECK(f.word() == "closed");
+        up = true;
+    }
+}
+
+#if AXIS_TRANSFERS
+TEST_CASE("follower: a ZMODEM sender over the fetched file is held by 2 answers, then delivers the file whole") {
+    std::string file(9000, '\0');
+    for (size_t i = 0; i < file.size(); i++) file[i] = (char)(i * 7 + (i >> 8));
+    int               waits = 0;
+    RemoteFileLibrary lib([&](const std::string& req, std::string& r) {
+        if (req[0] != 't') return false;
+        if (waits++ % 3 != 2) {  // two "2" answers before each piece
+            r = "2";
+            return true;
+        }
+        auto     f = req.find('\x1f', 2);
+        uint32_t off = (uint32_t)std::stoul(req.substr(2, f - 2)), k = (uint32_t)std::stoul(req.substr(f + 1));
+        r = "1" + file.substr(off, k);
+        return true;
+    });
+    fakeNow = 0;
+    RemoteFetchFile      rf(lib, (uint32_t)file.size(), fakeClock);
+    NetLine              l;
+    std::vector<uint8_t> got;
+    bool                 ended = false;
+    axis::net::ZmodemSender s(l.a, [&](uint32_t off, uint8_t* buf, size_t n) { return rf.readAt(off, buf, n); },
+                              (uint32_t)file.size(), "FAR.ZIP");
+    s.setReady([&](uint32_t off, size_t n) { return rf.ready(off, n); });
+    axis::net::ZmodemReceiver r(
+        l.b, [](const std::string&, uint32_t) { return true; },
+        [&](const uint8_t* p, size_t n) { got.insert(got.end(), p, p + n); return true; }, [&](bool ok) { ended = ok; });
+    bool a = true, b = true;
+    for (int i = 0; i < 40000 && (a || b); i++, fakeNow += 10) {
+        if (a) a = s.step(fakeNow);
+        if (b) b = r.step(fakeNow);
+    }
+    CHECK(s.result() == axis::net::Transfer::Result::Ok);
+    CHECK(ended);
+    CHECK(std::string(got.begin(), got.end()) == file);
+    CHECK(waits > 5);
+    CHECK(rf.word().empty());
+}
+
+TEST_CASE("follower: a 0-byte Net File downloads with no ask of the main") {
+    int               asks = 0;
+    RemoteFileLibrary lib([&](const std::string&, std::string& r) {
+        asks++;
+        r = "0closed";
+        return true;
+    });
+    RemoteFetchFile      rf(lib, 0, fakeClock);
+    NetLine              l;
+    bool                 ended = false;
+    std::vector<uint8_t> got;
+    axis::net::ZmodemSender s(l.a, [&](uint32_t off, uint8_t* buf, size_t n) { return rf.readAt(off, buf, n); }, 0, "EMPTY.TXT");
+    s.setReady([&](uint32_t off, size_t n) { return rf.ready(off, n); });
+    axis::net::ZmodemReceiver r(
+        l.b, [](const std::string&, uint32_t) { return true; },
+        [&](const uint8_t* p, size_t n) { got.insert(got.end(), p, p + n); return true; }, [&](bool ok) { ended = ok; });
+    bool a = true, b = true;
+    uint32_t now = 0;
+    for (int i = 0; i < 20000 && (a || b); i++, now += 10) {
+        if (a) a = s.step(now);
+        if (b) b = r.step(now);
+    }
+    CHECK(s.result() == axis::net::Transfer::Result::Ok);
+    CHECK(ended);
+    CHECK(got.empty());
+    CHECK(asks == 0);
+}
+#endif  // AXIS_TRANSFERS
+#endif  // AXIS_NETS
 
 #endif  // AXIS_FILES

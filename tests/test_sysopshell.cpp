@@ -645,4 +645,32 @@ TEST_CASE("User Net page with net_user off: Status says off with the held standi
     CHECK(s.find("New Board Voting") != std::string::npos);
     CHECK(s.find("Apply") == std::string::npos);
 }
+#if AXIS_FILES
+TEST_CASE("Net Files row: an area toggles in or out of net_files_areas, spaces in a hand-edited value dropped") {
+    Rig r;
+    r.replies["@NET"] = "board 0123456789abcdef\nuser net member\nrev board no\n";
+    r.replies["@NET WAITING"] = "";
+    r.replies["@SETTINGS"] = "bbs_name=AXIS\nnet_files_areas=axis, gcode\nnet_files_radio_kb=64\n";
+    r.shell.beginAt(axis::bbs::SysopSection::System);
+    REQUIRE(pickRow(r, "User Net"));
+    CHECK(screen(r.out).find("axis, gcode") != std::string::npos);
+    REQUIRE(pickRow(r, "Net Files"));
+    std::string s = screen(r.out);
+    CHECK(s.find("Axis Firmware") != std::string::npos);
+    CHECK(s.find("Radio size limit (KB)") != std::string::npos);
+    REQUIRE(pickRow(r, "G-code"));
+    CHECK(r.ranCmd("@SET net_files_areas=axis"));
+
+    Rig n;  // nothing shared yet: an area goes in
+    n.replies["@NET"] = r.replies["@NET"];
+    n.replies["@NET WAITING"] = "";
+    n.shell.beginAt(axis::bbs::SysopSection::System);
+    REQUIRE(pickRow(n, "User Net"));
+    CHECK(screen(n.out).find("none shared") != std::string::npos);
+    REQUIRE(pickRow(n, "Net Files"));
+    REQUIRE(pickRow(n, "Axis Firmware"));
+    CHECK(n.ranCmd("@SET net_files_areas=axis"));
+}
+#endif
+
 #endif
