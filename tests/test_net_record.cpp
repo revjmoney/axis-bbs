@@ -240,3 +240,171 @@ TEST_CASE("tampered post fails verify") {
     CHECK(verifyPost(t, pubOf(k)));
     CHECK_FALSE(verifyPost(p, pubOf(keyOf(0x34))));
 }
+
+TEST_CASE("app and vote round trip") {
+    KeyPair k = keyOf(0x41), voter = keyOf(0x42);
+    NetApp a = makeApp(k, 3, kNow, "line one\nline two \ end");
+    std::string line = encode(a);
+    REQUIRE(!line.empty());
+    CHECK(line.find('\n') == std::string::npos);
+    NetApp a2;
+    REQUIRE(decode(line, a2));
+    CHECK(a2.board == a.board);
+    CHECK(a2.pub == a.pub);
+    CHECK(a2.name == a.name);
+    CHECK(a2.sysop == a.sysop);
+    CHECK(a2.location == a.location);
+    CHECK(a2.mac == a.mac);
+    CHECK(a2.blurb == a.blurb);
+    CHECK(a2.seq == 3);
+    CHECK(a2.date == kNow);
+    CHECK(a2.sig == a.sig);
+    CHECK(verifyApp(a2));
+    CHECK(appId(a2) == a.board + "-a3");
+
+    NetVote v = makeVote(voter, a.board, 3, 7, true, kNow, "good board");
+    NetVote v2;
+    REQUIRE(decode(encode(v), v2));
+    CHECK(v2.voter == v.voter);
+    CHECK(v2.pub == v.pub);
+    CHECK(v2.app == a.board);
+    CHECK(v2.appSeq == 3);
+    CHECK(v2.seq == 7);
+    CHECK(v2.date == kNow);
+    CHECK(v2.yes);
+    CHECK(v2.comment == "good board");
+    CHECK(v2.sig == v.sig);
+    CHECK(verifyVote(v2));
+    NetVote no = makeVote(voter, a.board, 3, 8, false);
+    REQUIRE(decode(encode(no), v2));
+    CHECK_FALSE(v2.yes);
+
+    // The blurb and comment caps: 240 and 72 fit, one more does not (encode, sign and decode all refuse).
+    NetApp big = a;
+    big.blurb = std::string(kNetMaxBlurb, 'b');
+    CHECK(signApp(big, k));
+    CHECK(!encode(big).empty());
+    std::vector<std::string> f = fields(encode(big));
+    REQUIRE(f.size() == 11);
+    f[7] += "b";  // a 241 byte blurb
+    CHECK_FALSE(decode(join(f), a2));
+    big.blurb = std::string(kNetMaxBlurb + 1, 'b');
+    CHECK_FALSE(signApp(big, k));
+    big.sig = sig128();
+    CHECK(encode(big).empty());
+
+    NetVote longer = v;
+    longer.comment = std::string(kNetMaxComment, 'c');
+    CHECK(signVote(longer, voter));
+    std::vector<std::string> vf = fields(encode(longer));
+    REQUIRE(vf.size() == 10);
+    vf[8] += "c";  // a 73 byte comment
+    CHECK_FALSE(decode(join(vf), v2));
+    longer.comment = std::string(kNetMaxComment + 1, 'c');
+    CHECK_FALSE(signVote(longer, voter));
+    longer.sig = sig128();
+    CHECK(encode(longer).empty());
+
+    // A bad MAC: wrong separators, a non-hex digit, the wrong length.
+    for (const char* mac : {"02-00-00-00-00-01", "02:00:00:00:00:0g", "02:00:00:00:00", "0200000000001"}) {
+        NetApp m = a;
+        m.mac = mac;
+        CHECK_FALSE(signApp(m, k));
+        std::vector<std::string> mf = fields(line);
+        mf[6] = mac;
+        CHECK_FALSE(decode(join(mf), a2));
+    }
+    // Upper case hex digits in the MAC are fine.
+    NetApp upper = a;
+    upper.mac = "02:AB:00:00:00:01";
+    CHECK(signApp(upper, k));
+    REQUIRE(decode(encode(upper), a2));
+    CHECK(verifyApp(a2));
+
+    // An app whose boardId(pub) is not its board: signing refuses it; the line decodes (decode checks no
+    // signature or key), but it never verifies.
+    NetApp other = a;
+    other.board = boardOf(keyOf(0x43));
+    CHECK_FALSE(signApp(other, k));
+    std::vector<std::string> of = fields(line);
+    of[1] = other.board;
+    REQUIRE(decode(join(of), a2));
+    CHECK_FALSE(verifyApp(a2));
+    // The same for a vote whose voter is not boardId(pub).
+    NetVote wrong = v;
+    wrong.voter = boardOf(keyOf(0x43));
+    CHECK_FALSE(signVote(wrong, voter));
+    // A key that is not the app's own cannot sign it.
+    NetApp stolen = a;
+    CHECK_FALSE(signApp(stolen, keyOf(0x44)));
+
+    // Seqs start at 1.
+    NetApp zero = a;
+    zero.seq = 0;
+    CHECK_FALSE(signApp(zero, k));
+    NetVote vz = v;
+    vz.appSeq = 0;
+    CHECK_FALSE(signVote(vz, voter));
+    vz = v;
+    vz.seq = 0;
+    CHECK_FALSE(signVote(vz, voter));
+    // y or n only.
+    vf = fields(encode(v));
+    vf[7] = "Y";
+    CHECK_FALSE(decode(join(vf), v2));
+}
+
+TEST_CASE("an application with no MAC is accepted by signApp and decode") {
+    KeyPair k = keyOf(0x45);
+    NetApp a = makeApp(k, 1, kNow, "no mac", "");
+    NetApp b;
+    REQUIRE(decode(encode(a), b));
+    CHECK(b.mac.empty());
+    CHECK(verifyApp(b));
+}
+
+TEST_CASE("tampered app or vote fails verify") {
+    KeyPair k = keyOf(0x46), voter = keyOf(0x47);
+    NetApp a = makeApp(k, 2, kNow, "blurb");
+    CHECK(verifyApp(a));
+    NetApp t = a;
+    t.blurb = "blurc";
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.name = "Other";
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.mac = "02:00:00:00:00:02";
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.seq = 3;
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.date += 1;
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.sig[0] = t.sig[0] == 'a' ? 'b' : 'a';
+    CHECK_FALSE(verifyApp(t));
+
+    NetVote v = makeVote(voter, a.board, 2, 1, true, kNow, "yes please");
+    CHECK(verifyVote(v));
+    NetVote w = v;
+    w.yes = false;
+    CHECK_FALSE(verifyVote(w));
+    w = v;
+    w.comment = "no thanks";
+    CHECK_FALSE(verifyVote(w));
+    w = v;
+    w.appSeq = 3;
+    CHECK_FALSE(verifyVote(w));
+    w = v;
+    w.seq = 2;
+    CHECK_FALSE(verifyVote(w));
+    w = v;
+    w.app = boardOf(keyOf(0x48));
+    CHECK_FALSE(verifyVote(w));
+    // Another key's pub with the voter id left: the board id no longer matches the pub.
+    w = v;
+    w.pub = pubOf(keyOf(0x48));
+    CHECK_FALSE(verifyVote(w));
+}

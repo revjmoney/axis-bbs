@@ -176,3 +176,36 @@ TEST_CASE("users formatTo matches format") {
     CHECK(pieces == st.format());
     CHECK(n >= 3);  // one block a user at least: never the whole file in one string
 }
+
+TEST_CASE("users keep nonet") {
+    UserStore s;
+    User      quiet, open;
+    quiet.handle = "Quiet";
+    quiet.permNets = false;
+    open.handle = "Open";
+    s.add(quiet);
+    s.add(open);
+    std::string text = s.format();
+    CHECK(text.find("nonet=1") != std::string::npos);
+    UserStore t;
+    t.parse(text);
+    REQUIRE(t.find("Quiet") != nullptr);
+    REQUIRE(t.find("Open") != nullptr);
+    CHECK_FALSE(t.find("Quiet")->permNets);
+    CHECK(t.find("Open")->permNets);  // absent means true
+    // The same for one user as a cluster record.
+    User back;
+    REQUIRE(parseUser(formatUser(quiet), back));
+    CHECK_FALSE(back.permNets);
+    User back2;
+    REQUIRE(parseUser(formatUser(open), back2));
+    CHECK(back2.permNets);
+    CHECK(formatUser(open).find("nonet") == std::string::npos);
+    // nonet=0 written by hand means net posts on.
+    std::string hand = text;
+    size_t at = hand.find("nonet=1");
+    hand[at + 6] = '0';
+    UserStore u;
+    u.parse(hand);
+    CHECK(u.find("Quiet")->permNets);
+}

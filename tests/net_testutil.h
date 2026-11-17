@@ -99,6 +99,74 @@ inline NetNotice makeNotice(const KeyPair& k, int keyIdx, const std::string& kin
     return n;
 }
 
+// A signed User Net application from the board with key k.
+inline NetApp makeApp(const KeyPair& k, uint32_t seq = 1, uint32_t date = kNow, const std::string& blurb = "A board for testing",
+                      const std::string& mac = "02:00:00:00:00:01") {
+    NetApp a;
+    a.pub = pubOf(k);
+    a.board = boardId(a.pub);
+    a.name = "Test Board";
+    a.sysop = "Tester";
+    a.location = "Nowhere";
+    a.mac = mac;
+    a.blurb = blurb;
+    a.seq = seq;
+    a.date = date;
+    REQUIRE(signApp(a, k));
+    return a;
+}
+
+// A signed vote from the board with key k on the application app-a<appSeq>.
+inline NetVote makeVote(const KeyPair& k, const std::string& app, uint32_t appSeq, uint32_t seq, bool yes,
+                        uint32_t date = kNow, const std::string& comment = "") {
+    NetVote v;
+    v.pub = pubOf(k);
+    v.voter = boardId(v.pub);
+    v.app = app;
+    v.appSeq = appSeq;
+    v.seq = seq;
+    v.date = date;
+    v.yes = yes;
+    v.comment = comment;
+    REQUIRE(signVote(v, k));
+    return v;
+}
+
+// An apps file (/net/apps.txt) in RAM, wired into a NetCore with setAppsFile.
+struct AppsFile {
+    std::string text;
+    void wire(NetCore& core) {
+        core.setAppsFile(
+            [this](const std::string& line, uint32_t& off) {
+                off = (uint32_t)text.size();
+                text += line;
+                text += '\n';
+                return true;
+            },
+            [this](const NetCore::AppsLineFn& each) {
+                for (const auto& l : splitText())
+                    if (!each(l)) return;
+            },
+            [this](uint32_t off, std::string& line) {
+                if (off >= text.size()) return false;
+                size_t e = text.find('\n', off);
+                line = text.substr(off, e == std::string::npos ? std::string::npos : e - off);
+                return true;
+            });
+    }
+    std::vector<std::string> splitText() const {
+        std::vector<std::string> out;
+        size_t pos = 0;
+        while (pos < text.size()) {
+            size_t e = text.find('\n', pos);
+            if (e == std::string::npos) e = text.size();
+            if (e > pos) out.push_back(text.substr(pos, e - pos));
+            pos = e + 1;
+        }
+        return out;
+    }
+};
+
 // A temp folder of its own per object, removed afterwards.
 struct TempDir {
     fs::path p;
@@ -280,6 +348,34 @@ struct Node {
     }
 };
 
+// The node says net2 on its card (a Phase 2 board: peers send it UWANT and User Net records).
+inline void sayNet2(Node& n) {
+    NetCard c = n.card;
+    c.links = "internet,net2";
+    c.seq = n.card.seq + 1;
+    REQUIRE(signCard(c, n.key));
+    REQUIRE(n.core.setOwnCard(c));
+    n.card = c;
+}
+
+// A Phase 2 node with User Net on: net2 on its card, an apps file in RAM, and (carry) every User Net area carried.
+struct UNode : Node {
+    AppsFile apps;
+    explicit UNode(uint8_t seedByte, bool carry = true) : Node(seedByte) {
+        apps.wire(core);
+        sayNet2(*this);
+        if (carry) {
+            std::vector<std::string> all;
+            for (const auto& a : userNetAreas()) all.push_back(a.id);
+            core.setUserAreas(all);
+        }
+    }
+    // Rev's admit, deny or veto of a board, applied here.
+    bool seal(const std::string& kind, const std::string& board, uint32_t seq) {
+        return core.takeNotice(makeNotice(rev0(), 0, kind, board, seq, kind == "veto" ? "" : "1"), "");
+    }
+};
+
 inline NetPost decodePost(const std::string& line) {
     NetPost p;
     REQUIRE(decode(line, p));
@@ -313,6 +409,29 @@ inline void run(NetSession& a, NetSession& b, uint32_t& ms, int rounds = 5000, b
             return;
         }
     }
+}
+
+// Like run, keeping what each side said: fromA is what a sent to b, fromB what b sent to a.
+inline void runBoth(NetSession& a, NetSession& b, std::string& fromA, std::string& fromB, int rounds = 5000) {
+    uint32_t ms = 0;
+    for (int i = 0; i < rounds; i++) {
+        std::string x = a.takeOut();
+        fromA += x;
+        if (!x.empty()) b.feed(x.data(), x.size());
+        std::string y = b.takeOut();
+        fromB += y;
+        if (!y.empty()) a.feed(y.data(), y.size());
+        a.tick(ms, true);
+        b.tick(ms, true);
+        ms += 10;
+        if (settled(a) && settled(b)) break;
+    }
+    std::string x = a.takeOut();
+    fromA += x;
+    if (!x.empty()) b.feed(x.data(), x.size());
+    std::string y = b.takeOut();
+    fromB += y;
+    if (!y.empty()) a.feed(y.data(), y.size());
 }
 
 inline std::vector<std::string> lines(const std::string& s) {

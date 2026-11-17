@@ -196,6 +196,9 @@ add_executable(axis_tests
     tests/test_net_core.cpp
     tests/test_net_session.cpp
     tests/test_net_record_log.cpp
+    tests/test_net_members.cpp
+    tests/test_net_usernet.cpp
+    tests/test_net_recordview.cpp
     tests/test_features.cpp
     tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)

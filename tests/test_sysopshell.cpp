@@ -1,6 +1,8 @@
 #include "bbs/sysopshell.h"
 #include "bbs/features.h"
 
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <regex>
 #include <string>
@@ -466,3 +468,160 @@ TEST_CASE("features: the cluster key is offered only with the cluster built in")
     r.shell.beginAt(SysopSection::Settings);
     CHECK((plain(r.out).find("Cluster key") != std::string::npos) == (AXIS_CLUSTER == 1));
 }
+
+#if AXIS_NETS
+namespace {
+// The screen drawn last (from its clear screen on), escapes stripped.
+std::string screen(const std::string& out) {
+    size_t cls = out.rfind("\x1b[2J");
+    return plain(cls == std::string::npos ? out : out.substr(cls));
+}
+
+// Picks the row with this label on the layer on top, turning pages to find it. False if it is on none.
+bool pickRow(Rig& r, const std::string& label) {
+    for (int page = 0; page < 6; page++) {
+        std::string s = screen(r.out);
+        for (size_t at = s.find(" " + label); at != std::string::npos; at = s.find(" " + label, at + 1)) {
+            if (at < 2 || s[at - 2] != ' ' || !std::isalnum((unsigned char)s[at - 1])) continue;
+            char k = s[at - 1];
+            r.out.clear();
+            r.type(std::string(1, k));
+            return true;
+        }
+        r.out.clear();
+        r.type("n");
+    }
+    return false;
+}
+
+size_t ranCount(const Rig& r, const std::string& c) { return (size_t)std::count(r.ran.begin(), r.ran.end(), c); }
+
+const char* const kRecordPage0 =
+    "12 202611:0:1780000000 2026-11-15 10:30 local app 0123456789abcdef 1\n"
+    "11 202611:120:1780000060 2026-11-15 10:31 fedcba9876543210 vote fedcba9876543210 on 0123456789abcdef yes\n"
+    "axis: older from 10\n";
+const char* const kRecordPage1 = "10 202610:40:1779000000 2026-10-01 09:00 local member 0123456789abcdef admitted\n";
+
+void toRecords(Rig& r) {
+    r.replies["@NET"] = "board 0123456789abcdef\nrev board no\n";
+    r.shell.beginAt(axis::bbs::SysopSection::System);
+    REQUIRE(pickRow(r, "Sysop Net"));
+    REQUIRE(pickRow(r, "Traffic and logs"));
+}
+}  // namespace
+
+TEST_CASE("the record browser: list lines, SHOW, Older and Newer") {
+    Rig r;
+    r.replies["@NET RECORD KIND votes 20 0"] = kRecordPage0;
+    r.replies["@NET RECORD KIND votes 20 10"] = kRecordPage1;
+    r.replies["@NET RECORD SHOW 202611:120:1780000060"] = "axis: line 11\ncheck signed by fedcba9876543210, checks\n";
+    toRecords(r);
+    REQUIRE(pickRow(r, "Votes"));
+    CHECK(ranCount(r, "@NET RECORD KIND votes 20 0") == 1);
+    std::string s = screen(r.out);
+    CHECK(s.find("11-15 10:30 local") != std::string::npos);  // the label: month-day, time, who
+    CHECK(s.find("app 0123456789abcdef 1") != std::string::npos);  // the value: what
+    CHECK(s.find("11-15 10:31 fedcba9876543210") != std::string::npos);
+    CHECK(s.find("Older") != std::string::npos);
+    CHECK(s.find("Newer") == std::string::npos);
+    CHECK(s.find("older from") == std::string::npos);
+
+    // A line opens SHOW for that very line.
+    REQUIRE(pickRow(r, "11-15 10:31"));
+    CHECK(r.ranCmd("@NET RECORD SHOW 202611:120:1780000060"));
+    CHECK(screen(r.out).find("line 11") != std::string::npos);
+    r.out.clear();
+    r.type("q");
+
+    REQUIRE(pickRow(r, "Older"));
+    CHECK(ranCount(r, "@NET RECORD KIND votes 20 10") == 1);
+    s = screen(r.out);
+    CHECK(s.find("10-01 09:00 local") != std::string::npos);
+    CHECK(s.find("member 0123456789abcdef admitted") != std::string::npos);
+    CHECK(s.find("Newer") != std::string::npos);
+    CHECK(s.find("Older") == std::string::npos);
+
+    REQUIRE(pickRow(r, "Newer"));
+    s = screen(r.out);
+    CHECK(s.find("11-15 10:30 local") != std::string::npos);
+    CHECK(s.find("Newer") == std::string::npos);
+    CHECK(ranCount(r, "@NET RECORD KIND votes 20 0") >= 2);
+}
+
+TEST_CASE("the record browser: a search answer runs once, and a line that is no record shows as it is") {
+    Rig r;
+    r.replies["@NET RECORD FIND spindle 20 0"] = "axis: nothing found\n";
+    toRecords(r);
+    REQUIRE(pickRow(r, "Search"));
+    r.type("spindle\r");
+    CHECK(ranCount(r, "@NET RECORD FIND spindle 20 0") == 1);
+    std::string s = screen(r.out);
+    CHECK(s.find("nothing found") != std::string::npos);
+    CHECK(s.find("axis: nothing found") == std::string::npos);
+}
+
+TEST_CASE("a text page keeps 400 lines and says the rest is cut") {
+    Rig r;
+    std::string months = "axis: months:\n";
+    for (int i = 1; i < 500; i++) months += "line " + std::to_string(i) + "\n";
+    r.replies["@NET RECORD MONTHS"] = months;
+    toRecords(r);
+    REQUIRE(pickRow(r, "Months"));
+    for (int i = 0; i < 40; i++) r.type("n");
+    std::string o = plain(r.out);
+    CHECK(o.find("months:") != std::string::npos);
+    CHECK(o.find("axis: months") == std::string::npos);
+    CHECK(o.find("line 399\r") != std::string::npos);
+    CHECK(o.find("line 400\r") == std::string::npos);
+    CHECK(screen(r.out).find("(the rest is not shown)") != std::string::npos);
+}
+
+TEST_CASE("New Board Voting: the waiting list, the application and a vote with its comment") {
+    Rig r;
+    r.replies["@NET"] = "board 0123456789abcdef\nuser net member\nrev board no\n";
+    r.replies["@NET WAITING"] = "fedcba9876543210 2 1 Spindle Shop, Conway SC\n1111222233334444 0 0 Other Board, Here\n";
+    r.replies["@NET APP fedcba9876543210"] = "name Spindle Shop\nsysop Kid\nyes 2\nno 1\n";
+    r.shell.beginAt(axis::bbs::SysopSection::System);
+    REQUIRE(pickRow(r, "User Net"));
+    CHECK(screen(r.out).find("2 waiting") != std::string::npos);
+    REQUIRE(pickRow(r, "New Board Voting"));
+    std::string s = screen(r.out);
+    CHECK(s.find("Spindle Shop, Conway SC") != std::string::npos);
+    CHECK(s.find("yes 2 no 1") != std::string::npos);
+    CHECK(s.find("Other Board, Here") != std::string::npos);
+    REQUIRE(pickRow(r, "Spindle Shop, Conway SC"));
+    CHECK(r.ranCmd("@NET APP fedcba9876543210"));
+    s = screen(r.out);
+    CHECK(s.find("Kid") != std::string::npos);
+    REQUIRE(pickRow(r, "Comment"));
+    r.type("solid board\r");
+    REQUIRE(pickRow(r, "Vote yes"));
+    CHECK(r.ranCmd("@NETVOTE fedcba9876543210 Y solid board"));
+    // Back in the list and into another applicant: the comment is not carried over.
+    r.out.clear();
+    r.type("q");
+    r.type("q");
+    REQUIRE(pickRow(r, "New Board Voting"));
+    REQUIRE(pickRow(r, "Other Board, Here"));
+    REQUIRE(pickRow(r, "Vote no"));
+    CHECK(r.ranCmd("@NETVOTE 1111222233334444 N "));
+}
+
+TEST_CASE("New Board Voting with nobody waiting, and no voting row before membership") {
+    Rig r;
+    r.replies["@NET"] = "board 0123456789abcdef\nuser net member\nrev board no\n";
+    r.replies["@NET WAITING"] = "";
+    r.shell.beginAt(axis::bbs::SysopSection::System);
+    REQUIRE(pickRow(r, "User Net"));
+    REQUIRE(pickRow(r, "New Board Voting"));
+    CHECK(screen(r.out).find("Nobody is waiting") != std::string::npos);
+
+    Rig p;
+    p.replies["@NET"] = "board 0123456789abcdef\nuser net pending (yes 1 of 3, no 0 of 3)\nrev board no\n";
+    p.shell.beginAt(axis::bbs::SysopSection::System);
+    REQUIRE(pickRow(p, "User Net"));
+    std::string s = screen(p.out);
+    CHECK(s.find("New Board Voting") == std::string::npos);
+    CHECK(s.find("Apply") != std::string::npos);
+}
+#endif

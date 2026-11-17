@@ -9,6 +9,13 @@ using namespace nettest;
 using Took = NetCore::Took;
 
 namespace {
+// The text has a line that is exactly l ("uhistory 0" is no "history 0" line).
+bool hasLine(const std::string& text, const std::string& l) {
+    for (const auto& x : lines(text))
+        if (x == l) return true;
+    return false;
+}
+
 std::string lastLine(const std::string& out, const std::string& prefix) {
     std::string found;
     for (const auto& l : lines(out))
@@ -498,7 +505,7 @@ TEST_CASE("a history pull cut mid-way resumes on the next session and ends with 
     CHECK(b.core.hasNetPosts());  // the areas are no longer empty: the old rule would never have asked again
     // A reboot: the flag goes with the cursors.
     std::string saved = b.core.saveCursors();
-    CHECK(saved.find("history 0\n") != std::string::npos);
+    CHECK(hasLine(saved, "history 0"));
     b.core.loadCursors(saved);
     CHECK(b.core.historyState() == 0);
     {  // The next session asks again; repeats are dropped as duplicates.
@@ -515,7 +522,7 @@ TEST_CASE("a history pull cut mid-way resumes on the next session and ends with 
     CHECK(got == want);
     CHECK(b.core.historyState() == 1);
     saved = b.core.saveCursors();
-    CHECK(saved.find("history 1\n") != std::string::npos);
+    CHECK(hasLine(saved, "history 1"));
     b.core.loadCursors(saved);
     CHECK(b.core.historyState() == 1);
     {  // Done: no WANT any more.
@@ -541,7 +548,7 @@ TEST_CASE("an upgraded board with posts and no history flag does not pull") {
     CHECK(countPrefix(said, "WANT") == 0);
     CHECK(db.postsTaken() == 0);
     CHECK(b.core.historyState() == 1);  // decided once, and saved from now on
-    CHECK(b.core.saveCursors().find("history 1\n") != std::string::npos);
+    CHECK(hasLine(b.core.saveCursors(), "history 1"));
 }
 
 TEST_CASE("a pull that got no H line at all is not done: the next session asks again") {
@@ -933,4 +940,95 @@ TEST_CASE("an inbound-only link peer is trusted after two completed sessions; fa
     b.core.loadCursors(saved);
     CHECK(b.core.trustedPeer(peer.card.board));
     CHECK(b.core.saveCursors() == saved);
+}
+
+TEST_CASE("unknown record kind is NAKed and the session goes on") {
+    RevKeys rk;
+    {
+        Node b(0x5A);
+        REQUIRE(!b.post().empty());  // B holds posts, so it asks for no history
+        NetSession s(b.core, b.card, b.key, nonce(2), false, "");
+        RawDialer r(0x5B);
+        r.handshake(s);
+        REQUIRE(s.proven());
+        s.tick(0, true);
+        s.takeOut();
+        RawDialer::say(s, "SEQ 0");
+        RawDialer::say(s, "S Z\x1f" "a kind from a later build");  // passed over in the snapshot too
+        CHECK_FALSE(s.failed());
+        RawDialer::say(s, "E 0 Z\x1f" "a kind from a later build");
+        CHECK(countPrefix(s.takeOut(), "NAK 0 bad") == 1);
+        CHECK_FALSE(s.failed());
+        RawDialer::say(s, "E 1 " + encode(makePost(r.key, 1, kNow)));
+        CHECK(countPrefix(s.takeOut(), "ACK 1") == 1);
+        CHECK_FALSE(s.failed());
+        CHECK(b.ids().size() == 2);
+    }
+
+    UNode a(0x5C);
+    REQUIRE(a.seal("admit", a.board, 1));
+    REQUIRE(!a.post("sn_support", "for history").empty());
+    REQUIRE(!a.post("un_chat", "user net").empty());
+    const KeyPair X = keyOf(0x5D), V = keyOf(0x5E);
+    REQUIRE(a.core.takeApp(makeApp(X), ""));
+    REQUIRE(a.core.takeVote(makeVote(V, boardOf(X), 1, 1, true), ""));
+    auto noUserRecords = [](const std::string& out, const char* prefix) {
+        size_t bad = 0, n = std::string(prefix).size();
+        for (const auto& l : lines(out))
+            if (l.compare(0, n, prefix) == 0 && l.size() > n && (l[n] == 'A' || l[n] == 'V')) bad++;
+        return bad;
+    };
+    {  // A new Phase 2 board: the snapshot, history and the User Net pull. A and V go only on U lines.
+        UNode b(0x5F);
+        NetSession da(a.core, a.card, a.key, nonce(3), true, b.board);
+        NetSession db(b.core, b.card, b.key, nonce(4), false, "");
+        std::string fa, fb;
+        runBoth(da, db, fa, fb);
+        CHECK_MESSAGE(da.done(), da.why());
+        CHECK_MESSAGE(db.done(), db.why());
+        CHECK(countPrefix(fa, "S ") > 0);
+        CHECK(countPrefix(fa, "H P") == 1);
+        CHECK(noUserRecords(fa, "S ") == 0);
+        CHECK(noUserRecords(fa, "H ") == 0);
+        CHECK(noUserRecords(fb, "S ") == 0);
+        CHECK(noUserRecords(fb, "H ") == 0);
+        CHECK(countPrefix(fa, "U A") == 1);
+        CHECK(countPrefix(fa, "U V") == 1);
+        CHECK(b.core.members().appCount() == 1);
+        CHECK(b.core.members().voteCount() == 1);
+    }
+    {  // A board whose card lacks net2 (as a v0.53 board's): no UWANT, no U lines, and no A, V or un_ post E lines.
+        Node old(0x60);
+        old.core.userHistoryGot();  // it never asks for the User Net pull itself, as a v0.53 board would not
+        a.core.addLinkPeer(old.board, true);
+        const KeyPair Y = keyOf(0x61);
+        REQUIRE(a.core.takeApp(makeApp(Y), ""));
+        REQUIRE(a.core.takeVote(makeVote(V, boardOf(Y), 1, 1, false), ""));
+        REQUIRE(!a.post("un_chat", "not for older boards").empty());
+        REQUIRE(!a.post("sn_support", "for every board").empty());
+        NetSession da(a.core, a.card, a.key, nonce(5), true, old.board);
+        NetSession dold(old.core, old.card, old.key, nonce(6), false, "");
+        std::string fa, fo;
+        runBoth(da, dold, fa, fo);
+        CHECK_MESSAGE(da.done(), da.why());
+        CHECK_MESSAGE(dold.done(), dold.why());
+        CHECK(countPrefix(fa, "UWANT") == 0);
+        CHECK(countPrefix(fa, "U ") == 0);
+        CHECK(countPrefix(fa, "UEND") == 0);
+        CHECK(noUserRecords(fa, "S ") == 0);
+        CHECK(noUserRecords(fa, "H ") == 0);
+        size_t eLines = 0, userE = 0;
+        for (const auto& l : lines(fa)) {
+            if (l.compare(0, 2, "E ") != 0) continue;
+            eLines++;
+            size_t sp = l.find(' ', 2);
+            REQUIRE(sp != std::string::npos);
+            if (l[sp + 1] == 'A' || l[sp + 1] == 'V' || l.find("\x1fun_") != std::string::npos) userE++;
+        }
+        CHECK(eLines >= 1);
+        CHECK(userE == 0);
+        CHECK(old.core.members().appCount() == 0);
+        CHECK(old.ids("un_chat").empty());
+        CHECK(a.core.pendingFor(old.board, 64, false).empty());  // passed over, never read again
+    }
 }
