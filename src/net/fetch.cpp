@@ -8,6 +8,8 @@
 #include <cstring>
 #include <new>
 
+#include "net/crc.h"
+
 namespace axis::net {
 
 namespace {
@@ -62,6 +64,7 @@ void FetchServer::refuse(const char* word) {
 
 void FetchServer::feed(const char* p, size_t n) {
     size_t at = 0;
+    if (n && st_ == St::Serving) moved_ = true;  // a keepalive: dropped, but the dialer is there
     while (at < n && (st_ == St::Hello || st_ == St::Get)) {  // nothing is read once serving
         bool got;
         if (!takeLine(in_, p, n, at, got)) return refuse("bad");
@@ -146,9 +149,11 @@ bool FetchServer::failed() const { return st_ == St::Failed; }
 
 // ------------------------------------------------------------------ client
 FetchClient::FetchClient(const NetListing& l, const std::string& homePub, const std::string& handle, const KeyPair& me,
-                         const std::string& myBoard, const std::string& dialNonce16, uint32_t offset)
+                         const std::string& myBoard, const std::string& dialNonce16, uint32_t offset,
+                         uint32_t crcState, uint32_t crcPos)
     : me_(me), board_(l.board), homePub_(homePub), handle_(handle), myBoard_(myBoard), dial_(dialNonce16),
-      id_(listingId(l)), size_(l.size), start_(offset), hi_(offset), want_(offset) {
+      id_(listingId(l)), size_(l.size), start_(offset), hi_(offset), listCrc_(l.crc), crc_(crcState),
+      crcPos_(crcPos), crcOn_(crcPos != kFetchNoCrc && crcPos <= l.size), want_(offset) {
     if (offset > l.size) {
         fail("size");
         return;
@@ -170,7 +175,13 @@ size_t FetchClient::room() const {
     if (st_ == St::Hello || st_ == St::Asked) return kFetchWindow;  // whatever trails OK still fits the ring
     if (st_ != St::Streaming) return 0;
     uint64_t cap = std::min<uint64_t>((uint64_t)want_ + kFetchWindow, size_);
-    return cap > hi_ ? (size_t)(cap - hi_) : 0;
+    return cap > hi_ ? (size_t)std::min<uint64_t>(cap - hi_, kFetchWindow) : 0;
+}
+
+void FetchClient::arrived() {
+    if (crcOn_ && crcPos_ == size_ && ~crc_ != listCrc_) return fail("crc");  // the last block never goes out
+    if (crcPos_ != size_) crcOn_ = false;  // bytes were skipped: the end cannot be checked
+    st_ = St::Done;
 }
 
 size_t FetchClient::feed(const char* p, size_t n) {
@@ -189,6 +200,14 @@ size_t FetchClient::feed(const char* p, size_t n) {
     if (st_ == St::Done) return n;  // anything past the promised bytes is dropped (the data is whole)
     if (at == n || st_ != St::Streaming) return at;
     size_t take = std::min(n - at, room());
+    if (crcOn_ && take) {
+        if (hi_ > crcPos_) crcOn_ = false;  // a gap: these bytes skip past what the crc covers
+        else if (hi_ + take > crcPos_) {      // bytes before crcPos_ were counted by an earlier call
+            uint32_t skip = crcPos_ - hi_;
+            crc_ = crc32Update(crc_, (const uint8_t*)p + at + skip, take - skip);
+            crcPos_ = hi_ + (uint32_t)take;
+        }
+    }
     for (size_t done = 0; done < take;) {
         size_t i = hi_ & (kFetchWindow - 1), k = std::min(take - done, kFetchWindow - i);
         std::memcpy(ring_.get() + i, p + at + done, k);
@@ -196,7 +215,7 @@ size_t FetchClient::feed(const char* p, size_t n) {
         hi_ += (uint32_t)k;
     }
     if (take) heard_ = true;
-    if (hi_ == size_) st_ = St::Done;
+    if (hi_ == size_) arrived();
     return at + take;
 }
 
@@ -240,10 +259,7 @@ void FetchClient::line(const std::string& l) {
     }
     if (v != (uint64_t)(size_ - start_)) return fail("size");
     std::string().swap(in_);
-    if (v == 0) {
-        st_ = St::Done;
-        return;
-    }
+    if (v == 0) return arrived();
     ring_.reset(new (std::nothrow) uint8_t[kFetchWindow]);
     if (!ring_) return fail("memory");
     st_ = St::Streaming;
@@ -258,12 +274,16 @@ std::string FetchClient::takeOut() {
 void FetchClient::tick(uint32_t now) {
     if (!started_) {
         started_ = true;
-        startMs_ = lastMs_ = now;
+        startMs_ = lastMs_ = keepMs_ = now;
     }
     if (st_ == St::Done || st_ == St::Failed) return;
     if (st_ != St::Streaming) {
         if (now - startMs_ > kFetchConnectMs) fail("stall");
         return;
+    }
+    if (now - keepMs_ >= kFetchStallMs / 2) {  // the home board's sign that this end is still here
+        keepMs_ = now;
+        out_ += '\n';
     }
     if (heard_ || room() == 0) lastMs_ = now;  // a full ring is the caller's pace, not a dead call
     heard_ = false;
