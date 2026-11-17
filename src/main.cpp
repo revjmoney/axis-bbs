@@ -3682,13 +3682,24 @@ static bool netUserCommand(NetHost& h, const std::string& word, const std::strin
         S st = mem.status(core.board());
         no = !boardCfg->netUser ? "net_user is off" : st == S::Member ? "already a member" : st == S::Pending ? "already applied" :
              st == S::Vetoed ? "vetoed" : h.seqFloorDue ? "waiting for the clock" : nullptr;
-        if (!no && st == S::Denied && now > axis::net::kNetClockSet) {  // 30 days after a deny (from the day it was applied here)
+        // 30 days after a deny: from the day Rev's deny was applied here, or, denied by the count with no deny of Rev's,
+        // from the held application's own signed date. A local gate only: the tally does not change.
+        static char wait[64];
+        if (!no && st == S::Denied && now > axis::net::kNetClockSet) {
             const axis::net::NetNotice* dn = core.state().memberNotice(core.board());
             uint32_t heldSeq = 0;
             bool     hasApp = mem.heldApp(core.board(), off, &heldSeq);
             // As the tally: a deny stands unless the held application is newer than the one it names.
             if (!dn || dn->kind != "deny" || (hasApp && heldSeq > (uint32_t)std::strtoul(dn->value.c_str(), nullptr, 10))) {
-                no = "denied by the vote count, waiting for Rev's seal";  // no deny notice covers the application held now
+                std::string       line;
+                axis::net::NetApp held;
+                // (an application dated before the clock was set, or one that cannot be read, does not hold it back)
+                if (hasApp && netAppsReadAt(off, line) && axis::net::decode(line, held) && held.date > axis::net::kNetClockSet &&
+                    now / 86400 < held.date / 86400 + 30) {
+                    unsigned left = (unsigned)(held.date / 86400 + 30 - now / 86400);
+                    std::snprintf(wait, sizeof wait, "denied by the vote count; may apply again in %u day%s", left, left == 1 ? "" : "s");
+                    no = wait;
+                }
             } else {
                 uint32_t d = core.state().memberNoticeDay(core.board());
                 if (d < axis::net::kNetClockDay) d = now / 86400;  // a deny from before the clock

@@ -31,7 +31,8 @@ constexpr size_t kMaxRotates = 16;
 constexpr size_t kMaxPostNotices = 64;   // hold/kill/lift of posts: the oldest applied goes first
 constexpr size_t kMaxBoardNotices = 64;  // ban/lift of boards: the oldest lift goes first, then the oldest ban
 // admit/deny/veto of User Net boards: the hard User Net size. A new target past it is refused, never
-// evicted, since the tally depends on every seal.
+// evicted, since the tally depends on every seal. Only Rev's own commands and the auto seal's admits
+// (never denies) make them, so an outsider cannot use them up.
 constexpr size_t kMaxMemberNotices = 64;
 constexpr uint32_t kDefaultVotesYes = 3;  // yes votes that admit an applicant, until a votes notice
 constexpr uint32_t kDefaultVotesNo = 3;   // no votes that deny one

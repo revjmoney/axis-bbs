@@ -85,7 +85,7 @@ Turn it on with `@SET net_user=1`, choose the areas with `net_user_areas` and th
 @NETAPPLY <blurb>
 ```
 
-The application carries the board's id, its public key, the card's name, sysop and location, the board's MAC, your blurb (up to 240 printable characters; line breaks are dropped) and a number counting that board's applications. It is signed with the board's own key and travels over Sysop Net. `@NETAPPLY` is refused when `net_user` is off, when the board is already a member or has already applied, when it is vetoed, while its counters wait for the clock (a board whose `/netseq.txt` was lost waits for a set clock to put their floor above any number used before), and for 30 days after Rev's deny. A board turned down by the vote count with no deny notice from Rev yet is told it is waiting for Rev's seal. A reply of `@OK applied` means it was taken here and will be passed on.
+The application carries the board's id, its public key, the card's name, sysop and location, the board's MAC, your blurb (up to 240 printable characters; line breaks are dropped) and a number counting that board's applications. It is signed with the board's own key and travels over Sysop Net. `@NETAPPLY` is refused when `net_user` is off, when the board is already a member or has already applied, when it is vetoed, while its counters wait for the clock (a board whose `/netseq.txt` was lost waits for a set clock to put their floor above any number used before), and for 30 days after a deny: 30 days from the day Rev's deny notice was applied on this board, or, for a board turned down by the vote count with no deny from Rev, 30 days from the signed date of its own application. Until then `@NETAPPLY` says in how many days it may apply again. A reply of `@OK applied` means it was taken here and will be passed on.
 
 ### How to vote
 
@@ -113,11 +113,11 @@ On Rev's board:
 `@NETADMIT` and `@NETDENY` name the application they decide, so they need the board's application held on Rev's board; without one they are refused.
 - `@NETVETO <board id> YES` keeps it out for good, and beats any vote count. A veto can come after a board is in, and then it leaves User Net. Without `YES` the command only explains what it would do.
 
-Each is a signed notice every board checks against Rev's public keys. Every board holds up to 64 such notices; past that a notice for a new board is refused, never an old one dropped.
+Each is a signed notice every board checks against Rev's public keys. Every board holds up to 64 such notices; past that a notice for a new board is refused, never an old one dropped, since the tally depends on every one. Only Rev's own commands and the auto seal's admits make them, so an outsider cannot use up the 64.
 
 ### Auto seal
 
-When the count on a board admits an applicant, Rev's board signs the matching admit notice itself (four a pass at most), so the result is fixed for every board and does not depend on who voted later. A deny by the count is not signed: every board already reaches it from the same votes, and signing one would spend one of the 64 notices on each board turned down. Rev denies by hand with `@NETDENY` when he wants the 30 day wait to start. Rev's own boards and boards Rev admitted are always members.
+When the count on a board admits an applicant, Rev's board signs the matching admit notice itself (four a pass at most), so the result is fixed for every board and does not depend on who voted later. A deny by the count is not signed: every board already reaches it from the same votes, and signing one would spend one of the 64 notices on each board turned down. A board turned down by the count may apply again 30 days after its own application's date; Rev denies by hand with `@NETDENY` when he wants the wait to run from his deny instead. Rev's own boards and boards Rev admitted are always members.
 
 ### Carrying the areas
 
