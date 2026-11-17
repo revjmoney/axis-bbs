@@ -172,6 +172,7 @@ FetchClient::FetchClient(const NetListing& l, const std::string& homePub, const 
       id_(listingId(l)), size_(l.size), start_(offset), hi_(offset), listCrc_(l.crc), crc_(crcState),
       crcPos_(crcPos), crcOn_(crcPos == offset && crcPos <= l.size), want_(offset) {
     hash(nullptr, 0);  // the checkpoint at 0, for a download from the start
+    if (st_ == St::Failed) return;
     if (offset > l.size) {
         fail("size");
         return;
@@ -198,19 +199,29 @@ size_t FetchClient::room() const {
 }
 
 void FetchClient::hash(const uint8_t* p, size_t n) {
-    if (!crcOn_) return;
+    if (!crcOn_ || st_ == St::Failed) return;
+    CrcMarks& m = marks_;
     for (;;) {
-        if (marks_.state.size() == kFetchCrcMarks) {  // full: every other one goes, the spacing doubles
-            for (size_t i = 0; i < kFetchCrcMarks / 2; i++) marks_.state[i] = marks_.state[2 * i];
-            marks_.state.resize(kFetchCrcMarks / 2);
-            marks_.step *= 2;
-        }
-        uint64_t next = (uint64_t)marks_.state.size() * marks_.step;  // the next checkpoint's offset
+        uint64_t next = (uint64_t)mark_ * m.step;  // the next checkpoint's offset
         if (next == crcPos_) {
-            marks_.state.push_back(crc_);
+            if (mark_ < m.count) {
+                if (m.state[mark_] != crc_) return fail("crc");  // an earlier pass got other bytes up to here
+            } else if (m.count == kFetchCrcMarks) {  // full: every other one goes, the spacing doubles
+                for (size_t i = 0; i < kFetchCrcMarks / 2; i++) m.state[i] = m.state[2 * i];
+                m.count = mark_ = kFetchCrcMarks / 2;
+                m.step *= 2;
+                continue;
+            } else {
+                if (!m.state) m.state.reset(new (std::nothrow) uint32_t[kFetchCrcMarks]);
+                if (!m.state) return fail("memory");
+                m.state[m.count++] = crc_;
+            }
+            mark_++;
             continue;
         }
-        size_t k = next > crcPos_ && next - crcPos_ < n ? (size_t)(next - crcPos_) : n;
+        if (crcPos_ && crcPos_ == m.endPos && crc_ != m.endState) return fail("crc");  // the farthest point, likewise
+        uint64_t stop = m.endPos > crcPos_ && m.endPos < next ? m.endPos : next;
+        size_t   k = stop > crcPos_ && stop - crcPos_ < n ? (size_t)(stop - crcPos_) : n;
         if (!k) return;
         crc_ = crc32Update(crc_, p, k);
         crcPos_ += (uint32_t)k;
@@ -220,17 +231,25 @@ void FetchClient::hash(const uint8_t* p, size_t n) {
 }
 
 bool FetchClient::checkpoint(uint32_t off, uint32_t& at, uint32_t& state) const {
-    if (!crcOn_ || marks_.state.empty()) return false;
-    size_t i = std::min<size_t>(off / marks_.step, marks_.state.size() - 1);
+    if (!crcOn_ || !marks_.count) return false;
+    size_t i = std::min<size_t>({off / marks_.step, crcPos_ / marks_.step, (size_t)marks_.count - 1});  // (one this pass checked)
     at = (uint32_t)(i * marks_.step);
     state = marks_.state[i];
     return true;
 }
 
+FetchClient::CrcMarks FetchClient::takeMarks() {
+    if (crcOn_ && crcPos_ >= marks_.endPos) {
+        marks_.endPos = crcPos_;
+        marks_.endState = crc_;
+    }
+    return std::move(marks_);
+}
+
 void FetchClient::giveMarks(CrcMarks m) {
-    if (!crcOn_ || !m.step || crcPos_ % m.step || crcPos_ / m.step >= m.state.size()) return;  // not one of its checkpoints
-    m.state.resize(crcPos_ / m.step);  // up to its start; hash() takes the one at the start again
+    if (!crcOn_ || !m.state || !m.step || crcPos_ % m.step || crcPos_ / m.step >= m.count) return;  // not one of its checkpoints
     marks_ = std::move(m);
+    mark_ = crcPos_ / marks_.step;  // its start: checked against the state it was given, then on from there
     hash(nullptr, 0);
 }
 
@@ -257,6 +276,7 @@ size_t FetchClient::feed(const char* p, size_t n) {
     if (at == n || st_ != St::Streaming) return at;
     size_t take = std::min(n - at, room());
     hash((const uint8_t*)p + at, take);  // (crcPos_ is hi_ while the crc is on: one pass, in order)
+    if (st_ == St::Failed) return at + take;  // they differ from what an earlier call gave: dropped, and why() says crc
     for (size_t done = 0; done < take;) {
         size_t i = hi_ & (kFetchWindow - 1), k = std::min(take - done, kFetchWindow - i);
         std::memcpy(ring_.get() + i, p + at + done, k);

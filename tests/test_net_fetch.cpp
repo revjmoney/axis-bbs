@@ -72,6 +72,7 @@ struct Call {
     std::string                  toServer;  // everything the client sent this call
     bool                         carryUp = true;  // the client's bytes reach the server
     long                         flipAt = -1;     // the home board's file has this byte changed
+    int                          flipCalls = 0;   // ... only in calls up to this one (0: in every call)
     const char*                  refuse = nullptr;  // the check's NO word
     long                         serveSize = -1;    // the check's file size, if not the file's
     uint32_t                     now = 0;
@@ -99,13 +100,14 @@ struct Call {
         s.size = serveSize >= 0 ? (uint32_t)serveSize : (uint32_t)file.size();
         s.read = [this](uint32_t off, uint8_t* buf, size_t k) {
             if ((size_t)off + k > file.size()) return false;
-            for (size_t i = 0; i < k; i++) buf[i] = (long)(off + i) == flipAt ? (uint8_t)(file[off + i] ^ 0x5A) : file[off + i];
+            for (size_t i = 0; i < k; i++) buf[i] = (long)(off + i) == flipAt && (!flipCalls || calls <= flipCalls) ? (uint8_t)(file[off + i] ^ 0x5A) : file[off + i];
             return true;
         };
         return s;
     }
     void start(uint32_t off, uint32_t cs = 0xFFFFFFFFu, uint32_t cp = 0) {
         calls++;
+        if (calls == 1 && off > 0) forward = true;  // a caller resuming its own partial file
         srv.reset(new FetchServer(l.board, serverKey, nonce((uint8_t)(0x30 + calls)), [this](const NetFetch& f) { return check(f); }));
         srv->feed("AXISFILE 1 ", 11);  // the host's first-line dispatch consumed it and feeds it back
         cli.reset(new FetchClient(l, pubOf(homeKey()), "Caller", myKey(), boardOf(myKey()), nonce((uint8_t)(0x50 + calls)), off, cs, cp));
@@ -610,9 +612,56 @@ TEST_CASE("fetch: the crc checkpoints halve when full and stay within 1 KB; a re
     CHECK(c.cli->state() == St::Done);
     CHECK(c.cli->verified());
     FetchClient::CrcMarks m = c.cli->takeMarks();
-    CHECK(m.state.size() <= kFetchCrcMarks);
-    CHECK(m.state.size() * sizeof(uint32_t) <= 1024);
+    CHECK(m.count <= kFetchCrcMarks);
+    CHECK(kFetchCrcMarks * sizeof(uint32_t) <= 1024);  // the whole table, taken once
     CHECK(m.step == 16384);
+}
+
+TEST_CASE("fetch: a plain rewind fails crc when the byte differed only in the first call; unchanged it verifies") {
+    for (int flipCalls : {1, 0}) {
+        CAPTURE(flipCalls);
+        Call c(40000);
+        if (flipCalls) {
+            c.flipAt = 10000;
+            c.flipCalls = 1;
+        }
+        c.start(0);
+        c.connect();
+        uint32_t             off = 0;
+        std::vector<uint8_t> b(1000);
+        for (int i = 0; i < 4000 && off < 25000; i++)
+            if (c.readyAt(off, 1000) && c.readAt(off, b.data(), 1000)) off += 1000;
+        REQUIRE(off == 25000);
+        CHECK_FALSE(c.readyAt(4000, 1000));  // a new call from the checkpoint at 0, with the right bytes this time
+        std::vector<uint8_t> rest = c.drain(4000, 1000);
+        if (flipCalls) {
+            CHECK(c.cli->state() == St::Failed);
+            CHECK(std::string(c.cli->why()) == "crc");  // the second call's state at the next checkpoint is not the first's
+        } else {
+            CHECK(rest == slice(c.file, 4000, 40000));
+            CHECK(c.cli->verified());
+        }
+    }
+}
+
+TEST_CASE("fetch: a resumed fetch stays unverified across a re-request") {
+    Call c(40000);
+    c.start(10000);
+    c.connect();
+    CHECK(c.forward);
+    uint32_t             off = 10000;
+    std::vector<uint8_t> b(1000);
+    for (int i = 0; i < 4000 && off < 30000; i++)
+        if (c.readyAt(off, 1000) && c.readAt(off, b.data(), 1000)) off += 1000;
+    REQUIRE(off == 30000);
+    CHECK_FALSE(c.readyAt(12000, 1000));  // a rewind: no checkpoints, so a call from 12,000, still unchecked
+    CHECK(c.calls == 2);
+    CHECK(c.lastAt == 12000);
+    std::vector<uint8_t> rest = c.drain(12000, 1000);
+    CHECK(rest == slice(c.file, 12000, 40000));
+    CHECK(c.cli->state() == St::Done);
+    CHECK_FALSE(c.cli->verified());
+    CHECK(c.cli->crcPos() == kFetchNoCrc);
 }
 
 TEST_CASE("fetch: a forward resume reports unverified") {
@@ -674,11 +723,43 @@ TEST_CASE("fetch: a ZMODEM sender over a client resumes through a re-request aft
     CHECK(r.result() == Transfer::Result::Ok);
     CHECK(ended);
     CHECK(got == c.file);
-    // The rewind went past the window (a new call from 5,000); the receiver then asked for its own place again, past
-    // the new window (one more call). Each carried the crc.
+    // The rewind went past the window (a new call from the checkpoint below 5,000); the receiver then asked for its own
+    // place again, past the new window (one more call, from the last checkpoint the second call reached). Each call
+    // carried the crc state, the checkpoints and the farthest point, and matched them as it went.
     CHECK(c.calls == 3);
     CHECK_FALSE(c.forward);
     CHECK(c.cli->verified());  // checked end to end across the calls
+}
+
+TEST_CASE("fetch: a byte that differed only in the first call fails crc after a rewind and a seek back ahead") {
+    Line l;
+    Call c(60000);
+    c.flipAt = 20000;  // the caller's program got this byte changed from the first call only
+    c.flipCalls = 1;
+    c.start(0);
+    c.connect();
+    std::vector<uint8_t> got;
+    ZmodemSender         s(l.a, [&](uint32_t off, uint8_t* buf, size_t n) { return c.readAt(off, buf, n); }, c.l.size, "TEST.BIN");
+    s.setReady([&](uint32_t off, size_t n) { return c.readyAt(off, n); });
+    ZmodemReceiver r(
+        l.b, [](const std::string&, uint32_t) { return true; },
+        [&](const uint8_t* p, size_t n) { got.insert(got.end(), p, p + n); return true; }, [](bool) {});
+    uint32_t now = 0;
+    bool     a = true, b = true, forced = false;
+    for (int i = 0; i < 40000 && (a || b); i++, now += 10) {
+        if (a) a = s.step(now);
+        if (!forced && s.bytes() >= 30000) {
+            forced = true;
+            std::string z = zrpos(5000);
+            l.ba.insert(l.ba.end(), z.begin(), z.end());
+        }
+        if (b) b = r.step(now);
+    }
+    CHECK(forced);
+    CHECK(c.calls >= 2);
+    CHECK(std::string(c.cli->why()) == "crc");
+    CHECK_FALSE(c.cli->verified());
+    CHECK(r.result() != Transfer::Result::Ok);
 }
 
 TEST_CASE("fetch: a changed byte gives the caller's ZMODEM program a cancel, not ZEOF") {

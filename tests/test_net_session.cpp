@@ -1231,6 +1231,9 @@ TEST_CASE("A, V and L E lines share the per-session cap; past it NAK store") {
     RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeApp(keyOf(0xD3))));  // an application, past the cap
     CHECK(countPrefix(s.takeOut(), "NAK " + std::to_string(i) + " store") == 1);
     i++;
+    RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeVote(keyOf(0xD3), boardOf(x.key), 1, 1, true)));  // a vote
+    CHECK(countPrefix(s.takeOut(), "NAK " + std::to_string(i) + " store") == 1);
+    i++;
     RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeListing(x.key, 200, "LATE")));
     CHECK(countPrefix(s.takeOut(), "NAK " + std::to_string(i) + " store") == 1);
     CHECK_FALSE(s.failed());
