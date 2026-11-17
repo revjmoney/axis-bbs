@@ -23,6 +23,7 @@ struct FileImpl {
     std::string path;  // as the board named it, inside its FS ("/users.dat")
     std::string real;  // where it is (<data>/flash/users.dat)
     std::string base;  // the FS's board folder, for openNextFile
+    bool        writes = false;  // opened for writing: size() flushes first so what was written counts
     ~FileImpl() { shut(); }
     void shut() {
         if (f) std::fclose(f);
@@ -51,6 +52,7 @@ std::shared_ptr<FileImpl> openAt(const std::string& base, const std::string& pat
         return impl->d ? impl : nullptr;
     }
     impl->f = std::fopen(impl->real.c_str(), mode ? mode : "r");
+    impl->writes = !reading;
     return impl->f ? impl : nullptr;
 }
 }  // namespace
@@ -96,7 +98,7 @@ size_t File::position() const {
 }
 size_t File::size() const {
     if (!impl_ || !impl_->f) return 0;
-    std::fflush(impl_->f);  // what was written so far counts
+    if (impl_->writes) std::fflush(impl_->f);  // (never on a read handle: that would drop its buffer every call)
     struct stat st;
     return ::fstat(fileno(impl_->f), &st) == 0 ? (size_t)st.st_size : 0;
 }
