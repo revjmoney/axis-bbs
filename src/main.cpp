@@ -3669,14 +3669,15 @@ static bool netFilesOn(const NetHost& h) {
 
 static std::string netSysopName() { return boardCfg->sysopHandle.empty() ? std::string("Sysop") : boardCfg->sysopHandle; }
 
-static constexpr size_t   kNetShareQueue = 32;     // listings and removals waiting at most; more are dropped (logged)
+static constexpr size_t   kNetShareQueue = 32;     // listings waiting at most; more are dropped (logged)
+static constexpr size_t   kNetShareSpare = 8;      // places LISTALL leaves free for live changes; removals may use them past the cap
 static constexpr size_t   kNetShareChunk = 2048;   // a listing's crc is read in pieces this size (kFetchChunk)
 static constexpr uint32_t kNetSharePerTurn = 8;    // pieces per loop turn at most (16 KB), and only for kNetFilesTurnMs
 
 static void netShareAdd(NetShareItem it) {
     NetHost* h = netHost.get();
     if (!h || !netFilesOn(*h) || !netFilesShared(it.area)) return;
-    if (h->share.q.size() >= kNetShareQueue) {
+    if (h->share.q.size() >= kNetShareQueue + (it.gone ? kNetShareSpare : 0)) {  // a removal is kept before a listing
         netFilesLog("too many waiting, %s not %s", it.name.c_str(), it.gone ? "unlisted" : "listed");
         return;
     }
@@ -3729,12 +3730,12 @@ static void netShareSend(NetHost& h, const NetShareItem& it, uint32_t size, uint
                 id.c_str());
 }
 
-// @NET LISTALL: the next files of the area walked fill the queue (one list of the area per kNetShareQueue files); names this
-// board lists there already are skipped.
+// @NET LISTALL: the next files of the area walked fill the queue up to kNetShareQueue - kNetShareSpare (one list of the area
+// per 24 files or so), so removals and renames still find room; names this board lists there already are skipped.
 static void netListAllNext(NetHost& h) {
     NetShare& sh = h.share;
     std::vector<axis::bbs::FileEntry> v = callerFiles().list(sh.allArea);
-    while (sh.allIx < v.size() && sh.q.size() < kNetShareQueue) {
+    while (sh.allIx < v.size() && sh.q.size() < kNetShareQueue - kNetShareSpare) {
         const axis::bbs::FileEntry& e = v[sh.allIx++];
         uint32_t k = axis::net::crc32((const uint8_t*)e.name.data(), e.name.size());
         if (std::find(sh.allHave.begin(), sh.allHave.end(), k) != sh.allHave.end()) continue;
@@ -4374,7 +4375,7 @@ static void netFetchTestStep(NetHost& h) {
     NetFetchTest& t = netFetchTestRun;
     if (!t.on) return;
     NetFetchSlot* s = netFetchFor(t.gen);
-    uint8_t       buf[1024];
+    static uint8_t buf[1024];  // (off the loop task's stack)
     for (int i = 0; s && i < 4 && t.off < t.size && s->ph != FetchPh::Failed; i++) {
         size_t n = std::min<size_t>(sizeof buf, t.size - t.off);
         if (!netFetchReadyAt(t.gen, t.off, n) || !netFetchRead(t.gen, t.off, buf, n)) break;
