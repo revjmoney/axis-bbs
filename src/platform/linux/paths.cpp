@@ -172,11 +172,25 @@ bool axisDataSetup(const std::string& requested, const std::string& seed, std::s
         why = "the data folder cannot be under /sd or /littlefs (those are the board's names for its folders)";
         return false;
     }
+    struct stat st;
+    if (::stat(dir.c_str(), &st) == 0 && (st.st_mode & 077)) {  // a folder that was already there, open to others
+        if (::chmod(dir.c_str(), 0700) != 0) {
+            why = "cannot make " + dir + " private (mode 0700): " + std::strerror(errno);
+            return false;
+        }
+        std::printf("axis: data: %s was open to other users (mode %03o), now 0700\n", dir.c_str(), (unsigned)(st.st_mode & 0777));
+    }
     for (const char* sub : {"/sd", "/flash", "/prefs", "/log"})
         if (::mkdir((dir + sub).c_str(), 0700) != 0 && errno != EEXIST) {
             why = "cannot make " + dir + sub + ": " + std::strerror(errno);
             return false;
         }
+    // present only while a --seed copy runs: still there at the next start means that copy stopped partway
+    std::string seeding = dir + "/.seeding";
+    if (::access(seeding.c_str(), F_OK) == 0)
+        std::printf("axis: data: WARNING: an earlier --seed copy into %s/sd did not finish, so sd/ may be missing files "
+                    "(empty sd/ and start again with --seed to copy it afresh, or delete %s to keep it as it is)\n",
+                    dir.c_str(), seeding.c_str());
     if (!seed.empty()) {
         std::string from = absolute(seed);
         if (from.empty() || !isDir(from)) {
@@ -189,7 +203,13 @@ bool axisDataSetup(const std::string& requested, const std::string& seed, std::s
         }
         if (emptyDir(dir + "/sd")) {
             int files = 0;
-            if (!copyTree(from, dir + "/sd", files, why)) return false;
+            int mark = ::open(seeding.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+            if (mark >= 0) ::close(mark);
+            if (!copyTree(from, dir + "/sd", files, why)) {
+                why += " (the copy stopped partway: " + dir + "/sd is incomplete)";
+                return false;
+            }
+            ::unlink(seeding.c_str());
             std::printf("axis: data: copied %d files from %s into %s/sd (first run)\n", files, from.c_str(), dir.c_str());
         } else {
             std::printf("axis: data: %s/sd already has files, so --seed is not used\n", dir.c_str());

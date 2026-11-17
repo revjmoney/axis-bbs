@@ -51,11 +51,17 @@ std::string unescape(const std::string& s) {
     return out;
 }
 
-// reads a namespace file; false when there is none
-bool load(const std::string& file, std::map<std::string, std::string>& keys) {
-    keys.clear();
+// reads a namespace file into `keys`: Loaded, Missing (never written: no keys), or Failed (it could not be read, for
+// example out of file handles or no permission; `keys` is left as it was so nothing is saved over the real file)
+enum class Load { Loaded, Missing, Failed };
+Load load(const std::string& file, std::map<std::string, std::string>& keys) {
     FILE* f = std::fopen(file.c_str(), "r");
-    if (!f) return false;
+    if (!f) {
+        if (errno != ENOENT) return Load::Failed;
+        keys.clear();
+        return Load::Missing;
+    }
+    std::map<std::string, std::string> got;
     std::string line;
     for (int c;;) {
         c = std::fgetc(f);
@@ -64,12 +70,15 @@ bool load(const std::string& file, std::map<std::string, std::string>& keys) {
             continue;
         }
         size_t eq = line.find('=');
-        if (eq != std::string::npos) keys[unescape(line.substr(0, eq))] = unescape(line.substr(eq + 1));
+        if (eq != std::string::npos) got[unescape(line.substr(0, eq))] = unescape(line.substr(eq + 1));
         line.clear();
         if (c == EOF) break;
     }
+    bool bad = std::ferror(f) != 0;
     std::fclose(f);
-    return true;
+    if (bad) return Load::Failed;
+    keys.swap(got);
+    return Load::Loaded;
 }
 
 bool okName(const char* name) {  // one file in prefs/, never a path out of it
@@ -87,8 +96,13 @@ bool Preferences::begin(const char* name, bool readOnly, const char* partition) 
     std::string dir = axisDataDir();
     if (dir.empty() || !okName(name)) return false;
     file_ = dir + "/prefs/" + name + ".ini";
-    bool exists = load(file_, keys_);
-    if (readOnly && !exists) return false;  // NVS cannot open a namespace read-only before it was ever written
+    keys_.clear();
+    Load got = load(file_, keys_);
+    if (got == Load::Failed) {  // never open on an empty copy: a put would then save over the real settings
+        std::printf("axis: prefs: cannot read %s: %s\n", file_.c_str(), std::strerror(errno));
+        return false;
+    }
+    if (readOnly && got == Load::Missing) return false;  // NVS cannot open a namespace read-only before it was ever written
     open_ = true;
     readOnly_ = readOnly;
     return true;
@@ -127,13 +141,15 @@ bool Preferences::save() {
 
 bool Preferences::clear() {
     if (!open_ || readOnly_) return false;
+    std::map<std::string, std::string> now;
+    if (load(file_, now) == Load::Failed) return false;  // (the file stays as it is)
     keys_.clear();
     return save();
 }
 
 bool Preferences::remove(const char* key) {
     if (!open_ || readOnly_ || !key) return false;
-    load(file_, keys_);
+    if (load(file_, keys_) == Load::Failed) return false;  // re-read first; a file it cannot read is left alone
     if (!keys_.erase(key)) return false;
     return save();
 }
@@ -150,7 +166,7 @@ const std::string* Preferences::find(const char* key) const {
 
 size_t Preferences::put(const char* key, const std::string& v, size_t bytes) {
     if (!open_ || readOnly_ || !key || !*key) return 0;
-    load(file_, keys_);
+    if (load(file_, keys_) == Load::Failed) return 0;  // re-read first; a file it cannot read is left alone
     keys_[key] = v;
     return save() ? bytes : 0;
 }
