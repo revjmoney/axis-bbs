@@ -18,6 +18,10 @@ constexpr size_t kNetMaxFrame = 9 * 1024;  // longest encoded line, without the 
 constexpr size_t kNetMaxBlurb = 240;        // an application's blurb, before escaping
 constexpr size_t kNetMaxComment = 72;       // a vote's comment, before escaping
 constexpr size_t kNetListDesc = 120;        // a listing's description, before escaping
+// The links a Phase 3 board's card carries: net2 (User Net, peers send it UWANT) and net3 (Net Files listings). A card
+// field is 16 characters at most, so "internet,net2,net3" would leave the board with no card at all.
+constexpr const char kNetCardLinks[] = "net2,net3";
+static_assert(sizeof kNetCardLinks - 1 <= 16, "a card's links field is 16 characters at most");
 
 enum class NetKind : char { Post = 'P', Card = 'C', Notice = 'N', App = 'A', Vote = 'V', Listing = 'L', Fetch = 'Q' };
 

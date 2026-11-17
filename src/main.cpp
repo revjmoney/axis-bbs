@@ -2892,7 +2892,7 @@ static axis::net::NetCard netCardNow(const NetHost& h) {
     c.mac = netField(WiFi.macAddress().c_str(), 17);
     c.sysop = netField(boardCfg->netSysopName.empty() ? boardCfg->sysopHandle : boardCfg->netSysopName, 40);
     c.location = netField(boardCfg->netLocation, 40);
-    c.links = "net2,net3";  // net2: a Phase 2 board (User Net), peers send it UWANT; net3: listings (a card field is 16 characters at most: "internet,net2,net3" was refused, so no card was made)
+    c.links = axis::net::kNetCardLinks;
     return c;
 }
 
@@ -4406,10 +4406,7 @@ static int32_t netCallerBps(const axis::net::LinkInfo& k) {
 // This board's own listing for a caller of security level `level`: own while its area is still shared and open to that
 // level (Node::openTo's rule), else gone or level.
 static int netFilesOwn(const axis::net::NetListing& l, int level) {
-    if (!netFilesShared(l.area)) return kNetFetchGone;
-    for (const axis::bbs::FileArea& a : boardCfg->areas)
-        if (a.id == l.area) return a.minSecurity <= level ? kNetFetchOwn : kNetFetchLevel;
-    return kNetFetchGone;
+    return axis::bbs::NetFilesView::ownAnswer(boardCfg->areas, netFilesShared(l.area), l.area, level);
 }
 // NetFilesView::begin on this board, for a caller here (owner: their Node) or a follower's (owner: its file server).
 static int netFilesBegin(const void* owner, const std::string& id, const std::string& handle, int level, std::string& area,

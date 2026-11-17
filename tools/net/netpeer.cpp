@@ -793,7 +793,7 @@ private:
         c.mac = "";
         c.sysop = "PC peer";
         c.location = "PC";
-        c.links = userOn_ ? "net2,net3" : "internet";  // net2: a Phase 2 board, peers send it UWANT; net3: listings
+        c.links = userOn_ ? kNetCardLinks : "internet";  // net2: a Phase 2 board, peers send it UWANT; net3: listings
         const NetCard* held = core_.state().card(c.board);
         if (held && held->name == c.name && held->host == c.host && held->port == c.port && held->sysop == c.sysop &&
             held->location == c.location && held->links == c.links && held->mac == c.mac) {

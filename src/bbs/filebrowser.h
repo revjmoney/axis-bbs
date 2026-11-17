@@ -39,6 +39,15 @@ struct NetFilesView {
     std::function<int(uint32_t& size, const char*& word)> poll;  // 0 connecting, 1 ready, -1 failed (word: why)
     std::function<void()>                                 release;  // the caller gives the fetch up
     uint32_t                                              radioLimitKb = 64;
+    // begin's answer for this board's own listing for a caller of security level `level` (Rev: area levels stay
+    // strict): kOwn while its area is shared and open to that level (Node::openTo's rule), kLevel when the area is above
+    // the level, kGone when the area is no longer shared or no longer here.
+    static int ownAnswer(const std::vector<FileArea>& areas, bool shared, const std::string& area, int level) {
+        if (!shared) return kGone;
+        for (const FileArea& a : areas)
+            if (a.id == area) return a.minSecurity <= level ? kOwn : kLevel;
+        return kGone;
+    }
 };
 #endif
 
