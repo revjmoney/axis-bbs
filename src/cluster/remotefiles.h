@@ -95,7 +95,7 @@ private:
 // waits; "0<word>" (or a lost main) ends it: ready true, reads fail, word() says why. The host ends the fetch ("e").
 class RemoteFetchFile : public bbs::RandomFile {
 public:
-    static constexpr uint32_t kWaitMs = 50;
+    static constexpr uint32_t kWaitMs = 200;
     RemoteFetchFile(RemoteFileLibrary& lib, uint32_t size, uint32_t (*clock)() = nullptr) : lib_(lib), size_(size), clock_(clock) {}
     uint32_t           size() const override { return size_; }
     bool               readAt(uint32_t off, uint8_t* buf, size_t n) override;
