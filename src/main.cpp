@@ -3927,7 +3927,7 @@ static axis::net::ServeFile netServeCheck(NetHost& h, const axis::net::NetFetch&
     else if (core.members().status(f.board) != axis::net::NetMembers::Status::Member) r.no = "member";
     else if (!netFilesOn(h) || !core.findListing(f.listing, l) || l.board != core.board() || l.gone || !netFilesShared(l.area) ||
              !(v.file = callerFiles().open(l.area, l.name)))
-        r.no = "gone";
+        r.no = core.listingIndexReady() ? "gone" : "busy";  // (the index is built again after a drop: try later)
     else if (v.file->size() != l.size) {
         v.file.reset();
         r.no = "size";
@@ -4297,7 +4297,7 @@ static int netFetchBegin(const void* owner, const std::string& id, const std::st
     if (s.ph != FetchPh::Idle) return kNetFetchBusy;
     if (h.core->blockedHere(id.substr(0, 16))) return kNetFetchUnreachable;  // never dialed (its listings are not shown)
     axis::net::NetListing l;
-    if (!h.core->findListing(id, l)) return kNetFetchGone;
+    if (!h.core->findListing(id, l)) return h.core->listingIndexReady() ? kNetFetchGone : kNetFetchBusy;
     if (l.board == h.core->board()) return kNetFetchOwn;
     if (!netFetchReach(h, l)) return kNetFetchUnreachable;
     if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor + axis::net::kFetchWindow + kNetFetchMarksBytes) return kNetFetchBusy;

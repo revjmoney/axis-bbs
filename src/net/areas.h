@@ -236,7 +236,8 @@ public:
     // comes from no signing key. A head that is not clean (a reset during a change), a tail that does not match the
     // area (a sysop's move into it, or a replaced file), or a failed read or write sends it to be built again from
     // the area, kNetIndexStep listings a call to listingIndexStep; until then listings are refused with the
-    // transient "store" NAK. After a drop from the area it is built again at once (the offsets moved).
+    // transient "store" NAK and findListing finds nothing. After a drop from the area it is built again the same way (the
+    // offsets moved).
     void setListingIndex(std::function<bool(uint32_t off, void* p, size_t n)> read,
                          std::function<bool(uint32_t off, const void* p, size_t n)> write,
                          std::function<void(void* p, size_t n)> random) {
@@ -450,8 +451,7 @@ private:
     // The first live record of that key (key 0: of that board key and seq) that reads back and passes ok, into out.
     bool idxLive(uint32_t key, uint32_t board, uint32_t seq, FnRef<bool(const NetListing&)> ok, NetListing& out);
     bool idxTailOk();
-    void idxStart();      // a rebuild from the start, with a new key
-    void idxRebuildNow();
+    void idxStart();      // a rebuild from the start, with a new key, kNetIndexStep listings a listingIndexStep
     Res resolve(const std::string& entry, const std::string& peer, std::string& line, bool peerUserNet, bool peerNet3);
     Res readRecord(bool held, uint32_t off, std::string& line);
     // Who is a member and who is denied, before a change, to note what the change did (empty without a

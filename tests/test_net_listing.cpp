@@ -127,6 +127,7 @@ TEST_CASE("listings: listing 5, re-listing 9 and removal 7 of one name end with 
             for (int i : order) {
                 Took t = p.take(recs[i]);
                 CHECK((t == Took::Stored || t == Took::Duplicate));
+                indexReady(p.r.core);  // after a replace or removal the index is built again a piece a step
             }
             std::vector<uint32_t> live = p.r.liveSeqs("SAME.ZIP");
             std::vector<std::string> shown = p.r.page();
@@ -176,8 +177,10 @@ TEST_CASE("listings: a re-listing replaces the lower one in either order; list, 
         for (int i = 0; i < 2; i++) {
             CHECK_FALSE(n.core.originateListing(l).empty());
             CHECK(n.liveSeqs("OWN.TXT").size() == 1);
+            indexReady(n.core);  // (the host's share queue waits for this too)
             CHECK_FALSE(n.core.originateListing(gone).empty());
             CHECK(n.liveSeqs("OWN.TXT").empty());
+            indexReady(n.core);
         }
         CHECK(countName(n, "OWN.TXT") == 1);
         CHECK(n.records().back().gone);
@@ -196,6 +199,7 @@ TEST_CASE("listings: the per-board cap drops that board's oldest; the total cap 
     {  // per board 3: a loses its two lowest seqs, b and this board keep all
         r.core.setListingCaps(1000, 3);
         r.core.trim(kNow);
+        indexReady(r.core);  // a trim that dropped some: built again in pieces before the next trim
         std::vector<uint32_t> as, bs;
         size_t own = 0;
         for (const auto& l : r.records()) {
@@ -213,6 +217,7 @@ TEST_CASE("listings: the per-board cap drops that board's oldest; the total cap 
         r.now += kDay;  // the trim runs once a day
         r.core.setListingCaps(6, 200);
         r.core.trim(r.now);
+        indexReady(r.core);
         std::vector<uint32_t> as, bs;
         size_t own = 0;
         for (const auto& l : r.records()) {
@@ -363,6 +368,8 @@ TEST_CASE("listing index: 64 takes read no whole area and no message by number")
     CHECK(r.store.readsAt == 1);
     CHECK(r.store.reads == 0);
     NetListing l;
+    CHECK_FALSE(r.core.findListing(h.board + "-70", l));  // the replace's drop: the index is built again first
+    indexReady(r.core);
     r.store.reset();
     CHECK(r.core.findListing(h.board + "-70", l));
     CHECK(r.store.scans + r.store.reads == 0);
@@ -426,6 +433,7 @@ TEST_CASE("listing index: a forced key collision still gives the right answer; f
     std::memcpy(&b[rec(1, 0)], &b[rec(0, 0)], 4);  // N2's record now looks like N1's name
     // A re-listing of N1 reads both back and drops only N1.
     CHECK(p.take(makeListing(p.h.key, 10, "N1")) == Took::Stored);
+    indexReady(p.r.core);
     CHECK(p.r.liveSeqs("N1") == std::vector<uint32_t>{10});
     CHECK(p.r.liveSeqs("N2") == std::vector<uint32_t>{2});
     // After that rewrite the index was built again with a new key. Force five onto one key: refused, transient.
@@ -468,6 +476,38 @@ TEST_CASE("listing index: an unclean head is built again in pieces, listings ref
     CHECK(p.take(makeListing(p.h.key, 41, "U41")) == Took::Stored);
     CHECK(p.take(makeListing(p.h.key, 42, "U1")) == Took::Stored);  // the replace still finds U1
     CHECK(p.r.liveSeqs("U1") == std::vector<uint32_t>{42});
+}
+
+TEST_CASE("listing index: after a replace it is built again in pieces from the tick, takes refused store until it is ready") {
+    RevKeys rk;
+    Pair p(0xC8, 0xC9);
+    for (uint32_t s = 1; s <= 40; s++) REQUIRE(p.take(makeListing(p.h.key, s, "V" + std::to_string(s))) == Took::Stored);
+    std::string key = p.r.idx.key();
+    REQUIRE(p.take(makeListing(p.h.key, 41, "V1")) == Took::Stored);  // replaces V1 (seq 1): the area is rewritten
+    CHECK_FALSE(p.r.core.listingIndexReady());
+    CHECK(p.r.idx.word(1) == 0);  // the head is unclean until the rebuild is done
+    NetListing l;
+    CHECK_FALSE(p.r.core.findListing(p.h.board + "-41", l));
+    const char* nak = nullptr;
+    CHECK(p.take(makeListing(p.h.key, 42, "V42"), &nak) == Took::Rejected);
+    CHECK(word(nak) == kNakStore);
+    CHECK(p.r.records().size() == 40);  // nothing stored meanwhile
+    // 40 records, kNetIndexStep (32) a call: two calls, the first leaving more to do.
+    CHECK(p.r.core.listingIndexStep());
+    CHECK_FALSE(p.r.core.listingIndexReady());
+    CHECK(p.take(makeListing(p.h.key, 42, "V42"), &nak) == Took::Rejected);
+    CHECK(word(nak) == kNakStore);
+    CHECK_FALSE(p.r.core.listingIndexStep());
+    REQUIRE(p.r.core.listingIndexReady());
+    CHECK(p.r.idx.key() != key);  // a new key
+    CHECK(p.r.idx.word(1) == 1);
+    CHECK(p.r.idx.word(2) == 40);
+    CHECK(p.r.core.findListing(p.h.board + "-41", l));
+    CHECK(l.name == "V1");
+    CHECK_FALSE(p.r.core.findListing(p.h.board + "-1", l));
+    CHECK(p.r.liveSeqs("V1") == std::vector<uint32_t>{41});
+    CHECK(p.take(makeListing(p.h.key, 42, "V42")) == Took::Stored);  // and the next is taken
+    CHECK(p.r.core.findListing(p.h.board + "-42", l));
 }
 
 TEST_CASE("listing index: a deleted index, a message behind its back or a lost area rebuild it with the same answers") {
@@ -585,6 +625,7 @@ TEST_CASE("listing index: a trim that drops nothing leaves the index as it was; 
     CHECK(p.take(makeListing(p.h.key, 4, "T4")) == Took::Stored);
     CHECK(p.take(makeListing(p.h.key, 5, "T2", true)) == Took::Stored);
     NetListing l;
+    indexReady(p.r.core);
     CHECK(p.r.core.findListing(p.h.board + "-4", l));
     CHECK(l.name == "T4");
     CHECK(p.r.core.findListing(p.h.board + "-3", l));
@@ -602,17 +643,22 @@ TEST_CASE("listings: the drop budgets, 8 a session and 64 a day; this board's ow
             Took t = p.take(makeListing(p.h.key, s, "R.ZIP"), &nak);
             stored += t == Took::Stored;
             store += word(nak) == kNakStore;
+            indexReady(p.r.core);  // each replace: the index built again before the next
         }
         CHECK(stored == 9);  // the first replaces nothing, then 8 replacements
         CHECK(store == 11);
         CHECK(p.r.liveSeqs("R.ZIP") == std::vector<uint32_t>{9});
         p.r.core.listingSessionStart();  // the next session takes 8 more
         stored = 0;
-        for (uint32_t s = 10; s <= 20; s++) stored += p.take(makeListing(p.h.key, s, "R.ZIP")) == Took::Stored;
+        for (uint32_t s = 10; s <= 20; s++) {
+            stored += p.take(makeListing(p.h.key, s, "R.ZIP")) == Took::Stored;
+            indexReady(p.r.core);
+        }
         CHECK(stored == 8);
         CHECK(countName(p.r, "R.ZIP") == 1);
         // this board's own removal still goes through, budget or not
         CHECK_FALSE(p.r.core.originateListing(makeListing(p.r.key, 1, "OWN")).empty());
+        indexReady(p.r.core);
         NetListing g = makeListing(p.r.key, 1, "OWN", true);
         CHECK_FALSE(p.r.core.originateListing(g).empty());
         CHECK(p.r.liveSeqs("OWN").empty());
@@ -623,15 +669,22 @@ TEST_CASE("listings: the drop budgets, 8 a session and 64 a day; this board's ow
         CHECK(p.r.core.takeListing(makeListing(p.h.key, seq++, "D.ZIP"), p.h.board, true) == Took::Stored);
         for (int session = 0; session < 9; session++) {
             p.r.core.listingSessionStart();
-            for (int i = 0; i < 8; i++) stored += p.r.core.takeListing(makeListing(p.h.key, seq++, "D.ZIP"), p.h.board, true) == Took::Stored;
+            for (int i = 0; i < 8; i++) {
+                stored += p.r.core.takeListing(makeListing(p.h.key, seq++, "D.ZIP"), p.h.board, true) == Took::Stored;
+                indexReady(p.r.core);
+            }
         }
         CHECK(stored == 64);
         p.r.now += kDay;
         p.r.core.listingSessionStart();
         stored = 0;
-        for (int i = 0; i < 10; i++) stored += p.r.core.takeListing(makeListing(p.h.key, seq++, "D.ZIP", false, p.r.now), p.h.board, true) == Took::Stored;
+        for (int i = 0; i < 10; i++) {
+            stored += p.r.core.takeListing(makeListing(p.h.key, seq++, "D.ZIP", false, p.r.now), p.h.board, true) == Took::Stored;
+            indexReady(p.r.core);
+        }
         CHECK(stored == 8);
         CHECK_FALSE(p.r.core.originateListing(makeListing(p.r.key, 1, "OWN2")).empty());
+        indexReady(p.r.core);
         CHECK_FALSE(p.r.core.originateListing(makeListing(p.r.key, 1, "OWN2", true)).empty());  // both budgets spent
         CHECK(p.r.liveSeqs("OWN2").empty());
     }
@@ -647,13 +700,19 @@ TEST_CASE("listings: without a clock the daily drop budget comes back with the t
     CHECK(r.core.takeListing(makeListing(h.key, seq++, "N.ZIP", false, 1000), h.board, true) == Took::Stored);
     for (int session = 0; session < 9; session++) {
         r.core.listingSessionStart();
-        for (int i = 0; i < 8; i++) stored += r.core.takeListing(makeListing(h.key, seq++, "N.ZIP", false, 1000), h.board, true) == Took::Stored;
+        for (int i = 0; i < 8; i++) {
+            stored += r.core.takeListing(makeListing(h.key, seq++, "N.ZIP", false, 1000), h.board, true) == Took::Stored;
+            indexReady(r.core);
+        }
     }
     CHECK(stored == 64);
     r.core.trim(0);
     r.core.listingSessionStart();
     stored = 0;
-    for (int i = 0; i < 10; i++) stored += r.core.takeListing(makeListing(h.key, seq++, "N.ZIP", false, 1000), h.board, true) == Took::Stored;
+    for (int i = 0; i < 10; i++) {
+        stored += r.core.takeListing(makeListing(h.key, seq++, "N.ZIP", false, 1000), h.board, true) == Took::Stored;
+        indexReady(r.core);
+    }
     CHECK(stored == 8);
 }
 
@@ -662,7 +721,10 @@ TEST_CASE("listings: one refused past the drop budget is not charged to its home
     Pair p(0xB1, 0xB2);
     REQUIRE(p.r.core.takeNotice(makeNotice(rev0(), 0, "limits", "net", 104, "posts=12,bytes=100000"), ""));
     p.r.core.listingSessionStart();
-    for (uint32_t s = 1; s <= 9; s++) REQUIRE(p.take(makeListing(p.h.key, s, "I.ZIP")) == Took::Stored);  // 9 of 12
+    for (uint32_t s = 1; s <= 9; s++) {
+        REQUIRE(p.take(makeListing(p.h.key, s, "I.ZIP")) == Took::Stored);  // 9 of 12
+        indexReady(p.r.core);
+    }
     const char* nak = nullptr;
     for (uint32_t s = 10; s <= 30; s++) CHECK(p.take(makeListing(p.h.key, s, "I.ZIP"), &nak) == Took::Rejected);
     CHECK(word(nak) == kNakStore);
@@ -682,6 +744,10 @@ TEST_CASE("listings: a removal far below the seen window on an E line is still s
     CHECK(p.take(makeListing(p.h.key, 5, "OLD.ZIP", true)) == Took::Stored);
     CHECK(p.r.liveSeqs("OLD.ZIP").empty());
     CHECK(countName(p.r, "OLD.ZIP") == 1);
+    const char* nak = nullptr;
+    CHECK(p.take(makeListing(p.h.key, 5, "OLD.ZIP", true), &nak) == Took::Rejected);  // the index is still being built
+    CHECK(word(nak) == kNakStore);
+    indexReady(p.r.core);
     CHECK(p.take(makeListing(p.h.key, 5, "OLD.ZIP", true)) == Took::Duplicate);  // held now
 }
 
@@ -907,6 +973,7 @@ struct SharingLib : axis::bbs::FileLibrary {
     void drain(NetCore& core) {
         bool goneSent = false;
         for (const Item& it : q) {
+            indexReady(core);  // as the host's share queue, which waits for the index before each one
             if (it.gone && !(goneSent = core.listedHere("files", it.name))) continue;
             if (it.renamed && !goneSent) continue;
             if (!it.gone && !files.count(it.name)) continue;

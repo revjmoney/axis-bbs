@@ -1084,7 +1084,10 @@ struct HeldPull {
         REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Stored);
         for (int k = 0; k < 8; k++) {
             r3.core.listingSessionStart();
-            for (int i = 0; i < 8; i++) REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Stored);
+            for (int i = 0; i < 8; i++) {
+                REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Stored);
+                indexReady(r3.core);  // each replace: the index built again before the next
+            }
         }
         r3.core.listingSessionStart();
         REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Rejected);
@@ -1251,7 +1254,10 @@ TEST_CASE("on E lines the 9th replacing listing of a session is NAKed store, tra
     s.tick(0, true);
     s.takeOut();
     RawDialer::say(s, "SEQ 0");
-    for (uint32_t i = 0; i < 10; i++) RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeListing(r.key, i + 1, "SAME.ZIP")));
+    for (uint32_t i = 0; i < 10; i++) {
+        RawDialer::say(s, "E " + std::to_string(i) + " " + encode(makeListing(r.key, i + 1, "SAME.ZIP")));
+        indexReady(b.core);  // the host's tick builds the index again between lines
+    }
     std::string out = s.takeOut();
     CHECK(countPrefix(out, "ACK ") == 9);  // the first, then 8 that replace
     CHECK(countPrefix(out, "NAK 9 store") == 1);

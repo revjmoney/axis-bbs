@@ -415,13 +415,6 @@ void NetCore::idxStart() {
     idx_ = idxHead(false) ? Idx::Rebuild : Idx::Unknown;
 }
 
-// After a rewrite of the area every offset moved: the index is built again now, in one go.
-void NetCore::idxRebuildNow() {
-    idxStart();
-    while (idx_ == Idx::Rebuild && listingIndexStep()) {
-    }
-}
-
 bool NetCore::listingIndexStep() {
     if (!idxRead_ || !idxWrite_) return false;
     if (idx_ == Idx::Unknown) {
@@ -572,11 +565,12 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
             listingDropsToday_++;
         }
         // It replaces the records of its name below it: one rewrite of the area, then the index built again (every
-        // offset after the first one dropped moved). A count that is not what was asked leaves the index unclean.
+        // offset after the first one dropped moved), kNetIndexStep listings a call from the host's tick; listings are
+        // refused "store" until it is done. A count that is not what was asked leaves the index unclean.
         if (store_.drop(kNetFilesArea, [&](const Message& x) {
                 return std::find(lower.begin(), lower.end(), (uint32_t)x.num) != lower.end();
             }) == (int)lower.size())
-            idxRebuildNow();
+            idxStart();
         else
             idx_ = Idx::Unknown;
     } else {
@@ -773,7 +767,7 @@ void NetCore::trimListings(uint32_t nowDay, bool clock) {
         return go;
     });
     if (!dropped && gone.empty()) idxHead(true);           // nothing went after all: the index stands
-    else if (dropped == (int)gone.size()) idxRebuildNow();  // every offset after the first drop moved
+    else if (dropped == (int)gone.size()) idxStart();  // every offset after the first drop moved: built again in pieces
     else idx_ = Idx::Unknown;                          // the head stays unclean: the next look rebuilds
 }
 
