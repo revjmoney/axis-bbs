@@ -92,6 +92,8 @@ if [ -n "$modem" ]; then
         rm -f "$tmp"
         echo "axis.conf: modem= set to $modem"
     else
+        # a hand-edited axis.conf may lack its last newline: the new key must not join the last line
+        if [ -s "$conf" ] && [ -n "$(tail -c1 "$conf")" ]; then echo >> "$conf"; fi
         echo "modem=$modem" >> "$conf"
         echo "axis.conf: added modem=$modem"
     fi
