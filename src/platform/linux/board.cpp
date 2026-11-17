@@ -24,7 +24,9 @@ bool boardSetHeadless(bool on) {
     return ok;
 }
 
-bool boardIsHeadless() { return true; }  // until the window (task 6) gives it a panel
+// Terminal and headless start modes alike: the terminal shows the board's serial console (its WFC command), not a
+// panel. Only the window start mode (task 6) will give it one.
+bool boardIsHeadless() { return true; }
 bool boardHasPanel() { return !boardIsHeadless(); }
 
 const char* boardInit(uint8_t rotation, uint32_t spiHz) {

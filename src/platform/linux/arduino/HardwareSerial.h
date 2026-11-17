@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The board's USB serial console on Linux: stdout for output, stdin for input (never blocks; end of input is
-// no input). How the terminal is set up (raw keys, the WFC in the terminal) is the start mode's job.
+// The board's USB serial console on Linux: it writes axis::host::serialOut and reads axis::host::serialIn (host.h),
+// never blocking; end of input is no input. The start mode (startmode.h) picks them: the terminal in terminal mode,
+// stdout and no input headless.
 #pragma once
 #include "Print.h"
 
@@ -21,8 +22,12 @@ public:
     int    availableForWrite() override { return 4096; }
     explicit operator bool() const { return true; }
 
+    // The host's own keys, read before anything typed after them (terminal mode types "WFC\r" at start). False when
+    // there is no room for them.
+    bool inject(const char* keys);
+
 private:
-    void    fill();          // whatever stdin has now, without waiting
+    void    fill();          // whatever the input has now, without waiting
     uint8_t buf_[256] = {};
     int     head_ = 0, tail_ = 0;
     bool    eof_ = false;

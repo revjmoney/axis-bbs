@@ -3,6 +3,7 @@
 // The Linux network layer's own calls (the Arduino stand-ins themselves are in arduino/WiFi*.h, bodies in
 // hostnet.cpp).
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 class NetGate;
@@ -20,6 +21,14 @@ void hostnetPoll();
 // like a TCP caller, with remoteIP() == fakeIp (network byte order, as IPAddress's uint32_t), and it does not pass
 // the accept gate (a radio caller is never refused or counted there). The board's LoginGuard still sees fakeIp.
 void hostnetInjectClient(int fd, uint32_t fakeIp);
+
+// The program is stopping (startmode.h): from now on no new caller is taken, radio calls not yet answered are
+// dropped, and every caller's socket is shut both ways. main.cpp sees each one gone on its next turn and hangs it up
+// through its own path, which lets go of the socket.
+void hostnetHangUpCallers();
+
+// Callers' sockets still open (main.cpp has not let go of them yet).
+size_t hostnetCallersOpen();
 
 // The accept gate every TCP caller passes (for logs and the tests' view of it).
 NetGate& hostGate();

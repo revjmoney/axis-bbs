@@ -309,6 +309,7 @@ if(UNIX AND NOT APPLE)
         src/platform/linux/hostconf.cpp
         src/platform/linux/hostnet.cpp
         src/platform/linux/modemline.cpp
+        src/platform/linux/startmode.cpp
         src/platform/linux/netgate.cpp
         src/platform/cyd/config_store.cpp  # the board's own: LittleFS is the data folder's flash/ (fs.cpp)
         src/platform/cyd/sdfiles.cpp       # the board's own: its /sd/files paths go through fs_remap.cpp
@@ -321,7 +322,7 @@ if(UNIX AND NOT APPLE)
     set_source_files_properties(src/main.cpp PROPERTIES COMPILE_OPTIONS "-w")
     target_include_directories(axis BEFORE PRIVATE src/platform/linux/arduino)
     target_include_directories(axis PRIVATE src/platform/cyd third_party/monocypher)
-    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=0 LGFX_USE_V1=)
+    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=0 LGFX_USE_V1= AXIS_WINDOW=$<BOOL:${AXIS_WINDOW}>)
     target_link_libraries(axis PRIVATE axiscore_solo lgfx_host)
     target_link_options(axis PRIVATE -Wl,--gc-sections)
     # The board's paths (/sd, /littlefs) become the data folder's at link time: every call below, from main.cpp,

@@ -88,6 +88,7 @@ struct ModemLine {
 ModemLine         M;
 std::thread::id   mainThread;
 bool              busy = false;
+bool              stopping = false;  // the program is stopping: no call is answered, the one up is hung up
 
 void say(const std::string& s) { std::printf("axis: modem: %s\n", s.c_str()); }
 
@@ -441,9 +442,19 @@ void resultLines(uint32_t now, const std::string& data) {
             }
         }
         if (text.compare(0, 4, "RING") == 0) {
+            if (stopping) {
+                say("RING, not answered (axis is stopping)");
+                continue;
+            }
             say("RING, answering");
             M.toTty += "ATA\r";
         } else if (text.compare(0, 7, "CONNECT") == 0) {
+            if (stopping) {  // answered just before the stop: hang it straight up
+                say(printable(text) + " while axis is stopping, hanging up");
+                M.lines.clear();
+                enter(St::Drain, now);
+                return;
+            }
             if (M.st == St::Probe) say("station " + (M.station.empty() ? std::string("unknown") : printable(M.station)));
             std::string rest = M.lines;
             M.lines.clear();
@@ -606,6 +617,29 @@ void modemLineStart(const std::string& path) {
     enter(St::Closed, 0);
     axis::host::delayHook = delayHook;
     modemLinePoll(millis());
+}
+
+bool modemLineBusy() {
+    return M.st == St::Call || M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2 || M.st == St::Ath;
+}
+
+void modemLineHangUp() {
+    stopping = true;
+    uint32_t now = millis();
+    if (M.st == St::Call) {
+        say("axis is stopping, hanging up the radio caller " + counts());
+        endCall();
+    }
+    if (M.st == St::Call || M.st == St::Drain) {
+        M.toTty.clear();     // AXIS's last screen is dropped: the guard and +++ start as soon as the tty is quiet
+        enter(St::Drain, now);
+    }
+}
+
+void modemLineFinish() {
+    if (M.fd >= 0 && !M.toTty.empty()) ttyFlush(millis());  // an ATH still queued goes out before the exit
+    if (M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2)
+        say("the hang-up did not finish before the exit: the modem may still be online");
 }
 
 void modemLinePoll(uint32_t nowMs) {

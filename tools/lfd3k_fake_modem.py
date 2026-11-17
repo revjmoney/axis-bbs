@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Rev. J. Money
 """A pretend LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM on a pty, for trying axis --modem without a radio.
 
-usage: lfd3k_fake_modem.py LINK [one]      (then: axis --modem LINK ...)
+usage: lfd3k_fake_modem.py LINK [one|stop]      (then: axis --modem LINK ...)
 
 LINK becomes a symlink to the pty's slave side, so axis can be pointed at it before it exists and finds the new one
 after the pretend modem is "unplugged". It plays three calls, printing what axis sends:
@@ -14,6 +14,8 @@ after the pretend modem is "unplugged". It plays three calls, printing what axis
   3. the same, then the pty is closed mid-call (the modem unplugged) for 12 s and opened again (a new pty), where
      it answers AT&V and plays one more RING/CONNECT/NO CARRIER.
 With "one" it plays a single 25 s call instead, for a set-up board (AXIS logs it as a RADIO SF9 caller).
+With "stop" it plays a single call and keeps it up, printing what axis sends, for stopping axis mid-call: axis
+must send +++ and then ATH (answered OK) before it exits.
 Only the Python standard library; Linux only.
 """
 import os
@@ -104,6 +106,23 @@ def main():
         m.send(b'\r\nNO CARRIER\r\n')
         log('sent NO CARRIER')
         m.read(2)
+        return
+    if sys.argv[2:] == ['stop']:  # one call kept up while axis is stopped (SIGTERM): expects +++, then ATH
+        m.ring()
+        log('the call is up: stop axis now')
+        got = b''
+        end = time.time() + 30
+        while time.time() < end and b'ATH\r' not in got:
+            chunk = m.read(0.1)
+            if chunk:
+                got += chunk
+                log(f'axis sent {show(chunk)!r}')
+        if b'ATH\r' in got:
+            m.send(b'\r\nOK\r\n')
+            log('answered ATH with OK')
+        else:
+            log('no ATH from axis')
+        m.read(1)
         return
 
     log('--- call 1: the caller hangs up (NO CARRIER)')

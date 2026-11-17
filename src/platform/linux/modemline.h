@@ -21,3 +21,14 @@ void modemLineStart(const std::string& path);
 
 // Between loop() turns (and from delay()): never waits.
 void modemLinePoll(uint32_t nowMs);
+
+// The program is stopping (main thread, between loop() turns). No call is answered from now on; a call that is up is
+// hung up at once (its socket closed, AXIS's unsent bytes dropped), then the usual guard, +++, guard, ATH runs as
+// modemLinePoll() keeps being called. With modem_guard_ms at its 1200 default that is about 2.5 s.
+void modemLineHangUp();
+
+// A call is up or being hung up (the shutdown keeps polling until this is false, or its time runs out).
+bool modemLineBusy();
+
+// Just before the exit: an ATH still queued for the tty is written, and an unfinished hang-up is logged.
+void modemLineFinish();

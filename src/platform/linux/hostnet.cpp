@@ -25,6 +25,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include "platform/linux/hostconf.h"
@@ -37,6 +38,7 @@ constexpr int      kAcceptBurst = 256;    // connections taken off one listener 
 constexpr int      kMaxLookups = 8;       // DNS lookups running at once
 
 uint16_t lanPort = 2323, publicPort = 0;
+bool     closing = false;  // the program is stopping: no new callers, and every open one is hung up
 
 void gateLog(const std::string& line) { std::printf("axis: %s\n", line.c_str()); }
 
@@ -190,19 +192,34 @@ int listenOn(uint16_t port) {
 }  // namespace
 
 // ------------------------------------------------------------------ the socket all copies of a WiFiClient share
+struct HostSocket;
+static std::unordered_set<HostSocket*>& callerSockets() {  // every caller's socket that is open (leaked, as hostGate)
+    static auto* s = new std::unordered_set<HostSocket*>();
+    return *s;
+}
+
 struct HostSocket {
     int      fd;
     uint32_t ip;     // the peer, network byte order (a radio call's made-up address)
     uint16_t port;   // the peer's (0 for a radio call)
     bool     gated;  // let in by the accept gate, which counts it until it closes
+    bool     caller = false;  // a caller (accepted, or a radio call): hostnetHangUpCallers() hangs it up
     HostSocket(int f, uint32_t i, uint16_t p, bool g) : fd(f), ip(i), port(p), gated(g) {}
     ~HostSocket() {
+        if (caller) callerSockets().erase(this);
         if (fd >= 0) ::close(fd);
         if (gated) hostGate().closed(ip);
     }
     HostSocket(const HostSocket&) = delete;
     HostSocket& operator=(const HostSocket&) = delete;
 };
+
+static std::shared_ptr<HostSocket> newCaller(int fd, uint32_t ip, uint16_t port, bool gated) {
+    auto s = std::make_shared<HostSocket>(fd, ip, port, gated);
+    s->caller = true;
+    callerSockets().insert(s.get());
+    return s;
+}
 
 NetGate& hostGate() {
     static auto* g = new NetGate();  // leaked: sockets closed during exit still find it
@@ -408,6 +425,10 @@ void WiFiServer::drain(int i) {
             }
             return;
         }
+        if (closing) {  // stopping: nobody new
+            ::close(c);
+            continue;
+        }
         uint32_t ip = sa.sin_family == AF_INET ? sa.sin_addr.s_addr : 0;
         bool     lan = NetGate::isLan(ip);
         if (lanOnly_[i] && !lan) {
@@ -424,7 +445,7 @@ void WiFiServer::drain(int i) {
             continue;
         }
         tune(c);
-        waiting_.push_back(WiFiClient(std::make_shared<HostSocket>(c, ip, ntohs(sa.sin_port), true)));
+        waiting_.push_back(WiFiClient(newCaller(c, ip, ntohs(sa.sin_port), true)));
     }
 }
 
@@ -451,10 +472,25 @@ WiFiClient WiFiServer::available() {
 // ------------------------------------------------------------------ the host layer's own calls
 void hostnetInjectClient(int fd, uint32_t fakeIp) {
     if (fd < 0) return;
+    if (closing) {
+        ::close(fd);
+        return;
+    }
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
     fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
-    injected().push_back(WiFiClient(std::make_shared<HostSocket>(fd, fakeIp, 0, false)));
+    injected().push_back(WiFiClient(newCaller(fd, fakeIp, 0, false)));
 }
+
+void hostnetHangUpCallers() {
+    closing = true;
+    injected().clear();  // radio calls the telnet server has not taken yet
+    // Both ways shut, the descriptor kept: main.cpp reads the caller's end on its next turn and hangs the session up
+    // through its own path (the log line, the last caller, the radio call list); its WiFiClient closes the socket.
+    for (HostSocket* s : callerSockets())
+        if (s->fd >= 0) ::shutdown(s->fd, SHUT_RDWR);
+}
+
+size_t hostnetCallersOpen() { return callerSockets().size(); }
 
 void hostnetStart() {
     lanPort = (uint16_t)hostConfInt("lan_port", 2323, 1, 65535);

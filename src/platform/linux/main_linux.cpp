@@ -1,34 +1,82 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // The axis program's process: the board's setup() once, then its loop() for ever, as the ESP32's Arduino core
-// does. ESP.restart() ends the process with exit code 3. Before setup(), the data folder is made ready (paths.h)
-// and axis.conf read (hostconf.h).
+// does. ESP.restart() ends the process with exit code 3. Before setup(), the start mode is picked (startmode.h), the
+// data folder made ready (paths.h) and axis.conf read (hostconf.h). A shutdown signal ends the loop: callers are
+// hung up through the board's own path, the radio modem hangs up, the terminal is put back and the exit code is 0.
 #include <unistd.h>
 
-#include <csignal>
 #include <cstdio>
 #include <cstring>
 
+#include <Arduino.h>
+
+#include "platform/cyd/config_store.h"
 #include "platform/linux/host.h"
 #include "platform/linux/hostconf.h"
 #include "platform/linux/hostnet.h"
 #include "platform/linux/modemline.h"
 #include "platform/linux/paths.h"
+#include "platform/linux/startmode.h"
 
-void     setup();
-void     loop();
-uint32_t millis();
+void setup();
+void loop();
 
 namespace axis::host {
-bool        headless = false;
+StartMode   startMode = StartMode::Headless;
 std::string dataDir;
 }  // namespace axis::host
+
+namespace {
+constexpr uint32_t kCallersWaitMs = 2000;  // shutdown: main.cpp's own hang-up of each caller, at most this long
+constexpr uint32_t kRadioWaitMs = 4500;    // shutdown: the radio modem's guard, +++, guard, ATH, at most this long
+
+void turn() {
+    loop();
+    hostnetPoll();            // finished DNS lookups call back here, on the main thread, between loop() turns
+    modemLinePoll(millis());  // the radio line (also pumped from delay())
+}
+
+// A board that is not set up shows its setup PIN only on its own screen, which this program has not got: the sysop
+// sets it up from the console's @ commands instead.
+const char kNotSetUp[] =
+    "\r\naxis: this board is not set up yet. Its setup PIN is only ever shown on a board's own screen, so set it up\r\n"
+    "axis: here with @ commands, one line each:\r\n"
+    "axis:   @SET bbs_name=Your BBS Name\r\n"
+    "axis:   @SET sysop_handle=YourHandle\r\n"
+    "axis:   @SYSOPPASS yourpassword\r\n"
+    "axis:   @SET setup_done=1\r\n"
+    "axis: then type WFC for the waiting-for-caller screen (restart axis to take more than one caller at once).\r\n";
+
+[[noreturn]] void shutdown() {
+    std::printf("axis: stopping: hanging up callers\n");
+    modemLineHangUp();       // first, so a radio caller's hang-up starts from a quiet line
+    hostnetHangUpCallers();  // main.cpp finds each caller gone on its next turn and hangs it up as usual
+    uint32_t t0 = millis();
+    for (;;) {
+        uint32_t t = millis() - t0;
+        bool     callers = hostnetCallersOpen() > 0 && t < kCallersWaitMs;
+        bool     radio = modemLineBusy() && t < kRadioWaitMs;
+        if (!callers && !radio) break;
+        turn();
+    }
+    modemLineFinish();
+    size_t left = hostnetCallersOpen();
+    if (left) std::printf("axis: %zu caller%s not hung up in time, closed\n", left, left == 1 ? "" : "s");
+    std::printf("axis: stopped\n");
+    hostTerminalRestore();
+    std::fflush(nullptr);
+    _exit(0);  // not exit(): main.cpp's static objects are not torn down under a board that never stops; the
+               // kernel closes every socket and file
+}
+}  // namespace
 
 int main(int argc, char** argv) {
     std::string seed, modem;
     for (int i = 1; i < argc; i++) {
-        if (std::strcmp(argv[i], "--headless") == 0) {
-            axis::host::headless = true;
+        if (std::strcmp(argv[i], "--headless") == 0 || std::strcmp(argv[i], "--terminal") == 0 ||
+            std::strcmp(argv[i], "--window") == 0) {
+            // detectStartMode() reads these
         } else if (std::strcmp(argv[i], "--data") == 0 && i + 1 < argc) {
             axis::host::dataDir = argv[++i];
         } else if (std::strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
@@ -36,7 +84,8 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--modem") == 0 && i + 1 < argc) {
             modem = argv[++i];  // the LFD3K-SM's serial port (/dev/ttyUSB0): it answers radio calls
         } else {
-            std::fprintf(stderr, "usage: axis [--headless] [--data DIR] [--seed CARD_FOLDER] [--modem TTY]\n");
+            std::fprintf(stderr,
+                         "usage: axis [--terminal | --window | --headless] [--data DIR] [--seed CARD_FOLDER] [--modem TTY]\n");
             return 2;
         }
     }
@@ -45,21 +94,38 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "axis: not starting as root: run it as an ordinary user (the service runs as user axis)\n");
         return 1;
     }
+    StartMode mode = detectStartMode(argc, argv);
     std::setvbuf(stdout, nullptr, _IOLBF, 0);  // a line at a time: the log reaches a pipe or journal as it happens
-    std::signal(SIGPIPE, SIG_IGN);             // a caller who hangs up mid-write is an error return, not the end of the BBS
+    hostSignalsInstall();
     std::string why;
     if (!axisDataSetup(axis::host::dataDir, seed, why)) {
         std::fprintf(stderr, "axis: %s\n", why.c_str());
         return 1;
     }
+    std::string logPath = axisDataDir() + "/log/axis.log";
+    if (mode == StartMode::Terminal) {
+        const char* bad = "";
+        if (!hostTerminalStart(logPath.c_str(), bad)) {
+            std::fprintf(stderr, "axis: terminal mode: %s; running headless\n", bad);
+            mode = StartMode::Headless;
+        }
+    }
+    axis::host::startMode = mode;
+    if (mode != StartMode::Terminal) axis::host::serialIn = -1;  // headless: the console's input is ignored
+    std::printf("axis: start mode %s\n", mode == StartMode::Terminal ? "terminal" : "headless");
+    if (mode == StartMode::Terminal) Serial.printf("axis: terminal mode; the program's own log is %s\r\n", logPath.c_str());
     std::printf("axis: data folder %s\n", axisDataDir().c_str());
     hostConfLoad(axisDataDir());  // <data>/axis.conf: ports and the accept gate's limits
     hostnetStart();
     modemLineStart(modem.empty() ? hostConfStr("modem", "") : modem);  // --modem wins over axis.conf's modem=
     setup();
-    for (;;) {
-        loop();
-        hostnetPoll();          // finished DNS lookups call back here, on the main thread, between loop() turns
-        modemLinePoll(millis());  // the radio line (also pumped from delay())
+    if (mode == StartMode::Terminal) {
+        // The board's own serial "WFC" command opens the waiting-for-caller screen; main.cpp takes it only on a
+        // set-up board. setup() has just loaded boardCfg from this same file through this same call, and only setup
+        // and @SET change setup_done (both save it), so the file says what boardCfg says.
+        if (configLoad().setupDone) Serial.inject("WFC\r");
+        else Serial.print(kNotSetUp);
     }
+    while (!hostShutdownRequested()) turn();
+    shutdown();
 }

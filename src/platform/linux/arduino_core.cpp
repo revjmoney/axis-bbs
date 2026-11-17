@@ -16,6 +16,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cinttypes>
+#include <cstring>
 #include <ctime>
 #include <string>
 
@@ -68,6 +69,7 @@ EspClass ESP;
 
 void EspClass::restart() {
     std::fflush(nullptr);  // every open stdio stream (the log and any file main.cpp left open), not only stdout
+    hostTerminalRestore();  // _exit skips atexit: the terminal goes back to normal here
     _exit(3);  // code 3: "restart me" (the systemd unit restarts the program); no static destructors run mid-loop
 }
 void esp_restart(void) { ESP.restart(); }
@@ -102,16 +104,36 @@ extern "C" int esp_rom_printf(const char* fmt, ...) {
 // ------------------------------------------------------------------ the serial console
 HostSerial Serial;
 
+namespace axis::host {
+int serialIn = STDIN_FILENO;
+int serialOut = STDOUT_FILENO;
+}  // namespace axis::host
+
+bool HostSerial::inject(const char* keys) {
+    size_t n = std::strlen(keys);
+    if (head_ > 0) {  // what is still unread moves to the front
+        std::memmove(buf_, buf_ + head_, (size_t)(tail_ - head_));
+        tail_ -= head_;
+        head_ = 0;
+    }
+    if (n > sizeof buf_ - (size_t)tail_) return false;
+    std::memcpy(buf_ + tail_, keys, n);
+    tail_ += (int)n;
+    return true;
+}
+
 void HostSerial::fill() {
-    if (eof_ || head_ != tail_) return;
-    pollfd p{STDIN_FILENO, POLLIN, 0};
+    if (eof_ || head_ != tail_) return;  // (injected keys are in buf_: they are read even after the input's end)
+    int fd = axis::host::serialIn;
+    if (fd < 0) return;  // headless: the console takes no input
+    pollfd p{fd, POLLIN, 0};
     if (poll(&p, 1, 0) <= 0) return;
-    if (p.revents & POLLNVAL) {  // stdin is not open at all: the same as its end
+    if (p.revents & POLLNVAL) {  // the input is not open at all: the same as its end
         eof_ = true;
         return;
     }
     if (!(p.revents & (POLLIN | POLLHUP | POLLERR))) return;
-    ssize_t n = ::read(STDIN_FILENO, buf_, sizeof buf_);
+    ssize_t n = ::read(fd, buf_, sizeof buf_);
     if (n > 0) {
         head_ = 0;
         tail_ = (int)n;
@@ -135,7 +157,7 @@ size_t HostSerial::write(const uint8_t* buf, size_t n) {
     std::fflush(stdout);  // anything printf'd straight to stdout goes first
     size_t done = 0;
     while (done < n) {
-        ssize_t w = ::write(STDOUT_FILENO, buf + done, n - done);
+        ssize_t w = ::write(axis::host::serialOut, buf + done, n - done);
         if (w < 0 && errno == EINTR) continue;
         if (w <= 0) break;
         done += (size_t)w;
