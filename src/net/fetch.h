@@ -91,6 +91,36 @@ private:
     bool        started_ = false, moved_ = false;
 };
 
+// The end of a served call, for a host whose socket takes the server's bytes a piece at a time. Once the server is
+// finished (or failed) and the dialer is still connected, the host asks step() each turn with what it still holds
+// (pendLeft) and whether the dialer sent anything (heard): Send while pendLeft goes out; Shut once, when it is all out
+// (the host half-closes: its FIN goes after the queued bytes); then Wait, reading and dropping what comes, until the
+// dialer closes (the host sees that itself). So a late keepalive meets a socket that still reads, never a closed one
+// (a reset, which throws away bytes the dialer has not read yet). Close: kFetchStallMs with no byte of pendLeft taken
+// and nothing heard (the FetchServer's own rule); the host lets go.
+class FetchServeEnd {
+public:
+    enum Step : uint8_t { Send, Shut, Wait, Close };
+    Step step(uint32_t nowMs, size_t pendLeft, bool heard);
+
+private:
+    uint32_t lastMs_ = 0;
+    size_t   left_ = 0;
+    bool     on_ = false, shut_ = false;
+};
+inline FetchServeEnd::Step FetchServeEnd::step(uint32_t now, size_t left, bool heard) {
+    if (!on_ || heard || left < left_) lastMs_ = now;  // the first turn, or life: the clock starts again
+    on_ = true;
+    left_ = left;
+    if (!left && !shut_) {
+        shut_ = true;
+        lastMs_ = now;
+        return Shut;
+    }
+    if ((uint32_t)(now - lastMs_) >= kFetchStallMs) return Close;
+    return left ? Send : Wait;
+}
+
 // One outbound fetch call. The host constructs it when it starts to dial and ticks it from then on
 // (kFetchConnectMs covers the connect and the handshake). It feeds at most room() bytes at a time.
 // While streaming it sends a one-byte keepalive (a newline) every kFetchStallMs / 2, so the home board
@@ -149,6 +179,8 @@ public:
     CrcMarks takeMarks();           // for the next client of a re-request (the table itself moves, with this pass's end)
     void     giveMarks(CrcMarks m);  // from the last client: its checkpoints and the calls' ends, checked as this pass goes
     void     aim(uint32_t off) const { want_ = off; }   // where the sender reads (a rewind's target, past the start)
+    uint32_t aimed() const { return want_; }            // where the sender last asked (or the aim)
+    uint32_t reached() const { return hi_; }            // the end of what has arrived
     // [off, off+n) is in the window (or off is at or past the end of the file). Also notes off as where
     // the sender is, which is what lets the ring take more.
     bool ready(uint32_t off, size_t n) const;

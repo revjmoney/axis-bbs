@@ -161,6 +161,14 @@ size_t TcpStream::writeSome(const uint8_t* p, size_t n) {
     return 0;
 }
 
+void TcpStream::shutdownWrite() {
+#ifdef _WIN32
+    ::shutdown((SOCKET)sock_, SD_SEND);
+#else
+    ::shutdown((int)sock_, SHUT_WR);
+#endif
+}
+
 bool TcpStream::carrier() {
     pump();
     return up_;

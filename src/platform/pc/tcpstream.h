@@ -29,6 +29,9 @@ public:
     // Raw streams only: sends what the socket takes now and returns how many bytes (0 when it is full). Never waits.
     size_t writeSome(const uint8_t* p, size_t n);
     void setSendTimeout(int ms) { sendTimeoutMs_ = ms; }  // a caller that stops reading is treated as gone
+    // Half-close: no more writes, a FIN goes after what the socket already holds; reading goes on, and carrier() still
+    // drops when the other side closes.
+    void shutdownWrite();
 
 private:
     void           pump();

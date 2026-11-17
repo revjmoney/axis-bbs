@@ -969,4 +969,38 @@ TEST_CASE("fetchLetGo: a follower's slot with a lost e is let go once Done or Fa
     CHECK_FALSE(fetchLetGo(&follower, &follower, true, quiet));
 }
 
+TEST_CASE("fetch serve end: a piece still pending waits even when the end lands on an even millisecond, and goes only after kFetchStallMs without progress") {
+    using E = FetchServeEnd;
+    // even and odd ends, 0 (no "unset" value), and an end just before the clock wraps
+    for (uint32_t t0 : {1000u, 1001u, 0u, 0xFFFFFFFFu - 5u, 0xFFFFFFFFu - kFetchStallMs / 2}) {
+        CAPTURE(t0);
+        E e;
+        CHECK(e.step(t0, 2048, false) == E::Send);  // the very turn the end is seen
+        CHECK(e.step(t0, 2048, false) == E::Send);
+        CHECK(e.step(t0 + 1, 2048, false) == E::Send);
+        CHECK(e.step(t0 + kFetchStallMs - 1, 2048, false) == E::Send);
+        CHECK(e.step(t0 + kFetchStallMs - 1, 1000, false) == E::Send);  // progress: the clock starts again
+        uint32_t t1 = t0 + kFetchStallMs - 1;
+        CHECK(e.step(t1 + kFetchStallMs - 1, 1000, false) == E::Send);
+        CHECK(e.step(t1 + kFetchStallMs - 2, 1000, true) == E::Send);  // a keepalive heard is life too
+        uint32_t t2 = t1 + kFetchStallMs - 2;
+        CHECK(e.step(t2 + kFetchStallMs - 1, 1000, false) == E::Send);
+        CHECK(e.step(t2 + kFetchStallMs, 1000, false) == E::Close);  // no byte taken for kFetchStallMs: let go
+    }
+    for (uint32_t t0 : {1000u, 1001u, 0xFFFFFFFFu}) {
+        CAPTURE(t0);
+        E e;
+        CHECK(e.step(t0, 512, false) == E::Send);
+        CHECK(e.step(t0 + 3, 0, false) == E::Shut);  // all out: half-close once
+        CHECK(e.step(t0 + 3, 0, false) == E::Wait);
+        CHECK(e.step(t0 + 3 + kFetchStallMs - 1, 0, false) == E::Wait);
+        CHECK(e.step(t0 + 3 + kFetchStallMs - 1, 0, true) == E::Wait);  // the dialer's late keepalive, read and dropped
+        CHECK(e.step(t0 + 3 + 2 * kFetchStallMs - 2, 0, false) == E::Wait);
+        CHECK(e.step(t0 + 3 + 2 * kFetchStallMs - 1, 0, false) == E::Close);  // it never closed: let go
+    }
+    E e;  // nothing pending at the end (a NO line already out): half-close at once
+    CHECK(e.step(2000, 0, false) == E::Shut);
+    CHECK(e.step(2000 + kFetchStallMs, 0, false) == E::Close);
+}
+
 #endif  // AXIS_NETS && AXIS_TRANSFERS

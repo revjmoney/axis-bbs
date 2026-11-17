@@ -882,7 +882,8 @@ struct Serve {
     std::unique_ptr<FetchServer> s;
     std::unique_ptr<ServeNote> note;  // (the server's check points at it)
     std::string pend;                 // taken from the server, not yet taken by the socket
-    uint32_t endMs = 0;               // when the call was over but pend was still waiting (0: not yet)
+    FetchServeEnd end;                // once the call is over: pend goes out, then the half-close
+    bool ending = false, closed = false;  // the call is over; it was over because the dialer closed
 };
 
 // Sends what the socket takes now; the rest stays in pend. Never waits (a slow caller must not hold the loop).
@@ -891,35 +892,44 @@ void flushServe(Serve& v) {
     v.pend.erase(0, w);
 }
 
-// One turn of a served call. True while it runs; false once it ended (and was logged).
+// One turn of a served call. True while it runs; false once it ended (and was logged). Once the server is done, the slot
+// stays taken while pend goes out and, after the half-close, until the dialer closes (FetchServeEnd says how long).
 bool pumpServe(Serve& v) {
     std::string in = v.sock->takeAll();
-    if (!in.empty()) v.s->feed(in.data(), in.size());
-    flushServe(v);
-    for (int i = 0; i < 4 && v.pend.empty(); i++) {  // up to four pieces a turn, each taken only once the last is out
-        v.pend = v.s->takeOut(kFetchChunk + 64);
+    if (!v.ending) {
+        if (!in.empty()) v.s->feed(in.data(), in.size());
+        in.clear();
         flushServe(v);
-    }
-    v.s->tick(msNow());
-    bool end = v.s->failed() || v.s->finished();
-    bool closed = !end && !v.sock->carrier();
-    if (!end && !closed) return true;
-    if (end && v.sock->carrier()) {
-        if (v.pend.empty()) v.pend = v.s->takeOut(256);  // a NO line still to go
-        flushServe(v);
-        if (!v.pend.empty()) {  // the caller is not taking it: wait a little, then let it go
-            if (!v.endMs) v.endMs = msNow() | 1u;
-            if (msNow() - v.endMs < 3000) return true;
+        for (int i = 0; i < 4 && v.pend.empty(); i++) {  // up to four pieces a turn, each taken only once the last is out
+            v.pend = v.s->takeOut(kFetchChunk + 64);
+            flushServe(v);
         }
+        v.s->tick(msNow());
+        bool end = v.s->failed() || v.s->finished();
+        v.closed = !end && !v.sock->carrier();
+        if (!end && !v.closed) return true;
+        if (v.pend.empty()) v.pend = v.s->takeOut(256);  // a NO line still to go
+        v.ending = true;
     }
-    bool done = v.s->finished() && !v.s->failed() && v.note->served;
+    flushServe(v);
+    if (v.sock->carrier()) {
+        FetchServeEnd::Step st = v.end.step(msNow(), v.pend.size(), !in.empty());
+        if (st == FetchServeEnd::Shut) v.sock->shutdownWrite();
+        if (st != FetchServeEnd::Close) return true;
+    }
+    bool done = v.s->finished() && !v.s->failed() && v.note->served && v.pend.empty();
+    // a whole file whose last piece never went out is not served: the dialer went (closed) or took nothing (stall)
+    const char* word = v.closed || (!v.s->failed() && !v.pend.empty() && !v.sock->carrier()) ? "closed"
+                       : !v.s->failed() && !v.pend.empty()                                   ? "stall"
+                                                                                               : v.s->why();
     if (done) say("fetch served %s to board %s", v.note->id.c_str(), v.note->from.c_str());
     else say("fetch %s from %s %s (%s)", v.note->id.empty() ? "call" : v.note->id.c_str(), v.note->from.empty() ? "?" : v.note->from.c_str(),
-             v.note->served ? "stopped" : "refused", closed ? "closed" : v.s->why());
+             v.note->served ? "stopped" : "refused", word);
     v.s.reset();
     v.sock.reset();
     v.pend.clear();
-    v.endMs = 0;
+    v.end = FetchServeEnd();
+    v.ending = v.closed = false;
     return false;
 }
 
