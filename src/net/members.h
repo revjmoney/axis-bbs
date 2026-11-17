@@ -43,7 +43,7 @@ public:
     // Verified against its own pub. Keeps the highest seq per (voter, app, appSeq) (equal seqs: the
     // higher line CRC wins). A vote for an app not held yet is kept; one for an app older than the
     // held one is refused. A voter may not vote on itself, nor hold more than kMaxOpenApps votes on
-    // apps not in the table. A full member pool makes room from votes on settled apps, else by moving
+    // apps not held (no held app with that board and seq) and not settled. A full member pool makes room from votes on settled apps, else by moving
     // the votes of voters no longer in M to the outsider pool. False if nothing changed.
     bool takeVote(const NetVote& v, std::string& line);
 
@@ -117,6 +117,7 @@ private:
     size_t sealedVictim() const;
     void capOutsiders(const std::vector<uint64_t>& m);
     void demote(const std::vector<uint64_t>& m);
+    bool unheld(uint64_t app, uint32_t appSeq) const;
     size_t unheldVotes(uint64_t voter) const;
     void migrate();
     static std::tuple<uint32_t, uint64_t, uint64_t, uint32_t, uint32_t, uint32_t> age(const Vote& x);

@@ -3686,8 +3686,9 @@ static bool netUserCommand(NetHost& h, const std::string& word, const std::strin
             const axis::net::NetNotice* dn = core.state().memberNotice(core.board());
             uint32_t heldSeq = 0;
             bool     hasApp = mem.heldApp(core.board(), off, &heldSeq);
-            if (!dn || dn->kind != "deny" || (hasApp && dn->value != std::to_string(heldSeq))) {
-                no = "denied by the vote count, waiting for Rev's seal";  // no deny notice names the application held now
+            // As the tally: a deny stands unless the held application is newer than the one it names.
+            if (!dn || dn->kind != "deny" || (hasApp && heldSeq > (uint32_t)std::strtoul(dn->value.c_str(), nullptr, 10))) {
+                no = "denied by the vote count, waiting for Rev's seal";  // no deny notice covers the application held now
             } else {
                 uint32_t d = core.state().memberNoticeDay(core.board());
                 if (d < axis::net::kNetClockDay) d = now / 86400;  // a deny from before the clock

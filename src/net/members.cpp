@@ -316,12 +316,20 @@ void NetMembers::demote(const std::vector<uint64_t>& m) {
     capOutsiders(m);
 }
 
-// The voter's held votes on apps not in the table (both pools).
+// A vote on an app not held here (no held app from that board with that seq) that is not settled either.
+// Those are what one voter may hold at most kMaxOpenApps of; a vote on a settled app is not counted, since
+// it makes room in a full pool anyway.
+bool NetMembers::unheld(uint64_t app, uint32_t appSeq) const {
+    const App* a = findApp(app);
+    return !(a && a->seq == appSeq) && !settled(app, appSeq);
+}
+
+// The voter's held votes on unheld apps (both pools).
 size_t NetMembers::unheldVotes(uint64_t voter) const {
     size_t n = 0;
     for (const auto* pool : {&votes_, &outsiders_})
         for (const auto& x : *pool)
-            if (x.voter == voter && !findApp(x.app)) n++;
+            if (x.voter == voter && unheld(x.app, x.appSeq)) n++;
     return n;
 }
 
@@ -357,8 +365,8 @@ bool NetMembers::takeVote(const NetVote& v, std::string& line) {
     Vote* inOutsiders = findIn(outsiders_);
     const Vote* old = inMembers ? inMembers : inOutsiders;
     if (old && (nv.seq < old->seq || (nv.seq == old->seq && nv.crc <= old->crc))) return false;
-    // A voter holds at most kMaxOpenApps votes on apps not in the table (a replacement is no new one).
-    if (!old && !findApp(nv.app) && unheldVotes(nv.voter) >= kMaxOpenApps) return false;
+    // A voter holds at most kMaxOpenApps votes on unheld apps (a replacement is no new one).
+    if (!old && unheld(nv.app, nv.appSeq) && unheldVotes(nv.voter) >= kMaxOpenApps) return false;
     if (!verifyVote(v)) return false;
 
     const std::vector<uint64_t> m = grow();
@@ -662,12 +670,12 @@ void NetMembers::endLoad() {
                                 }),
                  staged.end());
     std::sort(staged.begin(), staged.end(), [](const Vote& x, const Vote& y) { return age(x) < age(y); });
-    // At most kMaxOpenApps votes per voter on apps not in the table, as at run time: the oldest stay.
+    // At most kMaxOpenApps votes per voter on unheld apps, as at run time: the oldest stay.
     {
         std::vector<std::pair<uint64_t, size_t>> per;  // (voter, unheld votes kept)
         staged.erase(std::remove_if(staged.begin(), staged.end(),
                                     [&](const Vote& v) {
-                                        if (findApp(v.app)) return false;
+                                        if (!unheld(v.app, v.appSeq)) return false;
                                         for (auto& p : per)
                                             if (p.first == v.voter) return ++p.second > kMaxOpenApps;
                                         per.emplace_back(v.voter, 1);

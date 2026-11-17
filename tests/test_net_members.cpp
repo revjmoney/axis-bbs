@@ -556,6 +556,22 @@ TEST_CASE("a member filling the pool with votes on unheld apps cannot block a re
     const KeyPair B = keyOf(0x52);
     REQUIRE(t.admit(B));
     CHECK(t.vote(makeVote(B, idOf(0x2000 + kMaxOpenApps), 1, 1, true)));
+    // Made-up seqs of a held app are unheld apps too: E has 16 of them, the 17th is refused, and a vote on
+    // C's real application is still taken.
+    const KeyPair E = keyOf(0x55);
+    REQUIRE(t.admit(E));
+    for (uint32_t s = 2; s < 2 + kMaxOpenApps; s++) REQUIRE(t.vote(makeVote(E, c, s, 1, true)));
+    CHECK_FALSE(t.vote(makeVote(E, c, 2 + kMaxOpenApps, 1, true)));
+    CHECK(t.vote(makeVote(B, c, 1, 1, true)));
+    CHECK(t.m.tally(c).yes == 2);
+    // Votes on applications Rev has already decided are not counted against the 16 (a fresh board holds
+    // them without the apps, whose boards Rev admitted): F votes on 17 admitted boards, then 16 unheld.
+    const KeyPair F = keyOf(0x56);
+    REQUIRE(t.admit(F));
+    for (uint32_t i = 0; i < kMaxOpenApps + 1; i++) REQUIRE(t.notice("admit", idOf(0x4000 + i), "1"));
+    for (uint32_t i = 0; i < kMaxOpenApps + 1; i++) CHECK(t.vote(makeVote(F, idOf(0x4000 + i), 1, 1, true)));
+    for (uint32_t i = 0; i < kMaxOpenApps; i++) CHECK(t.vote(makeVote(F, idOf(0x5000 + i), 1, 1, true)));
+    CHECK_FALSE(t.vote(makeVote(F, idOf(0x5000 + kMaxOpenApps), 1, 1, true)));
     // A load keeps the oldest 16 per voter on unheld apps, whatever the line order.
     std::string text;
     const KeyPair D = keyOf(0x54);
