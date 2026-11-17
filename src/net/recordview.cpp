@@ -114,6 +114,18 @@ std::string view(const std::string& sl, const NetState* st, const Out& o) {
             field(o, "comment", v.comment), field(o, "seq", std::to_string(v.seq)), field(o, "date", netDateText(v.date));
             break;
         }
+        case 'L': {
+            NetListing l;
+            if (!decode(sl, l)) break;
+            who = l.board;
+            if (st) {
+                const NetCard* held = st->card(l.board);
+                ok = !held ? 2 : verifyListing(l, held->pub);
+            }
+            field(o, "file", l.name), field(o, "size", std::to_string(l.size)), field(o, "area", l.area), field(o, "uploader", l.uploader);
+            field(o, "reach", l.reach), field(o, "gone", l.gone ? "yes" : "no"), field(o, "id", listingId(l));
+            break;
+        }
     }
     return "signed by " + netSafe(who) + (ok == 2 ? ", no card held to check it" : ok ? ", checks" : ", does NOT check");
 }

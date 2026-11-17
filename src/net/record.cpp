@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// Encoding, decoding, signing and checking of net records (posts, cards, notices, applications, votes).
+// Encoding, decoding, signing and checking of net records (posts, cards, notices, applications, votes, listings, fetches).
 #include "net/record.h"
 
 #include <vector>
 
+#include "bbs/filelib.h"
 #include "net/revkeys.h"
 
 namespace axis::net {
@@ -164,6 +165,31 @@ bool validFields(const NetVote& v) {
            v.seq >= 1 && v.comment.size() <= kNetMaxComment && noSep(v.comment);
 }
 
+bool noCtl(const std::string& s, size_t maxLen) {
+    if (s.size() > maxLen) return false;
+    for (unsigned char ch : s)
+        if (ch < 0x20 || ch == 0x7f) return false;
+    return true;
+}
+
+// "<board>-<decimal seq>" for any board (a listing id; validId() ties the board to a field).
+bool validListingId(const std::string& id) {
+    uint32_t seq;
+    return id.size() >= 18 && id.size() <= 27 && isLowerHex(id.substr(0, 16), 16) && id[16] == '-' &&
+           parseU32(id.substr(17), seq);
+}
+
+bool validFields(const NetListing& l) {
+    return isLowerHex(l.board, 16) && validArea(l.area) && bbs::safeFileName(l.name) && cleanField(l.desc, kNetListDesc) &&
+           noCtl(l.uploader, 30) && (l.reach == "i" || l.reach == "r" || l.reach == "ir") && l.seq >= 1 &&
+           (!l.gone || (l.size == 0 && l.crc == 0 && l.desc.empty()));
+}
+
+bool validFields(const NetFetch& f) {
+    return isLowerHex(f.board, 16) && validListingId(f.listing) && noCtl(f.handle, 30) && isLowerHex(f.dialNonce, 16) &&
+           isLowerHex(f.servNonce, 16);
+}
+
 bool sigOk(const std::string& s) { return isLowerHex(s, 128); }
 
 std::string u(uint32_t v) { return std::to_string(v); }
@@ -252,6 +278,34 @@ std::string signedPart(const NetVote& v) {
     return s;
 }
 
+std::string listingId(const NetListing& l) { return l.board + "-" + u(l.seq); }
+
+std::string signedPart(const NetListing& l) {
+    std::string s(1, (char)NetKind::Listing);
+    for (const std::string* f : {&l.board, &l.area, &l.name, &l.desc, &l.uploader, &l.reach}) {
+        s += kSep;
+        s += *f;
+    }
+    for (uint32_t n : {l.seq, l.size, l.crc, l.date}) {
+        s += kSep;
+        s += u(n);
+    }
+    s += kSep;
+    s += l.gone ? '1' : '0';
+    return s;
+}
+
+std::string signedPart(const NetFetch& f) {
+    std::string s(1, (char)NetKind::Fetch);
+    for (const std::string* p : {&f.board, &f.listing, &f.handle, &f.dialNonce, &f.servNonce}) {
+        s += kSep;
+        s += *p;
+    }
+    s += kSep;
+    s += u(f.offset);
+    return s;
+}
+
 // ---- encode ----------------------------------------------------------------------------
 
 std::string encode(const NetPost& p) {
@@ -290,6 +344,20 @@ std::string encode(const NetVote& v) {
     if (!validFields(v)) return "";
     if (!v.sig.empty() && !sigOk(v.sig)) return "";
     std::string line = signedPart(v) + kSep + v.sig;
+    return line.size() > kNetMaxFrame ? std::string() : line;
+}
+
+std::string encode(const NetListing& l) {
+    if (!validFields(l)) return "";
+    if (!l.sig.empty() && !sigOk(l.sig)) return "";
+    std::string line = signedPart(l) + kSep + l.sig;
+    return line.size() > kNetMaxFrame ? std::string() : line;
+}
+
+std::string encode(const NetFetch& f) {
+    if (!validFields(f)) return "";
+    if (!f.sig.empty() && !sigOk(f.sig)) return "";
+    std::string line = signedPart(f) + kSep + f.sig;
     return line.size() > kNetMaxFrame ? std::string() : line;
 }
 
@@ -397,6 +465,43 @@ bool decode(std::string_view line, NetVote& out) {
     return true;
 }
 
+bool decode(std::string_view line, NetListing& out) {
+    if (line.size() > kNetMaxFrame) return false;
+    std::string_view f[13];
+    if (split(line, f, 13) != 13 || f[0] != "L") return false;
+    NetListing l;
+    l.board = f[1];
+    l.area = f[2];
+    l.name = f[3];
+    l.desc = f[4];
+    l.uploader = f[5];
+    l.reach = f[6];
+    if (!parseU32(f[7], l.seq) || !parseU32(f[8], l.size) || !parseU32(f[9], l.crc) || !parseU32(f[10], l.date)) return false;
+    if (f[11] == "1") l.gone = true;
+    else if (f[11] != "0") return false;
+    l.sig = f[12];
+    if (!validFields(l) || !sigOk(l.sig)) return false;
+    out = std::move(l);
+    return true;
+}
+
+bool decode(std::string_view line, NetFetch& out) {
+    if (line.size() > kNetMaxFrame) return false;
+    std::string_view f[8];
+    if (split(line, f, 8) != 8 || f[0] != "Q") return false;
+    NetFetch q;
+    q.board = f[1];
+    q.listing = f[2];
+    q.handle = f[3];
+    q.dialNonce = f[4];
+    q.servNonce = f[5];
+    if (!parseU32(f[6], q.offset)) return false;
+    q.sig = f[7];
+    if (!validFields(q) || !sigOk(q.sig)) return false;
+    out = std::move(q);
+    return true;
+}
+
 // ---- sign / verify ---------------------------------------------------------------------
 
 bool validPost(const NetPost& p) { return validFields(p) && sigOk(p.sig); }
@@ -490,6 +595,38 @@ bool verifyVote(const NetVote& v) {
     if (!validFields(v) || !sigOk(v.sig)) return false;
     if (boardId(v.pub) != v.voter) return false;
     return verifyHex(v.pub, signedPart(v), v.sig);
+}
+
+bool signListing(NetListing& l, const KeyPair& k) {
+    if (boardId(toHex(k.pub, 32)) != l.board || !validFields(l)) return false;
+    l.sig.assign(128, '0');  // final length, to check the frame cap before signing
+    if (encode(l).empty()) {
+        l.sig.clear();
+        return false;
+    }
+    l.sig = signHex(k, signedPart(l));
+    return !l.sig.empty();
+}
+
+bool verifyListing(const NetListing& l, const std::string& pubHex) {
+    if (!isLowerHex(pubHex, 64) || !validFields(l) || !sigOk(l.sig) || boardId(pubHex) != l.board) return false;
+    return verifyHex(pubHex, signedPart(l), l.sig);
+}
+
+bool signFetch(NetFetch& f, const KeyPair& k) {
+    if (boardId(toHex(k.pub, 32)) != f.board || !validFields(f)) return false;
+    f.sig.assign(128, '0');
+    if (encode(f).empty()) {
+        f.sig.clear();
+        return false;
+    }
+    f.sig = signHex(k, signedPart(f));
+    return !f.sig.empty();
+}
+
+bool verifyFetch(const NetFetch& f, const std::string& pubHex) {
+    if (!isLowerHex(pubHex, 64) || !validFields(f) || !sigOk(f.sig) || boardId(pubHex) != f.board) return false;
+    return verifyHex(pubHex, signedPart(f), f.sig);
 }
 
 }  // namespace axis::net
