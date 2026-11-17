@@ -72,7 +72,8 @@ struct ModemLine {
     // the call
     int         sock = -1;  // this end of the socketpair; AXIS has the other
     std::string toAxis;     // bytes waiting for AXIS (caller keys, telnet answers, link reports)
-    std::string tail;       // the tty's last 32 bytes: NO CARRIER can arrive split across reads
+    std::string held;       // the caller's last bytes, when they could be the start of NO CARRIER (scanCarrier)
+    uint32_t    heldMs = 0;
     uint64_t    up = 0, down = 0;
     uint32_t    callMs = 0;
     bool        heard = false, waitLogged = false;
@@ -105,7 +106,6 @@ void endCall() {
     if (M.sock >= 0) ::close(M.sock);  // AXIS reads the end of its socket and hangs its session up
     M.sock = -1;
     M.toAxis.clear();
-    M.tail.clear();
 }
 
 void closeTty() {
@@ -265,10 +265,28 @@ bool ttyQuiet() {  // nothing of ours still waits in the driver (a pty may not s
     return !M.toTty.empty() ? false : ioctl(M.fd, TIOCOUTQ, &n) < 0 || n == 0;
 }
 
-bool carrierLost(const std::string& data) {  // NO CARRIER, even split across reads
-    M.tail = (M.tail + data);
-    if (M.tail.size() > 32) M.tail.erase(0, M.tail.size() - 32);
-    return M.tail.find("NO CARRIER") != std::string::npos;
+// The modem's NO CARRIER result code in data mode is framed "\r\nNO CARRIER\r\n" (lfd3k-sm core/src/at.rs
+// format_result, verbose results); a caller's terminal sends its text with a bare CR, so "NO CARRIER" typed or
+// uploaded in a message never matches. (The V3's CP2102 carries only TX and RX and the firmware drives no DCD, so
+// TIOCMGET cannot confirm a hangup.) The code can span reads: a tail of `data` that could be its start is held back
+// in M.held (at most 13 bytes) until the next read settles it, or kHoldMs pass (releaseHeld), so a caller's lone CR
+// waits at most that long. `fwd` gets the bytes that are surely the caller's; true when the code has come.
+const std::string  kNoCarrier = "\r\nNO CARRIER\r\n";
+constexpr uint32_t kHoldMs = 100;
+bool scanCarrier(const std::string& data, uint32_t now, std::string& fwd) {
+    std::string all = M.held + data;
+    size_t      at = all.find(kNoCarrier);
+    if (at != std::string::npos) {
+        fwd = all.substr(0, at);
+        M.held.clear();
+        return true;
+    }
+    size_t k = std::min(all.size(), kNoCarrier.size() - 1);
+    while (k > 0 && all.compare(all.size() - k, k, kNoCarrier, 0, k) != 0) k--;
+    fwd = all.substr(0, all.size() - k);
+    M.held = all.substr(all.size() - k);
+    if (!data.empty()) M.heldMs = now;
+    return false;
 }
 
 // ------------------------------------------------------------------ the call's telnet side
@@ -357,6 +375,14 @@ void hangUp(uint32_t now, const std::string& why) {  // AXIS ended the call: dra
     enter(St::Drain, now);
 }
 
+void noCarrier(uint32_t now) {  // the caller hung up (or the link dropped): AXIS's socket closes, back to result lines
+    say("NO CARRIER " + counts());
+    endCall();
+    M.toTty.clear();  // AXIS's unsent bytes would reach the modem as commands
+    M.lines.clear();
+    enter(St::Idle, now);
+}
+
 void startCall(uint32_t now, const std::string& connect, const std::string& rest) {
     int sv[2];
     if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, sv) < 0) {
@@ -367,7 +393,7 @@ void startCall(uint32_t now, const std::string& connect, const std::string& rest
     M.sock = sv[0];
     hostnetInjectClient(sv[1], inet_addr("127.0.0.2"));  // the telnet server's next caller, from 127.0.0.2
     M.toAxis.clear();
-    M.tail.clear();
+    M.held.clear();
     M.up = M.down = 0;
     M.callMs = now;
     M.heard = M.waitLogged = false;
@@ -379,7 +405,11 @@ void startCall(uint32_t now, const std::string& connect, const std::string& rest
     say(printable(connect) + ": a radio caller for the telnet server" +
         (M.report.empty() ? " (no SF tier in it: no radio reports)" : ", radio reports offered (option 90)"));
     enter(St::Call, now);
-    if (!rest.empty() && !carrierLost(rest)) toAxis(rest);
+    if (rest.empty()) return;
+    std::string fwd;
+    bool        nc = scanCarrier(rest, now, fwd);
+    toAxis(fwd);
+    if (nc) noCarrier(now);  // the call ended in the same read as its CONNECT
 }
 
 // Result lines while no call is up (lfd3k_bridge.py's main loop).
@@ -458,16 +488,19 @@ void step(uint32_t now) {
         if (M.toAxis.size() < kToAxisMax) {
             if (!ttyRead(now, got, kToAxisMax - M.toAxis.size())) return;
             if (!got.empty()) {
-                if (carrierLost(got)) {
-                    say("NO CARRIER " + counts());
-                    endCall();
-                    M.toTty.clear();  // AXIS's unsent bytes would reach the modem as commands
-                    M.lines.clear();
-                    enter(St::Idle, now);
+                std::string fwd;
+                bool        nc = scanCarrier(got, now, fwd);
+                toAxis(fwd);  // the caller's bytes before a NO CARRIER still count
+                if (nc) {
+                    if (M.sock >= 0) ::send(M.sock, M.toAxis.data(), M.toAxis.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+                    noCarrier(now);
                     break;
                 }
-                toAxis(got);
             }
+        }
+        if (!M.held.empty() && now - M.heldMs >= kHoldMs) {  // it was not NO CARRIER after all: the caller's
+            toAxis(M.held);
+            M.held.clear();
         }
         // AXIS -> caller (only when the tty has taken the last lot: a slow radio holds AXIS's line, not this loop)
         while (M.toTty.empty() && M.sock >= 0) {
@@ -510,12 +543,9 @@ void step(uint32_t now) {
     }
     case St::Drain:
         if (!ttyRead(now, got, 4096)) return;
-        if (carrierLost(got)) {  // the caller went first: nothing to hang up
-            say("NO CARRIER while hanging up");
+        if (std::string fwd; scanCarrier(got, now, fwd)) {  // the caller went first: +++ and ATH still go (harmless)
+            say("NO CARRIER while hanging up (still sending +++ and ATH)");
             M.toTty.clear();
-            M.lines.clear();
-            enter(St::Idle, now);
-            break;
         }
         if (now - M.since >= kDrainMs) M.toTty.clear();  // the radio has stopped taking bytes: give up on them
         if (!ttyFlush(now)) return;
@@ -523,12 +553,7 @@ void step(uint32_t now) {
         break;
     case St::Guard1:
         if (!ttyRead(now, got, 4096)) return;
-        if (carrierLost(got)) {
-            say("NO CARRIER while hanging up");
-            M.lines.clear();
-            enter(St::Idle, now);
-            break;
-        }
+        if (std::string fwd; scanCarrier(got, now, fwd)) say("NO CARRIER while hanging up (still sending +++ and ATH)");
         if (now - M.since >= M.guardMs) {
             M.toTty += "+++";
             enter(St::Guard2, now);
@@ -542,21 +567,25 @@ void step(uint32_t now) {
             enter(St::Ath, now);
         }
         break;
-    case St::Ath:
+    case St::Ath: {
         if (!ttyRead(now, got, 4096)) return;
         M.reply += got;
         if (M.reply.size() > kLineMax) M.reply.erase(0, M.reply.size() - kLineMax);
-        if (M.reply.find("OK") != std::string::npos || M.reply.find("ERROR") != std::string::npos ||
-            M.reply.find("NO CARRIER") != std::string::npos || now - M.since >= kAthMs) {
-            std::string r = printable(M.reply);
+        size_t code = std::min({M.reply.find("OK"), M.reply.find("ERROR"), M.reply.find("NO CARRIER")});
+        if (code != std::string::npos || now - M.since >= kAthMs) {
+            size_t      cut = code == std::string::npos ? M.reply.size() : M.reply.find('\n', code);
+            cut = cut == std::string::npos ? M.reply.size() : cut + 1;
+            std::string r = printable(M.reply.substr(0, cut)), after = M.reply.substr(cut);
             while (r.find("  ") != std::string::npos) r.erase(r.find("  "), 1);
             size_t a = r.find_first_not_of(' '), b = r.find_last_not_of(' ');
             say("hang up: " + (a == std::string::npos ? std::string("no answer") : r.substr(a, b - a + 1)));
             M.lines.clear();
-            M.tail.clear();
+            M.held.clear();
             enter(St::Idle, now);
+            if (!after.empty()) resultLines(now, after);  // a RING right behind the OK is answered, not lost
         }
         break;
+    }
     default:
         break;
     }

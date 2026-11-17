@@ -8,7 +8,9 @@ usage: lfd3k_fake_modem.py LINK [one]      (then: axis --modem LINK ...)
 LINK becomes a symlink to the pty's slave side, so axis can be pointed at it before it exists and finds the new one
 after the pretend modem is "unplugged". It plays three calls, printing what axis sends:
   1. RING, waits for ATA, CONNECT LORA SF9 ..., shows the screen, then NO CARRIER (the caller hangs up);
-  2. the same, then wrong setup PINs until AXIS says goodbye: expects +++ after the guard time, then ATH;
+     (before that the caller types "NO CARRIER" + CR, which must not end the call);
+  2. the same, then wrong setup PINs until AXIS says goodbye, and NO CARRIER during the guard time: expects +++
+     after the guard time all the same, then ATH;
   3. the same, then the pty is closed mid-call (the modem unplugged) for 12 s and opened again (a new pty), where
      it answers AT&V and plays one more RING/CONNECT/NO CARRIER.
 With "one" it plays a single 25 s call instead, for a set-up board (AXIS logs it as a RADIO SF9 caller).
@@ -108,8 +110,12 @@ def main():
     m.ring()
     m.send(b'\r')
     log(f'after a CR: {show(m.read(12))!r}')   # long enough for AXIS's 10 s radio report to have gone twice
-    m.send(b'\r\nNO CARRIER\r\n')
-    log('sent NO CARRIER')
+    m.send(b'NO CARRIER\r')                    # the caller typing it: not the modem's framed result code
+    log(f'caller typed NO CARRIER + CR, the call is still up: {show(m.read(2))!r}')
+    m.send(b'\r\nNO CAR')                       # the real one, split across two reads (20 ms apart)
+    time.sleep(0.02)
+    m.send(b'RIER\r\n')
+    log('sent NO CARRIER (framed, in two pieces)')
     log(f'after NO CARRIER: {show(m.read(3))!r}')
 
     log('--- call 2: AXIS hangs up (wrong setup PINs)')
@@ -127,6 +133,8 @@ def main():
         if b'Goodbye' in got:
             break
     log(f'PIN replies: {show(got)!r}')
+    m.send(b'\r\nNO CARRIER\r\n')   # the caller drops during the hang-up guard: +++ and ATH must come all the same
+    log('sent NO CARRIER during the guard time')
     if b'+++' not in got:
         got += m.read(6, b'+++')
     log(f'+++ came {time.time() - last:.2f} s after the last screen byte')
