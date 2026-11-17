@@ -526,11 +526,14 @@ NetCore::Res NetCore::resolve(const std::string& entry, const std::string& peer,
         if (t[1] != "R") line = state_.noticeLine(t[1], t[2]);
         else if (parseSeq(t[2], seq)) line = state_.rotateLine(seq);
     } else if (t[0] == "A" && t.size() == 3) {
+        // held first: off is filled by heldApp, and argument order is unspecified
         uint32_t off = kNoOffset;
-        return readRecord(members_.heldApp(t[1], off), off, line);
+        bool held = members_.heldApp(t[1], off);
+        return readRecord(held, off, line);
     } else if (t[0] == "V" && t.size() == 4) {
         uint32_t off = kNoOffset;
-        return readRecord(members_.heldVote(t[2], t[1], off), off, line);
+        bool held = members_.heldVote(t[2], t[1], off);
+        return readRecord(held, off, line);
     }
     return line.empty() ? Res::Skip : Res::Ready;  // not held any more (or not an entry): gone
 }
