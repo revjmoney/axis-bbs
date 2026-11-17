@@ -355,6 +355,8 @@ TEST_CASE("listing index: 64 takes read no whole area and no message by number")
     CHECK(r.store.headerCalls == 0);
     CHECK(r.store.readsAt == 0);       // distinct names: nothing to read back
     CHECK(r.store.scansFrom == 64);    // one short scan of each new message, from where the area ended
+    CHECK(r.store.posts == 1);         // the first, into an empty area
+    CHECK(r.store.postAfters == 63);   // the rest after the last number the index head holds: no whole-area read
     // A re-listing reads back the one record it replaces, at its offset.
     r.store.reset();
     CHECK(r.core.takeListing(makeListing(h.key, 70, "F1.ZIP"), h.board, true) == Took::Stored);
@@ -365,6 +367,53 @@ TEST_CASE("listing index: 64 takes read no whole area and no message by number")
     CHECK(r.core.findListing(h.board + "-70", l));
     CHECK(r.store.scans + r.store.reads == 0);
     CHECK(r.store.readsAt == 1);
+}
+
+TEST_CASE("listing index: 50 appends each go after the head's last number, and every record points at its message") {
+    RevKeys rk;
+    CountedNode r(0xC6);
+    UNode       h(0xC7);
+    REQUIRE(r.core.takeCard(h.card, ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", r.card.board, 1, "1"), ""));
+    REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", h.board, 2, "1"), ""));
+    // A junk message first: the head's last number counts it, so the listings go on from 2.
+    Message junk;
+    junk.subject = "junk";
+    REQUIRE(r.files.post(kNetFilesArea, junk) == 1);
+    r.idx.bytes.clear();
+    r.idx.wire(r.core);
+    indexReady(r.core);
+    REQUIRE(r.core.listingIndexReady());
+    r.store.reset();
+    for (uint32_t s = 1; s <= 50; s++)
+        REQUIRE(r.core.takeListing(makeListing(h.key, s, "G" + std::to_string(s) + ".ZIP"), h.board, true) == Took::Stored);
+    CHECK(r.store.posts == 0);
+    CHECK(r.store.postAfters == 50);
+    CHECK(r.store.scans == 0);
+    // The area as a scan gives it, against the index: same count, numbers, offsets and seqs, in order.
+    std::vector<Message> ms;
+    r.files.scanHeaders(kNetFilesArea, [&](const Message& m) { return ms.push_back(m), true; });
+    REQUIRE(ms.size() == 51);
+    REQUIRE(r.idx.word(2) == 50);
+    CHECK(r.idx.word(5 + 2) == 1);    // hasLast
+    CHECK(r.idx.word(5 + 3) == 51);   // lastNum
+    CHECK(r.idx.word(5 + 4) == ms.back().at);
+    for (uint32_t i = 0; i < 50; i++) {
+        const Message& m = ms[i + 1];
+        CHECK(m.num == (int)i + 2);
+        CHECK(r.idx.word(11 + i * 6 + 2) == i + 1);           // seq
+        CHECK(r.idx.word(11 + i * 6 + 3) == (uint32_t)m.num);  // num
+        CHECK(r.idx.word(11 + i * 6 + 5) == m.at);             // at
+    }
+    NetListing l;
+    CHECK(r.core.findListing(h.board + "-37", l));
+    CHECK(l.name == "G37.ZIP");
+    // A fresh look at the head agrees with the area (the tail check): ready with no rebuild.
+    std::string key = r.idx.key();
+    r.idx.wire(r.core);
+    CHECK(indexReady(r.core) == 0);
+    CHECK(r.core.listingIndexReady());
+    CHECK(r.idx.key() == key);
 }
 
 TEST_CASE("listing index: a forced key collision still gives the right answer; five records on one key are refused store") {

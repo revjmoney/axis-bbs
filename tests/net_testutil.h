@@ -201,6 +201,7 @@ public:
         return inner_.read(a, num, out);
     }
     int post(const std::string& a, const axis::bbs::Message& m) override { return inner_.post(a, m); }
+    int postAfter(const std::string& a, int last, const axis::bbs::Message& m) override { return inner_.postAfter(a, last, m); }
     int drop(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& gone) override {
         return inner_.drop(a, gone);
     }
@@ -231,6 +232,7 @@ public:
     }
     bool read(const std::string& a, int num, axis::bbs::Message& out) override { return inner_.read(a, num, out); }
     int post(const std::string& a, const axis::bbs::Message& m) override { return inner_.post(a, m); }
+    int postAfter(const std::string& a, int last, const axis::bbs::Message& m) override { return inner_.postAfter(a, last, m); }
     int drop(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& gone) override {
         return inner_.drop(a, gone);
     }
@@ -246,12 +248,13 @@ private:
 };
 
 // A store that counts what is asked of one area (Net Files' nf_list by default) and passes everything through: whole
-// scans, scans from an offset, reads by number and reads at an offset.
+// scans, scans from an offset, reads by number and reads at an offset, posts (each a whole-area read in the file
+// store), posts after a known last number, and drops.
 class CountingStore : public axis::bbs::MessageStore {
 public:
     explicit CountingStore(axis::bbs::MessageStore& inner, std::string area = kNetFilesArea)
         : inner_(inner), area_(std::move(area)) {}
-    int headerCalls = 0, scans = 0, scansFrom = 0, reads = 0, readsAt = 0;
+    int headerCalls = 0, scans = 0, scansFrom = 0, reads = 0, readsAt = 0, posts = 0, postAfters = 0, drops = 0;
     std::vector<axis::bbs::Message> headers(const std::string& a) override {
         headerCalls += a == area_;
         return inner_.headers(a);
@@ -272,11 +275,20 @@ public:
         readsAt += a == area_;
         return inner_.readAt(a, at, num, out);
     }
-    int post(const std::string& a, const axis::bbs::Message& m) override { return inner_.post(a, m); }
+    // post reads the whole area for its last number (the file store); postAfter is told it and only appends.
+    int post(const std::string& a, const axis::bbs::Message& m) override {
+        posts += a == area_;
+        return inner_.post(a, m);
+    }
+    int postAfter(const std::string& a, int last, const axis::bbs::Message& m) override {
+        postAfters += a == area_;
+        return inner_.postAfter(a, last, m);
+    }
     int drop(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& gone) override {
+        drops += a == area_;
         return inner_.drop(a, gone);
     }
-    void reset() { headerCalls = scans = scansFrom = reads = readsAt = 0; }
+    void reset() { headerCalls = scans = scansFrom = reads = readsAt = posts = postAfters = drops = 0; }
 
 private:
     axis::bbs::MessageStore& inner_;

@@ -31,6 +31,12 @@ public:
     virtual std::vector<Message> headers(const std::string& area) = 0;  // without bodies, oldest first
     virtual bool                 read(const std::string& area, int num, Message& out) = 0;
     virtual int                  post(const std::string& area, const Message& m) = 0;  // its number, or 0
+    // post when the caller knows last, the highest number in the area and that of its last message (numbers rise in
+    // store order): the message gets last + 1. FileMessageStore appends without reading the area; this default is post.
+    virtual int postAfter(const std::string& area, int last, const Message& m) {
+        (void)last;
+        return post(area, m);
+    }
     virtual int drop(const std::string&, const std::function<bool(const Message&)>&) { return 0; }  // the sysop removes posts
     // Every header of an area, oldest first, one at a time (as headers() gives them: no body, net cut short).
     // each returns false to stop. This default walks headers(), so it sees only the newest kMaxHeaders;
@@ -70,6 +76,7 @@ public:
     std::vector<Message> headers(const std::string& area) override;
     bool                 read(const std::string& area, int num, Message& out) override;
     int                  post(const std::string& area, const Message& m) override;
+    int                  postAfter(const std::string& area, int last, const Message& m) override;
     // the sysop: rewrite the area without the posts `gone` picks (numbers stay); how many went
     int drop(const std::string& area, const std::function<bool(const Message&)>& gone) override;
     void scanHeaders(const std::string& area, const std::function<bool(const Message&)>& each) override;

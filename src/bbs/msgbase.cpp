@@ -212,6 +212,10 @@ int FileMessageStore::post(const std::string& area, const Message& m) {
         if (h.num > last) last = h.num;
         return true;
     });
+    return FileMessageStore::postAfter(area, last, m);
+}
+
+int FileMessageStore::postAfter(const std::string& area, int last, const Message& m) {
     std::FILE* out = std::fopen(path(area).c_str(), "ab");
     if (!out) return 0;
     bool ok = writeRecord(out, last + 1, m);

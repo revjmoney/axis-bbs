@@ -558,7 +558,9 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     m.net = line;
     if (!idxHead(false)) return res(Took::Rejected, "rejected store", kNakStore);
     liveCount_ = -1;  // (the count of live listings is taken again)
-    int num = store_.post(kNetFilesArea, m);
+    // The index is ready, so its head knows the area's last message, which holds the highest number (post appends max + 1
+    // and drop keeps the order): appended after it without reading the area.
+    int num = hd_.hasLast ? store_.postAfter(kNetFilesArea, (int)hd_.lastNum, m) : store_.post(kNetFilesArea, m);
     if (!num) {
         idx_ = Idx::Unknown;
         return res(Took::Rejected, "rejected store", kNakStore);
