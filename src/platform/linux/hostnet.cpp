@@ -28,6 +28,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "platform/cyd/config_store.h"
 #include "platform/linux/hostconf.h"
 #include "platform/linux/netgate.h"
 
@@ -388,9 +389,9 @@ void WiFiServer::begin(uint16_t port) {
     if (port) port_ = port;
     uint16_t want[2] = {port_, 0};
     bool     lanOnly[2] = {true, false};
-    if (port_ == 23) {  // the board's telnet port: the LAN port, and the public one when it is set
-        want[0] = lanPort;
-        want[1] = publicPort == lanPort ? 0 : publicPort;
+    if (port_ != kPanelPort) {  // the board's telnet server: the LAN port, and the public one when it is set
+        want[0] = port_ == 23 ? lanPort : port_;  // 23 (the board's default) is lan_port; a telnet_port set is kept
+        want[1] = publicPort == want[0] ? 0 : publicPort;
         lanOnly[0] = false;  // any address may call the LAN port; the firewall decides who reaches it
     }
     if ((fd_[0] >= 0 || !want[0]) && (fd_[1] >= 0 || !want[1]) && bound_[0] == want[0] && bound_[1] == want[1])
@@ -666,3 +667,23 @@ mdns_search_once_t* mdns_query_async_new(const char*, const char*, const char*, 
     return nullptr;
 }
 
+// ------------------------------------------------------------------ the telnet port main.cpp shows
+// main.cpp shows boardCfg->telnetPort (the AXIS card other boards dial, the boot line, the WFC's "or telnet <ip>
+// <port>") and the board's default 23 is lan_port here (WiFiServer::begin). The axis link wraps configLoad and
+// configSave (CMakeLists.pc.txt, --wrap on their mangled names): a stored 23 loads as lan_port and lan_port saves as
+// 23, so main.cpp shows the port axis listens on, and the file keeps meaning "the LAN port" if lan_port changes.
+extern "C" axis::bbs::BbsConfig __real__Z10configLoadv();
+extern "C" bool                 __real__Z10configSaveRKN4axis3bbs9BbsConfigE(const axis::bbs::BbsConfig& c);
+
+extern "C" axis::bbs::BbsConfig __wrap__Z10configLoadv() {
+    axis::bbs::BbsConfig c = __real__Z10configLoadv();
+    if (c.telnetPort == 23) c.telnetPort = lanPort;
+    return c;
+}
+
+extern "C" bool __wrap__Z10configSaveRKN4axis3bbs9BbsConfigE(const axis::bbs::BbsConfig& c) {
+    if (lanPort == 23 || c.telnetPort != lanPort) return __real__Z10configSaveRKN4axis3bbs9BbsConfigE(c);
+    axis::bbs::BbsConfig d = c;
+    d.telnetPort = 23;
+    return __real__Z10configSaveRKN4axis3bbs9BbsConfigE(d);
+}

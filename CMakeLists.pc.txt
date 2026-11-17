@@ -337,5 +337,8 @@ if(UNIX AND NOT APPLE)
             opendir unlink rmdir access truncate statvfs)
       target_link_options(axis PRIVATE "-Wl,--wrap=${fn}")
     endforeach()
+    # configLoad and configSave (the board's config_store.cpp) map the board's telnet port 23 to lan_port and back,
+    # so the port main.cpp shows is the one axis listens on (src/platform/linux/hostnet.cpp, at its end).
+    target_link_options(axis PRIVATE "-Wl,--wrap=_Z10configLoadv" "-Wl,--wrap=_Z10configSaveRKN4axis3bbs9BbsConfigE")
   endif()
 endif()
