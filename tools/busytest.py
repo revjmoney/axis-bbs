@@ -17,15 +17,16 @@ Callers (each a thread with a telnet socket, logged in the way tools/seven_login
 
 Events: at 3 minutes the follower is reset (@RESTART force on --follower-port), at 5 minutes
 the main is told to check DNS now (@DDNS now on --port). @HEAPWIN is sent first, so wmin/wlarge
-cover the test only. @HEAPWIN and @DDNS now are bench commands: flash the main with pio run -e cyd-bench
-(the release image, env cyd, leaves them out; there wmin/wlarge run from boot).
+cover the test only. @HEAPWIN and @DDNS now are bench commands: flash the main with pio run -e cyd-bench.
+The release image (env cyd) leaves them out: busytest then logs "not a bench image", the window counts
+from boot, the wmin and wlarge floors are not checked (reported as NOT CHECKED) and no DNS check is forced.
 
 Every 30 s @STATUS is polled on --port (DTR and RTS held low, like tools/sdput.py), plus one row
 before anyone dials and one after they hang up. CSV columns: see CSV_HEAD. Every serial line
 goes to a raw log next to the CSV (it can hold the public hostname: keep it local), and the
 board's @LOG is added at the end. Ends with what each caller did, PASS or FAIL and the lowest
 numbers seen. FAIL on: a reset (up= goes down or the ROM's rst: line), a line with ALLOC FAILED,
-wmin < 61440, wlarge < 32768, @STATUS without wmin/wlarge, or a caller that never did its job
+wmin < 61440, wlarge < 32768 (bench image only), @STATUS without wmin/wlarge, or a caller that never did its job
 (A no fight or town screen, B no pack, C no ZMODEM download, D no screen). Stops early after --max-resets
 resets, 90 s without @STATUS, or the main coming back without its role or card.
 BUSY_TRACE=1 prints every key whose expected answer never came.
@@ -54,7 +55,7 @@ RESTART_AT_S = 3 * 60
 DDNS_AT_S = 5 * 60
 
 # @STATUS fields, in CSV order (after t). "min" is the board's lowest since boot; wmin/wlarge the
-# lowest seen at the top of loop() since @HEAPWIN.
+# lowest seen at the top of loop() since @HEAPWIN (since boot on a release image).
 CSV_KEYS = ("up", "on", "heap", "largest", "min", "wmin", "wlarge", "wdoing", "stack", "stk_web", "stk_mdns",
             "stk_timer", "outmax", "artmax", "holdmax")
 CSV_HEAD = "t," + ",".join(CSV_KEYS) + ",resets"
@@ -631,14 +632,19 @@ class Monitor:
         except OSError:
             pass
 
-    def command(self, cmd, seconds=1.0):
+    def command(self, cmd, seconds=1.0, expect=None):
+        """Send cmd and read for that long. With expect: True as soon as a line holding it comes back, False if
+        none does. Without: None."""
         self.ser.write(("\n" + cmd + "\n").encode())
         self.ser.flush()
         end = time.time() + seconds
         while time.time() < end:
             raw = self.ser.readline()
-            if raw:
+            if raw and expect is not None and expect in self._line(raw):
+                return True
+            elif raw and expect is None:
                 self._line(raw)
+        return None if expect is None else False
 
 
 def serial_send(port, cmd):
@@ -737,6 +743,7 @@ def main(argv=None):
     low = {}
     reasons = []
     seen_window = False
+    window_ok = False  # @HEAPWIN answered (a bench image): wmin/wlarge cover this run, so their floors apply
     last_answer = time.time()
     start = time.time()
 
@@ -753,9 +760,9 @@ def main(argv=None):
             st.get("wlarge"), st.get("wdoing"), st.get("stk_web"), mon.resets))
         if "wmin" in st and "wlarge" in st:
             seen_window = True
-        if "wmin" in st and to_int(st["wmin"]) < WMIN_FLOOR and "wmin" not in reasons:
+        if window_ok and "wmin" in st and to_int(st["wmin"]) < WMIN_FLOOR and "wmin" not in reasons:
             reasons.append("wmin")
-        if "wlarge" in st and to_int(st["wlarge"]) < WLARGE_FLOOR and "wlarge" not in reasons:
+        if window_ok and "wlarge" in st and to_int(st["wlarge"]) < WLARGE_FLOOR and "wlarge" not in reasons:
             reasons.append("wlarge")
 
     with open(args.out, "w", encoding="ascii", newline="") as f:
@@ -766,8 +773,12 @@ def main(argv=None):
             return 2
         record(f, st, 0)
         try:  # the windowed low (wmin wlarge wdoing) then covers this run only
-            mon.command("@HEAPWIN", 0.5)
-            ledger.note("@HEAPWIN sent: window starts with the test")
+            window_ok = mon.command("@HEAPWIN", 3.0, expect="@HEAPWIN reset")
+            if window_ok:
+                ledger.note("@HEAPWIN reset: window starts with the test")
+            else:
+                ledger.note("not a bench image: heap window counts from boot, wmin/wlarge floors not checked "
+                            "(flash pio run -e cyd-bench)")
         except Exception as e:
             ledger.note("@HEAPWIN failed: %s" % e)
         start = time.time()
@@ -801,8 +812,10 @@ def main(argv=None):
             if not did_ddns and now >= DDNS_AT_S:
                 did_ddns = True
                 try:
-                    mon.command("@DDNS now", 0.5)
-                    ledger.note("DNS check forced at %ds" % now)
+                    if mon.command("@DDNS now", 3.0, expect="ddns check due"):
+                        ledger.note("DNS check forced at %ds" % now)
+                    else:
+                        ledger.note("not a bench image: DNS check not forced at %ds (no answer to @DDNS now)" % now)
                 except Exception as e:
                     ledger.note("@DDNS now failed: %s" % e)
             if time.time() >= next_poll:
@@ -856,6 +869,8 @@ def main(argv=None):
     for line in mon.panic_lines[:10]:
         say("panic: " + line)
     verdict = "FAIL" if reasons else "PASS"
+    if not window_ok:
+        say("wmin/wlarge NOT CHECKED: @HEAPWIN got no answer (not a bench image: flash pio run -e cyd-bench)")
     say("%s lowest free=%s largest=%s min=%s wmin=%s wlarge=%s stk_web=%s stk_mdns=%s stk_timer=%s resets=%d "
         "alloc_failed=%d rounds=%s%s" % (
             verdict, low.get("heap"), low.get("largest"), low.get("min"), low.get("wmin"), low.get("wlarge"),
