@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <new>
 
 #include "bbs/config.h"
 #include "bbs/theme.h"
@@ -104,25 +105,53 @@ std::vector<std::string> SysopShell::lines(const std::string& cmd) {
     return v;
 }
 
-std::vector<std::string> SysopShell::paged(const std::string& cmd, size_t pages, bool& more) {
-    std::vector<std::string> v;
-    std::string              from = "0";
-    more = false;
-    for (size_t p = 0; p < pages; p++) {
-        auto page = lines(cmd + from);
-        if (!p && (page.empty() || page[0].rfind("axis: unknown", 0) == 0))  // an older main: the whole list, once
-            return lines(cmd.substr(0, cmd.size() - 1));
-        std::string n = page.empty() || page.back().rfind("more ", 0) != 0 ? "" : page.back().substr(5);
-        more = !n.empty() && n.find_first_not_of("0123456789") == std::string::npos && n != from;  // (one that never moves on: stop)
-        if (more) from = page.back().substr(5), page.pop_back();
-        v.insert(v.end(), page.begin(), page.end());
-        if (!more) break;
+std::vector<std::string> SysopShell::fetch(const std::string& cmd, size_t from, size_t& next, bool& ok) {
+    auto v = lines(cmd + std::to_string(from));
+    next = 0;
+    if (!v.empty() && v.back().size() > 5 && v.back().rfind("more ", 0) == 0 && v.back().find_first_not_of("0123456789", 5) == std::string::npos) {
+        size_t n = std::strtoul(v.back().c_str() + 5, nullptr, 10);
+        if (n > from) next = n;  // (one that doesn't move on ends the list)
+        v.pop_back();
     }
+    old_ = !from && v.empty();
+    if (old_) v = lines(cmd.substr(0, cmd.size() - 1));  // an older main answers nothing for a start: its whole list
+    ok = old_ || std::any_of(v.begin(), v.end(), [](const std::string& s) { return s.rfind("axis: ", 0) != 0; });
+    if (!ok) did(from || v.empty() ? "the board didn't answer, try again" : v[0]);
     return v;
 }
 
-void SysopShell::moreItem(Layer& l, bool more) {
-    if (more) l.items.push_back({"More...", "", [this] { layers_.back().pages++; }});  // (the lightbar stays: on the first new one)
+const std::vector<std::string>& SysopShell::page(Layer& l, const std::string& cmd) {
+    size_t at = l.step > 0 ? l.next : l.step < 0 && !l.back.empty() ? l.back.back() : l.start, next;
+    bool   ok, moved = false;
+    auto   v = fetch(cmd, at, next, ok);
+    if (ok) {  // (not answered: the rows before stay, and so do More and Earlier, to try again)
+        if (l.step > 0) l.back.push_back(l.start);
+        else if (l.step < 0 && !l.back.empty()) l.back.pop_back();
+        moved = l.step != 0;
+        l.start = at, l.next = next, l.rows = std::move(v);
+    }
+    l.step = 0;
+    if (!l.back.empty()) l.items.push_back({"Earlier...", "", [this] { layers_.back().step = -1; }});
+    if (moved) l.at = l.items.size();  // the lightbar on the page's first row
+    return l.rows;
+}
+
+void SysopShell::moreItem(Layer& l) {
+    if (l.next) l.items.push_back({"More...", "", [this] { layers_.back().step = 1; }});
+}
+
+bool SysopShell::walk(const std::string& cmd, const std::function<bool(const std::string&)>& each, size_t from) {
+    for (int p = 0; p < 64; p++) {  // (64 pages: far past any list, and never a loop)
+        size_t next;
+        bool   ok;
+        auto   v = fetch(cmd, from, next, ok);
+        if (!ok) return !(noAnswer_ = true);
+        for (auto& s : v)
+            if (each(s)) return true;
+        if (!next) break;
+        from = next;
+    }
+    return true;
 }
 
 void SysopShell::did(const std::string& reply) {
@@ -158,10 +187,17 @@ void SysopShell::pop() {
 
 void SysopShell::refresh() {
     Layer& l = layers_.back();
-    haveSettings_ = false;  // a change may have just gone out: ask again, once, for this build
+    haveSettings_ = noAnswer_ = false;  // a change may have just gone out: ask again, once, for this build
     if (l.build) {
         l.items.clear();
-        l.build(l);
+        try {
+            l.build(l);
+        } catch (const std::bad_alloc&) {  // a board low on memory: a note, not a restart
+            l.items.clear();
+            l.rows.clear();
+            did("not enough memory for this list now");
+        }
+        if (noAnswer_) l.items.assign(1, Item{"(no answer from the board: Q, then try again)", "", nullptr});  // never a default shown as a value
         if (l.at >= l.items.size()) l.at = l.items.empty() ? 0 : l.items.size() - 1;
     }
     draw();
@@ -214,10 +250,10 @@ void SysopShell::begin() {
 }
 
 const std::vector<std::string>& SysopShell::settingLines() {
-    if (!haveSettings_) {
-        bool more;
-        settings_ = paged("@SETTINGS ", (size_t)-1, more);  // every page: a setting is looked up by key
-        haveSettings_ = true;
+    if (!haveSettings_ && !noAnswer_) {  // every page: a setting is looked up by key
+        settings_.clear();
+        haveSettings_ = walk("@SETTINGS ", [this](const std::string& s) { settings_.push_back(s); return false; });
+        if (!haveSettings_) settings_.clear();
     }
     return settings_;
 }
@@ -395,26 +431,27 @@ void SysopShell::users(Layer& l) {
     l.items.push_back({"Add a user", "", [this] {
                            ask("handle|location|password (6+)", false, [this](const std::string& a) { did(run_("@ADDUSER " + a)); });
                        }});
-    bool more;
-    for (auto& line : paged("@USERS ", l.pages, more)) {
+    const auto& rows = page(l, "@USERS ");
+    size_t      st = l.start;  // (a user's own row is looked for from this page first)
+    for (auto& line : rows) {
         if (line.rfind("user ", 0) != 0) continue;
         auto f = split(line.substr(5), '|');
         if (f.size() < 6) continue;
         std::string h = f[1];
-        l.items.push_back({h, f[2] + ", level " + f[3] + ", " + f[4] + " calls", [this, h] { push("USER", [this, h](Layer& x) { user(x, h); }); }});
+        l.items.push_back({h, f[2] + ", level " + f[3] + ", " + f[4] + " calls", [this, h, st] { push("USER", [this, h, st](Layer& x) { user(x, h, st); }); }});
     }
-    moreItem(l, more);
+    moreItem(l);
 }
 
-void SysopShell::user(Layer& l, const std::string& h) {
+void SysopShell::user(Layer& l, const std::string& h, size_t from) {
     auto d = lines("@USER " + h);
     std::string flags;
-    bool        more;
-    for (auto& line : paged("@USERS ", (size_t)-1, more))
-        if (line.rfind("user ", 0) == 0) {
-            auto f = split(line.substr(5), '|');
-            if (f.size() >= 6 && f[1] == h) flags = f[5];
-        }
+    auto        mine = [&](const std::string& line) {  // its own row: from the page it was listed on, then from the top
+        auto f = split(line.size() > 5 ? line.substr(5) : "", '|');
+        if (line.rfind("user ", 0) == 0 && f.size() >= 6 && f[1] == h) flags = f[5];
+        return !flags.empty();
+    };
+    if (!walk("@USERS ", mine, from) || (flags.empty() && from && !walk("@USERS ", mine))) return;
     auto field = [&](const char* label, const char* key, const char* field) {
         std::string f = field;
         l.items.push_back({label, after(d, key), [this, h, f, label] {
@@ -500,8 +537,7 @@ void SysopShell::area(Layer& l, bool msgs, int n) {
 }
 
 void SysopShell::files(Layer& l, const std::string& a) {
-    bool more;
-    for (auto& line : paged("@FILES " + a + "|", l.pages, more)) {
+    for (auto& line : page(l, "@FILES " + a + "|")) {
         auto f = split(line, '|');
         if (f.size() < 2) continue;
         std::string name = f[0], desc = f.size() > 2 ? f[2] : "";
@@ -531,13 +567,14 @@ void SysopShell::files(Layer& l, const std::string& a) {
                                });
                            }});
     }
-    moreItem(l, more);
+    moreItem(l);
     if (l.items.empty()) l.items.push_back({"(no files)", "", nullptr});
 }
 
 void SysopShell::posts(Layer& l, const std::string& a) {
-    bool more;
-    for (auto& line : paged("@POSTS " + a + "|", l.pages, more)) {  // (paged: the newest first)
+    auto list = page(l, "@POSTS " + a + "|");  // (paged: the newest first)
+    if (old_) std::reverse(list.begin(), list.end());  // (an older main's whole list: oldest first)
+    for (auto& line : list) {
         auto f = split(line, '|');
         if (f.size() < 3) continue;
         std::string num = f[0], subj = f[2];
@@ -558,7 +595,7 @@ void SysopShell::posts(Layer& l, const std::string& a) {
                                });
                            }});
     }
-    moreItem(l, more);
+    moreItem(l);
     if (l.items.empty()) l.items.push_back({"(no posts)", "", nullptr});
 }
 

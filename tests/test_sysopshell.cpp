@@ -481,19 +481,52 @@ TEST_CASE("a list longer than a page reaches its last entry through More") {
     CHECK(o.find("More...") != std::string::npos);
     CHECK(o.find("u30") == std::string::npos);
     r.ran.clear();
+    r.out.clear();
     r.type("8");  // Add and u1 to u20 are 21 items: More is row 8 of the second screen
     CHECK(r.ranCmd("@USERS 20"));
-    r.out.clear();
-    r.type("n");
+    CHECK_FALSE(r.ranCmd("@USERS 0"));  // one page at a time: only the new one is asked for
     o = plain(r.out);
     CHECK(o.find("u30") != std::string::npos);
+    CHECK(o.find("u20 ") == std::string::npos);
+    CHECK(o.find("Earlier...") != std::string::npos);
     CHECK(o.find("More...") == std::string::npos);
+    r.out.clear();
+    r.type("2");  // Earlier..., after Add
+    o = plain(r.out);
+    CHECK(o.find("u1 ") != std::string::npos);
+    CHECK(o.find("u30") == std::string::npos);
+}
+
+TEST_CASE("a page the board doesn't answer keeps the rows and More, and settings show no defaults") {
+    Rig         r;
+    std::string p0;
+    for (int i = 1; i <= 20; i++) p0 += "user " + std::to_string(i) + "|u" + std::to_string(i) + "|valid|10|1|FMD--\n";
+    r.replies["@USERS 0"] = p0 + "more 20\n";
+    r.replies["@USERS 20"] = "axis: the main didn't answer\n";
+    r.shell.beginAt(axis::bbs::SysopSection::Users);
+    r.type("n");
+    r.out.clear();
+    r.type("8");  // More..., not answered
+    std::string o = plain(r.out);
+    CHECK(o.find("didn't answer, try again") != std::string::npos);
+    CHECK(o.find("u20 ") != std::string::npos);
+    CHECK(o.find("More...") != std::string::npos);
+    r.replies["@USERS 20"] = "user 21|u21|valid|10|1|FMD--\n";
+    r.out.clear();
+    r.type("8");  // try again
+    CHECK(plain(r.out).find("u21") != std::string::npos);
+    r.replies["@SETTINGS 0"] = "bbs_name=AXIS\nmore 1\n";  // the second page never comes
+    r.out.clear();
+    r.shell.beginAt(axis::bbs::SysopSection::Settings);
+    o = plain(r.out);
+    CHECK(o.find("no answer from the board") != std::string::npos);
+    CHECK(o.find("Telnet sysop access") == std::string::npos);
 }
 
 TEST_CASE("System ends with this board's door memory, so no other item moves") {
     Rig        r;
     SysopShell remote{r.out, r.run, 80, false};  // over telnet: the short System list
-    r.replies["@DOORSTATE"] = "last door: oom\nstack left: 900 bytes\nheap free: 90000\nlargest block: 40000\n";
+    r.replies["@DOORSTATE"] = "last door: oom\nloop stack low: 900 bytes\nheap free: 90000\nlargest block: 40000\n";
     remote.beginAt(axis::bbs::SysopSection::System);
     std::string o = plain(r.out);
     CHECK(o.find("Door memory") != std::string::npos);
@@ -502,7 +535,7 @@ TEST_CASE("System ends with this board's door memory, so no other item moves") {
     CHECK(r.ranCmd("@DOORSTATE"));
     o = plain(r.out);
     CHECK(o.find("DOOR MEMORY (this board)") != std::string::npos);
-    CHECK(o.find("stack left: 900 bytes") != std::string::npos);
+    CHECK(o.find("loop stack low: 900 bytes") != std::string::npos);
     CHECK(o.find("largest block: 40000") != std::string::npos);
     CHECK(axis::bbs::boardOnlyCommand("@DOORSTATE"));  // each board's own door, never the main's
 }

@@ -5087,29 +5087,52 @@ static bool pagedRun = false;  // runCommand under the pager: @POSTS sends the n
 static void runCommand(const String& cmd, Print& out) {
     // "@USERS 40", "@SETTINGS 40", "@FILES area|40", "@POSTS area|40": the list from line 40, about 4 KB of it,
     // then "more <next>" while lines remain. Without the number: the whole list, as always.
-    int    at = std::max(cmd.lastIndexOf(' '), cmd.lastIndexOf('|'));
-    String base = cmd.substring(0, at), num = cmd.substring(at + 1);
-    if (at > 0 && !pagedRun && String(num.toInt()) == num &&
-        (base == "@USERS" || base == "@SETTINGS" || (cmd[at] == '|' && (base.startsWith("@FILES ") || base.startsWith("@POSTS "))))) {
-        struct Page : Print {
-            Print& to;
-            size_t skip, line = 0, sent = 0;
-            bool   full = false, bol = true;
-            Page(Print& o, size_t s) : to(o), skip(s) {}
-            size_t write(uint8_t b) override {
-                if (bol && line >= skip && sent >= 4096) full = true;
-                if (full) return 1;
-                bol = b == '\n';
-                if (line >= skip) to.write(b), sent++;
-                if (bol) line++;
-                return 1;
-            }
-        } page(out, (size_t)num.toInt());
-        pagedRun = true;
-        runCommand(base, page);
-        pagedRun = false;
-        if (page.full) out.printf("more %u\n", (unsigned)page.line);
-        return;
+    // A page is whole lines, and with its marker it stays under sysopRun's 6 KB cap (one line too long is cut).
+    if (!pagedRun && (cmd.startsWith("@USERS ") || cmd.startsWith("@SETTINGS ") || cmd.startsWith("@FILES ") || cmd.startsWith("@POSTS "))) {
+        int    at = std::max(cmd.lastIndexOf(' '), cmd.lastIndexOf('|'));
+        String base = cmd.substring(0, at), num = cmd.substring(at + 1);
+        if (String(num.toInt()) == num && (base == "@USERS" || base == "@SETTINGS" || (cmd[at] == '|' && base.length() > 7 && (cmd[1] == 'F' || cmd[1] == 'P')))) {
+            struct Page : Print {
+                const size_t kRoom = 6 * 1024 - 64;
+                Print&       to;
+                size_t       skip, line = 0, sent = 0, next = 0;  // next: where the next page starts (0: none)
+                bool         drop = false;                       // the rest of a cut line
+                std::string  held;                               // the line so far: sent whole, or left for the next page
+                Page(Print& o, size_t s) : to(o), skip(s) {}
+                size_t write(uint8_t b) override {
+                    if (next) return 1;
+                    if (line < skip || drop) {
+                        if (b == '\n') line++, drop = false;
+                        return 1;
+                    }
+                    if (held.empty() && sent >= 4096) {
+                        next = line;
+                        return 1;
+                    }
+                    held += (char)b;
+                    bool end = b == '\n';
+                    if (!end && held.size() < kRoom) return 1;
+                    if (sent && sent + held.size() > kRoom) {  // it starts the next page
+                        next = line;
+                        return 1;
+                    }
+                    if (!end) held += '\n', drop = true;  // longer than a page: cut
+                    to.write((const uint8_t*)held.data(), held.size());
+                    sent += held.size();
+                    held.clear();
+                    if (end) line++;
+                    return 1;
+                }
+            } page(out, (size_t)num.toInt());
+            struct Flag {
+                Flag() { pagedRun = true; }
+                ~Flag() { pagedRun = false; }
+            } flag;
+            runCommand(base, page);
+            if (!page.next && !page.held.empty()) out.write((const uint8_t*)page.held.data(), page.held.size());
+            if (page.next) out.printf("more %u\n", (unsigned)page.next);
+            return;
+        }
     }
     if (cmd.startsWith("@TAP ")) {
         int sp = cmd.indexOf(' ', 5);
@@ -5146,7 +5169,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@DOORSTATE") {  // the last door's memory (noteDoor), and the heap now
         if (boardDiag_.door == axis::bbs::DoorDiag::None) out.println("axis: no door has run since boot");
         else
-            out.printf("last door: %s\nstack left: %u bytes\n", axis::bbs::doorDiagToken(boardDiag_.door),
+            out.printf("last door: %s\nloop stack low: %u bytes\n", axis::bbs::doorDiagToken(boardDiag_.door),
                        (unsigned)boardDiag_.doorStackWords);  // (bytes: the Xtensa port's StackType_t is uint8_t)
         out.printf("heap free: %u\nlargest block: %u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
                    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));

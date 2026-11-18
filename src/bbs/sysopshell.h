@@ -68,7 +68,12 @@ public:
         std::vector<Item>  items;
         std::function<void(Layer&)> build;  // (re)fills items: after every change the layer is rebuilt
         size_t             at = 0;          // the lightbar
-        size_t             pages = 1;       // a paged list: the pages asked for so far (More... asks for one more)
+        // a paged list, one page at a time: the start shown and the next page's (0: the last page), the earlier
+        // pages' starts, the move asked for (+1 More, -1 Earlier), and the rows shown (kept when the board doesn't answer)
+        size_t                   start = 0, next = 0;
+        int                      step = 0;
+        std::vector<size_t>      back;
+        std::vector<std::string> rows;
         std::vector<std::string> text;      // a read-only page (the event log ...) instead of items
     };
 
@@ -85,12 +90,16 @@ private:
     std::string setting(const std::string& key);  // one axis.ini value ("" if unset)
     const std::vector<std::string>& settingLines();  // @SETTINGS, asked once per layer build
     std::vector<std::string> lines(const std::string& cmd);
-    // a list the board sends a page at a time ("@USERS " + start; "more <next>" ends a page with more to come)
-    std::vector<std::string> paged(const std::string& cmd, size_t pages, bool& more);
-    void                     moreItem(Layer& l, bool more);  // More...: the next page, in the same layer
+    // a list the board sends a page at a time ("@USERS " + start; "more <next>" ends a page with more to come).
+    // fetch: one page; ok false when the board didn't answer (the note says so).
+    std::vector<std::string> fetch(const std::string& cmd, size_t from, size_t& next, bool& ok);
+    const std::vector<std::string>& page(Layer& l, const std::string& cmd);  // the layer's page, after Earlier... if any
+    void moreItem(Layer& l);  // More...: the next page in its place
+    // the pages from `from` on until each() says stop; false (and the layer shows only a note) when one didn't come
+    bool walk(const std::string& cmd, const std::function<bool(const std::string&)>& each, size_t from = 0);
     // the layers
     void users(Layer& l);
-    void user(Layer& l, const std::string& handle);
+    void user(Layer& l, const std::string& handle, size_t from);
     void areas(Layer& l, bool msgs);
     void area(Layer& l, bool msgs, int n);
     void files(Layer& l, const std::string& area);
@@ -129,6 +138,8 @@ private:
     std::vector<std::string>               settings_;  // @SETTINGS for the layer being built
     bool                                   haveSettings_ = false;
     bool                                   cut_ = false;  // the last lines() reply ended "axis: reply cut"
+    bool                                   old_ = false;  // the last fetch() was an older main's whole list
+    bool                                   noAnswer_ = false;  // a walk() failed: the layer shows a note, no values
     std::string                            header(const std::string& title) const;
     size_t page_() const { return cols_ >= 80 ? 14 : 7; }  // items a page: 14 online, 7 on the board's 12-line screen
 };
