@@ -99,6 +99,8 @@ std::vector<std::string> SysopShell::lines(const std::string& cmd) {
         while (!t.empty() && (t.back() == '\r' || t.back() == ' ')) t.pop_back();
         if (!t.empty()) v.push_back(t);
     }
+    cut_ = !v.empty() && v.back().rfind("axis: reply cut", 0) == 0;  // (sysopRun stopped at 6 KB: not the whole list)
+    if (cut_) did(v.back());
     return v;
 }
 
@@ -108,6 +110,8 @@ std::vector<std::string> SysopShell::paged(const std::string& cmd, size_t pages,
     more = false;
     for (size_t p = 0; p < pages; p++) {
         auto page = lines(cmd + from);
+        if (!p && (page.empty() || page[0].rfind("axis: unknown", 0) == 0))  // an older main: the whole list, once
+            return lines(cmd.substr(0, cmd.size() - 1));
         std::string n = page.empty() || page.back().rfind("more ", 0) != 0 ? "" : page.back().substr(5);
         more = !n.empty() && n.find_first_not_of("0123456789") == std::string::npos && n != from;  // (one that never moves on: stop)
         if (more) from = page.back().substr(5), page.pop_back();
@@ -448,11 +452,12 @@ void SysopShell::user(Layer& l, const std::string& h) {
 void SysopShell::areas(Layer& l, bool msgs) {
     auto list = lines(msgs ? "@MSGAREAS" : "@AREAS");
     int  count = (int)list.size();
-    l.items.push_back({msgs ? "Add a message base" : "Add a file area", "", [this, msgs, count] {
-                           ask("id|name|level (id: short, no spaces)", false, [this, msgs, count](const std::string& a) {
-                               did(run_(std::string("@AREASET ") + (msgs ? "msgs" : "files") + "|" + std::to_string(count + 1) + "|" + a));
-                           });
-                       }});
+    if (!cut_)  // (a cut list's count is short: adding would overwrite an area)
+        l.items.push_back({msgs ? "Add a message base" : "Add a file area", "", [this, msgs, count] {
+                               ask("id|name|level (id: short, no spaces)", false, [this, msgs, count](const std::string& a) {
+                                   did(run_(std::string("@AREASET ") + (msgs ? "msgs" : "files") + "|" + std::to_string(count + 1) + "|" + a));
+                               });
+                           }});
     if (msgs)
         l.items.push_back({"Purge old posts", "", [this] {
                                ask("area|days (posts older than that go)", false, [this](const std::string& a) { did(run_("@PURGE " + a)); });
@@ -636,11 +641,12 @@ void SysopShell::menus(Layer& l) {
         return;
     }
     int count = (int)items.size();
-    l.items.push_back({"Add an item", "", [this, count] {
-                           ask("key|name|command (see the list in an item)", false, [this, count](const std::string& a) {
-                               did(run_("@MENUSET " + std::to_string(count + 1) + "|" + a));
-                           });
-                       }});
+    if (!cut_)  // (a cut list's count is short: adding would overwrite an item)
+        l.items.push_back({"Add an item", "", [this, count] {
+                               ask("key|name|command (see the list in an item)", false, [this, count](const std::string& a) {
+                                   did(run_("@MENUSET " + std::to_string(count + 1) + "|" + a));
+                               });
+                           }});
     for (auto& line : items) {
         auto f = split(line, '|');
         if (f.size() < 4) continue;
@@ -736,7 +742,7 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"Update No-IP now", "", show("NO-IP", "@NOIPNOW")});
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
-    l.items.push_back({"Door memory", "the last door's memory", show("DOOR MEMORY", "@DOORSTATE")});
+    Item doorMem{"Door memory", "the last door's memory", show("DOOR MEMORY (this board)", "@DOORSTATE")};  // (last: no key moves)
 #if AXIS_MODEMLINK
     Item modemPage{"Modem", "LFD3K-SM radio callers", [this] { push("MODEM", [this](Layer& x) { modem(x); }); }};  // (last, online and here)
 #endif
@@ -750,6 +756,7 @@ void SysopShell::system(Layer& l) {
 #if AXIS_NETS
         l.items.push_back(netPage);
 #endif
+        l.items.push_back(doorMem);
         return;
     }
     l.items.push_back({"Restart this board", "", [this] { confirm("Restart the board now?", [this] { did(run_("@RESTART")); }); }});
@@ -770,6 +777,7 @@ void SysopShell::system(Layer& l) {
 #if AXIS_NETS
     l.items.push_back(netPage);
 #endif
+    l.items.push_back(doorMem);
 }
 
 // ---- station: sensors (read only), the relays (pick to flip), a beep

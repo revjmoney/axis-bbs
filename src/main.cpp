@@ -5146,8 +5146,8 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@DOORSTATE") {  // the last door's memory (noteDoor), and the heap now
         if (boardDiag_.door == axis::bbs::DoorDiag::None) out.println("axis: no door has run since boot");
         else
-            out.printf("last door: %s\npeak guest RAM: %u KB\nstack left: %u bytes\n", axis::bbs::doorDiagToken(boardDiag_.door),
-                       (unsigned)boardDiag_.doorPeakKb, (unsigned)boardDiag_.doorStackWords);  // (ESP-IDF counts stacks in bytes)
+            out.printf("last door: %s\nstack left: %u bytes\n", axis::bbs::doorDiagToken(boardDiag_.door),
+                       (unsigned)boardDiag_.doorStackWords);  // (bytes: the Xtensa port's StackType_t is uint8_t)
         out.printf("heap free: %u\nlargest block: %u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
                    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 #if AXIS_NETS

@@ -279,7 +279,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
     {  // System > Restart, confirmed
         Rig r;
         r.shell.beginAt(SysopSection::System);
-        r.type("a");  // Restart this board
+        r.type("9");  // Restart this board
         CHECK_FALSE(r.ranCmd("@RESTART"));
         r.type("y");
         CHECK(r.ranCmd("@RESTART"));
@@ -287,7 +287,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
     {  // System > Rerun setup, confirmed: setup again, the settings kept until the wizard saves (no erase)
         Rig r;
         r.shell.beginAt(SysopSection::System);
-        r.type("b");
+        r.type("a");
         CHECK_FALSE(r.ranCmd("@RERUNSETUP"));
         r.type("y");
         CHECK(r.ranCmd("@RERUNSETUP"));
@@ -296,13 +296,13 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
     {  // System > Format SD needs FORMAT typed
         Rig r;
         r.shell.beginAt(SysopSection::System);
-        r.type("c");
+        r.type("b");
         r.type("nope\r");
         CHECK_FALSE(r.ranCmd("@SDFORMAT FORMAT"));
-        r.type("c");
+        r.type("b");
         r.type("formats\r");
         CHECK_FALSE(r.ranCmd("@SDFORMAT FORMAT"));
-        r.type("c");
+        r.type("b");
         r.type("format\r");  // any case (the touch keyboard has no caps lock)
         CHECK(r.ranCmd("@SDFORMAT FORMAT"));
     }
@@ -310,7 +310,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         Rig r;
         r.replies["@STATION"] = "sensor|temp 21.5 (stub)\nrelay|1|0\nrelay|2|1\n";
         r.shell.beginAt(SysopSection::System);
-        r.type("d");
+        r.type("c");
         CHECK(plain(r.out).find("Relay 2") != std::string::npos);
         r.type("3");  // sensor, relay 1, relay 2: the third row is relay 2
         CHECK(r.ranCmd("@RELAY 2 off"));
@@ -490,17 +490,35 @@ TEST_CASE("a list longer than a page reaches its last entry through More") {
     CHECK(o.find("More...") == std::string::npos);
 }
 
-TEST_CASE("System shows the last door's memory, right after the doors on the card") {
-    Rig r;
-    r.replies["@DOORSTATE"] = "last door: oom\npeak guest RAM: 512 KB\nstack left: 900 bytes\nheap free: 90000\nlargest block: 40000\n";
-    r.shell.beginAt(axis::bbs::SysopSection::System);
+TEST_CASE("System ends with this board's door memory, so no other item moves") {
+    Rig        r;
+    SysopShell remote{r.out, r.run, 80, false};  // over telnet: the short System list
+    r.replies["@DOORSTATE"] = "last door: oom\nstack left: 900 bytes\nheap free: 90000\nlargest block: 40000\n";
+    remote.beginAt(axis::bbs::SysopSection::System);
     std::string o = plain(r.out);
     CHECK(o.find("Door memory") != std::string::npos);
     CHECK(o.find("Door memory") > o.find("Doors on the card"));
-    r.type("9");
+    remote.key("123456789abc"[8 + AXIS_MODEMLINK + AXIS_NETS]);  // after Doors on the card, Modem and Sysop Net
     CHECK(r.ranCmd("@DOORSTATE"));
     o = plain(r.out);
-    CHECK(o.find("peak guest RAM: 512 KB") != std::string::npos);
+    CHECK(o.find("DOOR MEMORY (this board)") != std::string::npos);
+    CHECK(o.find("stack left: 900 bytes") != std::string::npos);
     CHECK(o.find("largest block: 40000") != std::string::npos);
     CHECK(axis::bbs::boardOnlyCommand("@DOORSTATE"));  // each board's own door, never the main's
+}
+
+TEST_CASE("an older main without paging still gives the whole list, and a cut list offers no add") {
+    Rig r;
+    r.replies["@USERS 0"] = "";  // an older main answers nothing for a start it doesn't know
+    r.replies["@USERS"] = "user 1|Rev|valid|255|9|FMD$-\nuser 2|Kid|pending|10|1|FMD--\n";
+    r.shell.beginAt(axis::bbs::SysopSection::Users);
+    CHECK(r.ranCmd("@USERS"));
+    CHECK(plain(r.out).find("Kid") != std::string::npos);
+    r.replies["@MENU"] = "1|M|Messages|messages\naxis: reply cut at 6 KB\n";
+    r.out.clear();
+    r.shell.beginAt(axis::bbs::SysopSection::Menus);
+    std::string o = plain(r.out);
+    CHECK(o.find("Messages") != std::string::npos);
+    CHECK(o.find("Add an item") == std::string::npos);
+    CHECK(o.find("reply cut at 6 KB") != std::string::npos);
 }

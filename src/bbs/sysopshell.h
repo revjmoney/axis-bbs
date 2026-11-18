@@ -128,6 +128,7 @@ private:
     std::string                            previewKey_, previewLook_;
     std::vector<std::string>               settings_;  // @SETTINGS for the layer being built
     bool                                   haveSettings_ = false;
+    bool                                   cut_ = false;  // the last lines() reply ended "axis: reply cut"
     std::string                            header(const std::string& title) const;
     size_t page_() const { return cols_ >= 80 ? 14 : 7; }  // items a page: 14 online, 7 on the board's 12-line screen
 };
