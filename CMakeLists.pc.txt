@@ -238,6 +238,7 @@ if(WIN32)
 endif()
 
 target_compile_definitions(axiscore PUBLIC AXIS_SD_POOL=1)  # the PC build and tests cover the pool build too
+target_compile_definitions(axiscore PUBLIC AXIS_BENCH=1)  # the tests drive the bench commands' code (bbs/features.h)
 
 # Switched-off core for host tests: cmake -DAXIS_OFF=lord,scripts (same names as the firmware build).
 set(AXIS_OFF "" CACHE STRING "Comma list of features to switch off (see installer/features.json)")
@@ -300,7 +301,7 @@ if(UNIX AND NOT APPLE)
     # cluster's), every other feature at the board's default (bbs/features.h). axiscore above keeps the test flags.
     add_library(axiscore_solo STATIC ${AXISCORE_SOURCES})
     target_include_directories(axiscore_solo PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
-    target_compile_definitions(axiscore_solo PUBLIC AXIS_CLUSTER=0)
+    target_compile_definitions(axiscore_solo PUBLIC AXIS_CLUSTER=0 AXIS_BENCH=1)  # (and axis: the bench commands stay in)
     target_compile_options(axiscore_solo PRIVATE -w)  # as the board builds it: the core's warnings are its own
 
     add_executable(axis

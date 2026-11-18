@@ -7,7 +7,9 @@
 
 static LGFX_Sprite full(&tft);  // 320x240, 4 bits a pixel: draw with pal:: numbers, only while a screen other than the WFC is up
 static LGFX_Sprite band(&tft);  // 320x40, the WFC's band
-static bool        failNext = false;
+#if AXIS_BENCH
+static bool        failNext = false;  // @SPRITEFAIL (bench)
+#endif
 
 const uint8_t kPalette[16][3] = {{0, 0, 0},       {0, 0, 170},    {0, 170, 0},    {0, 170, 170},
                                  {170, 0, 0},     {170, 0, 170},  {170, 85, 0},   {170, 170, 170},
@@ -50,10 +52,12 @@ static bool make(LGFX_Sprite& s, int h) {
 bool screenFull() {
     if (full.getBuffer()) return true;
     if (!boardHasPanel()) return false;
+#if AXIS_BENCH
     if (failNext) {
         failNext = false;
         return false;
     }
+#endif
     return make(full, 240);
 }
 
@@ -75,7 +79,8 @@ bool screenBandsInit() {
 }
 
 LGFX_Sprite* screenBand() { return band.getBuffer() ? &band : nullptr; }
-void         screenFailNext() { failNext = true; }
+#if AXIS_BENCH  // @SPRITEFAIL and @SHOT: bench builds only (bbs/features.h)
+void screenFailNext() { failNext = true; }
 
 // rows of a 4-bit copy as RGB332 hex (the PC tool reads RGB332, as before the copy went 4-bit)
 static void shotRows(const uint8_t* p, int rows, void (*eachRow)()) {
@@ -115,3 +120,4 @@ void screenShot(void (*eachRow)(), const axis::bbs::AnsiTerm* wfc, const axis::b
     }
     Serial.println("@SHOT END");
 }
+#endif  // AXIS_BENCH

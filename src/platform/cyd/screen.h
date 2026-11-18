@@ -9,6 +9,7 @@
 // WFC is back. With no room for it, that screen draws straight to the panel. A headless board has
 // neither.
 #pragma once
+#include "bbs/features.h"  // AXIS_BENCH
 #include "platform/cyd/board.h"
 
 namespace axis::bbs {
@@ -35,8 +36,10 @@ uint32_t     screenColor(uint8_t p);  // a pal:: colour for screenGfx(): its num
 void         screenPushIfSprite();  // show the full copy (drawing that went straight to the panel needs no push)
 bool         screenBandsInit();     // the WFC's 320x40 band (6.4 KB), made once
 LGFX_Sprite* screenBand();          // the band, or nullptr
+#if AXIS_BENCH  // bench builds only (bbs/features.h)
 void         screenFailNext();      // @SPRITEFAIL (bench): the next screenFull() that has to make the copy fails
 // dump the screen over serial: "@SHOT 320 240", RGB332 hex rows, "@SHOT END"; eachRow keeps the board's work going (it
 // takes ~13 s). wfc: the WFC's terminal, drawn band by band into the dump. No wfc and no full copy: "@SHOT NONE".
 // anim: the WFC is moving: its frame now is dumped instead (wfc must still be given)
 void screenShot(void (*eachRow)() = nullptr, const axis::bbs::AnsiTerm* wfc = nullptr, const axis::bbs::WfcAnim* anim = nullptr);
+#endif

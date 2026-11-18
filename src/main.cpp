@@ -259,7 +259,9 @@ static std::map<int, std::unique_ptr<axis::cluster::FileServer>> fileServers;  /
 static std::map<int, std::unique_ptr<axis::cluster::DoorFsServer>> doorServers;
 #endif
 static bool servedRequest = false;  // the main answered a follower this loop turn
+#if AXIS_BENCH
 static uint32_t shotDoneMs = 0;      // the last @SHOT (it stalls the loop ~13 s on purpose)
+#endif
 
 // The oneliner wall: the newest 20, in internal flash on the main; followers read and post over the link.
 static std::vector<std::string> oneLiners;
@@ -1079,7 +1081,9 @@ static std::string statsLastCaller() {
     return h.empty() ? std::string(lastCaller.c_str()) : h;
 }
 static bool     screenDirty = true;
-static int      tapX = -1, tapY = -1;  // a tap from the @TAP serial command
+#if AXIS_BENCH
+static int      tapX = -1, tapY = -1;  // a tap from the @TAP serial command (bench)
+#endif
 
 static uint32_t hwRandom() { return esp_random(); }
 
@@ -1398,7 +1402,10 @@ static bool                               wfcOnPanel = false;  // the panel show
 // and stands still (that copy given back) while a caller is on, when memory runs short, or when it is turned off.
 static axis::bbs::WfcAnim wfcAnim;
 static const char*        wfcAnimWhy = "";  // why it stands still ("" = it may move)
-static uint32_t           wfcAnimFrameMs = 0, wfcAnimFrameUs = 0, wfcAnimTryMs = 0, wfcAnimSlowUs = 0, wfcAnimDrawUs = 0, wfcAnimBands = 0;
+static uint32_t           wfcAnimFrameMs = 0, wfcAnimTryMs = 0;
+#if AXIS_BENCH
+static uint32_t wfcAnimFrameUs = 0, wfcAnimSlowUs = 0, wfcAnimDrawUs = 0, wfcAnimBands = 0;  // frame times for @WFCFX
+#endif
 static std::string                        wfcArt, wfcArtFolder;  // the theme's art while the WFC is up, and the skin folder it came from
 static bool                               wfcArtLoaded = false;  // wfcArt is current (empty: the theme has none, the built-in art is drawn from flash)
 static const int                          kWfcLeft = 2;        // 45 cells of 7 pixels: 2 spare pixels on the left, 3 on the right
@@ -1630,21 +1637,29 @@ static void wfcAnimTick() {
     for (int b = 0, k = 0; b < axis::bbs::WfcAnim::kBands && k < 2; b++)
         if (pending & (1u << b)) due |= (uint8_t)(1u << b), k++;
     pending &= (uint8_t)~due;
+#if AXIS_BENCH
     uint32_t t0 = micros();
     wfcAnimDrawUs = wfcAnimBands = 0;
+#endif
     tft.startWrite();
     for (int b = 0; b < axis::bbs::WfcAnim::kBands; b++) {
         if (!(due & (1u << b))) continue;
+#if AXIS_BENCH
         uint32_t d0 = micros();
+#endif
         AnsiScreen::renderAnimBand(*band, wfcAnim, b, now);
+#if AXIS_BENCH
         wfcAnimDrawUs += micros() - d0;
         wfcAnimBands++;
+#endif
         band->pushSprite(0, b * axis::bbs::WfcAnim::kBandH);
         tft.waitDMA();
     }
     tft.endWrite();
+#if AXIS_BENCH
     wfcAnimFrameUs = micros() - t0;
     if (wfcAnimFrameUs > wfcAnimSlowUs) wfcAnimSlowUs = wfcAnimFrameUs;
+#endif
 }
 
 // A node's details (tap its line on the WFC): who, where, how long, and a KICK for the sysop.
@@ -7114,7 +7129,15 @@ static void runCommand(const String& cmd, Print& out) {
             return;
         }
     }
-    if (cmd.startsWith("@TAP ")) {
+    if (cmd == "@DOORSTATE") {  // the last door's memory (noteDoor), and the heap now
+        if (boardDiag_.door == axis::bbs::DoorDiag::None) out.println("axis: no door has run since boot");
+        else
+            out.printf("last door: %s\nloop stack low: %u bytes\n", axis::bbs::doorDiagToken(boardDiag_.door),
+                       (unsigned)boardDiag_.doorStackWords);  // (bytes: the Xtensa port's StackType_t is uint8_t)
+        out.printf("heap free: %u\nlargest block: %u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#if AXIS_BENCH  // bench and test tooling only (bbs/features.h): in a release image these are unknown commands
+    } else if (cmd.startsWith("@TAP ")) {  // bench: a tap on the touchscreen (tools/screenshots/cyd_shot.py)
         int sp = cmd.indexOf(' ', 5);
         tapX = cmd.substring(5, sp).toInt();
         tapY = cmd.substring(sp + 1).toInt();
@@ -7146,13 +7169,7 @@ static void runCommand(const String& cmd, Print& out) {
                 out.printf("%02d|%s\n", r + 1, row);
             }
         }
-    } else if (cmd == "@DOORSTATE") {  // the last door's memory (noteDoor), and the heap now
-        if (boardDiag_.door == axis::bbs::DoorDiag::None) out.println("axis: no door has run since boot");
-        else
-            out.printf("last door: %s\nloop stack low: %u bytes\n", axis::bbs::doorDiagToken(boardDiag_.door),
-                       (unsigned)boardDiag_.doorStackWords);  // (bytes: the Xtensa port's StackType_t is uint8_t)
-        out.printf("heap free: %u\nlargest block: %u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif
 #if AXIS_NETS
     } else if (cmd.startsWith("@NET") || netKeyLine(cmd)) {  // Sysop Net: @NET, @NET SYNC|PEERS|RECORD|LOCAL, local and Rev's moderation
         netCommand(cmd, out);
@@ -7343,12 +7360,14 @@ static void runCommand(const String& cmd, Print& out) {
             out.printf("@STATS day=%d calls=%u posts=%u uploads=%u total=%u\n", s.day, (unsigned)s.calls, (unsigned)s.posts,
                        (unsigned)s.uploads, (unsigned)s.total);
         }
-    } else if (cmd == "@HEAPWIN") {  // restart the lowest-heap window (the numbers on @STATUS: wmin wlarge wdoing)
-        heapWin.reset();
+#if AXIS_BENCH
+    } else if (cmd == "@HEAPWIN") {  // bench: restart the lowest-heap window (the numbers on @STATUS: wmin wlarge wdoing)
+        heapWin.reset();               // (without it the window runs from boot: @STATUS still shows it)
 #if AXIS_HEAP_TRACE
         heapTraceRestart();
 #endif
         out.println("@HEAPWIN reset");
+#endif
     } else if (cmd == "@STATUS") {  // one line for the panel
         int on = 0;
         for (size_t i = 0; i < sessions.size(); i++) on += sessionLine(i) ? 1 : 0;
@@ -7586,9 +7605,11 @@ static void runCommand(const String& cmd, Print& out) {
 #if AXIS_WEB
     } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
         out.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
-    } else if (cmd == "@DDNS now") {  // bench: make the web task's DNS check due on its next turn
+#if AXIS_BENCH
+    } else if (cmd == "@DDNS now") {  // bench (tools/busytest.py): make the web task's DNS check due on its next turn
         web::ddnsSoon();
         out.println("axis: ddns check due");
+#endif
     } else if (cmd.startsWith("@DDNS")) {  // "@DDNS domain|host|key|secret": GoDaddy dynamic DNS; alone: off
         out.println(web::setDdns(cmd.length() > 6 ? cmd.substring(6) : String()) ? "axis: ddns saved" : "axis: @DDNS domain|host|key|secret");
     } else if (cmd == "@NOIPNOW") {  // bench: update No-IP right now
@@ -7621,7 +7642,8 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@LOG") {  // the event log, newest last (bench)
         for (auto& l : events.lines()) out.printf("@LOG %s\n", l.c_str());
         out.println("@LOG END");
-    } else if (cmd == "@SHOT") {
+#if AXIS_BENCH
+    } else if (cmd == "@SHOT") {  // bench: the screen over serial (tools/screenshots/cyd_shot.py)
         shotDoneMs = millis();
         std::unique_ptr<axis::bbs::AnsiTerm> wfc;  // the WFC on the panel: its terminal again, dumped band by band
         if (wfcOnPanel && !screenSprite()) wfc = wfcTerm(wfcShown, wfcSoon());
@@ -7673,6 +7695,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@SPRITEFAIL") {  // bench: the next screen away from the WFC finds no room for the full copy
         screenFailNext();
         out.println("axis: the next full screen copy fails");
+#endif
     } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
 #if AXIS_NETS
         netIdxForget();
@@ -8355,7 +8378,11 @@ static void viewCacheTick() {
 
 void loop() {
     static uint32_t lastLoop = millis();
+#if AXIS_BENCH
     if (millis() - lastLoop > 2000 && millis() - shotDoneMs > 1000)  // (a bench screenshot stalls on purpose)
+#else
+    if (millis() - lastLoop > 2000)
+#endif
         logEvent("loop stalled " + String(millis() - lastLoop) + " ms");
     lastLoop = millis();
     heapWin.sample((uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT), (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), doingNow());
@@ -8377,10 +8404,12 @@ void loop() {
     bool        down = boardTouch(tx, ty);
     if (down && !wasDown) handleTap(tx, ty);
     wasDown = down;
+#if AXIS_BENCH
     if (tapX >= 0) {
         handleTap(tapX, tapY);
         tapX = tapY = -1;
     }
+#endif
     if (mode == Mode::WifiPick) {  // the touch WiFi picker owns the screen
         if (picker.wantsLeave()) {
             mode = afterPick;
