@@ -1117,7 +1117,7 @@ setup_done=1</code></pre></details>
       <tr><td><code>@SDFORMAT FORMAT</code></td><td>Erase the SD card to fresh FAT32, the same as FORMAT SD on the sysop menu. Refused while a caller is online.</td></tr>
       <tr><td><code>@DOORLS id</code></td><td>List a door's folder the way the door sees it.</td></tr>
       <tr><td><code>@DOORCHECK id [force]</code></td><td>Relocate the door's EXE (<code>&lt;id&gt;.EXE</code>) into the door flash partition now; <code>force</code> rebuilds it.</td></tr>
-      <tr><td><code>@DOORSTATE</code></td><td>The running door's state, for a door that seems stuck (<em>bench</em>).</td></tr>
+      <tr><td><code>@DOORSTATE</code></td><td>The last door's memory: how it ended, its peak guest RAM, the stack it left, and the heap now (this board's own).</td></tr>
       <tr><td><code>@WIFIPICK</code></td><td>Open the touch WiFi picker on demand.</td></tr>
       <tr><td><code>@SHOT</code></td><td>Stream a screenshot of the CYD screen (used by <code>tools/screenshots/cyd_shot.py</code>; <em>bench</em>).</td></tr>
       <tr><td><code>@TAP x y</code></td><td>Simulate a tap on the touchscreen (<em>bench</em>).</td></tr>
@@ -1131,6 +1131,7 @@ setup_done=1</code></pre></details>
       <tr><td class="wrap"><code>@POSTS area</code>, <code>@POSTDEL area|n</code>, <code>@POSTMV area|n|to</code>, <code>@PURGE area|days</code></td><td>Posts in a message base: list, delete, move, purge old ones.</td></tr>
       <tr><td class="wrap"><code>@MENU</code>, <code>@MENUCMDS</code>, <code>@MENUSTART</code>, <code>@MENUSET N|key|name|command</code>, <code>@MENUUP N</code>, <code>@MENUDEL N</code>, <code>@MENURESET</code></td><td>The main menu's items: list, the commands they can run, start editing from the built-in menu, add or change, move, remove, back to the built-in menu.</td></tr>
       <tr><td class="wrap"><code>@SETTINGS</code>, <code>@STATUS</code>, <code>@RUMORS</code>, <code>@LINERS</code>, <code>@BBSLIST</code>, <code>@VOTES</code>, <code>@RESTART</code></td><td>The settings (never a salt or hash), one status line, the lists, restart this board.</td></tr>
+      <tr><td class="wrap"><code>@USERS n</code>, <code>@SETTINGS n</code>, <code>@FILES area|n</code>, <code>@POSTS area|n</code></td><td>The same lists a page at a time, from line n (0 first): about 4 KB of lines, then <code>more N</code> while more remain (ask again from N). Paged posts come newest first. The sysop menu uses these, so a list is never cut.</td></tr>
       <tr><td><code>@NUP [password]</code></td><td>Sets the new user password (NUP) callers need before they can apply, shared to every board. <code>@NUP</code> alone lets anyone apply again.</td></tr>
       <tr><td><code>@NOIP [host|username|password]</code></td><td>No-IP dynamic DNS on that board, or off. <code>@NOIPNOW</code> updates at once. See <a href="#internet">internet extras</a>.</td></tr>
       <tr><td><code>@WEB</code>, <code>@WEBTEST</code>, <code>@WEBPING</code></td><td>Internet extras status, a test announcement, and an HTTPS test.</td></tr>
