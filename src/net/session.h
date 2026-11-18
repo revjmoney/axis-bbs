@@ -42,7 +42,7 @@ constexpr uint32_t kSyncHistoryMax = 800;             // H lines taken per sessi
 constexpr size_t kSyncCardsAhead = 64;                // origins whose card went ahead of their posts, remembered
 constexpr uint32_t kSyncUserHistoryMax = 400;         // U post lines taken per session (4 areas x 100)
 constexpr uint32_t kSyncUserRecordsMax = 512;         // U application and vote lines taken per session
-constexpr uint32_t kSyncUserListingsMax = 1400;       // U listing lines taken per session (1000 live and the tombstones)
+constexpr uint32_t kSyncUserListingsMax = 1400;       // U listing lines taken per session (500 live and 200 tombstones, with room)
 constexpr uint32_t kSyncUserEMax = 64;                // E application, vote and listing lines taken per session; then NAK store
 
 class NetSession {

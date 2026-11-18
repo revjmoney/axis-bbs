@@ -5365,7 +5365,7 @@ static bool netStart() {
                 std::memcpy((uint8_t*)p + i, &r, std::min<size_t>(4, n - i));
             }
         });
-        if (!storageHasSd()) core.setListingCaps(100, 100);  // internal flash only: a tenth of the listings
+        if (!storageHasSd()) core.setListingCaps(100, 100);  // internal flash only: 100 live listings, 100 from one board
     }
     core.state().load(netFileRead("state.txt"), day);
     {  // /net/apps.txt is read a few lines a pass from the loop (netAppsLoadStep). A compaction stopped by a reset: with no

@@ -183,13 +183,13 @@ Pick the file areas to share with `net_files_areas`, a comma list of file area i
 
 | What | Limit |
 | --- | --- |
-| Live listings held | 500 (100 on a board with no SD card), held at intake and by the daily trim. At the cap a new listing from another board is refused `limited` (final; the sender moves on), while removals, re-listings of a name held and this board's own listings still come in. This board's own listings are not held to it. |
+| Live listings held from other boards | 500 (100 on a board with no SD card). This board's own listings are not held to it and do not count toward it. |
 | Live listings from one home board | 200 (100 on a board with no SD card). This board's own listings are not held to it. |
-| A removal (tombstone) is kept | 120 days (200 removals on a board with no clock) |
+| A removal (tombstone) is kept | 120 days, and at most the newest 200 |
 | Listings from peers that replace or remove one already held | 8 a session and 64 a day |
 | A description | 120 characters |
 
-The caps are applied once a day, when the net trims, so between trims a board can hold a few more. A listing past the drop budget is refused with the `store` NAK and comes again on a later call. That keeps a peer from making this board rewrite its listing file over and over. One listing is kept for each name: a newer listing of the same name replaces an older one, and a removal beats any older listing of its name, whichever arrives first. A board's own listings are never held back by the budget.
+The two listing caps are held as listings come in: past either one, a new listing from another board is refused with the `limited` NAK, which is final, so the sender moves on to its next line. A removal, or a re-listing of a name already held, still comes in, since it adds no listing. The daily trim holds them too, and is what keeps removals to 120 days and 200. A listing past the drop budget is refused with the `store` NAK and comes again on a later call. That keeps a peer from making this board rewrite its listing file over and over. One listing is kept for each name: a newer listing of the same name replaces an older one, and a removal beats any older listing of its name, whichever arrives first. A board's own listings are never held back by the budget.
 
 Listings live in a hidden message area (`nf_list`) that no caller sees, one message each. They travel on the same calls as posts, but only to a peer whose card says `net3` in its links. A board that becomes a member (or starts to carry `un_files`) asks its peers for the listings they hold, as it does for applications and votes.
 

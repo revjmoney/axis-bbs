@@ -269,19 +269,65 @@ TEST_CASE("listings: the total cap holds at intake; a removal, a replace and thi
     CHECK(r.core.takeListing(makeListing(a.key, 5, "A1"), a.board) == Took::Stored);
     indexReady(r.core);
     CHECK(live() == 4);
-    // this board's own always come in, past the cap
+    // this board's own always come in, past the cap, and are not counted toward it
     CHECK_FALSE(r.core.originateListing(makeListing(r.key, 1, "R1")).empty());
     indexReady(r.core);
     CHECK(live() == 5);
+    CHECK(r.core.takeListing(makeListing(b.key, 3, "B3"), b.board) == Took::Limited);  // 4 from others: still full
     // a removal comes in at the cap and makes room
     CHECK(r.core.takeListing(makeListing(a.key, 6, "A2", true), a.board) == Took::Stored);
     indexReady(r.core);
     CHECK(live() == 4);
-    CHECK(r.core.takeListing(makeListing(b.key, 3, "B3"), b.board) == Took::Limited);  // 4 live with this board's own: still full
-    CHECK(r.core.takeListing(makeListing(a.key, 7, "A3", true), a.board) == Took::Stored);
-    indexReady(r.core);
     CHECK(r.core.takeListing(makeListing(b.key, 4, "B4"), b.board) == Took::Stored);
-    CHECK(live() == 4);
+    CHECK(live() == 5);
+    CHECK(r.core.takeListing(makeListing(b.key, 5, "B5"), b.board) == Took::Limited);
+}
+
+TEST_CASE("listings: the per-board cap holds at intake, and this board's own do not count toward either cap") {
+    RevKeys rk;
+    FNode r(0x98), a(0x99), b(0x9A);
+    r.knows(a), r.knows(b);
+    r.admit({&r.board, &a.board, &b.board});
+    r.core.setListingCaps(4, 2);
+    for (int i = 0; i < 5; i++) CHECK_FALSE(r.core.originateListing(makeListing(r.key, 1, "R" + std::to_string(i))).empty());
+    indexReady(r.core);
+    // 5 of this board's own held, past both caps: a peer's still come in
+    CHECK(r.core.takeListing(makeListing(a.key, 1, "A1"), a.board) == Took::Stored);
+    CHECK(r.core.takeListing(makeListing(a.key, 2, "A2"), a.board) == Took::Stored);
+    // a holds 2, its cap: a third is refused "limited", final; b still comes in
+    const char* why = nullptr;
+    CHECK(r.core.takeListing(makeListing(a.key, 3, "A3"), a.board, true, &why) == Took::Limited);
+    CHECK(std::string(why ? why : "") == kNakLimited);
+    CHECK(r.core.takeListing(makeListing(b.key, 1, "B1"), b.board) == Took::Stored);
+    CHECK(r.core.takeListing(makeListing(b.key, 2, "B2"), b.board) == Took::Stored);
+    // 4 from others: the total cap
+    CHECK(r.core.takeListing(makeListing(b.key, 3, "B3"), b.board) == Took::Limited);
+    // a re-listing of a held name still comes in at the per-board cap
+    CHECK(r.core.takeListing(makeListing(a.key, 4, "A1"), a.board) == Took::Stored);
+    indexReady(r.core);
+    // and the trim keeps all of them (own are not counted in the total)
+    r.core.trim(kNow);
+    size_t own = 0, others = 0;
+    for (const auto& l : r.records())
+        if (!l.gone) (l.board == r.board ? own : others)++;
+    CHECK(own == 5);
+    CHECK(others == 4);
+}
+
+TEST_CASE("listings: with a clock the trim still keeps at most kNetGoneKeepCount tombstones, the newest") {
+    RevKeys rk;
+    Pair p(0x9B, 0x9C);
+    p.r.core.setListingCaps(kNetListingsMax, kNetGoneKeepCount + 50);
+    uint32_t n = kNetGoneKeepCount + 5;
+    for (uint32_t s = 1; s <= n; s++)
+        REQUIRE(p.take(makeListing(p.h.key, s, "G" + std::to_string(s), true, kNow - 10 * kDay)) == Took::Stored);
+    p.r.core.trim(kNow);
+    indexReady(p.r.core);
+    std::vector<uint32_t> seqs;
+    for (const auto& l : p.r.records())
+        if (l.gone) seqs.push_back(l.seq);
+    CHECK(seqs.size() == kNetGoneKeepCount);
+    CHECK(*std::min_element(seqs.begin(), seqs.end()) == 6);  // the 5 oldest went
 }
 
 TEST_CASE("listings: the trim drops a tombstone at 121 days and keeps ones at 120 and 119") {

@@ -518,9 +518,12 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     IdxRec me = idxRec(l, probe);
     std::vector<IdxRec> hits;
     bool many = false;
-    uint32_t liveHeld = 0;  // the live records in the area (the walk is whole unless many stops it, which refuses)
+    // Live records held from other boards, and from this listing's home board (the walk is whole unless many stops it,
+    // which refuses). This board's own are not counted, as the trim does not count them.
+    const uint32_t mine = idxHash(myBoard_);
+    uint32_t liveOthers = 0, liveFrom = 0;
     if (!idxEach([&](const IdxRec& x) {
-            liveHeld += !(x.flags & 1);
+            if (!(x.flags & 1) && x.board != mine) liveOthers++, liveFrom += x.board == me.board;
             if (x.board != me.board || (x.key != me.key && x.seq != l.seq)) return true;
             if (hits.size() == kIdxConfirm) return !(many = true);
             hits.push_back(x);
@@ -554,11 +557,11 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     // a day, then the transient "store" (before ingress is charged and before anything is stored, so a name never
     // holds two records). This board's own are not counted.
     if (!lower.empty() && !fromPeer.empty() && !listingDropAllowed()) return res(Took::Rejected, "rejected store", kNakStore);
-    // The total cap, at intake: a full area takes no new name from another board, final ("limited", so the sender's
-    // queue moves on; the trim alone would let a pull run far past the cap until the next day). A removal or a
-    // re-listing of a name held adds no live record, and this board's own always come in. Not counted as seen, so a
-    // later session or pull may still bring it once there is room.
-    if (lower.empty() && !l.gone && l.board != myBoard_ && liveHeld >= listingsMax_)
+    // The caps, at intake: past the total (other boards' live listings) or this home board's share, no new name comes
+    // in, final ("limited", so the sender's queue moves on; the trim alone would let a pull run far past the caps until
+    // the next day). A removal or a re-listing of a name held adds no live record, and this board's own always come
+    // in. Not counted as seen, so a later session or pull may still bring it once there is room.
+    if (lower.empty() && !l.gone && l.board != myBoard_ && (liveOthers >= listingsMax_ || liveFrom >= listingsPerBoard_))
         return res(Took::Limited, "limited full", kNakLimited);
     // 8. ingress, counting the line (history pulls are capped by the session; Rev's boards and this board are not)
     uint32_t today = day();
@@ -724,8 +727,8 @@ bool NetCore::listingLines(uint32_t& pos, bool tombs, std::vector<std::string>& 
     return end;
 }
 
-// Drops killed listings, live ones of banned boards and tombstones past kNetGoneKeepDays (by count without a clock:
-// the newest kNetGoneKeepCount stay), then holds live listings to the caps. A board's oldest listing is its lowest seq,
+// Drops killed listings, live ones of banned boards and tombstones past kNetGoneKeepDays, and past the newest
+// kNetGoneKeepCount by count (with a clock or not), then holds live listings to the caps (this board's own uncounted). A board's oldest listing is its lowest seq,
 // so arrival order does not change what goes. Header scans count (a further one per board past a cap finds its
 // seqs), then one rewrite of the area and of the index. Not while the index is being built.
 void NetCore::trimListings(uint32_t nowDay, bool clock) {
@@ -740,12 +743,12 @@ void NetCore::trimListings(uint32_t nowDay, bool clock) {
     bool drops = false;
     eachListing([&](const Message& m, const NetListing& l) {
         if (dead(l)) drops = true;
-        else if (!l.gone) live[l.board]++, total++;
+        else if (!l.gone) live[l.board]++, total += l.board != myBoard_;  // (this board's own are not counted)
         else if (old(m)) drops = true;
         else tombs++;
         return true;
     });
-    uint32_t tombCut = !clock && tombs > kNetGoneKeepCount ? tombs - kNetGoneKeepCount : 0;
+    uint32_t tombCut = tombs > kNetGoneKeepCount ? tombs - kNetGoneKeepCount : 0;  // the oldest past the count, clock or not
     for (auto& kv : live)
         if (kv.first != myBoard_ && kv.second > listingsPerBoard_) {
             cut[kv.first] = kv.second - listingsPerBoard_;
@@ -784,7 +787,7 @@ void NetCore::trimListings(uint32_t nowDay, bool clock) {
         NetListing l;
         if (!decode(m.net, l)) return false;
         auto c = cut.find(l.board);
-        bool go = dead(l) || (l.gone ? old(m) || (!clock && n++ < tombCut) : c != cut.end() && l.seq <= c->second);
+        bool go = dead(l) || (l.gone ? old(m) || n++ < tombCut : c != cut.end() && l.seq <= c->second);
         if (go) gone.push_back((uint32_t)m.num);
         return go;
     });
