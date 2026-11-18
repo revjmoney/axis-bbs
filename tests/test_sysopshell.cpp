@@ -534,7 +534,7 @@ TEST_CASE("System ends with this board's door memory, so no other item moves") {
     std::string o = plain(r.out);
     CHECK(o.find("Door memory") != std::string::npos);
     CHECK(o.find("Door memory") > o.find("Doors on the card"));
-    remote.key("123456789abc"[8 + AXIS_MODEMLINK + AXIS_NETS]);  // after Doors on the card, Modem and Sysop Net
+    remote.key("123456789abc"[8 + AXIS_MODEMLINK + 2 * AXIS_NETS]);  // after Doors on the card, Modem, Sysop Net and User Net
     CHECK(r.ranCmd("@DOORSTATE"));
     o = plain(r.out);
     CHECK(o.find("DOOR MEMORY (this board)") != std::string::npos);
@@ -772,7 +772,7 @@ TEST_CASE("Net Files row: an area toggles in or out of net_files_areas, spaces i
     Rig r;
     r.replies["@NET"] = "board 0123456789abcdef\nuser net member\nrev board no\n";
     r.replies["@NET WAITING"] = "";
-    r.replies["@SETTINGS"] = "bbs_name=AXIS\nnet_files_areas=axis, gcode\nnet_files_radio_kb=64\n";
+    r.replies["@SETTINGS 0"] = "bbs_name=AXIS\nnet_files_areas=axis, gcode\nnet_files_radio_kb=64\n";
     r.shell.beginAt(axis::bbs::SysopSection::System);
     REQUIRE(pickRow(r, "User Net"));
     CHECK(screen(r.out).find("axis, gcode") != std::string::npos);
