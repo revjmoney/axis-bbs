@@ -17,7 +17,8 @@ Callers (each a thread with a telnet socket, logged in the way tools/seven_login
 
 Events: at 3 minutes the follower is reset (@RESTART force on --follower-port), at 5 minutes
 the main is told to check DNS now (@DDNS now on --port). @HEAPWIN is sent first, so wmin/wlarge
-cover the test only.
+cover the test only. @HEAPWIN and @DDNS now are bench commands: flash the main with pio run -e cyd-bench
+(the release image, env cyd, leaves them out; there wmin/wlarge run from boot).
 
 Every 30 s @STATUS is polled on --port (DTR and RTS held low, like tools/sdput.py), plus one row
 before anyone dials and one after they hang up. CSV columns: see CSV_HEAD. Every serial line

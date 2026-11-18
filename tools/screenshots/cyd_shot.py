@@ -3,6 +3,9 @@
 """Save the CYD's own screen as a PNG (the board sends its off-screen copy over serial).
 
 usage: python cyd_shot.py COMxx out.png ["@TAP x y" ...]   (optional serial commands first)
+
+@SHOT and @TAP are bench commands: the board must run a bench image (pio run -e cyd-bench); the release
+image (env cyd) leaves them out and never answers.
 """
 import sys
 import time
@@ -43,7 +46,9 @@ def main():
         elif w and len(line) == w * 2:
             rows.append(line)
     s.close()
-    if not w or len(rows) != h:
+    if not w:
+        sys.exit('no answer to @SHOT: is the board on a bench image (pio run -e cyd-bench)?')
+    if len(rows) != h:
         sys.exit(f'incomplete screenshot: {len(rows)} of {h} rows')
     img = Image.new('RGB', (w, h))
     img.putdata([rgb332(int(r[i:i + 2], 16)) for r in rows for i in range(0, w * 2, 2)])

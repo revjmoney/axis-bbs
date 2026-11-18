@@ -651,7 +651,7 @@ LOGO.NC       AXIS logo, 2D pocket, 3 mm deep</code></pre>
     <li><strong>Uploads go to the roomiest card.</strong> A new upload is written to the card with the most free space, its own or another board's, and its <code>FILES.BBS</code> description goes on that card. Downloads read from a card that has the file, the main's own card first.</li>
     <li><strong>Mirrored areas keep two copies.</strong> Add <code>|m</code> to an area line (<code>area3=gcode|G-code and Toolpaths|0|m</code>) and the main copies every file in that area that only one card holds onto a second card with room, in the background: one file at a time, 2 KB per turn of the main loop, so callers never notice. A copy only shows up once it is whole.</li>
     <li><strong>When a board is down.</strong> Its card simply drops out of the lists until it comes back; nothing waits on it longer than a couple of seconds. A file in a mirrored area is still there from its other copy. A copy cut short by a board leaving is thrown away and made again on a later pass. The sysop's remove and rename reach every copy that is up.</li>
-    <li><strong>Checking on it.</strong> On the main's serial console, <code>@CARDS</code> lists each card board with its free space and whether it is up, and <code>@MIRROR</code> shows the mirrored areas and what the mirror is doing (copying, resting, how many copied or failed, the last event). Mirror copies also go in the event log ("mirror: copied X to node 2").</li>
+    <li><strong>Checking on it.</strong> On the main's serial console, <code>@CARDS</code> lists each card board with its free space and whether it is up, and <code>@MIRROR</code> (in a firmware built with the pool, <code>-DAXIS_SD_POOL=1</code>) shows the mirrored areas and what the mirror is doing (copying, resting, how many copied or failed, the last event). Mirror copies also go in the event log ("mirror: copied X to node 2").</li>
   </ul>
   <p>With one SD card in the cluster (the usual setup) everything works exactly as before: the main's card is the library.</p></div></details>
 <details class="sub" id="disc-changer"><summary>SD disc changer (work in progress)</summary><div class="sub-body"><div class="note"><strong>Work in progress</strong>Designed and planned on 2026-11-04, not built yet. This is how the SD cards will work by default; pool and mirror (above) becomes a build option, <code>AXIS_SD_POOL</code>.</div>
@@ -1111,7 +1111,7 @@ setup_done=1</code></pre></details>
       <tr><td><code>@LOGCLEAR</code></td><td>Wipe the event log (screen, flash file and its old copy) and the page shown on the activity screen.</td></tr>
       <tr><td><code>@NODES</code></td><td>The cluster as this board sees it: every node's number, IP, caller and activity (<em>bench</em>).</td></tr>
       <tr><td><code>@CARDS</code></td><td>On the main: each SD card in the pool (this board's and every card board's), its free space, and whether it is up. See <a href="#sd-pool">SD card clustering</a>.</td></tr>
-      <tr><td><code>@MIRROR</code></td><td>On the main: the mirrored areas and the mirror job's state (copying, resting, copied and failed counts, the last event).</td></tr>
+      <tr><td><code>@MIRROR</code></td><td>On the main: the mirrored areas and the mirror job's state (copying, resting, copied and failed counts, the last event). Only in a firmware built with the pool (<code>-DAXIS_SD_POOL=1</code>); in any other it is an unknown command.</td></tr>
       <tr><td><code>@LED</code></td><td>What the LED is showing and why (<em>bench</em>).</td></tr>
       <tr><td><code>@SDCHECK</code></td><td>Look for the SD card again (after swapping cards).</td></tr>
       <tr><td><code>@SDFORMAT FORMAT</code></td><td>Erase the SD card to fresh FAT32, the same as FORMAT SD on the sysop menu. Refused while a caller is online.</td></tr>
@@ -1119,8 +1119,8 @@ setup_done=1</code></pre></details>
       <tr><td><code>@DOORCHECK id [force]</code></td><td>Relocate the door's EXE (<code>&lt;id&gt;.EXE</code>) into the door flash partition now; <code>force</code> rebuilds it.</td></tr>
       <tr><td><code>@DOORSTATE</code></td><td>The last door's memory: how it ended, the loop task's lowest stack so far, and the heap now (this board's own).</td></tr>
       <tr><td><code>@WIFIPICK</code></td><td>Open the touch WiFi picker on demand.</td></tr>
-      <tr><td><code>@SHOT</code></td><td>Stream a screenshot of the CYD screen (used by <code>tools/screenshots/cyd_shot.py</code>; <em>bench</em>).</td></tr>
-      <tr><td><code>@TAP x y</code></td><td>Simulate a tap on the touchscreen (<em>bench</em>).</td></tr>
+      <tr><td><code>@SHOT</code></td><td>Stream a screenshot of the CYD screen (used by <code>tools/screenshots/cyd_shot.py</code>; <em>bench builds only</em>: <code>pio run -e cyd-bench</code>, not in the release image).</td></tr>
+      <tr><td><code>@TAP x y</code></td><td>Simulate a tap on the touchscreen (<em>bench builds only</em>: <code>cyd-bench</code>).</td></tr>
       <tr><td><code>@PUT</code>, <code>@LS</code>, <code>@RM</code>, <code>@MKDIR</code>, <code>@BAUD</code></td><td>File transfer to the board's storage, used by <code>tools/sdput.py</code> (<em>bench</em>).</td></tr>
       <tr><td><code>@DISCORD [url]</code></td><td>Discord webhook on that board, or off. See <a href="#internet">internet extras</a>.</td></tr>
       <tr><td><code>@DDNS [domain|host|key|secret]</code></td><td>GoDaddy dynamic DNS on that board, or off.</td></tr>
