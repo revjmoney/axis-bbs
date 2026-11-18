@@ -518,7 +518,9 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     IdxRec me = idxRec(l, probe);
     std::vector<IdxRec> hits;
     bool many = false;
+    uint32_t liveHeld = 0;  // the live records in the area (the walk is whole unless many stops it, which refuses)
     if (!idxEach([&](const IdxRec& x) {
+            liveHeld += !(x.flags & 1);
             if (x.board != me.board || (x.key != me.key && x.seq != l.seq)) return true;
             if (hits.size() == kIdxConfirm) return !(many = true);
             hits.push_back(x);
@@ -552,6 +554,12 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     // a day, then the transient "store" (before ingress is charged and before anything is stored, so a name never
     // holds two records). This board's own are not counted.
     if (!lower.empty() && !fromPeer.empty() && !listingDropAllowed()) return res(Took::Rejected, "rejected store", kNakStore);
+    // The total cap, at intake: a full area takes no new name from another board, final ("limited", so the sender's
+    // queue moves on; the trim alone would let a pull run far past the cap until the next day). A removal or a
+    // re-listing of a name held adds no live record, and this board's own always come in. Not counted as seen, so a
+    // later session or pull may still bring it once there is room.
+    if (lower.empty() && !l.gone && l.board != myBoard_ && liveHeld >= listingsMax_)
+        return res(Took::Limited, "limited full", kNakLimited);
     // 8. ingress, counting the line (history pulls are capped by the session; Rev's boards and this board are not)
     uint32_t today = day();
     if (!history && l.board != myBoard_ && !isRevBoard(l.board) && !ingress_.allow(l.board, line.size(), today))

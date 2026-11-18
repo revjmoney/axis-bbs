@@ -87,7 +87,7 @@ constexpr uint8_t kNetTrustSessions = 2;        // completed sessions before an 
 // caller's area list (isNetAreaId is false for it). Listings are gated on the User Net area kNetFilesUserArea.
 constexpr const char* kNetFilesArea = "nf_list";
 constexpr const char* kNetFilesUserArea = "un_files";
-constexpr uint32_t kNetListingsMax = 1000;      // live listings held (the host sets 100 without an SD card)
+constexpr uint32_t kNetListingsMax = 500;       // live listings held, at intake and by the trim (the host sets 100 without an SD card)
 constexpr uint32_t kNetListingsPerBoard = 200;  // live listings from one home board
 constexpr uint32_t kNetGoneKeepDays = 120;      // a tombstone is kept this long (with the clock set)
 constexpr uint32_t kNetGoneKeepCount = 200;     // without a clock, the newest this many tombstones are kept

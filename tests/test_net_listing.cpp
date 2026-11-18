@@ -243,6 +243,47 @@ TEST_CASE("listings: the per-board cap drops that board's oldest; the total cap 
     }
 }
 
+TEST_CASE("listings: the total cap holds at intake; a removal, a replace and this board's own still come in, and a removal makes room") {
+    RevKeys rk;
+    CHECK(kNetListingsMax == 500);
+    FNode r(0x95), a(0x96), b(0x97);
+    r.knows(a), r.knows(b);
+    r.admit({&r.board, &a.board, &b.board});
+    r.core.setListingCaps(4, 200);
+    auto live = [&] {
+        size_t n = 0;
+        for (const auto& l : r.records()) n += !l.gone;
+        return n;
+    };
+    for (uint32_t s = 1; s <= 3; s++) CHECK(r.core.takeListing(makeListing(a.key, s, "A" + std::to_string(s)), a.board) == Took::Stored);
+    CHECK(r.core.takeListing(makeListing(b.key, 1, "B1"), b.board) == Took::Stored);
+    CHECK(live() == 4);
+    // full: a new name from either board is refused, final ("limited": the sender moves on, it is not held)
+    const char* why = nullptr;
+    CHECK(r.core.takeListing(makeListing(b.key, 2, "B2"), b.board, false, &why) == Took::Limited);
+    CHECK(std::string(why ? why : "") == kNakLimited);
+    CHECK_FALSE(netNakTransient(why));
+    CHECK(r.core.takeListing(makeListing(a.key, 4, "A4"), a.board, true) == Took::Limited);  // in a history pull too
+    CHECK(live() == 4);
+    // a re-listing of a name held replaces it (no more held), so it comes in
+    CHECK(r.core.takeListing(makeListing(a.key, 5, "A1"), a.board) == Took::Stored);
+    indexReady(r.core);
+    CHECK(live() == 4);
+    // this board's own always come in, past the cap
+    CHECK_FALSE(r.core.originateListing(makeListing(r.key, 1, "R1")).empty());
+    indexReady(r.core);
+    CHECK(live() == 5);
+    // a removal comes in at the cap and makes room
+    CHECK(r.core.takeListing(makeListing(a.key, 6, "A2", true), a.board) == Took::Stored);
+    indexReady(r.core);
+    CHECK(live() == 4);
+    CHECK(r.core.takeListing(makeListing(b.key, 3, "B3"), b.board) == Took::Limited);  // 4 live with this board's own: still full
+    CHECK(r.core.takeListing(makeListing(a.key, 7, "A3", true), a.board) == Took::Stored);
+    indexReady(r.core);
+    CHECK(r.core.takeListing(makeListing(b.key, 4, "B4"), b.board) == Took::Stored);
+    CHECK(live() == 4);
+}
+
 TEST_CASE("listings: the trim drops a tombstone at 121 days and keeps ones at 120 and 119") {
     RevKeys rk;
     Pair p(0x93, 0x94);
