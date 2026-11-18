@@ -7209,22 +7209,20 @@ static void runCommand(const String& cmd, Print& out) {
         else if (cluster)
             out.println("axis: only the main pools the cards (@CARDS there)");
 #if !AXIS_FILES
-    } else if (cmd == "@MIRROR" || cmd == "@AREAS" || cmd.startsWith("@FILES ") || cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") ||
+    } else if (cmd == "@AREAS" || cmd.startsWith("@FILES ") || cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") ||
                cmd.startsWith("@FDEL ") || cmd.startsWith("@FMV ") ||
                ((cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) &&
                 !cmd.substring(cmd.indexOf(' ') + 1).startsWith("msgs|"))) {
         out.println("axis: the file areas are not in this firmware");
 #endif
+#if AXIS_SD_POOL  // the pool and its mirror (platformio.ini): without them @MIRROR is an unknown command
     } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
         std::string areas;
         for (auto& a : boardCfg->areas)
             if (a.mirror) areas += (areas.empty() ? "" : " ") + a.id;
         out.printf("axis: mirrored areas: %s\n", areas.empty() ? "none (add |m to an areaN line)" : areas.c_str());
-#if AXIS_SD_POOL
         if (!cluster || cluster->role() != axis::cluster::Role::Main) out.println("axis: only the main runs the mirror");
         else out.printf("axis: mirror %s\n", mirrorJob.state().c_str());
-#else
-        out.println("axis: pool and mirror are not in this build (AXIS_SD_POOL)");
 #endif
     } else if (cmd.startsWith("@KICK ") || cmd.startsWith("@ADDTIME ") || cmd.startsWith("@FORCETC ") || cmd.startsWith("@NOTE ")) {
         // a node on this board ("@KICK 3", "@ADDTIME 3 15", "@FORCETC 3", "@NOTE 3 text"); the panel sends
