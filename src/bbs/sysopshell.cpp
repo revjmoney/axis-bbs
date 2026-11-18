@@ -67,7 +67,7 @@ bool inGroups(const std::string& k) {
 bool boardOnlyCommand(const std::string& cmd) {
     static const char* const kMine[] = {"@CLUSTERKEY", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
                                         "@BEEP",       "@STATION", "@LED",       "@SHOT",       "@TAP",     "@LKEY",    "@LSCREEN", "@WIFIPICK",
-                                        "@STATS", "@HEAPWIN", "@SPRITEFAIL",
+                                        "@STATS", "@HEAPWIN", "@SPRITEFAIL", "@DOORSTATE",
 #if AXIS_NETS
                                         "@NETKEY",     "@NETROTATE",  // Sysop Net: Rev's keys, at the board's serial console only
 #endif
@@ -100,6 +100,24 @@ std::vector<std::string> SysopShell::lines(const std::string& cmd) {
         if (!t.empty()) v.push_back(t);
     }
     return v;
+}
+
+std::vector<std::string> SysopShell::paged(const std::string& cmd, size_t pages, bool& more) {
+    std::vector<std::string> v;
+    std::string              from = "0";
+    more = false;
+    for (size_t p = 0; p < pages; p++) {
+        auto page = lines(cmd + from);
+        more = !page.empty() && page.back().rfind("more ", 0) == 0 && page.back().substr(5) != from;  // (one that never moves on: stop)
+        if (more) from = page.back().substr(5), page.pop_back();
+        v.insert(v.end(), page.begin(), page.end());
+        if (!more) break;
+    }
+    return v;
+}
+
+void SysopShell::moreItem(Layer& l, bool more) {
+    if (more) l.items.push_back({"More...", "", [this] { layers_.back().pages++; }});  // (the lightbar stays: on the first new one)
 }
 
 void SysopShell::did(const std::string& reply) {
@@ -192,7 +210,8 @@ void SysopShell::begin() {
 
 const std::vector<std::string>& SysopShell::settingLines() {
     if (!haveSettings_) {
-        settings_ = lines("@SETTINGS");
+        bool more;
+        settings_ = paged("@SETTINGS ", (size_t)-1, more);  // every page: a setting is looked up by key
         haveSettings_ = true;
     }
     return settings_;
@@ -371,19 +390,22 @@ void SysopShell::users(Layer& l) {
     l.items.push_back({"Add a user", "", [this] {
                            ask("handle|location|password (6+)", false, [this](const std::string& a) { did(run_("@ADDUSER " + a)); });
                        }});
-    for (auto& line : lines("@USERS")) {
+    bool more;
+    for (auto& line : paged("@USERS ", l.pages, more)) {
         if (line.rfind("user ", 0) != 0) continue;
         auto f = split(line.substr(5), '|');
         if (f.size() < 6) continue;
         std::string h = f[1];
         l.items.push_back({h, f[2] + ", level " + f[3] + ", " + f[4] + " calls", [this, h] { push("USER", [this, h](Layer& x) { user(x, h); }); }});
     }
+    moreItem(l, more);
 }
 
 void SysopShell::user(Layer& l, const std::string& h) {
     auto d = lines("@USER " + h);
     std::string flags;
-    for (auto& line : lines("@USERS"))
+    bool        more;
+    for (auto& line : paged("@USERS ", (size_t)-1, more))
         if (line.rfind("user ", 0) == 0) {
             auto f = split(line.substr(5), '|');
             if (f.size() >= 6 && f[1] == h) flags = f[5];
@@ -472,7 +494,8 @@ void SysopShell::area(Layer& l, bool msgs, int n) {
 }
 
 void SysopShell::files(Layer& l, const std::string& a) {
-    for (auto& line : lines("@FILES " + a)) {
+    bool more;
+    for (auto& line : paged("@FILES " + a + "|", l.pages, more)) {
         auto f = split(line, '|');
         if (f.size() < 2) continue;
         std::string name = f[0], desc = f.size() > 2 ? f[2] : "";
@@ -502,13 +525,14 @@ void SysopShell::files(Layer& l, const std::string& a) {
                                });
                            }});
     }
+    moreItem(l, more);
     if (l.items.empty()) l.items.push_back({"(no files)", "", nullptr});
 }
 
 void SysopShell::posts(Layer& l, const std::string& a) {
-    auto list = lines("@POSTS " + a);
-    for (auto it = list.rbegin(); it != list.rend(); ++it) {  // the newest first
-        auto f = split(*it, '|');
+    bool more;
+    for (auto& line : paged("@POSTS " + a + "|", l.pages, more)) {  // (paged: the newest first)
+        auto f = split(line, '|');
         if (f.size() < 3) continue;
         std::string num = f[0], subj = f[2];
         l.items.push_back({"#" + num + " " + subj, f[1] + (f.size() > 3 ? "  " + f[3] : ""), [this, a, num, subj] {
@@ -528,6 +552,7 @@ void SysopShell::posts(Layer& l, const std::string& a) {
                                });
                            }});
     }
+    moreItem(l, more);
     if (l.items.empty()) l.items.push_back({"(no posts)", "", nullptr});
 }
 
@@ -710,6 +735,7 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"Update No-IP now", "", show("NO-IP", "@NOIPNOW")});
     l.items.push_back({"SD card check", "", show("SD CHECK", "@SDCHECK")});
     l.items.push_back({"Doors on the card", "", show("DOORS", "@DOORLS")});
+    l.items.push_back({"Door memory", "the last door's memory", show("DOOR MEMORY", "@DOORSTATE")});
 #if AXIS_MODEMLINK
     Item modemPage{"Modem", "LFD3K-SM radio callers", [this] { push("MODEM", [this](Layer& x) { modem(x); }); }};  // (last, online and here)
 #endif

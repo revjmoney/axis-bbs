@@ -68,6 +68,7 @@ public:
         std::vector<Item>  items;
         std::function<void(Layer&)> build;  // (re)fills items: after every change the layer is rebuilt
         size_t             at = 0;          // the lightbar
+        size_t             pages = 1;       // a paged list: the pages asked for so far (More... asks for one more)
         std::vector<std::string> text;      // a read-only page (the event log ...) instead of items
     };
 
@@ -84,6 +85,9 @@ private:
     std::string setting(const std::string& key);  // one axis.ini value ("" if unset)
     const std::vector<std::string>& settingLines();  // @SETTINGS, asked once per layer build
     std::vector<std::string> lines(const std::string& cmd);
+    // a list the board sends a page at a time ("@USERS " + start; "more <next>" ends a page with more to come)
+    std::vector<std::string> paged(const std::string& cmd, size_t pages, bool& more);
+    void                     moreItem(Layer& l, bool more);  // More...: the next page, in the same layer
     // the layers
     void users(Layer& l);
     void user(Layer& l, const std::string& handle);

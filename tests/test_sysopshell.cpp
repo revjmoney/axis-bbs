@@ -17,11 +17,11 @@ struct Rig {
     std::string              out;
     std::vector<std::string> ran;
     std::map<std::string, std::string> replies = {
-        {"@USERS", "user 1|Rev|valid|255|9|FMD$-\nuser 2|Kid|pending|10|1|FMD--\n"},
+        {"@USERS 0", "user 1|Rev|valid|255|9|FMD$-\nuser 2|Kid|pending|10|1|FMD--\n"},
         {"@USER Kid", "handle Kid\nreal Kid Kutter\nfrom Conway\nsecurity 10\n"},
         {"@AREAS", "1|axis|Axis Firmware|0|\n2|gcode|G-code|20|m\n"},
         {"@MSGAREAS", "1|general|General Chatter|0|\n"},
-        {"@SETTINGS", "bbs_name=AXIS UNDERGROUND CNC\ntheme=iniquity\nwfc=iniquity\nsysop_salt_should_never=x\n"},
+        {"@SETTINGS 0", "bbs_name=AXIS UNDERGROUND CNC\ntheme=iniquity\nwfc=iniquity\nsysop_salt_should_never=x\n"},
         {"@MENU", ""},
         {"@LOG", "12:00 boot\n12:01 call from 10.0.0.2\n"},
     };
@@ -231,7 +231,7 @@ TEST_CASE("Q and Esc go back a layer, and Q on the top layer leaves") {
 
 TEST_CASE("sections switch messages off and turn original LORD back on") {
     Rig r;
-    r.replies["@SETTINGS"] += "messages_on=1\nfiles_on=1\ndoors_on=1\n"
+    r.replies["@SETTINGS 0"] += "messages_on=1\nfiles_on=1\ndoors_on=1\n"
                               "door1=lord|Legend of the Red Dragon|LORD.EXE|%N NOEMS /DREW|doorsys\n"
                               "door8=lord|LORD Fast|FAST.EXE|%N|doorsys\n";
     r.shell.begin();
@@ -279,7 +279,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
     {  // System > Restart, confirmed
         Rig r;
         r.shell.beginAt(SysopSection::System);
-        r.type("9");  // Restart this board
+        r.type("a");  // Restart this board
         CHECK_FALSE(r.ranCmd("@RESTART"));
         r.type("y");
         CHECK(r.ranCmd("@RESTART"));
@@ -287,7 +287,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
     {  // System > Rerun setup, confirmed: setup again, the settings kept until the wizard saves (no erase)
         Rig r;
         r.shell.beginAt(SysopSection::System);
-        r.type("a");
+        r.type("b");
         CHECK_FALSE(r.ranCmd("@RERUNSETUP"));
         r.type("y");
         CHECK(r.ranCmd("@RERUNSETUP"));
@@ -296,13 +296,13 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
     {  // System > Format SD needs FORMAT typed
         Rig r;
         r.shell.beginAt(SysopSection::System);
-        r.type("b");
+        r.type("c");
         r.type("nope\r");
         CHECK_FALSE(r.ranCmd("@SDFORMAT FORMAT"));
-        r.type("b");
+        r.type("c");
         r.type("formats\r");
         CHECK_FALSE(r.ranCmd("@SDFORMAT FORMAT"));
-        r.type("b");
+        r.type("c");
         r.type("format\r");  // any case (the touch keyboard has no caps lock)
         CHECK(r.ranCmd("@SDFORMAT FORMAT"));
     }
@@ -310,7 +310,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
         Rig r;
         r.replies["@STATION"] = "sensor|temp 21.5 (stub)\nrelay|1|0\nrelay|2|1\n";
         r.shell.beginAt(SysopSection::System);
-        r.type("c");
+        r.type("d");
         CHECK(plain(r.out).find("Relay 2") != std::string::npos);
         r.type("3");  // sensor, relay 1, relay 2: the third row is relay 2
         CHECK(r.ranCmd("@RELAY 2 off"));
@@ -330,7 +330,7 @@ TEST_CASE("the one sysop menu reaches every touch menu feature") {
     }
     {  // Settings: the board switches and the telnet sysop switch
         Rig r;
-        r.replies["@SETTINGS"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
+        r.replies["@SETTINGS 0"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
         r.shell.beginAt(SysopSection::Settings);
         // Row 9 is the cluster key and row 10 (a) the DOS prompt password, each when the build has it. Then Files (when the build has the file areas),
         // Messages, Doors, Free downloads, Telnet sysop access. A page holds 1 to 9 and a to e; N turns it. In the full
@@ -421,21 +421,21 @@ TEST_CASE("a board's own commands are never run for another board") {
 TEST_CASE("a layer asks for the settings once however many it shows") {
     using axis::bbs::SysopSection;
     Rig r;
-    r.replies["@SETTINGS"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
+    r.replies["@SETTINGS 0"] += "files_on=1\nmessages_on=0\ndoors_on=1\nsysop_telnet=1\nfree_kb=500\n";
     r.shell.beginAt(SysopSection::Settings);
     int n = 0;
-    for (auto& c : r.ran) n += c == "@SETTINGS";
+    for (auto& c : r.ran) n += c == "@SETTINGS 0";
     CHECK(n == 1);
     r.ran.clear();
     // the first board switch (Files off in the full build, row b): the layer is built again, and asks again (once)
     r.type(std::string(1, "123456789abcde"[9 + AXIS_CLUSTER + AXIS_DOSPROMPT - 1]));
     n = 0;
-    for (auto& c : r.ran) n += c == "@SETTINGS";
+    for (auto& c : r.ran) n += c == "@SETTINGS 0";
     CHECK(n == 1);
     r.ran.clear();
     r.shell.beginAt(SysopSection::Look);
     n = 0;
-    for (auto& c : r.ran) n += c == "@SETTINGS";
+    for (auto& c : r.ran) n += c == "@SETTINGS 0";
     CHECK(n == 1);
 }
 
@@ -450,7 +450,7 @@ TEST_CASE("features: the Modem page and the modem settings show only with the mo
     }
     for (char page : {'2', '5'}) {  // Network, then Other settings: kept as saved, shown on Network or nowhere
         Rig r;
-        r.replies["@SETTINGS"] += "modem_link=1\nlite_below_bps=7031\n";
+        r.replies["@SETTINGS 0"] += "modem_link=1\nlite_below_bps=7031\n";
         r.shell.beginAt(SysopSection::Settings);
         r.out.clear();
         r.type(std::string(1, page));
@@ -465,4 +465,42 @@ TEST_CASE("features: the cluster key is offered only with the cluster built in")
     Rig r;
     r.shell.beginAt(SysopSection::Settings);
     CHECK((plain(r.out).find("Cluster key") != std::string::npos) == (AXIS_CLUSTER == 1));
+}
+
+TEST_CASE("a list longer than a page reaches its last entry through More") {
+    Rig r;
+    std::string p0, p1;
+    for (int i = 1; i <= 30; i++) (i <= 20 ? p0 : p1) += "user " + std::to_string(i) + "|u" + std::to_string(i) + "|valid|10|1|FMD--\n";
+    r.replies["@USERS 0"] = p0 + "more 20\n";
+    r.replies["@USERS 20"] = p1;
+    r.shell.beginAt(axis::bbs::SysopSection::Users);
+    CHECK(plain(r.out).find("More...") == std::string::npos);  // (the first screen: Add, u1 to u13)
+    r.type("n");                                                 // the second: u14 to u20, then More...
+    std::string o = plain(r.out);
+    CHECK(o.find("u20 ") != std::string::npos);
+    CHECK(o.find("More...") != std::string::npos);
+    CHECK(o.find("u30") == std::string::npos);
+    r.ran.clear();
+    r.type("8");  // Add and u1 to u20 are 21 items: More is row 8 of the second screen
+    CHECK(r.ranCmd("@USERS 20"));
+    r.out.clear();
+    r.type("n");
+    o = plain(r.out);
+    CHECK(o.find("u30") != std::string::npos);
+    CHECK(o.find("More...") == std::string::npos);
+}
+
+TEST_CASE("System shows the last door's memory, right after the doors on the card") {
+    Rig r;
+    r.replies["@DOORSTATE"] = "last door: oom\npeak guest RAM: 512 KB\nstack left: 900 bytes\nheap free: 90000\nlargest block: 40000\n";
+    r.shell.beginAt(axis::bbs::SysopSection::System);
+    std::string o = plain(r.out);
+    CHECK(o.find("Door memory") != std::string::npos);
+    CHECK(o.find("Door memory") > o.find("Doors on the card"));
+    r.type("9");
+    CHECK(r.ranCmd("@DOORSTATE"));
+    o = plain(r.out);
+    CHECK(o.find("peak guest RAM: 512 KB") != std::string::npos);
+    CHECK(o.find("largest block: 40000") != std::string::npos);
+    CHECK(axis::bbs::boardOnlyCommand("@DOORSTATE"));  // each board's own door, never the main's
 }
