@@ -142,7 +142,7 @@ void ddnsCheck() {
     if (code == 200) lastIp_ = ip;
 }
 
-volatile bool ddnsDue_ = false;  // bench: @DDNS now makes the next tick check at once
+volatile bool ddnsDue_ = false;  // ddnsSoon() (@DDNS now, bench builds only) makes the next tick check at once
 bool          first_ = true;     // the timer: kept by tick() on the loop (core 1) only
 uint32_t      lastDdns_ = 0, nextTick_ = 0, failedAt_ = 0;
 bool          failed_ = false;  // the last start was refused: wait 2 s (loop core only, like the timer)

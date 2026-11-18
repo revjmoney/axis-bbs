@@ -130,7 +130,7 @@ static void noteDoing(const String& what) {
     doingMagic_ = kDoingMagic;
 }
 static const char* doingNow() { return doingMagic_ == kDoingMagic ? doing_ : ""; }  // the same text noteDoing keeps
-static axis::bbs::HeapWindow heapWin;  // lowest heap since boot or the last @HEAPWIN
+static axis::bbs::HeapWindow heapWin;  // lowest heap since boot, or since the last @HEAPWIN (bench builds only)
 #if AXIS_HEAP_TRACE
 // Bench build only (env cyd-trace): what is live, and who took it, each time the heap reaches a new low.
 #include "esp_heap_trace.h"
@@ -138,12 +138,14 @@ static axis::bbs::HeapWindow heapWin;  // lowest heap since boot or the last @HE
 static heap_trace_record_t traceRecs_[250];
 static uint32_t            traceDumpFree_ = UINT32_MAX;
 static int                 traceDumps_ = 0;
+#if AXIS_BENCH  // only @HEAPWIN restarts the trace, and @HEAPWIN is in bench builds only
 static void heapTraceRestart() {
     heap_trace_stop();
     heap_trace_start(HEAP_TRACE_LEAKS);
     traceDumpFree_ = UINT32_MAX;
     traceDumps_ = 0;
 }
+#endif
 static void heapTraceLow(uint32_t freeB, uint32_t largest) {
     if (freeB >= 64000 || freeB + 3072 > traceDumpFree_ || traceDumps_ >= 8) return;
     traceDumpFree_ = freeB;

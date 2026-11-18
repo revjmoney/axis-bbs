@@ -9,6 +9,7 @@
 #include <new>
 
 #include "bbs/config.h"
+#include "bbs/features.h"  // AXIS_BENCH (boardOnlyCommand)
 #include "bbs/theme.h"
 
 namespace axis::bbs {
@@ -68,8 +69,10 @@ bool inGroups(const std::string& k) {
 
 bool boardOnlyCommand(const std::string& cmd) {
     static const char* const kMine[] = {"@CLUSTERKEY", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
-                                        "@BEEP",       "@STATION", "@LED",       "@SHOT",       "@TAP",     "@LKEY",    "@LSCREEN", "@WIFIPICK",
-                                        "@STATS", "@HEAPWIN", "@SPRITEFAIL", "@DOORSTATE",
+                                        "@BEEP",       "@STATION", "@LED",       "@WIFIPICK",   "@STATS",   "@DOORSTATE",
+#if AXIS_BENCH  // bench builds only (bbs/features.h); elsewhere they are unknown commands, sent on like any other
+                                        "@SHOT",       "@TAP",     "@LKEY",      "@LSCREEN",    "@HEAPWIN", "@SPRITEFAIL",
+#endif
 #if AXIS_NETS
                                         "@NETKEY",     "@NETROTATE",  // Sysop Net: Rev's keys, at the board's serial console only
 #endif
