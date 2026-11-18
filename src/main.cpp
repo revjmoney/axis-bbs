@@ -2612,7 +2612,7 @@ struct NetServe {
     std::unique_ptr<axis::bbs::RandomFile>   file;  // the file being served (check opens it)
     std::string                              pend, id, who;  // who: "<handle>@<board>" once the GET is read
     std::string                              from;  // the calling board
-    uint32_t                                 ip = 0, closeMs = 0;  // closeMs: the half-close, or the last byte heard after it
+    uint32_t                                 ip = 0, closeMs = 0, closeAt = 0;  // closeMs: the half-close, or the last byte heard after it; closeAt: the half-close
     bool                                     proven = false, served = false;  // the GET's signature checked; check passed
     bool                                     closing = false;  // half-closed: what comes is dropped until the dialer closes
     // noexcept (WiFiClient() cannot throw): NetHost's constructor then needs no unwinding code for the members before it.
@@ -4014,7 +4014,7 @@ static void netServeClose(NetHost& h, const char* why) {
         int fd = v.c.fd();
         if (done && !why && fd >= 0 && v.c.connected() && shutdown(fd, SHUT_WR) == 0) {  // served (a proven member) only
             v.closing = true;
-            v.closeMs = millis();
+            v.closeMs = v.closeAt = millis();
             return;
         }
     }
@@ -4034,7 +4034,9 @@ static void netServePump(NetHost& h) {
     size_t fed = 0;
     if (v.closing) {  // half-closed: drop what comes (a keepalive) until the dialer closes
         for (int i = 0; i < 8 && v.c.available() > 0 && v.c.read((uint8_t*)buf, sizeof buf) > 0; i++) v.closeMs = millis();
-        if (!v.c.connected() || millis() - v.closeMs >= axis::net::kFetchStallMs) netServeClose(h, nullptr);
+        // (a byte heard keeps a slow dialer reading its tail, but never past kFetchServeIdleMs from the half-close)
+        if (!v.c.connected() || millis() - v.closeMs >= axis::net::kFetchStallMs || millis() - v.closeAt >= axis::net::kFetchServeIdleMs)
+            netServeClose(h, nullptr);
         return;
     }
     while (fed < 2048) {  // the GET line, then only the dialer's keepalives

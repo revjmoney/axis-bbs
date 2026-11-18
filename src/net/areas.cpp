@@ -474,12 +474,14 @@ bool NetCore::listingIndexStep() {
 
 // The daily count is keyed on day() as ingress is, with the clock set; without one, day() does not move and trim (run
 // once per day of uptime) resets it.
-bool NetCore::listingDropAllowed() {
+const char* NetCore::listingDropRefused(const std::string& board) {
     if (clockSet() && day() != listingDropsDay_) {
         listingDropsDay_ = day();
-        listingDropsToday_ = 0;
+        listingDropsToday_.clear();
     }
-    return listingDrops_ < kNetListingDropsPerSession && listingDropsToday_ < kNetListingDropsPerDay;
+    auto it = listingDropsToday_.find(board);
+    if (it != listingDropsToday_.end() && it->second >= kNetListingDropsPerDay) return kNakLimited;
+    return listingDrops_ < kNetListingDropsPerSession ? nullptr : kNakStore;
 }
 
 NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromPeer, bool history, const char** nak) {
@@ -553,10 +555,13 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
         seen_.add(id, day());
         return res(Took::Duplicate, removed ? "duplicate removed" : "duplicate replaced", nullptr);
     }
-    // A peer's listing that replaces or removes one held costs a rewrite of the area: a few a session and a few more
-    // a day, then the transient "store" (before ingress is charged and before anything is stored, so a name never
-    // holds two records). This board's own are not counted.
-    if (!lower.empty() && !fromPeer.empty() && !listingDropAllowed()) return res(Took::Rejected, "rejected store", kNakStore);
+    // A peer's listing that replaces or removes one held costs a rewrite of the area: a few a session (then the
+    // transient "store") and a few more a day for each home board (then "limited", final), checked before ingress is
+    // charged and before anything is stored, so a name never holds two records. This board's own are not counted.
+    if (!lower.empty() && !fromPeer.empty()) {
+        if (const char* w = listingDropRefused(l.board))
+            return w == kNakStore ? res(Took::Rejected, "rejected store", kNakStore) : res(Took::Limited, "limited drops", kNakLimited);
+    }
     // The caps, at intake: past the total (other boards' live listings) or this home board's share, no new name comes
     // in, final ("limited", so the sender's queue moves on; the trim alone would let a pull run far past the caps until
     // the next day). A removal or a re-listing of a name held adds no live record, and this board's own always come
@@ -587,7 +592,7 @@ NetCore::Took NetCore::takeListing(const NetListing& l, const std::string& fromP
     if (!lower.empty()) {
         if (!fromPeer.empty()) {
             listingDrops_++;
-            listingDropsToday_++;
+            listingDropsToday_[l.board]++;
         }
         // It replaces the records of its name below it: one rewrite of the area, then the index built again (every
         // offset after the first one dropped moved), kNetIndexStep listings a call from the host's tick; listings are
@@ -1240,7 +1245,7 @@ void NetCore::trim(uint32_t nowUnix) {
     bool clock = nowUnix > kNetClockSet;
     if (clock && nowDay == lastTrimDay_) return;  // once a day: the area rewrites below touch the SD card
     lastTrimDay_ = nowDay;
-    if (!clock) listingDropsToday_ = 0;  // a day of uptime: the daily listing drop budget is full again
+    if (!clock) listingDropsToday_.clear();  // a day of uptime: the daily listing drop budgets are full again
     state_.prune(nowDay);
     seen_.prune(nowDay);
     log_.trimTo(kOutLogKeep);

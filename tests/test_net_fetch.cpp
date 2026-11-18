@@ -331,6 +331,43 @@ TEST_CASE("fetch: the server refuses with the check's word and the client report
     }
 }
 
+TEST_CASE("fetch: keepalives without reading hold the serve slot no longer than kFetchServeIdleMs") {
+    Call        c(5000);
+    FetchServer s(c.l.board, homeKey(), nonce(0x3D), [&](const NetFetch& f) { return c.check(f); });
+    uint32_t    t = 1000;
+    s.tick(t);
+    std::string dial = nonce(0x5D);
+    std::string hello = "AXISFILE 1 " + dial + "\r\n";
+    s.feed(hello.data(), hello.size());
+    std::string hi = s.takeOut(4096);
+    REQUIRE(hi.size() == 167);
+    NetFetch f;
+    f.board = boardOf(myKey());
+    f.listing = listingId(c.l);
+    f.handle = "Caller";
+    f.dialNonce = dial;
+    f.servNonce = hi.substr(20, 16);
+    REQUIRE(signFetch(f, myKey()));
+    std::string get = "GET " + encode(f) + "\r\n";
+    s.feed(get.data(), get.size());
+    REQUIRE(s.takeOut(16).rfind("OK ", 0) == 0);  // the OK line only: the dialer then reads nothing
+    s.tick(t);
+    // a keepalive every 10 s, never a byte read: alive up to kFetchServeIdleMs, then a stall
+    for (; t < 1000 + kFetchServeIdleMs - 10000; t += 10000) {
+        s.feed("\n", 1);
+        CHECK(s.takeOut(0).empty());
+        s.tick(t);
+        REQUIRE_FALSE(s.failed());
+    }
+    for (int i = 0; i < 3; i++, t += 10000) {
+        s.feed("\n", 1);
+        s.takeOut(0);
+        s.tick(t);
+    }
+    CHECK(s.failed());
+    CHECK(std::string(s.why()) == "stall");
+}
+
 TEST_CASE("fetch: NO busy from the host is the client's busy; a word outside the list reads bad") {
     Call c(5000);
     c.start(0);

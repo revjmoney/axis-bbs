@@ -30,6 +30,7 @@ constexpr size_t   kFetchWindow = 8 * 1024;          // the client's replay wind
 constexpr size_t   kFetchChunk = 2048;               // the server's read size
 constexpr uint32_t kFetchStallMs = 20000;            // no bytes for this long ends a fetch (either end)
 constexpr uint32_t kFetchConnectMs = 15000;          // connect plus handshake
+constexpr uint32_t kFetchServeIdleMs = 150000;       // serving: this long with no file byte taken out ends it, keepalives or not
 constexpr int      kFetchRetries = 3;                // re-requests at a new offset per download
 constexpr uint32_t kFetchNoCrc = 0xFFFFFFFFu;        // crcPos() when the crc can no longer be checked
 constexpr size_t   kFetchMaxLine = 1024;             // a longer line fails the call (HI is 165, GET about 260)
@@ -57,7 +58,9 @@ struct ServeFile {
 // back in first, then the rest. A host with no free slot answers "NO busy\r\n" itself, with no server.
 //
 // Once serving, what the dialer sends (its keepalives) is dropped but counts as life: kFetchStallMs with
-// nothing taken out and nothing heard means the dialer is gone.
+// nothing taken out and nothing heard means the dialer is gone. Keepalives alone keep it no longer than
+// kFetchServeIdleMs with no file byte taken out (past the dialer's own 120 s slow rule), so a dialer that sends
+// them but never reads cannot hold the serve slot.
 //
 // What is checked where (the server never streams before all of it passes):
 //   - the server: the AXISFILE line, GET's decode (field rules and signature form), both nonces equal
@@ -72,7 +75,7 @@ public:
     ~FetchServer();  // wipes its copy of the key (already wiped once HI is signed)
     void        feed(const char* p, size_t n);
     std::string takeOut(size_t room);  // at most room bytes: pending lines, then at most kFetchChunk read from the file
-    void        tick(uint32_t nowMs);  // handshake deadline kFetchConnectMs; kFetchStallMs with nothing taken out
+    void        tick(uint32_t nowMs);  // handshake deadline kFetchConnectMs; kFetchStallMs with nothing taken out or heard; kFetchServeIdleMs with nothing taken out
     bool        finished() const;      // close the call (everything to send has been taken out)
     bool        failed() const;
     const char* why() const { return why_; }  // the NO word sent, or "timeout", "stall", "read"; "" when served
@@ -87,8 +90,8 @@ private:
     ServeFile   file_;
     St          st_ = St::Hello;
     const char* why_ = "";
-    uint32_t    pos_ = 0, startMs_ = 0, lastMs_ = 0;
-    bool        started_ = false, moved_ = false;
+    uint32_t    pos_ = 0, startMs_ = 0, lastMs_ = 0, outMs_ = 0;
+    bool        started_ = false, moved_ = false, took_ = false;
 };
 
 // The end of a served call, for a host whose socket takes the server's bytes a piece at a time. Once the server is

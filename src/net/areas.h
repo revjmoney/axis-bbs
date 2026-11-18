@@ -93,7 +93,7 @@ constexpr uint32_t kNetGoneKeepDays = 120;      // a tombstone is kept this long
 constexpr uint32_t kNetGoneKeepCount = 200;     // at most the newest this many tombstones are kept (clock or not)
 constexpr uint32_t kNetIndexStep = 32;          // listings a rebuild of the listing index takes per call
 constexpr uint32_t kNetListingDropsPerSession = 8;  // listings from peers that may replace or remove one held, per session
-constexpr uint32_t kNetListingDropsPerDay = 64;     // the same, per day across every session (uptime days without a clock)
+constexpr uint32_t kNetListingDropsPerDay = 64;     // the same, per home board per day across every session (uptime days without a clock)
 constexpr uint32_t kNetFilesHeldPulls = 3;          // listings pulls in a row that may end held before fhistory is done anyway
 
 // The words a receiver puts after NAK <index>. Permanent ones move the sender's cursor past the entry;
@@ -247,8 +247,10 @@ public:
         idx_ = Idx::Unknown;
     }
     // A session starts: the budget of listings from peers that may replace or remove a held one (each a rewrite of
-    // the area) is full again. Past it, or past the daily budget (kNetListingDropsPerDay, which a session start does
-    // not reset), such a listing is refused with the transient "store", before ingress and before it is stored.
+    // the area) is full again. Past it, such a listing is refused with the transient "store" (this session's sender
+    // goes on next session), before ingress and before it is stored. Past its home board's daily budget
+    // (kNetListingDropsPerDay, which a session start does not reset) it is refused "limited", final, so one board's
+    // churn never holds another sender's queue.
     void listingSessionStart() { listingDrops_ = 0; }
     // One bounded piece of index work (a look at the head, or a piece of a rebuild); the host calls it from its idle
     // tick. True while more is to do.
@@ -440,7 +442,7 @@ private:
     void eachListing(FnRef<bool(const bbs::Message& m, const NetListing& l)> each);
     bool shown(const NetListing& l) const;  // live, not held, killed or hidden here, its board not banned or blocked here
     void trimListings(uint32_t nowDay, bool clock);
-    bool listingDropAllowed();  // both drop budgets, this session's and this day's, have room
+    const char* listingDropRefused(const std::string& board);  // nullptr, or the NAK word: the session's or the board's day budget spent
     // The listing index (setListingIndex). key: the keyed hash of "<board>|<area>|<name>", board: the keyed hash of
     // the board id, flags 1 for a tombstone, at where the message starts in the area.
     struct IdxRec {
@@ -505,7 +507,7 @@ private:
     // state gen liveGen_ (a notice can change what is shown).
     int      liveCount_ = -1;
     uint32_t liveGen_ = 0;
-    uint8_t listingDropsToday_ = 0;  // this day's, across sessions (listingDropAllowed)
+    std::map<std::string, uint8_t> listingDropsToday_;  // this day's, per home board, across sessions (listingDropRefused)
     uint32_t listingDropsDay_ = 0;   // the day it counts (day(), with the clock set; trim resets it without one)
     uint32_t lastTrimDay_ = 0xFFFFFFFFu;
     std::map<std::string, Link> links_;

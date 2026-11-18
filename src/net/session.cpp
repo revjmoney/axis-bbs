@@ -140,6 +140,8 @@ void NetSession::fail(const char* why, const char* bye) {
     if (failed_) return;
     failed_ = true;
     why_ = why;
+    // A listings pull that sent listings and then ended before its UEND: held, as a plain UEND is.
+    if (uAskFiles_ && sentUwant_ && !peerUend_ && userListsTaken_ > 0 && core_.needFilesHistory()) core_.filesHistoryHeld();
     if (bye) send(std::string("BYE ") + bye);
     // Let go of everything the session holds.
     std::string().swap(in_);
@@ -377,8 +379,10 @@ void NetSession::syncLine(std::string& l) {
         // refused "store" (say past a drop budget), or the session's listing cap reached, holds it open, for at most
         // kNetFilesHeldPulls pulls in a row; the last of them marks it done anyway (a peer holding more than the cap
         // would otherwise be pulled from the start every session).
-        if (rest == "F" && uAskFiles_) {
-            if (uFilesHeld_ || userListsTaken_ >= kSyncUserListingsMax) core_.filesHistoryHeld();
+        // A plain UEND to a listings ask (an older or broken peer) counts as held too, so it is asked at most
+        // kNetFilesHeldPulls times, not every session.
+        if (uAskFiles_ && core_.needFilesHistory()) {
+            if (rest != "F" || uFilesHeld_ || userListsTaken_ >= kSyncUserListingsMax) core_.filesHistoryHeld();
             else core_.filesHistoryGot();
         }
         return;

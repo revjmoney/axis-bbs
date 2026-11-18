@@ -283,6 +283,34 @@ TEST_CASE("listings: the total cap holds at intake; a removal, a replace and thi
     CHECK(r.core.takeListing(makeListing(b.key, 5, "B5"), b.board) == Took::Limited);
 }
 
+TEST_CASE("listings: the daily drop budget is each home board's own; past it a board's replaces are refused limited, final") {
+    RevKeys rk;
+    FNode r(0x9D), a(0x9E), b(0x9F);
+    r.knows(a), r.knows(b);
+    r.admit({&r.board, &a.board, &b.board});
+    uint32_t sa = 1;
+    REQUIRE(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board) == Took::Stored);
+    REQUIRE(r.core.takeListing(makeListing(b.key, 1, "B.ZIP"), b.board) == Took::Stored);
+    indexReady(r.core);
+    // a re-lists its name kNetListingDropsPerDay times, a session's budget at a time
+    for (uint32_t i = 0; i < kNetListingDropsPerDay; i++) {
+        if (i % kNetListingDropsPerSession == 0) r.core.listingSessionStart();
+        REQUIRE(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board) == Took::Stored);
+        indexReady(r.core);
+    }
+    r.core.listingSessionStart();
+    const char* why = nullptr;
+    CHECK(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board, false, &why) == Took::Limited);
+    CHECK(std::string(why ? why : "") == kNakLimited);
+    // b's replace, in the same session, still comes in
+    CHECK(r.core.takeListing(makeListing(b.key, 2, "B.ZIP"), b.board) == Took::Stored);
+    indexReady(r.core);
+    // the next day a's budget is full again
+    r.now += kDay;
+    r.core.listingSessionStart();
+    CHECK(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board) == Took::Stored);
+}
+
 TEST_CASE("listings: the per-board cap holds at intake, and this board's own do not count toward either cap") {
     RevKeys rk;
     FNode r(0x98), a(0x99), b(0x9A);

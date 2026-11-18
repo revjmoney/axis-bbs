@@ -141,19 +141,21 @@ std::string FetchServer::takeOut(size_t room) {
             st_ = St::Done;
         }
     }
-    if (!s.empty()) moved_ = true;
+    if (!s.empty()) moved_ = took_ = true;
     return s;
 }
 
 void FetchServer::tick(uint32_t now) {
     if (!started_) {
         started_ = true;
-        startMs_ = lastMs_ = now;
+        startMs_ = lastMs_ = outMs_ = now;
     }
     if (moved_) lastMs_ = now;
-    moved_ = false;
+    if (took_) outMs_ = now;
+    moved_ = took_ = false;
     if (st_ == St::Done || st_ == St::Failed) return;
-    bool late = st_ == St::Serving ? now - lastMs_ > kFetchStallMs : now - startMs_ > kFetchConnectMs;
+    bool late = st_ == St::Serving ? now - lastMs_ > kFetchStallMs || now - outMs_ > kFetchServeIdleMs
+                                   : now - startMs_ > kFetchConnectMs;
     if (late) {
         why_ = st_ == St::Serving ? "stall" : "timeout";
         file_.read = nullptr;

@@ -1446,6 +1446,29 @@ TEST_CASE("fhistory: a held pull then a clean one is done, and the held count is
     CHECK(p.r3.liveSeqs("NAME.ZIP") == std::vector<uint32_t>{5});
 }
 
+TEST_CASE("fhistory: a net3 peer that answers the listings ask with a plain UEND is asked kNetFilesHeldPulls times, not forever") {
+    RevKeys rk;
+    FNode     r3(0xE6);
+    RawDialer r(0xE7);
+    r.card.links = kNetCardLinks;
+    REQUIRE(signCard(r.card, r.key));
+    r3.admit({&r3.board, &r.card.board});
+    for (uint32_t pull = 1; pull <= kNetFilesHeldPulls; pull++) {
+        REQUIRE(r3.core.needFilesHistory());
+        NetSession s(r3.core, r3.card, r3.key, nonce((uint8_t)(20 + pull)), false, "");
+        r.handshake(s);
+        REQUIRE(s.proven());
+        s.tick(0, true);
+        CHECK(hasLine(s.takeOut(), "UWANT un_chat,un_tech,un_games,un_files"));
+        RawDialer::say(s, "SEQ 0");
+        RawDialer::say(s, "SEND");
+        RawDialer::say(s, "UEND");
+        s.tick(10, true);
+        CHECK_FALSE(s.failed());
+    }
+    CHECK_FALSE(r3.core.needFilesHistory());
+}
+
 TEST_CASE("fhistory: a pull that reaches the session's listing cap counts as held; three in a row end it") {
     RevKeys rk;
     // A hand-driven net3 peer answers r3's UWANT with kSyncUserListingsMax listings (from x, whose card r3 does not
