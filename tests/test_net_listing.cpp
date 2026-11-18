@@ -509,6 +509,7 @@ TEST_CASE("listing index: a take reads the index in 16-record pieces (one read e
     REQUIRE(r.core.takeCard(h.card, ""));
     REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", r.card.board, 1, "1"), ""));
     REQUIRE(r.core.takeNotice(makeNotice(rev0(), 0, "admit", h.board, 2, "1"), ""));
+    r.core.setListingCaps(1000, 1000);  // (more held than the default cap, to see the reads grow)
     uint32_t seq = 1;
     auto takeOne = [&](uint32_t held) {
         CAPTURE(held);

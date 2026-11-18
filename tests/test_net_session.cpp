@@ -1200,7 +1200,7 @@ TEST_CASE("an upgraded Phase 2 board with uhistory done and no fhistory line ask
     CHECK(hasLine(r3.core.saveCursors(), "fhistory 1"));
 }
 
-TEST_CASE("a pull of 600 listings is past the 512 cap on applications and votes and still reaches UEND F") {
+TEST_CASE("a pull of 600 listings is past the 512 cap on applications and votes and the 500 listing cap, and still reaches UEND F") {
     RevKeys rk;
     FNode h(0xCD), r3(0xCE);
     for (FNode* n : {&h, &r3}) n->admit({&h.board, &r3.board});
@@ -1208,7 +1208,7 @@ TEST_CASE("a pull of 600 listings is past the 512 cap on applications and votes 
     Said s = syncFiles(r3, h, 1);
     CHECK(listingLinesIn(s.fromAnswerer, "U ") == 600);
     CHECK(hasLine(s.fromAnswerer, "UEND F"));
-    CHECK(r3.records().size() == 600);
+    CHECK(r3.records().size() == kNetListingsMax);  // the rest refused "limited", final: the pull is not held open
     CHECK_FALSE(r3.core.needFilesHistory());
     Said again = syncFiles(r3, h, 3);
     CHECK(countPrefix(again.fromDialer, "UWANT") == 0);
