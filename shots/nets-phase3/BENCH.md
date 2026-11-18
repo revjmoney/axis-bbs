@@ -174,3 +174,73 @@ To download the peer's file, a caller has to page to it, because `D` and a name 
   - Each session with the peer logs `3 out` on board 1 while the peer logs `0 in`, every time.
   - Listings the peer made before its first link to board 1 were not sent to it (seen once, not traced; board 1 already had `history done`).
   - `D` by name finds only files on the page shown.
+
+## 500 cap bench (df7ddc0), 2026-11-18
+
+Board 1 (COM17) ran a bench-only build: nets/phase3 at df7ddc0 (the 500 cap, held at intake) plus a test-key swap in `src/net/revkeys.cpp` only, with two fresh throwaway test keys (test board ids 648640941a2c6bf9 and c7974f6afabb5586). The image was 2,125,809 B (90.1%). Rev's real seeds were never read or used. The PC peer `axis_netpeer` (P3Peer3, test key 1) was built on the build box from the same tree and listened on port 2401. As in the earlier runs, both ends were (test) Rev boards, so no admit, vote or limits notice was signed. The settings changed for the bench (`net_user=1`, a pinned `net_first_peer`, the area `p3bench` in `net_files_areas`, `public_host` cleared, the caller P3Bench) were all set back afterwards.
+
+**Earlier today, before this run:** board 1's residue from the first two runs was purged on the real build, the same way as in "Restore and purge" below. While saving copies of its net files first, a helper opened the serial port with the reset lines on, and board 1 rebooted 6 times in a few seconds. It was back within a minute and nothing was lost, but the BBS was briefly down. The helper was fixed to set the lines before opening the port.
+
+### The cap
+
+- The peer listed 561 files (BIG300K.BIN plus F001 to F560) after its first link. Board 1 held its own 2 listings, took 498 of the peer's and stopped at **500**. The other 63 were refused `limited full` (in board 1's net record), which is final. The peer's cursor for board 1 then sat at its outlog end, so its queue moved on and nothing was held. 134 sessions ran in 360 s.
+- After 50 removals (450 live, 50 tombstones), the peer listed 55 new files. Board 1 took 50, back to 500, and refused 5 `limited full`. No stall line came from the refill.
+- Storing turns during the pull were at most 1.47 s. One 3.05 s turn came between dials to the dead old peers, next to a `heap low in viewcache` line, not from storing (not traced).
+
+### Turns at 500 live and 50 tombstones
+
+The method is the same as before: a serial `@STATUS` ping every 0.1 s, and the `loop stalled` lines (logged over 2 s). The dials to the two dead old PC peers cost a 1.2 to 1.6 s turn each, as in the re-bench; those turns are left out. The task watchdog fires (IDLE1 starved) on turns over about 5 s.
+
+| Action at about 500 held | Re-bench at about 1200 (0fed318) | This run at 500 (df7ddc0) | Over 2 s | Over 5 s (watchdog) |
+| --- | --- | --- | --- | --- |
+| Net Files page 1 draw, first open | 8.2 s turn, 8.87 s at the caller | 3.64 s turn, 3.99 s at the caller | yes | no |
+| Net Files next or previous page | 4.0 to 4.2 s | 1.77 to 1.88 s (4 runs) | no | no |
+| Opening Files (the area list), going back | 1.9 to 2.1 s | 1.88 s turn; 2.10 and 2.09 s at the caller | about at the line | no |
+| A removal from the peer (`unlist`) | 11.7 s | 3.33 to 4.10 s (50 of them, one a session) | yes | no |
+| A replace from the peer (re-list of F100) | 10.7 s and 8.0 s | 3.72 s | yes | no |
+| A replace from the peer (re-list of BIG300K.BIN, the oldest record) | not measured | **6.12 s, watchdog once** | yes | **yes** |
+| A removal on board 1 (`@FDEL` of its own file) | 8.2 to 8.7 s | 3.89 s (2.43 s later, at 201 held) | yes | no |
+| `@NET`, first after a change | 5.1 s (1201) | 1.78 s, then 0.05 s while nothing changes | no | no |
+| `@NET FILES` | 4.1 to 8.2 s | 3.72 s first, 1.85 s for the next page | yes | no |
+| The boot trim (cut 297 from the peer, to the 200 per home board) | 13.9 s | **6.84 s, watchdog once** | yes | **yes** |
+
+- **Where the long ones go:** both watchdog backtraces decode to `FileMessageStore::drop`, writing the rewritten `nf_list` to the SD card (`sdWriteSector`, waiting on the card). The replace came from `takeListing`, the trim from `trimListings`.
+- **Why one replace is longer:** the BIG300K.BIN record was the first in the area, so its drop rewrites the whole area. F100 sat about 100 records in.
+- **Not measured:** a trim at 500 that cuts nothing (no board over 200), which is only a scan. The peer held about 497 here, so this trim was the worst case.
+
+### Busy heap test (plan step 7)
+
+A caller downloaded the peer's 300 KB BIG300K.BIN through Net Files with ZMODEM three times while `@NET SYNC` ran again and again (35 sessions with the peer in 100 s).
+- **Downloads:** 3 of 3 whole, md5 identical to the peer's file (39 to 45 s each).
+- **Heap:** lowest free 80,968 B, lowest largest block 65,536 B (highest 125,408 and 110,592). `kNetHeapFloor` is 40 KB (40,960 B), and a fetch client needs that plus its 8 KB window, 49,152 B. The lowest largest block was 16 KB above that.
+- **Turns:** the Net Files first open in this run (3.63 s) once shared a loop pass with a dead-peer dial: a 5.33 s turn, with no watchdog line.
+- Two download tries before this stopped at `No file by that name in this area`, because BIG300K.BIN was on the last page (the known limit of `D` by name). The peer re-listed it to bring it to page 1, which was the 6.12 s replace above.
+
+### Restore and purge
+
+- **Bench pieces:** `@FDEL` of board 1's own bench file, `@AREADEL` of `p3bench`, the settings set back, `@UDEL P3Bench`, `@NETKEY CLEAR`, and the peer stopped.
+- **Reflash:** the real build from the main worktree (i5build "building cyd for nets/phase3 (0f915901)", 2,126,781 B, hash verified). By then nets/phase3 had moved on to 0f91590 (the per-board daily drop budget). This run measured df7ddc0, with the older budget; the 50 removals fit under it.
+- **SD mount:** on two boots (after the reflash, and after the purge reset) the SD card did not mount, and board 1 ran on internal flash with a fresh, empty net state there. A reset mounted it each time (once "on try 2"). This was not seen in the earlier runs. It may be the card or its socket; not traced.
+- **Purge:** the net files were saved first. Then the two test cards and their cursor and seen lines were removed, and the two old PC peers' cursors were set to the outlog end. `/net/firstpeer.txt` (it pinned P3Peer3) was removed, and so were `/msgs/nf_list.msg` and `/net/files.idx`, after a check that every listing was from P3Peer3 (200 of 200, plus test tombstones). The empty `p3bench` folder went too. Then the board was reset through the USB reset line, not `@RESTART`, which saves its RAM copy of the net state over the edits.
+- **State after:**
+  - board 1 (its own id), `rev board no`, `user net off (application pending)`;
+  - cards 3, and peers PCPEER and BenchPeer with queue 0;
+  - `files: 0 listed`, and `@NET MEMBERS` is empty;
+  - `@NETKEY CLEAR` gives `@OK no net key was set`;
+  - `@SETTINGS` is identical to the capture at the start, `public_host` included;
+  - `@AREAS` and `@USERS` show no `p3bench` or P3Bench.
+- **Cleanup:** these are all gone:
+  - the throwaway worktree, branch `bench/p3-testkey3` and its refs;
+  - the build box's `i5build/bench_p3-testkey3` ref, its builds folder, and the peer folder with the peer's test seed;
+  - the local test seeds and the caller password.
+- **Residue, reported:**
+  - The outlog keeps its lines (now 0..1906). No link peer has any of them queued, and a new link peer starts at the end.
+  - The net record keeps the bench's lines.
+  - The internal flash holds the small, empty net state written on the two boots without the card. It is used only when there is no SD card.
+  - A LORD warrior made for a bench caller in the first run may remain (not checked).
+
+### Notes from this run
+
+- **The 500 cap holds at intake.** A pull past it stops at 500, the refusals are final, and the sender moves on.
+- **Over the 2 s line at 500:** Net Files page 1 first open (3.6 s), removals and replaces (3.3 to 4.1 s), `@FDEL` (3.9 s) and the first `@NET FILES` (3.7 s).
+- **Over the 5 s watchdog at 500:** a replace of the area's oldest record (6.1 s) and a trim that cuts about 300 (6.8 s). Both are one `drop` of the whole area.
