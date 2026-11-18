@@ -183,7 +183,7 @@ Pick the file areas to share with `net_files_areas`, a comma list of file area i
 
 | What | Limit |
 | --- | --- |
-| Live listings held | 1000 (100 on a board with no SD card). This board's own listings are not held to it. |
+| Live listings held | 500 (100 on a board with no SD card), held at intake and by the daily trim. At the cap a new listing from another board is refused `limited` (final; the sender moves on), while removals, re-listings of a name held and this board's own listings still come in. This board's own listings are not held to it. |
 | Live listings from one home board | 200 (100 on a board with no SD card). This board's own listings are not held to it. |
 | A removal (tombstone) is kept | 120 days (200 removals on a board with no clock) |
 | Listings from peers that replace or remove one already held | 8 a session and 64 a day |

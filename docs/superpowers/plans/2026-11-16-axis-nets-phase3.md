@@ -92,7 +92,7 @@ Each line is the plan's default. Rev's yes or no on the plan settles them.
 | `kFetchConnectMs` | 15000 | connect plus handshake |
 | `kFetchRetries` | 3 | re-requests at a new offset per download |
 | `kNetServeMax` | 1 | fetches served at once |
-| `kNetListingsMax` | 1000 | live listings held; 100 when the board has no SD card |
+| `kNetListingsMax` | 500 (was 1000; cut 2026-11-18 after the bench, see shots/nets-phase3/BENCH.md) | live listings held, at intake and by the trim; 100 when the board has no SD card |
 | `kNetListingsPerBoard` | 200 | live listings from one home board |
 | `kNetListDesc` | 120 | description bytes |
 | `kNetGoneKeepDays` | 120 | how long a removal (tombstone) is kept, the spec's dedupe window |
