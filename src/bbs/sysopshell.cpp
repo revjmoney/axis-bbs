@@ -108,7 +108,8 @@ std::vector<std::string> SysopShell::paged(const std::string& cmd, size_t pages,
     more = false;
     for (size_t p = 0; p < pages; p++) {
         auto page = lines(cmd + from);
-        more = !page.empty() && page.back().rfind("more ", 0) == 0 && page.back().substr(5) != from;  // (one that never moves on: stop)
+        std::string n = page.empty() || page.back().rfind("more ", 0) != 0 ? "" : page.back().substr(5);
+        more = !n.empty() && n.find_first_not_of("0123456789") == std::string::npos && n != from;  // (one that never moves on: stop)
         if (more) from = page.back().substr(5), page.pop_back();
         v.insert(v.end(), page.begin(), page.end());
         if (!more) break;
