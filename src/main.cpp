@@ -4908,14 +4908,27 @@ static std::string sysopRun(const std::string& cmd) {
         std::string reply;
         return cluster->request("V\x1f" + cmd, reply, 8000) && !reply.empty() ? reply.substr(1) : std::string("axis: the main didn't answer\n");
     }
-    String out;
+    // one reply stays under 6 KB (the link's queue dies at 8 KB); the long lists come a page at a time (runCommand)
+    static constexpr size_t kCap = 6 * 1024;
+    std::string out;
     struct Sink : Print {
-        String& s;
-        explicit Sink(String& r) : s(r) {}
-        size_t write(uint8_t b) override { s += (char)b; return 1; }
+        std::string& s;
+        bool         cut = false;
+        explicit Sink(std::string& r) : s(r) {}
+        size_t write(uint8_t b) override { return write(&b, 1); }
+        size_t write(const uint8_t* p, size_t n) override {
+            size_t room = kCap - s.size();
+            if (n > room) cut = true;
+            s.append((const char*)p, n > room ? room : n);
+            return n;
+        }
     } sink(out);
     runCommand(String(cmd.c_str()), sink);
-    return std::string(out.c_str());
+    if (sink.cut) {
+        out.resize(out.rfind('\n') + 1);  // (no newline at all: npos + 1 is 0)
+        out += "axis: reply cut at 6 KB\n";
+    }
+    return out;
 }
 
 // Copies of what callers are sent, for the panel's screen wall and console ("SCR <node> <base64>").
@@ -5069,7 +5082,35 @@ static void pumpPanel() {
     }
 }
 
+static bool pagedRun = false;  // runCommand under the pager: @POSTS sends the newest first
+
 static void runCommand(const String& cmd, Print& out) {
+    // "@USERS 40", "@SETTINGS 40", "@FILES area|40", "@POSTS area|40": the list from line 40, about 4 KB of it,
+    // then "more <next>" while lines remain. Without the number: the whole list, as always.
+    int    at = std::max(cmd.lastIndexOf(' '), cmd.lastIndexOf('|'));
+    String base = cmd.substring(0, at), num = cmd.substring(at + 1);
+    if (at > 0 && !pagedRun && String(num.toInt()) == num &&
+        (base == "@USERS" || base == "@SETTINGS" || (cmd[at] == '|' && (base.startsWith("@FILES ") || base.startsWith("@POSTS "))))) {
+        struct Page : Print {
+            Print& to;
+            size_t skip, line = 0, sent = 0;
+            bool   full = false, bol = true;
+            Page(Print& o, size_t s) : to(o), skip(s) {}
+            size_t write(uint8_t b) override {
+                if (bol && line >= skip && sent >= 4096) full = true;
+                if (full) return 1;
+                bol = b == '\n';
+                if (line >= skip) to.write(b), sent++;
+                if (bol) line++;
+                return 1;
+            }
+        } page(out, (size_t)num.toInt());
+        pagedRun = true;
+        runCommand(base, page);
+        pagedRun = false;
+        if (page.full) out.printf("more %u\n", (unsigned)page.line);
+        return;
+    }
     if (cmd.startsWith("@TAP ")) {
         int sp = cmd.indexOf(' ', 5);
         tapX = cmd.substring(5, sp).toInt();
@@ -5102,8 +5143,13 @@ static void runCommand(const String& cmd, Print& out) {
                 out.printf("%02d|%s\n", r + 1, row);
             }
         }
-    } else if (cmd == "@DOORSTATE") {  // the 8086 runtime is dosemu/ and is not in this firmware
-        out.println("axis: no 8086 in this firmware");
+    } else if (cmd == "@DOORSTATE") {  // the last door's memory (noteDoor), and the heap now
+        if (boardDiag_.door == axis::bbs::DoorDiag::None) out.println("axis: no door has run since boot");
+        else
+            out.printf("last door: %s\npeak guest RAM: %u KB\nstack left: %u bytes\n", axis::bbs::doorDiagToken(boardDiag_.door),
+                       (unsigned)boardDiag_.doorPeakKb, (unsigned)boardDiag_.doorStackWords);  // (ESP-IDF counts stacks in bytes)
+        out.printf("heap free: %u\nlargest block: %u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 #if AXIS_NETS
     } else if (cmd.startsWith("@NET") || netKeyLine(cmd)) {  // Sysop Net: @NET, @NET SYNC|PEERS|RECORD|LOCAL, local and Rev's moderation
         netCommand(cmd, out);
@@ -5431,9 +5477,10 @@ static void runCommand(const String& cmd, Print& out) {
         logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + area.c_str() + " " + name.c_str() + (ok ? "" : " (failed)"));
         out.println(ok ? "axis: done" : "axis: that didn't work");
 #endif
-    } else if (cmd.startsWith("@POSTS ")) {  // "@POSTS area": num|from|subject|date per post (the newest 200)
-        for (auto& m : callerMessages().headers(cmd.substring(7).c_str()))
-            out.printf("%d|%s|%s|%s\n", m.num, m.from.c_str(), m.subject.c_str(), m.date.c_str());
+    } else if (cmd.startsWith("@POSTS ")) {  // "@POSTS area": num|from|subject|date per post (the newest 200; paged: newest first)
+        auto v = callerMessages().headers(cmd.substring(7).c_str());
+        if (pagedRun) std::reverse(v.begin(), v.end());
+        for (auto& m : v) out.printf("%d|%s|%s|%s\n", m.num, m.from.c_str(), m.subject.c_str(), m.date.c_str());
     } else if (cmd.startsWith("@POSTDEL ") || cmd.startsWith("@POSTMV ") || cmd.startsWith("@PURGE ")) {
         // "@POSTDEL area|num", "@POSTMV area|num|toarea", "@PURGE area|days" (posts older than that)
         String a = cmd.substring(cmd.indexOf(' ') + 1);
