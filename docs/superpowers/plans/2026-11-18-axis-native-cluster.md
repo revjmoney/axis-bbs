@@ -28,10 +28,10 @@ plan stands on; its tasks are not repeated.
 
 ## Questions for Rev
 
-Each has a default the plan builds until Rev answers, so no task waits except Task 3.
+Each has a default the plan builds until Rev answers, so no task waits.
 
-1. **Flash line (blocks Task 3).** Main is 2,132,757 B, 7,757 B over the 2,125,000 B stop line, and this plan
-   adds firmware (Task 3 measures how much). Trim from the candidates Task 3 lists, raise the line, or both?
+1. **Flash line: ANSWERED 2026-11-18.** Rev raised the stop line to **2,200,000 B** (93.2% of the 2,359,296 B app
+   partition). No trim in this plan.
 2. **The card main dies and the i5 is the only AXIS left** (no cardless board to yield to it). Default built:
    after 60 s with no main the i5 restarts as the **solo** BBS (your rule: "no CYD main heard: solo"), and
    rejoins as a follower when the card board comes back. Alternative: it takes over from its mirror. One constant
@@ -125,8 +125,8 @@ Each has a default the plan builds until Rev answers, so no task waits except Ta
   (board image). The native program builds with cmake on the i5 in that same checkout:
   `cmake -S ~/builds/<branch> -B ~/builds/<branch>/build-native -DLOVYANGFX_DIR=$HOME/axis-bbs/.pio/libdeps/cyd/LovyanGFX -DAXIS_WINDOW=ON`
   then `cmake --build ~/builds/<branch>/build-native --target axis` (and once with `-DAXIS_WINDOW=OFF`).
-- **Board flash:** main is 2,132,757 B against Rev's stop line of 2,125,000 B (Rev accepted the overrun for now).
-  The final image must be at or under the line, or under a new line Rev sets in Task 3.
+- **Board flash:** Rev's stop line is **2,200,000 B** (raised 2026-11-18 from 2,125,000 B). Main is 2,132,757 B.
+  The final image must be at or under 2,200,000 B.
 - **The board's firmware may change** (Rev: "yes change the firmware"), but `main.cpp` edits stay a few lines
   each, are listed in the task report, and sit apart from the nets session's areas (it edits `main.cpp` too).
   Host-only hooks in `main.cpp` and the core are under `#if AXIS_NATIVE` (0 on the boards, defined in
@@ -275,29 +275,23 @@ Each has a default the plan builds until Rev answers, so no task waits except Ta
 - [ ] **Step 2:** Build tests and board image as in Task 1 Step 2; note the size.
 - [ ] **Step 3:** Commit: `cluster: card tree service and change feed for the card mirror`.
 
-### Task 3: Measure the firmware cost and get the image under the line
+### Task 3: Measure the firmware cost against the line
 
 **Files:**
-- Modify: per Rev's pick (candidates below); nothing else.
+- Modify: nothing (a measurement task). Only if the image is over 2,200,000 B: stop and report to Rev with the
+  trim candidates below; do not trim on your own.
 
 **Interfaces:**
 - Produces: a size table in the task report: main's image (2,132,757 B), after Task 1, after Task 2, and the
-  line (2,125,000 B).
+  line (2,200,000 B).
 
-- [ ] **Step 1:** `py -3.14 -I F:/axis-bbs/local/i5build.py cyd --fetch`, then `python -I tools/buildcost.py measure`
-  on the fetched build, and the 40 largest symbols of our own code from the map (`xtensa-esp32-elf-nm --size-sort`
-  on the i5). Write the table and the candidates with their measured savings:
-  - `CONFIG_NEWLIB_NANO_FORMAT=y` in `sdkconfig.defaults` (printf from ROM; `%lld`, `%llu` and `%f` stop working,
-    so every such use in `src/` must be listed first);
-  - bench-only @ commands behind a bench build flag like `env:cyd-trace` (`@SPRITEFAIL`, `@HEAPWIN`, `@TAP`,
-    `@LKEY`, `@LSCREEN`, `@SHOT`, `@DOORSTATE`);
-  - the `@MIRROR` handler and its text in a build without `AXIS_SD_POOL` (the default image, where it can only
-    say "not in this build");
-  - a release preset with a feature off (`installer/features.json`, for example `AXIS_DOSPROMPT`);
-  - raising the stop line.
-- [ ] **Step 2:** Ask Rev to pick (Question 1). **Stop here until he answers.**
-- [ ] **Step 3:** Apply his pick; rebuild until `cyd` is at or under the line he set.
-- [ ] **Step 4:** Commit: `board: flash trim for the card mirror` (or no commit if he raised the line only).
+- [ ] **Step 1:** `py -3.14 -I F:/axis-bbs/local/i5build.py cyd` at the Task 1 head and at the Task 2 head; write
+  the table.
+- [ ] **Step 2:** If the image is at or under 2,200,000 B, done (no commit). If over, list the candidates with
+  measured savings and stop for Rev: `CONFIG_NEWLIB_NANO_FORMAT=y` (lists every `%lld`, `%llu`, `%f` use first);
+  bench-only @ commands behind a bench build flag (`@SPRITEFAIL`, `@HEAPWIN`, `@TAP`, `@LKEY`, `@LSCREEN`, `@SHOT`;
+  not `@DOORSTATE`, which is the sysop Door memory entry); the `@MIRROR` handler in a build without `AXIS_SD_POOL`;
+  a release preset with a feature off (`installer/features.json`).
 
 ### Task 4: Profiles, data folders, the key file and restarts on Linux
 
@@ -514,7 +508,7 @@ Never put a LAN address, MAC or key in a screenshot that goes into the repo.
     `the pace gives the full rate when idle and a quarter when someone is on`.
 - [ ] **Step 2: Host tests.** `py -3.14 -I F:/axis-bbs/local/i5build.py test`: every test passes (the 1150 before
   this plan plus the new ones).
-- [ ] **Step 3: Board image.** `py -3.14 -I F:/axis-bbs/local/i5build.py cyd`: at or under the line from Task 3.
+- [ ] **Step 3: Board image.** `py -3.14 -I F:/axis-bbs/local/i5build.py cyd`: at or under 2,200,000 B.
 - [ ] **Step 4: Native builds.** `axis` builds with `-DAXIS_WINDOW=ON` and `OFF` in `~/builds/<branch>/build-native`.
 - [ ] **Bench.** Tell the nets session first and agree a slot; check each board's MAC before every flash.
   - **Check 1, rollout:** flash board 2; it still clusters with board 1 on old firmware (logins, a post). Flash
