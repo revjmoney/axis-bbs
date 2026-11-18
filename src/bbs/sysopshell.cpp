@@ -115,8 +115,10 @@ std::vector<std::string> SysopShell::fetch(const std::string& cmd, size_t from, 
     }
     old_ = !from && v.empty();
     if (old_) v = lines(cmd.substr(0, cmd.size() - 1));  // an older main answers nothing for a start: its whole list
-    ok = old_ || std::any_of(v.begin(), v.end(), [](const std::string& s) { return s.rfind("axis: ", 0) != 0; });
-    if (!ok) did(from || v.empty() ? "the board didn't answer, try again" : v[0]);
+    // not answered: past the first page, no list line at all; on the first, the follower's "the main didn't answer"
+    ok = old_ || (from ? std::any_of(v.begin(), v.end(), [](const std::string& s) { return s.rfind("axis: ", 0) != 0; })
+                       : v[0].rfind("axis: the main didn't answer", 0) != 0);
+    if (!ok) did("the board didn't answer, try again");
     return v;
 }
 
