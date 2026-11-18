@@ -516,6 +516,7 @@ TEST_CASE("a page the board doesn't answer keeps the rows and More, and settings
     r.type("8");  // try again
     CHECK(plain(r.out).find("u21") != std::string::npos);
     r.replies["@SETTINGS 0"] = "bbs_name=AXIS\nmore 1\n";  // the second page never comes
+    r.replies["@SETTINGS 1"] = "axis: the main didn't answer\n";
     r.out.clear();
     r.shell.beginAt(axis::bbs::SysopSection::Settings);
     o = plain(r.out);
@@ -554,4 +555,37 @@ TEST_CASE("an older main without paging still gives the whole list, and a cut li
     CHECK(o.find("Messages") != std::string::npos);
     CHECK(o.find("Add an item") == std::string::npos);
     CHECK(o.find("reply cut at 6 KB") != std::string::npos);
+}
+
+TEST_CASE("a list that got shorter goes back a page, and a user deleted elsewhere is gone, not unanswered") {
+    Rig         r;
+    std::string p0;
+    for (int i = 1; i <= 20; i++) p0 += "user " + std::to_string(i) + "|u" + std::to_string(i) + "|valid|10|1|FMD--\n";
+    r.replies["@USERS 0"] = p0 + "more 20\n";
+    r.replies["@USERS 20"] = "user 21|u21|valid|10|1|FMD--\n";
+    r.shell.beginAt(axis::bbs::SysopSection::Users);
+    r.type("n8");                // More: Add, Earlier, u21
+    r.replies["@USERS 20"] = "";  // u21 is deleted from the panel
+    r.out.clear();
+    r.type("3");  // u21
+    std::string o = plain(r.out);
+    CHECK(o.find("that user is gone") != std::string::npos);
+    CHECK(o.find("didn't answer") == std::string::npos);
+    r.out.clear();
+    r.type("q");  // back: page 20 is past the end now, so the page before it
+    o = plain(r.out);
+    CHECK(o.find("u1 ") != std::string::npos);
+    CHECK(o.find("Earlier...") == std::string::npos);
+    CHECK(o.find("didn't answer") == std::string::npos);
+}
+
+TEST_CASE("a first page the board doesn't answer offers Try again") {
+    Rig r;
+    r.replies["@USERS 0"] = "axis: the main didn't answer\n";
+    r.shell.beginAt(axis::bbs::SysopSection::Users);
+    CHECK(plain(r.out).find("Try again") != std::string::npos);
+    r.replies["@USERS 0"] = "user 1|Rev|valid|255|9|FMD$-\n";
+    r.out.clear();
+    r.type("2");  // Try again, after Add
+    CHECK(plain(r.out).find("Rev") != std::string::npos);
 }

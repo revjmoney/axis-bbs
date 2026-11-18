@@ -115,9 +115,8 @@ std::vector<std::string> SysopShell::fetch(const std::string& cmd, size_t from, 
     }
     old_ = !from && v.empty();
     if (old_) v = lines(cmd.substr(0, cmd.size() - 1));  // an older main answers nothing for a start: its whole list
-    // not answered: past the first page, no list line at all; on the first, the follower's "the main didn't answer"
-    ok = old_ || (from ? std::any_of(v.begin(), v.end(), [](const std::string& s) { return s.rfind("axis: ", 0) != 0; })
-                       : v[0].rfind("axis: the main didn't answer", 0) != 0);
+    // not answered: only the follower's "the main didn't answer" (an empty page past the first is past the end)
+    ok = v.empty() || v[0].rfind("axis: the main didn't answer", 0) != 0;
     if (!ok) did("the board didn't answer, try again");
     return v;
 }
@@ -126,14 +125,24 @@ const std::vector<std::string>& SysopShell::page(Layer& l, const std::string& cm
     size_t at = l.step > 0 ? l.next : l.step < 0 && !l.back.empty() ? l.back.back() : l.start, next;
     bool   ok, moved = false;
     auto   v = fetch(cmd, at, next, ok);
+    if (ok && at && std::none_of(v.begin(), v.end(), [](const std::string& s) { return s.rfind("axis: ", 0) != 0; })) {
+        // past the end, the list got shorter: More stays on this page, a rebuild goes back one, Earlier to the top
+        at = l.step > 0 ? l.start : l.step == 0 && !l.back.empty() ? l.back.back() : 0;
+        if (l.step < 0) l.back.clear();
+        else if (!l.step && !l.back.empty()) l.back.pop_back();
+        l.step = 0;
+        moved = true;
+        v = fetch(cmd, at, next, ok);
+    }
     if (ok) {  // (not answered: the rows before stay, and so do More and Earlier, to try again)
         if (l.step > 0) l.back.push_back(l.start);
         else if (l.step < 0 && !l.back.empty()) l.back.pop_back();
-        moved = l.step != 0;
+        moved = moved || l.step != 0;
         l.start = at, l.next = next, l.rows = std::move(v);
     }
     l.step = 0;
     if (!l.back.empty()) l.items.push_back({"Earlier...", "", [this] { layers_.back().step = -1; }});
+    if (!ok && l.rows.empty()) l.items.push_back({"Try again", "", [] {}});  // (the pick's rebuild asks again)
     if (moved) l.at = l.items.size();  // the lightbar on the page's first row
     return l.rows;
 }
@@ -142,8 +151,8 @@ void SysopShell::moreItem(Layer& l) {
     if (l.next) l.items.push_back({"More...", "", [this] { layers_.back().step = 1; }});
 }
 
-bool SysopShell::walk(const std::string& cmd, const std::function<bool(const std::string&)>& each, size_t from) {
-    for (int p = 0; p < 64; p++) {  // (64 pages: far past any list, and never a loop)
+bool SysopShell::walk(const std::string& cmd, const std::function<bool(const std::string&)>& each, size_t from, size_t until) {
+    for (int p = 0; p < 64 && from < until; p++) {  // (64 pages: far past any list, and never a loop)
         size_t next;
         bool   ok;
         auto   v = fetch(cmd, from, next, ok);
@@ -453,7 +462,12 @@ void SysopShell::user(Layer& l, const std::string& h, size_t from) {
         if (line.rfind("user ", 0) == 0 && f.size() >= 6 && f[1] == h) flags = f[5];
         return !flags.empty();
     };
-    if (!walk("@USERS ", mine, from) || (flags.empty() && from && !walk("@USERS ", mine))) return;
+    if (!walk("@USERS ", mine, from) || (flags.empty() && from && !walk("@USERS ", mine, 0, from))) return;
+    if (flags.empty()) {  // (deleted or renamed elsewhere)
+        did("that user is gone");
+        l.items.push_back({"(no such user now: Q)", "", nullptr});
+        return;
+    }
     auto field = [&](const char* label, const char* key, const char* field) {
         std::string f = field;
         l.items.push_back({label, after(d, key), [this, h, f, label] {

@@ -675,6 +675,10 @@ bool Cluster::requestTo(const std::string& boardId, const std::string& req, std:
     if (!put(*to, Frame::MainReq, {num(id), req})) return false;
     bool done = false;
     inRequest_ = true;
+    struct Clear {  // every way out, a throw too (a caller may catch bad_alloc): never left in a request
+        Cluster* c;
+        ~Clear() { c->wantReq_ = 0, c->replyTo_ = nullptr, c->inRequest_ = false; }
+    } clear{this};
     // never accept or drop a link in here: tick() may be in the middle of its loop over links_
     while (!done && clockMs() - start < timeoutMs) {
         bool any = false, lost = false;
@@ -705,7 +709,6 @@ bool Cluster::requestTo(const std::string& boardId, const std::string& req, std:
         }
         if (!any) sleepMs(1);
     }
-    inRequest_ = false;
     if (!done && card != cards_.end()) card->second.alive = false;  // silent (lost power, no FIN yet): skip it until it is heard from
     return done;
 }
@@ -718,6 +721,10 @@ bool Cluster::request(const std::string& req, std::string& reply, uint32_t timeo
     replyTo_ = &reply;
     replied_ = false;
     inRequest_ = true;
+    struct Clear {  // (as in requestTo)
+        Cluster* c;
+        ~Clear() { c->wantReq_ = 0, c->replyTo_ = nullptr, c->inRequest_ = false; }
+    } clear{this};
     while (!replied_ && clockMs() - start < timeoutMs) {
         std::string bytes;
         int         n = net_.recv(links_[0].id, bytes);
@@ -729,9 +736,6 @@ bool Cluster::request(const std::string& req, std::string& reply, uint32_t timeo
         if (links_.empty() || links_[0].dead) break;
         if (!replied_ && n == 0) sleepMs(1);
     }
-    wantReq_ = 0;
-    replyTo_ = nullptr;
-    inRequest_ = false;
     return replied_;
 }
 

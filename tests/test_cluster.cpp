@@ -5,6 +5,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -301,6 +302,21 @@ TEST_CASE("a follower asks the main a question and gets its answer, binary bytes
     std::string reply;
     REQUIRE(t.b.c->request(std::string("A\x1f" "ansi\x1f\x00\xff", 9), reply));
     CHECK(reply == "1node 2:" + std::string("A\x1f" "ansi\x1f\x00\xff", 9));
+}
+
+TEST_CASE("a request that throws (out of memory) leaves no request open: the next one works") {
+    TwoBoards t;
+    t.a.c->onRequest = [](int, const std::string& req) { return "1" + req; };
+    t.b.c->clockMs = [&t] { return t.now; };
+    t.b.c->sleepMs = [](uint32_t) { throw std::bad_alloc(); };
+    std::string reply;
+    CHECK_THROWS_AS(t.b.c->request("q", reply), std::bad_alloc);
+    t.b.c->sleepMs = [&t](uint32_t) {
+        t.now += 5;
+        t.a.c->tick(t.now);
+    };
+    CHECK(t.b.c->request("again", reply));
+    CHECK(reply == "1again");
 }
 
 TEST_CASE("a request with no main to ask fails at once") {

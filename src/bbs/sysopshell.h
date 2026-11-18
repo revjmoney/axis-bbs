@@ -96,7 +96,7 @@ private:
     const std::vector<std::string>& page(Layer& l, const std::string& cmd);  // the layer's page, after Earlier... if any
     void moreItem(Layer& l);  // More...: the next page in its place
     // the pages from `from` on until each() says stop; false (and the layer shows only a note) when one didn't come
-    bool walk(const std::string& cmd, const std::function<bool(const std::string&)>& each, size_t from = 0);
+    bool walk(const std::string& cmd, const std::function<bool(const std::string&)>& each, size_t from = 0, size_t until = (size_t)-1);
     // the layers
     void users(Layer& l);
     void user(Layer& l, const std::string& handle, size_t from);
