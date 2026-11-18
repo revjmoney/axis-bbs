@@ -295,20 +295,20 @@ TEST_CASE("listings: the daily drop budget is each home board's own; past it a b
     // a re-lists its name kNetListingDropsPerDay times, a session's budget at a time
     for (uint32_t i = 0; i < kNetListingDropsPerDay; i++) {
         if (i % kNetListingDropsPerSession == 0) r.core.listingSessionStart();
-        REQUIRE(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board) == Took::Stored);
+        REQUIRE(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board, true) == Took::Stored);  // (history: no ingress)
         indexReady(r.core);
     }
     r.core.listingSessionStart();
     const char* why = nullptr;
-    CHECK(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board, false, &why) == Took::Limited);
+    CHECK(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board, true, &why) == Took::Limited);
     CHECK(std::string(why ? why : "") == kNakLimited);
     // b's replace, in the same session, still comes in
-    CHECK(r.core.takeListing(makeListing(b.key, 2, "B.ZIP"), b.board) == Took::Stored);
+    CHECK(r.core.takeListing(makeListing(b.key, 2, "B.ZIP"), b.board, true) == Took::Stored);
     indexReady(r.core);
     // the next day a's budget is full again
     r.now += kDay;
     r.core.listingSessionStart();
-    CHECK(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board) == Took::Stored);
+    CHECK(r.core.takeListing(makeListing(a.key, sa++, "A.ZIP"), a.board, true) == Took::Stored);
 }
 
 TEST_CASE("listings: the per-board cap holds at intake, and this board's own do not count toward either cap") {

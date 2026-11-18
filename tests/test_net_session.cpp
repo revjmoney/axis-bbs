@@ -1073,24 +1073,23 @@ void pullsDone(NetCore& c) {
 // budget spent by y's re-listings: each pull's NAME.ZIP is refused "store".
 struct HeldPull {
     FNode h, r3, y;
-    HeldPull(uint8_t a, uint8_t b, uint8_t c) : h(a), r3(b), y(c) {
-        for (FNode* n : {&h, &r3}) n->admit({&h.board, &r3.board, &y.board});
+    // r3 holds n names of h's at low seqs; h holds each at a higher one. A pull of h's listings replaces them, the
+    // session's drop budget (kNetListingDropsPerSession) at a time: past it the transient "store" holds the pull.
+    HeldPull(uint8_t a, uint8_t b, uint8_t c, uint32_t n = 30) : h(a), r3(b), y(c) {
+        for (FNode* x : {&h, &r3}) x->admit({&h.board, &r3.board, &y.board});
         r3.knows(y);
         r3.knows(h);
-        h.core.setPostSeq(5);
-        REQUIRE(!h.core.originateListing(makeListing(h.key, 1, "NAME.ZIP")).empty());
-        REQUIRE(r3.core.takeListing(makeListing(h.key, 2, "NAME.ZIP"), h.board) == Took::Stored);
-        uint32_t seq = 1;
-        REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Stored);
-        for (int k = 0; k < 8; k++) {
-            r3.core.listingSessionStart();
-            for (int i = 0; i < 8; i++) {
-                REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Stored);
-                indexReady(r3.core);  // each replace: the index built again before the next
-            }
+        h.core.setPostSeq(100);
+        for (uint32_t i = 0; i < n; i++) {
+            std::string name = "N" + std::to_string(i) + ".ZIP";
+            REQUIRE(!h.core.originateListing(makeListing(h.key, 1, name)).empty());
+            REQUIRE(r3.core.takeListing(makeListing(h.key, i + 1, name), h.board, true) == Took::Stored);
         }
-        r3.core.listingSessionStart();
-        REQUIRE(r3.core.takeListing(makeListing(y.key, seq++, "SPEND.ZIP"), y.board, true) == Took::Rejected);
+    }
+    size_t replaced() {  // h's names held here at its higher seqs
+        size_t k = 0;
+        for (const auto& l : r3.records()) k += l.board == h.board && !l.gone && l.seq >= 100;
+        return k;
     }
     std::string cursors() { return r3.core.saveCursors(); }
 };
@@ -1417,7 +1416,7 @@ TEST_CASE("fhistory: store refusals hold the pull for 3 pulls in a row, then it 
     CHECK_FALSE(p.r3.core.needFilesHistory());
     CHECK(hasLine(p.cursors(), "fhistory 1"));
     CHECK(countPrefix(p.cursors(), "fheld") == 0);
-    CHECK(p.r3.liveSeqs("NAME.ZIP") == std::vector<uint32_t>{2});  // never replaced: the budget stayed spent
+    CHECK(p.replaced() == 3 * kNetListingDropsPerSession);  // a session's budget each pull
 }
 
 TEST_CASE("fhistory: the held count survives a save and load of the cursors") {
@@ -1436,14 +1435,13 @@ TEST_CASE("fhistory: the held count survives a save and load of the cursors") {
 
 TEST_CASE("fhistory: a held pull then a clean one is done, and the held count is cleared") {
     RevKeys rk;
-    HeldPull p(0xE0, 0xE1, 0xE2);
+    HeldPull p(0xE0, 0xE1, 0xE2, kNetListingDropsPerSession + 4);
     syncFiles(p.r3, p.h, 1);
     CHECK(hasLine(p.cursors(), "fheld 1"));
-    p.r3.now += kDay;  // a new day: the budget is back
-    syncFiles(p.r3, p.h, 3);
+    syncFiles(p.r3, p.h, 3);  // the 4 left fit in this session's budget
     CHECK_FALSE(p.r3.core.needFilesHistory());
     CHECK(countPrefix(p.cursors(), "fheld") == 0);
-    CHECK(p.r3.liveSeqs("NAME.ZIP") == std::vector<uint32_t>{5});
+    CHECK(p.replaced() == kNetListingDropsPerSession + 4);
 }
 
 TEST_CASE("fhistory: a net3 peer that answers the listings ask with a plain UEND is asked kNetFilesHeldPulls times, not forever") {
