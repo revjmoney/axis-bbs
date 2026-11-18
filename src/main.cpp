@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -97,9 +98,13 @@
 #include <lwip/dns.h>
 #include "net/areas.h"
 #include "net/crc.h"
+#if AXIS_TRANSFERS
+#include "net/fetch.h"
+#endif
 #include "net/outlog.h"
 #include "net/netrecord.h"
 #include "net/record.h"
+#include "net/recordview.h"
 #include "net/revkeys.h"
 #include "net/session.h"
 #include "net/sign.h"
@@ -1224,7 +1229,12 @@ struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for
     using axis::bbs::FileMessageStore::FileMessageStore;
     int post(const std::string& area, const axis::bbs::Message& m) override {
         int n = axis::bbs::FileMessageStore::post(area, m);
-        if (n && area != "email" && area.compare(0, 3, "sn_") != 0) countPost();  // net posts are not this board's
+#if AXIS_NETS
+        // net posts and Net Files listings are not this board's
+        if (n && area != "email" && !axis::net::isNetAreaId(area) && area != axis::net::kNetFilesArea) countPost();
+#else
+        if (n && area != "email") countPost();
+#endif
         return n;
     }
 };
@@ -1234,13 +1244,13 @@ static axis::bbs::RemoteMessageStore remoteMsgs([](const std::string& req, std::
 });
 #if AXIS_NETS
 static axis::bbs::MessageStore* netMessages();  // the store with Sysop Net on top, once the net runs (main only)
-// The board's store while Sysop Net is not on top of it: a post into a Sysop Net area (sn_) is refused, so none is
+// The board's store while the net is not on top of it: a post into a net area (sn_ or un_) is refused, so none is
 // ever stored unsigned. NetCore itself writes to localMsgs, never through this.
 struct NoNetMsgs : axis::bbs::MessageStore {
     std::vector<axis::bbs::Message> headers(const std::string& area) override { return localMsgs->headers(area); }
     bool read(const std::string& area, int num, axis::bbs::Message& out) override { return localMsgs->read(area, num, out); }
     int  post(const std::string& area, const axis::bbs::Message& m) override {
-        return area.compare(0, 3, "sn_") == 0 ? 0 : localMsgs->post(area, m);
+        return axis::net::isNetAreaId(area) ? 0 : localMsgs->post(area, m);
     }
     int drop(const std::string& area, const std::function<bool(const axis::bbs::Message&)>& gone) override {
         return localMsgs->drop(area, gone);
@@ -1269,7 +1279,7 @@ static axis::bbs::MessageStore& callerMessages() {
 // A follower (card or not) sees the main's library, which is every card pooled; the main pools its
 // own card with its card followers'; a board on its own has just its card.
 #if AXIS_FILES
-static axis::bbs::FileLibrary& callerFiles() {
+static axis::bbs::FileLibrary& rawCallerFiles() {
 #if AXIS_CLUSTER
     if (asFollower()) return remoteFiles;
 #endif
@@ -1277,6 +1287,38 @@ static axis::bbs::FileLibrary& callerFiles() {
     if (cluster && cluster->role() == axis::cluster::Role::Main && !cluster->cardBoards().empty()) return pooledFiles;
 #endif
     return sdFiles;
+}
+#if AXIS_NETS
+// Net Files (the Net Files section below): a file in an area shared on User Net was removed or renamed here.
+static void netFilesRemoved(const std::string& area, const std::string& name);
+static void netFilesRenamed(const std::string& area, const std::string& from, const std::string& to);
+// The callers' file library with Net Files on top, as NetStore is for messages: a removal or rename in a shared area
+// sends the removal of the old name's listing once it is done, if this board lists it (a rename lists the new name too). Everything else passes
+// through to the library of the moment (rawCallerFiles), so a Node may keep it for the whole call.
+struct NetSharingFiles : axis::bbs::FileLibrary {
+    std::vector<axis::bbs::FileEntry> list(const std::string& a) override { return rawCallerFiles().list(a); }
+    bool read(const std::string& a, const std::string& n, std::string& out, size_t max) override { return rawCallerFiles().read(a, n, out, max); }
+    std::unique_ptr<axis::bbs::RandomFile> open(const std::string& a, const std::string& n) override { return rawCallerFiles().open(a, n); }
+    std::unique_ptr<axis::bbs::WriteFile> create(const std::string& a, const std::string& n) override { return rawCallerFiles().create(a, n); }
+    bool describe(const std::string& a, const std::string& n, const std::string& d) override { return rawCallerFiles().describe(a, n, d); }
+    bool remove(const std::string& a, const std::string& n) override {
+        bool ok = rawCallerFiles().remove(a, n);
+        if (ok) netFilesRemoved(a, n);
+        return ok;
+    }
+    bool rename(const std::string& a, const std::string& from, const std::string& to) override {
+        bool ok = rawCallerFiles().rename(a, from, to);
+        if (ok) netFilesRenamed(a, from, to);
+        return ok;
+    }
+};
+static NetSharingFiles netSharingFiles;
+#endif
+static axis::bbs::FileLibrary& callerFiles() {
+#if AXIS_NETS
+    if (!asFollower()) return netSharingFiles;  // (the main's net runs the hooks; a follower's go to the main's library)
+#endif
+    return rawCallerFiles();
 }
 static axis::bbs::FileLibrary* callerLib() { return &callerFiles(); }  // a new Node's file areas
 #else
@@ -2061,11 +2103,17 @@ static void drainParkedLines() {
     }
 }
 
+#if AXIS_NETS && AXIS_TRANSFERS
+static void netFetchRelease(const void* owner);  // the Net Files fetch slot, if this caller holds it
+#endif
 __attribute__((noinline)) static void hangUp() {
     HeapScope scope("hangUp");
     noteDoing("idle");
     viewer.reset();
     job.reset();  // a viewer or job gives the board's inflate window back as it goes
+#if AXIS_NETS && AXIS_TRANSFERS
+    netFetchRelease(node.get());  // a Net Files fetch still connecting for this caller
+#endif
     noteZipHeap();
     dropLord();
     if (line && node && node->failedLogin()) {  // wrong passwords: count it against the caller's address
@@ -2318,6 +2366,101 @@ static bool netFileWrite(const std::string& name, const std::string& text) {
     return ::rename(tmp.c_str(), path.c_str()) == 0;
 }
 
+// /net/apps.txt, the signed User Net applications and votes (net/members.h holds only their compact fields and each
+// line's byte offset): one line appended per record taken, read back a line at a time and never whole (it can reach
+// about 140 KB).
+static bool netAppsAppend(const std::string& line, uint32_t& off) {
+    FILE* f = std::fopen(netPath("apps.txt").c_str(), "a+b");
+    if (!f) return false;
+    long at = std::fseek(f, 0, SEEK_END) == 0 ? std::ftell(f) : -1;
+    bool ok = at >= 0;
+    if (ok && at > 0 && std::fseek(f, -1, SEEK_END) == 0 && std::fgetc(f) != '\n') {  // a torn append: end it first
+        ok = std::fseek(f, 0, SEEK_END) == 0 && std::fputc('\n', f) != EOF;
+        at++;
+    }
+    ok = ok && std::fseek(f, 0, SEEK_END) == 0 && std::fwrite(line.data(), 1, line.size(), f) == line.size() && std::fputc('\n', f) != EOF;
+    ok = std::fclose(f) == 0 && ok;
+    if (ok) off = (uint32_t)at;
+    return ok;
+}
+
+// The one line starting at byte off (without its line break); false if it cannot be read or is longer than a frame.
+static bool netAppsReadAt(uint32_t off, std::string& line) {
+    line.clear();
+    FILE* f = std::fopen(netPath("apps.txt").c_str(), "rb");
+    if (!f) return false;
+    bool   ok = std::fseek(f, (long)off, SEEK_SET) == 0, end = false;
+    char   buf[256];
+    size_t r;
+    while (ok && !end && (r = std::fread(buf, 1, sizeof buf, f)) > 0) {
+        const char* nl = (const char*)std::memchr(buf, '\n', r);
+        size_t      n = nl ? (size_t)(nl - buf) : r;
+        if (line.size() + n > axis::net::kNetMaxFrame + 1) ok = false;
+        else line.append(buf, n);
+        end = nl != nullptr;
+    }
+    std::fclose(f);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    return ok && !line.empty();
+}
+
+// The line starting at pos in f (no line break, no '\r' at its end), pos moved past it. A line longer than a frame
+// comes back empty, like an empty one. False at the end of the file.
+static bool netAppsNext(FILE* f, uint32_t& pos, std::string& line) {
+    line.clear();
+    bool any = false, over = false;
+    for (int c; (c = std::fgetc(f)) != EOF;) {
+        any = true;
+        pos++;
+        if (c == '\n') break;
+        if (line.size() > axis::net::kNetMaxFrame) over = true;
+        if (!over) line.push_back((char)c);
+    }
+    if (over) std::string().swap(line);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    return any;
+}
+
+// Each line in order (no line break, no empty lines) until each returns false; a line longer than a frame is passed
+// over, so the same file always gives the same lines at the same places.
+static void netAppsScan(const axis::net::NetCore::AppsLineFn& each) {
+    FILE* f = std::fopen(netPath("apps.txt").c_str(), "rb");
+    if (!f) return;
+    uint32_t    pos = 0;
+    std::string line;
+    while (netAppsNext(f, pos, line))
+        if (!line.empty() && !each(line)) break;
+    std::fclose(f);
+}
+
+// /net/files.idx, the Net Files listing index (NetCore::setListingIndex): byte ranges read and written in place. A
+// take reads it in many pieces, so one handle stays open between calls (an open on the card each time cost more than
+// the reads). It is closed after a failed read or write (the next call opens it again) and by netIdxClose wherever the
+// file may change or go under it: a restart, the card looked at again or formatted, a serial file command.
+static FILE* netIdxF = nullptr;
+static void  netIdxClose() {
+    if (netIdxF) std::fclose(netIdxF);
+    netIdxF = nullptr;
+}
+static bool netIdxDone(bool ok) {
+    if (!ok) netIdxClose();
+    return ok;
+}
+static bool netIdxOpen(bool make) {  // a read never makes the file
+    if (!netIdxF) netIdxF = std::fopen(netPath("files.idx").c_str(), make ? "w+b" : "r+b");
+    return netIdxF != nullptr;
+}
+static bool netIdxRead(uint32_t off, void* p, size_t n) {
+    return netIdxDone(netIdxOpen(false) && std::fseek(netIdxF, (long)off, SEEK_SET) == 0 && std::fread(p, 1, n, netIdxF) == n);
+}
+// A head write (offset 0) is synced to the card with the records before it: the head marks a change under way and
+// ends it, so it must be there before the area changes and after the records are. Records alone are only flushed.
+static bool netIdxWrite(uint32_t off, const void* p, size_t n) {
+    if (!netIdxOpen(false) && !netIdxOpen(true)) return false;  // first use
+    return netIdxDone(std::fseek(netIdxF, (long)off, SEEK_SET) == 0 && std::fwrite(p, 1, n, netIdxF) == n &&
+                      std::fflush(netIdxF) == 0 && (off || ::fsync(fileno(netIdxF)) == 0));
+}
+
 // /net/outlog.txt for FileOutLog (net/outlog.h). Reads are mostly in order, so the line and byte offset the last
 // read ended at are kept and the next read starts there. No file stays open between calls.
 struct NetLogFile {
@@ -2441,6 +2584,60 @@ struct NetLogFile {
 };
 
 enum class NetPhase { Idle, Looking, Live };
+#if AXIS_FILES
+// Net Files sharing: what waits to be listed or removed (an upload, a removal or rename here, @NET LISTALL), done one at a
+// time from netTick. A listing first reads its file once, in kFetchChunk pieces across loop turns, for the crc.
+struct NetShareItem {
+    std::string area, name, desc, uploader;
+    bool        gone = false, lookDesc = false;  // lookDesc: the description comes from the area's list
+};
+struct NetShare {
+    std::vector<NetShareItem>              q;     // oldest first
+    NetShareItem                           cur;   // the listing whose crc is being read
+    std::unique_ptr<axis::bbs::RandomFile> file;  // its file while it is
+    uint32_t                               size = 0, pos = 0, crc = 0xFFFFFFFFu;
+    std::string                            allArea;     // @NET LISTALL: the area walked, "" when none
+    size_t                                 allIx = 0;   // the next file in its list
+    std::vector<uint32_t>                  allHave;     // crc32 of the names this board lists there already (skipped)
+    uint32_t                               listed = 0, listedMs = 0;  // @NET status: live listings, counted at most once a minute
+    bool                                   counted = false;
+    bool                                   goneSent = false;  // the last removal was sent (a rename's new name goes with it)
+};
+#endif
+#if AXIS_TRANSFERS
+// The Net Files serve slot: one inbound fetch call (AXISFILE 1, handed over by axisServe), apart from the sync slots.
+struct NetServe {
+    WiFiClient                               c;
+    std::unique_ptr<axis::net::FetchServer>  s;
+    std::unique_ptr<axis::bbs::RandomFile>   file;  // the file being served (check opens it)
+    std::string                              pend, id, who;  // who: "<handle>@<board>" once the GET is read
+    std::string                              from;  // the calling board
+    uint32_t                                 ip = 0, closeMs = 0, closeAt = 0;  // closeMs: the half-close, or the last byte heard after it; closeAt: the half-close
+    bool                                     proven = false, served = false;  // the GET's signature checked; check passed
+    bool                                     closing = false;  // half-closed: what comes is dropped until the dialer closes
+    // noexcept (WiFiClient() cannot throw): NetHost's constructor then needs no unwinding code for the members before it.
+    NetServe() noexcept {}
+};
+// The Net Files fetch slot: one outbound fetch call at a time for a caller here (or a follower's, or @NET FETCHTEST).
+enum class FetchPh : uint8_t { Idle, Looking, Live, Done, Failed };
+struct NetFetchSlot {
+    WiFiClient                               c;
+    std::unique_ptr<axis::net::FetchClient>  f;
+    axis::net::NetListing                    l;
+    std::string                              homePub, handle, host, home, pend;  // home: the home board's name, for messages
+    int                                      port = 23;
+    FetchPh                                  ph = FetchPh::Idle;
+    const void*                              owner = nullptr;
+    const void*                              job = nullptr;  // the TransferJob reading it (netFetchJob)
+    uint32_t                                 gen = 0, dnsGen = 0, ip = 0, at = 0;  // at: the offset this call asked from
+    uint32_t                                 touchMs = 0, tickMs = 0, slowMs = 0, slowFed = 0, fed = 0, fedNow = 0;
+    uint32_t                                 redialAt = 0;
+    int                                      retries = 0;
+    bool                                     redial = false, forward = false;
+    const char*                              why = "";
+    NetFetchSlot() noexcept {}  // (as NetServe)
+};
+#endif
 struct NetSlot {
     WiFiClient                              c;
     std::unique_ptr<axis::net::NetSession>  s;
@@ -2465,7 +2662,7 @@ struct NetHost {
     std::string                             firstKey, firstBoard;  // /net/firstpeer.txt: "host:port", its board
     bool                                    logSaid = false, dirty = false, postDue = false;
     uint32_t                                logTryMs = 0, minuteMs = 0, saveMs = 0, dialMs = 0, postMs = 0;
-    uint32_t                                postSeq = 0, appendFails = 0, houseDay = 0;
+    uint32_t                                postSeq = 0, appendFails = 0, appsFails = 0, houseDay = 0;
     bool                                    seqFloorDue = false;  // no counters found and no clock: floored once it is set
     bool                                    cardSeqFree = false;  // cardSeq was saved but no card went out with it
     uint32_t                                crc[3] = {0, 0, 0};  // what state, seen and cursors last wrote
@@ -2473,12 +2670,31 @@ struct NetHost {
     std::unique_ptr<axis::net::NetRecord>   record;         // the net record (/net/record)
     std::vector<std::string>                hides, blocks;  // /net/local.txt: this board's own moderation
     uint32_t                                trimMs = 0;     // no clock: the last trim by count (once per 24 h of uptime)
+    // User Net: the next vote and application seqs (/netseq.txt); the boot load of /net/apps.txt (read from appsPos a
+    // few lines a pass, appsLines lines of appsBytes bytes); appsHeld, about the bytes of held lines (compaction).
+    uint32_t                                voteSeq = 1, appSeq = 1, appsPos = 0, appsLines = 0, appsBytes = 0, appsHeld = 0;
+    bool                                    appsLoaded = false;
+    bool                                    unDirty = false, unMember = false, sealSaid = false;  // an app, vote, card or notice taken; this board a member
+    bool                                    cfgUser = false;  // net_user, net_user_areas and net_user_level as last applied
+    uint8_t                                 cfgAreas = 0, carried = 0;  // (masks: userNetMask) the setting, what core carries
+    int                                     cfgLevel = 0;
+#if AXIS_FILES
+    NetShare                                share;
+#endif
+#if AXIS_TRANSFERS
+    NetServe                                serve;
+    NetFetchSlot                            fetch;
+#endif
     NetHost() = default;
     NetHost(const NetHost&) = delete;
     NetHost& operator=(const NetHost&) = delete;
     ~NetHost() {  // the sessions and the core go first (they hold copies of the key and wipe them), then this one
         in.s.reset();
         out.s.reset();
+#if AXIS_TRANSFERS
+        serve.s.reset();
+        fetch.f.reset();
+#endif
         store.reset();
         core.reset();
         axis::net::wipe(key);
@@ -2490,7 +2706,12 @@ static bool                     netStartSaid = false;
 
 static axis::bbs::MessageStore* netMessages() { return netHost ? netHost->store.get() : nullptr; }
 static bool netMainUp = false;  // a follower: the main's settings frame said its net is up ("net_up=1")
+static bool netMainFiles = false;  // a follower: the main answers Net Files for its callers ("net_files=1")
 static bool netSharedUp = false;  // the main: what the last settings frame said
+// The User Net areas callers get now: on the main while this board is a member with net_user on, on a
+// follower what the main's settings frame said ("net_un="). netAreasGen moves whenever they or net_user_level may have.
+static uint8_t     netUnMask = 0;  // (bbs/config.h userNetMask)
+static uint32_t    netAreasGen = 0;
 
 // Proof back-off: an address whose AXISNET 2 session failed before it proved who it is is refused for 60 s,
 // doubling up to 30 min for repeats. Cooldown: an address whose session came from a board not trusted at its hello
@@ -2626,34 +2847,31 @@ static bool netKeyLoad(axis::net::KeyPair& k) {
     return have;
 }
 
-// /netseq.txt in internal flash, beside the key: "<next post seq> <card seq>", then " f" while the counters still
-// wait to be floored from the clock (none were found and there was no clock), so a restart before the clock is set
-// still floors them. It lives there, not under /net, so a board that boots without its SD card keeps its counters with
-// its key (peers drop a reused post id as seen and refuse a card whose seq is not newer). Malformed reads as missing.
-static bool netSeqRead(uint32_t& post, uint32_t& card, bool& floorDue) {
+// /netseq.txt in internal flash, beside the key: "<next post seq> <card seq> <next vote seq> <next app seq>", then " f"
+// while the counters still wait to be floored from the clock (none were found and there was no clock), so a restart
+// before the clock is set still floors them. An older file has only the first two (n says how many were read). It lives
+// there, not under /net, so a board that boots without its SD card keeps its counters with its key (peers drop a
+// reused post id as seen and refuse a card whose seq is not newer). Malformed reads as missing.
+static bool netSeqRead(uint32_t v[4], int& n, bool& floorDue) {
     File f = LittleFS.open("/netseq.txt", "r");
     if (!f) return false;
-    char   b[32];
-    size_t n = f.read((uint8_t*)b, sizeof b - 1);
+    char   b[64];
+    size_t got = f.read((uint8_t*)b, sizeof b - 1);
     f.close();
-    b[n] = 0;
-    char*         e = nullptr;
-    unsigned long p = std::strtoul(b, &e, 10);
-    if (e == b || *e != ' ') return false;
-    char*         e2 = nullptr;
-    unsigned long c = std::strtoul(e + 1, &e2, 10);
-    if (e2 == e + 1) return false;
-    bool due = e2[0] == ' ' && e2[1] == 'f';
-    if (due) e2 += 2;
-    if ((*e2 != '\n' && *e2 != 0) || p == 0 || p > 0xFFFFFFFFul || c > 0xFFFFFFFFul) return false;
-    post = (uint32_t)p;
-    card = (uint32_t)c;
-    floorDue = due;
-    return true;
+    b[got] = 0;
+    char* p = b;
+    for (n = 0; n < 4 && std::isdigit((unsigned char)*p); n++) {
+        v[n] = (uint32_t)std::strtoul(p, &p, 10);
+        if (*p == ' ' && std::isdigit((unsigned char)p[1])) p++;
+    }
+    floorDue = p[0] == ' ' && p[1] == 'f';
+    if (floorDue) p += 2;
+    return n >= 2 && v[0] && (!*p || *p == '\n');
 }
 // Written to a temp file, then renamed over the old one (LittleFS replaces it in one step).
-static bool netSeqWrite(uint32_t post, uint32_t card, bool floorDue) {
-    std::string t = std::to_string(post) + " " + std::to_string(card) + (floorDue ? " f\n" : "\n");
+static bool netSeqWrite(uint32_t post, uint32_t card, uint32_t vote, uint32_t app, bool floorDue) {
+    std::string t = std::to_string(post) + " " + std::to_string(card) + " " + std::to_string(vote) + " " + std::to_string(app) +
+                    (floorDue ? " f\n" : "\n");
     File        f = LittleFS.open("/netseq.tmp", "w");
     bool        ok = f && f.write((const uint8_t*)t.data(), t.size()) == t.size();
     if (f) f.close();
@@ -2686,7 +2904,7 @@ static axis::net::NetCard netCardNow(const NetHost& h) {
     c.mac = netField(WiFi.macAddress().c_str(), 17);
     c.sysop = netField(boardCfg->netSysopName.empty() ? boardCfg->sysopHandle : boardCfg->netSysopName, 40);
     c.location = netField(boardCfg->netLocation, 40);
-    c.links = "internet";
+    c.links = axis::net::kNetCardLinks;
     return c;
 }
 
@@ -2716,7 +2934,7 @@ static bool netCardUpdate(NetHost& h) {
         return false;
     }
     if (c.seq != h.cardSeq) {  // saved before the card goes anywhere
-        if (!netSeqWrite(h.core->postSeq(), c.seq, h.seqFloorDue)) return false;
+        if (!netSeqWrite(h.core->postSeq(), c.seq, h.voteSeq, h.appSeq, h.seqFloorDue)) return false;
         h.cardSeq = c.seq;
     }
     h.cardSeqFree = true;
@@ -2736,10 +2954,12 @@ static bool netCardUpdate(NetHost& h) {
 static void netSeqFloor(NetHost& h) {
     uint32_t now = unixNow();
     if (!h.seqFloorDue || now <= axis::net::kNetClockSet) return;
-    uint32_t post = std::max(h.core->postSeq(), now), card = std::max(h.cardSeq, now);
-    if (!netSeqWrite(post, card, false)) return;
+    uint32_t post = std::max(h.core->postSeq(), now), card = std::max(h.cardSeq, now), vote = std::max(h.voteSeq, now), app = std::max(h.appSeq, now);
+    if (!netSeqWrite(post, card, vote, app, false)) return;
     h.core->setPostSeq(post);
     h.cardSeq = card;
+    h.voteSeq = vote;
+    h.appSeq = app;
     h.cardSeqFree = false;
     h.seqFloorDue = false;
 }
@@ -2817,17 +3037,18 @@ static String netWho(const NetHost& h, const NetSlot& s) {
 }
 
 // What the socket takes now, never waiting. False when the socket is gone.
-static bool netSendSome(NetSlot& s) {
-    while (!s.pend.empty()) {
-        int fd = s.c.fd();
+static bool netSendRaw(WiFiClient& c, std::string& pend) {
+    while (!pend.empty()) {
+        int fd = c.fd();
         if (fd < 0) return false;
-        int w = ::send(fd, s.pend.data(), s.pend.size(), MSG_DONTWAIT);
+        int w = ::send(fd, pend.data(), pend.size(), MSG_DONTWAIT);
         if (w < 0) return errno == EAGAIN || errno == EWOULDBLOCK;
         if (w == 0) return true;
-        s.pend.erase(0, (size_t)w);
+        pend.erase(0, (size_t)w);
     }
     return true;
 }
+static bool netSendSome(NetSlot& s) { return netSendRaw(s.c, s.pend); }
 
 static void netSaveFirstPeer(NetHost& h, const std::string& board) {
     NetTarget t;
@@ -2879,7 +3100,7 @@ static void netPump(NetHost& h, NetSlot& s, bool heapOk) {
     size_t fed = 0;
     // Short of heap nothing is read: a received line costs a few copies of itself (up to 9 KB each), so it waits
     // in the socket and TCP holds the peer back. The session's silence timer stands still meanwhile.
-    while (heapOk && fed < kNetFeedPerTurn) {
+    while (heapOk && !s.s->parked() && fed < kNetFeedPerTurn) {  // (parked: a listing line waits for the index)
         int a = s.c.available();
         if (a <= 0) break;
         int r = s.c.read((uint8_t*)buf, (size_t)a < sizeof buf ? (size_t)a : sizeof buf);
@@ -2896,6 +3117,7 @@ static void netPump(NetHost& h, NetSlot& s, bool heapOk) {
         sent = netSendSome(s);
     }
     if (s.s->done() || s.s->failed()) netClose(h, s, nullptr);
+    else if (s.s->parked() && !s.c.connected()) return;  // the peer closed: what it sent, parked, is handled first
     else if (!sent || (!s.c.connected() && s.c.available() <= 0)) netClose(h, s, "connection closed");
 }
 
@@ -2982,7 +3204,7 @@ static void netDialStep(NetHost& h) {
 static void netAccept(WiFiClient& c, const std::string& got) {
     NetHost* h = netHost.get();
     uint32_t ip = (uint32_t)c.remoteIP();
-    if (netBackedOff(ip) || !h || !boardCfg->netSysop || asFollower() || h->in.phase != NetPhase::Idle || h->out.phase != NetPhase::Idle ||
+    if (netBackedOff(ip) || !h || !h->appsLoaded || !boardCfg->netSysop || asFollower() || h->in.phase != NetPhase::Idle || h->out.phase != NetPhase::Idle ||
         !netHeapOk()) {  // one session at a time, in or out
         c.print("BYE busy\n");
         delay(10);
@@ -3019,7 +3241,14 @@ static void netPosted(NetHost& h) {
 struct NetStore : axis::net::NetPostingStore {
     using axis::net::NetPostingStore::NetPostingStore;
     int post(const std::string& area, const axis::bbs::Message& m) override {
-        if (netHost && area.compare(0, 3, "sn_") == 0) netSeqFloor(*netHost);
+        if (netHost && axis::net::isNetAreaId(area)) {
+            // A caller with net posts off, or a twit, is refused before anything is signed. The board's own sysop is
+            // no account in the user store: let through by handle, only when no account has that handle.
+            const std::string& sysop = boardCfg->sysopHandle.empty() ? std::string("Sysop") : boardCfg->sysopHandle;
+            const axis::bbs::User* u = users.find(m.from);
+            if (u ? !axis::net::mayPostToNets(u) : strcasecmp(m.from.c_str(), sysop.c_str()) != 0) return 0;
+            netSeqFloor(*netHost);
+        }
         int n = axis::net::NetPostingStore::post(area, m);
         if (netHost) netPosted(*netHost);
         return n;
@@ -3061,6 +3290,13 @@ static bool netSave(NetHost& h, bool force = false) {
 // Before a clean restart.
 static void netSaveNow() {
     if (netHost) netSave(*netHost, true);
+    netIdxClose();
+}
+// /net/files.idx may change or go under the board (a card swap, a serial file command, a format): the handle is
+// closed and NetCore forgets the index, so its next look checks the head and the area's tail again.
+static void netIdxForget() {
+    netIdxClose();
+    if (netHost && netHost->core) netHost->core->listingIndexForget();
 }
 
 // ---- the net record, local moderation and the @NET commands
@@ -3158,6 +3394,203 @@ static void netRecordTail(size_t skip, size_t count, std::vector<std::string>& o
     std::fclose(f);
 }
 
+// ---- The record browser (@NET RECORD FIND, KIND, MONTHS, SHOW; the sysop menu's Traffic and logs)
+
+using axis::net::netSafe;  // a field from another board, safe for a terminal (net/recordview.h)
+static constexpr size_t kNetRecordScan = 2000;  // lines looked at by one command, so a search never holds the loop long
+
+// One line of output, for net/recordview.h's field lists (ctx is the Print).
+static void netOutLine(void* out, const std::string& line) { static_cast<Print*>(out)->printf("%s\n", line.c_str()); }
+
+// A record file's short name: "202611", "nodate", or "record" (the one file without a card).
+static std::string netRecordMonth(const std::string& path) {
+    size_t sl = path.rfind('/') + 1;
+    return path.substr(sl, path.size() - sl - 4);
+}
+
+// a comes before b, newest first: the file being written, then the months newest to oldest, nodate.log last
+static bool netRecordBefore(const std::string& a, const std::string& b, const std::string& cur) {
+    int ra = a == cur ? 0 : a.compare(a.size() - 10, 6, "nodate") == 0 ? 2 : 1, rb = b == cur ? 0 : b.compare(b.size() - 10, 6, "nodate") == 0 ? 2 : 1;
+    return ra != rb ? ra < rb : a > b;
+}
+
+// The record files, newest first: on the SD card the month being written, then /net/record/<yyyymm>.log newest to
+// oldest, nodate.log (lines from before the clock was set) last; without a card the one /net/record.log.
+static std::vector<std::string> netRecordFiles() {
+    std::vector<std::string> v;
+    std::string              cur = netRecordFile(), dir = std::string(storageRoot()) + "/net/record";
+    if (!storageHasSd()) v.push_back(cur);
+    else if (DIR* d = opendir(dir.c_str())) {
+        while (dirent* e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n == "nodate.log" || (n.size() == 10 && n.find_first_not_of("0123456789") == 6 && n.compare(6, 4, ".log") == 0)) v.push_back(dir + "/" + n);
+        }
+        closedir(d);
+    }
+    for (size_t i = 1; i < v.size(); i++)
+        for (size_t j = i; j > 0 && netRecordBefore(v[j], v[j - 1], cur); j--) std::swap(v[j], v[j - 1]);
+    return v;
+}
+
+// Walks the record newest first across every file, from index skip on (index 0 is the newest line): each(index, file,
+// line start, line) gets the line, only its first 255 bytes (the head) unless whole. Each file is read from its end in
+// 512-byte pieces and one line is held at a time; a line over kNetRecordMaxLine is passed over but keeps its index.
+// Stops when each says false or after kNetRecordScan lines; returns the next index to look at then, or -1 when no
+// line is left.
+static long netRecordWalk(size_t skip, bool whole, const std::function<bool(size_t, const std::string&, long, std::string&)>& each) {
+    std::unique_ptr<char[]>  buf(new (std::nothrow) char[512]);
+    std::vector<std::string> files = netRecordFiles();
+    std::string              line;
+    size_t                   idx = 0, looked = 0;
+    if (!buf) return -1;
+    for (size_t fi = 0; fi < files.size(); fi++) {
+        FILE* f = std::fopen(files[fi].c_str(), "rb");
+        if (!f) continue;
+        bool stop = false, left = false;  // left: lines remain before the one it stopped at
+        auto emit = [&](long s, long e) {  // the line [s, e); false to stop
+            if (e <= s) return true;
+            if (idx < skip || (size_t)(e - s) > axis::net::kNetRecordMaxLine) return ++idx, true;
+            if (looked++ >= kNetRecordScan) return !(stop = left = true);
+            size_t n = whole ? (size_t)(e - s) : std::min<size_t>((size_t)(e - s), 255);
+            line.resize(n);
+            if (std::fseek(f, s, SEEK_SET) != 0 || std::fread(&line[0], 1, n, f) != n) line.clear();
+            stop = !each(idx++, files[fi], s, line);
+            left = s > 0;
+            return !stop;
+        };
+        std::fseek(f, 0, SEEK_END);
+        long lineEnd = std::ftell(f), p;
+        if (lineEnd > 0 && std::fseek(f, lineEnd - 1, SEEK_SET) == 0 && std::fgetc(f) == '\n') lineEnd--;
+        bool more = true;
+        for (p = lineEnd; more && p > 0;) {
+            long from = p > 512 ? p - 512 : 0;
+            if (std::fseek(f, from, SEEK_SET) != 0 || std::fread(buf.get(), 1, (size_t)(p - from), f) != (size_t)(p - from)) break;
+            for (long i = p - 1; more && i >= from; i--)
+                if (buf[i - from] == '\n') {
+                    more = emit(i + 1, lineEnd);
+                    lineEnd = i;
+                }
+            p = from;
+        }
+        if (more && p == 0) emit(0, lineEnd);
+        std::fclose(f);
+        if (!stop) continue;
+        for (size_t k = fi + 1; !left && k < files.size(); k++) {  // stopped on a file's first line: any older file?
+            struct stat st;
+            left = ::stat(files[k].c_str(), &st) == 0 && st.st_size > 0;
+        }
+        return left ? (long)idx : -1;
+    }
+    return -1;
+}
+
+// The record line starting at pos in the file, if a line starts there (none over kNetRecordMaxLine).
+static bool netRecordLineAt(const std::string& path, long pos, std::string& line) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    bool  ok = f && pos >= 0 && (pos ? std::fseek(f, pos - 1, SEEK_SET) == 0 && std::fgetc(f) == '\n' : true);
+    char  b[128];
+    line.clear();
+    for (size_t r; ok && (r = std::fread(b, 1, sizeof b, f)) > 0;) {
+        const char* nl = (const char*)std::memchr(b, '\n', r);
+        size_t      n = nl ? (size_t)(nl - b) : r;
+        ok = line.size() + n <= axis::net::kNetRecordMaxLine;
+        if (ok) line.append(b, n);
+        if (nl) break;
+    }
+    if (f) std::fclose(f);
+    return ok && !line.empty();
+}
+
+// "@NET RECORD FIND <text> [n [skip]]", "KIND votes|members|actions|all [n [skip]]", "MONTHS", "SHOW <index>" or
+// "SHOW <file>:<offset>:<unix>" (args lowercase, after RECORD). FIND and KIND print "<index> <file>:<offset>:<unix> <date>
+// <who> <what>" newest first, at most n (20, up to 100) from the record's index skip on, then "older from <index>" if
+// lines are left. SHOW by index takes the line at that index now; by file, offset and time the very line listed (its
+// place does not move as the record grows; the time is checked, since internal flash cuts its file). Trailing numbers
+// after FIND's text are n and skip. False if args are none of these (the plain RECORD [n [skip]]).
+static bool netRecordBrowse(const NetHost& h, const std::string& args, Print& out) {
+    std::vector<std::string> w;
+    for (size_t at = 0, e; at < args.size(); at = e + 1) {
+        e = std::min(args.find(' ', at), args.size());
+        if (e > at) w.push_back(args.substr(at, e - at));
+    }
+    auto digits = [](const std::string& s) { return s.find_first_not_of("0123456789") == std::string::npos; };
+    if (w.empty()) return false;
+    const std::string& sub = w[0];
+    bool               find = sub == "find", show = sub == "show";
+    if (sub == "months") {
+        bool any = false;
+        for (const std::string& p : netRecordFiles()) {
+            struct stat st;
+            if (::stat(p.c_str(), &st) == 0) out.printf("%s %ld bytes\n", netRecordMonth(p).c_str(), (long)st.st_size), any = true;
+        }
+        if (!any) out.println("axis: the record is empty");
+        return true;
+    }
+    if (!find && !show && sub != "kind") return false;
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) {
+        out.println("@ERR low on memory just now, try again");
+        return true;
+    }
+    if (show) {
+        std::string line;
+        size_t      c1 = w.size() == 2 ? w[1].find(':') : std::string::npos, c2 = c1 == std::string::npos ? c1 : w[1].find(':', c1 + 1);
+        if (w.size() == 2 && digits(w[1])) {
+            size_t want = (size_t)std::strtoul(w[1].c_str(), nullptr, 10);
+            netRecordWalk(want, true, [&line, want](size_t i, const std::string&, long, std::string& l) {
+                if (i == want) line.swap(l);
+                return false;
+            });
+        } else if (c2 != std::string::npos) {
+            for (const std::string& p : netRecordFiles())
+                if (netRecordMonth(p) == w[1].substr(0, c1) && netRecordLineAt(p, std::strtol(w[1].c_str() + c1 + 1, nullptr, 10), line) &&
+                    std::strtoul(line.c_str(), nullptr, 10) != std::strtoul(w[1].c_str() + c2 + 1, nullptr, 10))
+                    line.clear();  // another line is there now
+        } else {
+            out.println("@ERR @NET RECORD SHOW <index> or <file>:<offset>:<time>");
+            return true;
+        }
+        if (line.empty()) {
+            out.println("axis: that line is not in the record now");
+            return true;
+        }
+        size_t      us = std::min(line.find('\x1f'), line.size());
+        std::string head = line.substr(0, us);
+        line.erase(0, us + 1);  // the signed line
+        size_t s1 = std::min(head.find(' '), head.size()), s2 = std::min(head.find(' ', s1 + 1), head.size());
+        out.printf("date %s\n", axis::net::netDateText((uint32_t)std::strtoul(head.c_str(), nullptr, 10)).c_str());
+        out.printf("who %s\n", netSafe(head.substr(std::min(s1 + 1, s2), s2 - std::min(s1 + 1, s2))).c_str());
+        out.printf("what %s\n", netSafe(head.substr(std::min(s2 + 1, head.size()))).c_str());
+        axis::net::recordFields(line, netOutLine, &out);
+        out.printf("check %s\n", axis::net::recordCheck(line, h.core->state()).c_str());
+        return true;
+    }
+    size_t nums = 0;  // after the word and the text or kind
+    while (nums < 2 && w.size() > 2 + nums && digits(w[w.size() - 1 - nums])) nums++;
+    using K = axis::net::RecordKind;
+    std::string kind = w.size() > 1 ? w[1] : "", text;
+    K           k = kind == "votes" ? K::Votes : kind == "members" ? K::Members : kind == "actions" ? K::Actions : K::All;
+    for (size_t i = 1; find && i + nums < w.size(); i++) text += (text.empty() ? "" : " ") + w[i];
+    if (find ? text.empty() : k == K::All && kind != "all") {
+        out.println("@ERR @NET RECORD FIND <text> [n [skip]], KIND votes|members|actions [n [skip]]");
+        return true;
+    }
+    unsigned long n = nums ? std::strtoul(w[w.size() - nums].c_str(), nullptr, 10) : 20, shown = 0;
+    n = std::min<unsigned long>(n ? n : 20, 100);
+    long more = netRecordWalk(nums == 2 ? (size_t)std::strtoul(w.back().c_str(), nullptr, 10) : 0, find,
+                              [&](size_t i, const std::string& file, long pos, std::string& l) {
+                                  if (!axis::net::recordMatches(l, find ? K::All : k, text)) return true;
+                                  std::string head = axis::net::recordHead(l);
+                                  size_t      sp = std::min(head.find(' '), head.size());
+                                  uint32_t    t = (uint32_t)std::strtoul(head.c_str(), nullptr, 10);
+                                  out.printf("%u %s:%ld:%u %s %s\n", (unsigned)i, netRecordMonth(file).c_str(), pos, (unsigned)t,
+                                             axis::net::netDateText(t).c_str(), netSafe(head.substr(std::min(sp + 1, head.size()))).c_str());
+                                  return ++shown < n;
+                              });
+    if (!shown) out.println("axis: nothing found");
+    if (more >= 0) out.printf("axis: older from %ld\n", more);
+    return true;
+}
+
 static void netNote(const std::string& what) {
     if (netHost && netHost->record) netHost->record->note("sysop", what, "");
 }
@@ -3188,8 +3621,15 @@ static int netRevSlot(const NetHost& h) {
     return pub == axis::net::revKey(0) ? 0 : pub == axis::net::revKey(1) ? 1 : -1;
 }
 
-// A notice from Rev's board: signed, applied here and logged to flood with the next sync (dialed soon).
-static void netNotice(NetHost& h, const char* kind, const std::string& target, const std::string& value, Print& out) {
+// Something made here goes out with the next sync, dialed soon.
+static void netFlood(NetHost& h) {
+    h.dirty = true;
+    h.postDue = true;
+    h.postMs = millis();
+}
+
+// A notice from Rev's board: signed, applied here and logged to flood. out: what to say (none for the auto seal).
+static bool netNotice(NetHost& h, const char* kind, const std::string& target, const std::string& value, Print* out) {
     axis::net::NetNotice n;
     n.kind = kind;
     n.target = target;
@@ -3198,12 +3638,1105 @@ static void netNotice(NetHost& h, const char* kind, const std::string& target, c
     n.key = netRevSlot(h);
     bool ok = n.key >= 0 && axis::net::signNotice(n, h.key) && h.core->originateNotice(n);
     if (ok) {
-        h.dirty = true;
-        h.postDue = true;
-        h.postMs = millis();
-        logEvent(String("sysop: net ") + kind + " " + target.c_str());
+        netFlood(h);
+        logEvent(String(out ? "sysop: net " : "net: sealed ") + kind + " " + target.c_str());
     }
-    out.printf(ok ? "@OK %s %s, seq %u\n" : "@ERR %s %s not taken\n", kind, target.c_str(), (unsigned)n.seq);
+    if (out) out->printf(ok ? "@OK %s %s, seq %u\n" : "@ERR %s %s not taken\n", kind, target.c_str(), (unsigned)n.seq);
+    return ok;
+}
+
+// ---- Net Files (listings: net/areas.h; fetch calls: net/fetch.h): sharing, serving and fetching
+
+// An event log line "net files: ..." (one formatted line instead of a chain of String additions).
+static void netFilesLog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void netFilesLog(const char* fmt, ...) {
+    char    b[192];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    logEvent(String("net files: ") + b);
+}
+
+#if AXIS_TRANSFERS
+// The same line in the event log and in the net record, about board.
+static void netFilesNote(NetHost& h, const std::string& board, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
+static void netFilesNote(NetHost& h, const std::string& board, const char* fmt, ...) {
+    char    b[256];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    netFilesLog("%s", b);
+    if (h.record) h.record->note(board, b, std::string());
+}
+#endif
+
+// Closes a socket after reading what is left in it, so lwIP closes it cleanly rather than answering with a reset.
+static void netDrainStop(WiFiClient& c) {
+    uint8_t b[64];
+    for (int i = 0; i < 32 && c.available() > 0; i++)
+        if (c.read(b, sizeof b) <= 0) break;
+    c.stop();
+}
+
+static constexpr uint32_t kNetFilesTurnMs = 20;  // file reads in one loop turn stop past this (a pooled read can be a cluster round trip)
+
+#if AXIS_FILES
+// net_files_areas: the local file area ids shared on User Net, a comma list (spaces around an id are dropped). Only an
+// id a listing can carry (1 to 16 of a-z 0-9 _) counts.
+static bool netFilesShared(const std::string& area) {
+    if (area.empty() || area.size() > 16 || area.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos) return false;
+    const std::string& v = boardCfg->netFilesAreas;
+    for (size_t at = 0; at <= v.size();) {
+        size_t e = v.find(',', at);
+        if (e == std::string::npos) e = v.size();
+        size_t b = at, z = e;
+        while (b < z && v[b] == ' ') b++;
+        while (z > b && v[z - 1] == ' ') z--;
+        if (v.compare(b, z - b, area) == 0) return true;
+        at = e + 1;
+    }
+    return false;
+}
+
+// This board lists its files: User Net is loaded and this board is a member carrying un_files (as originateListing wants).
+static bool netFilesOn(const NetHost& h) {
+    return h.appsLoaded && boardCfg->netSysop && !asFollower() && h.core->carries(axis::net::kNetFilesUserArea) && h.core->selfMember();
+}
+
+static std::string netSysopName() { return boardCfg->sysopHandle.empty() ? std::string("Sysop") : boardCfg->sysopHandle; }
+
+static constexpr size_t   kNetShareQueue = 32;     // listings waiting at most; more are dropped (logged)
+static constexpr size_t   kNetShareSpare = 8;      // places LISTALL leaves free for live changes; removals may use them past the cap
+static constexpr size_t   kNetShareChunk = 2048;   // a listing's crc is read in pieces this size (kFetchChunk)
+static constexpr uint32_t kNetSharePerTurn = 8;    // pieces per loop turn at most (16 KB), and only for kNetFilesTurnMs
+
+static void netShareAdd(NetShareItem it) {
+    NetHost* h = netHost.get();
+    if (!h || !netFilesOn(*h) || !netFilesShared(it.area)) return;
+    if (h->share.q.size() >= kNetShareQueue + (it.gone ? kNetShareSpare : 0)) {  // a removal is kept before a listing
+        netFilesLog("too many waiting, %s not %s", it.name.c_str(), it.gone ? "unlisted" : "listed");
+        return;
+    }
+    h->share.q.push_back(std::move(it));
+}
+static void netFilesRemoved(const std::string& area, const std::string& name) {
+    NetShareItem it;
+    it.area = area;
+    it.name = name;
+    it.gone = true;
+    netShareAdd(std::move(it));
+}
+// When the old name was listed (netShareStep), the new name is listed with the area's description, the sysop as the
+// uploader (no uploader is kept for a file).
+static void netFilesRenamed(const std::string& area, const std::string& from, const std::string& to) {
+    netFilesRemoved(area, from);
+    NetShareItem it;
+    it.area = area;
+    it.name = to;
+    it.uploader = netSysopName();
+    it.lookDesc = true;
+    netShareAdd(std::move(it));
+}
+// A caller's upload landed (serviceJob): listed once its crc is read.
+static void netFilesUploaded(const std::string& area, const std::string& name, const std::string& desc, const std::string& who) {
+    if (asFollower()) return;  // (a follower's uploads land on the main through its file server)
+    NetShareItem it;
+    it.area = area;
+    it.name = name;
+    it.desc = desc;
+    it.uploader = who.empty() ? netSysopName() : who;
+    netShareAdd(std::move(it));
+}
+
+// Signs and sends a listing or a removal (the post seq, saved before and after as for a post: NetStore::post).
+static void netShareSend(NetHost& h, const NetShareItem& it, uint32_t size, uint32_t crc) {
+    axis::net::NetListing l;
+    l.area = it.area;
+    l.name = it.name;
+    l.desc = it.desc;
+    l.uploader = it.uploader;
+    l.reach = "i";  // Phase 3 has only the internet; a home card with no host shows unreachable (netFetchReach)
+    l.size = size;
+    l.crc = crc;
+    l.gone = it.gone;
+    netSeqFloor(h);
+    std::string id = h.core->originateListing(l);
+    netPosted(h);
+    h.share.counted = false;
+    netFilesLog("%s %s/%s %s%s", it.gone ? "unlisted" : "listed", it.area.c_str(), it.name.c_str(), id.empty() ? "FAILED" : "as ",
+                id.c_str());
+}
+
+// @NET LISTALL: the next files of the area walked fill the queue up to kNetShareQueue - kNetShareSpare (one list of the area
+// per 24 files or so), so removals and renames still find room; names this board lists there already are skipped.
+static void netListAllNext(NetHost& h) {
+    NetShare& sh = h.share;
+    std::vector<axis::bbs::FileEntry> v = callerFiles().list(sh.allArea);
+    while (sh.allIx < v.size() && sh.q.size() < kNetShareQueue - kNetShareSpare) {
+        const axis::bbs::FileEntry& e = v[sh.allIx++];
+        uint32_t k = axis::net::crc32((const uint8_t*)e.name.data(), e.name.size());
+        if (std::find(sh.allHave.begin(), sh.allHave.end(), k) != sh.allHave.end()) continue;
+        NetShareItem it;
+        it.area = sh.allArea;
+        it.name = e.name;
+        it.desc = e.desc;
+        it.uploader = netSysopName();
+        sh.q.push_back(std::move(it));
+    }
+    if (sh.allIx < v.size()) return;
+    netFilesLog("every file in %s is listed", sh.allArea.c_str());
+    sh.allArea.clear();
+    std::vector<uint32_t>().swap(sh.allHave);
+}
+
+// One piece of sharing work from netTick: a removal sent, or a piece of a listing's crc (then the listing sent).
+static void netShareStep(NetHost& h) {
+    NetShare& sh = h.share;
+    if (!sh.file) {
+        if (sh.q.empty() && !sh.allArea.empty()) netListAllNext(h);
+        if (sh.q.empty() || !h.core->listingIndexReady()) return;  // (originateListing would spend a seq for nothing)
+        NetShareItem it = std::move(sh.q.front());
+        sh.q.erase(sh.q.begin());
+        if (!netFilesOn(h)) return;  // left User Net meanwhile
+        // A removal only of a name this board lists (an upload's temp name, or a ZIP its rezip replaced, never was; the
+        // upload itself is listed by netFilesUploaded). A rename's new name (lookDesc, next in the queue) goes only with it.
+        if (it.gone) {
+            if ((sh.goneSent = h.core->listedHere(it.area, it.name))) netShareSend(h, it, 0, 0);
+            return;
+        }
+        if ((it.lookDesc && !sh.goneSent) || !netFilesShared(it.area) || !(sh.file = callerFiles().open(it.area, it.name)))
+            return;  // a rename of a name never listed, unshared or gone meanwhile
+        if (it.lookDesc)
+            for (const axis::bbs::FileEntry& e : callerFiles().list(it.area))
+                if (e.name == it.name) {
+                    it.desc = e.desc;
+                    break;
+                }
+        sh.cur = std::move(it);
+        sh.size = sh.file->size();
+        sh.pos = 0;
+        sh.crc = 0xFFFFFFFFu;
+    }
+    if (sh.pos < sh.size) {
+        std::unique_ptr<uint8_t[]> buf(new (std::nothrow) uint8_t[kNetShareChunk]);
+        uint32_t t0 = millis();
+        for (uint32_t i = 0; buf && i < kNetSharePerTurn && sh.pos < sh.size && (!i || millis() - t0 <= kNetFilesTurnMs); i++) {
+            size_t n = std::min<size_t>(kNetShareChunk, sh.size - sh.pos);
+            if (!sh.file->readAt(sh.pos, buf.get(), n)) {
+                netFilesLog("%s could not be read, not listed", sh.cur.name.c_str());
+                sh.file.reset();
+                return;
+            }
+            sh.crc = axis::net::crc32Update(sh.crc, buf.get(), n);
+            sh.pos += (uint32_t)n;
+        }
+    }
+    if (sh.pos < sh.size || !h.core->listingIndexReady()) return;
+    sh.file.reset();
+    netShareSend(h, sh.cur, sh.size, ~sh.crc);
+}
+
+// "@NET LISTALL <area>": every file already in a shared area, listed once (Decision 2), the sysop as uploader.
+static void netListAll(NetHost& h, const std::string& area, Print& out) {
+    NetShare& sh = h.share;
+    bool known = false;
+    for (const axis::bbs::FileArea& a : boardCfg->areas) known = known || a.id == area;
+    if (!known || !netFilesShared(area)) out.println("@ERR not a shared file area (net_files_areas)");
+    else if (!netFilesOn(h)) out.println("@ERR this board is not a User Net member carrying un_files");
+    else if (!sh.allArea.empty()) out.printf("@ERR still listing %s\n", sh.allArea.c_str());
+    else if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) out.println("@ERR short of memory, try again");
+    else {
+        std::string me = h.core->board();
+        localMsgs->scanHeaders(axis::net::kNetFilesArea, [&](const axis::bbs::Message& m) {
+            axis::net::NetListing l;
+            if (axis::net::decode(m.net, l) && !l.gone && l.board == me && l.area == area)
+                sh.allHave.push_back(axis::net::crc32((const uint8_t*)l.name.data(), l.name.size()));
+            return true;
+        });
+        sh.allArea = area;
+        sh.allIx = 0;
+        out.printf("@OK listing the files in %s (%u listed already)\n", area.c_str(), (unsigned)sh.allHave.size());
+    }
+}
+
+// Live listings stored here (a header count, at most once a minute; held or killed ones count too).
+static uint32_t netFilesListed(NetHost& h) {
+    NetShare& sh = h.share;
+    if (sh.counted && millis() - sh.listedMs < 60000u) return sh.listed;
+    uint32_t n = 0;
+    localMsgs->scanHeaders(axis::net::kNetFilesArea, [&n](const axis::bbs::Message& m) {
+        axis::net::NetListing l;
+        n += axis::net::decode(m.net, l) && !l.gone;
+        return true;
+    });
+    sh.listed = n;
+    sh.listedMs = millis();
+    sh.counted = true;
+    return n;
+}
+static size_t netFilesSharedCount() {
+    size_t n = 0;
+    for (const axis::bbs::FileArea& a : boardCfg->areas) n += netFilesShared(a.id);
+    return n;
+}
+#endif  // AXIS_FILES
+
+// Text from another board for the event log and the console: no control bytes, nothing that reads as scene news.
+static std::string netLogText(const std::string& s) {
+    std::string t = netSafe(s);
+    return t.find(" uploaded ") == std::string::npos ? t : std::string("?");
+}
+
+// "@NET FILES [skip]": live listings, newest first, 20 a page: "<id> <home name> <area> <name> <size>".
+static void netFilesPage(NetHost& h, int skip, Print& out) {
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) {
+        out.println("@ERR short of memory, try again");
+        return;
+    }
+    const axis::net::NetState& st = h.core->state();
+    int n = 0, next = h.core->listingsPage(skip, 20, [&](const axis::net::NetListing& l) {
+        std::string home = netLogText(netCardName(st.card(l.board)).c_str());
+        if (home.empty()) home = l.board;
+        for (char& c : home)
+            if (c == ' ') c = '_';
+        std::string name = netLogText(l.name);
+        out.printf("%s %s %s %s %u\n", axis::net::listingId(l).c_str(), home.c_str(), l.area.c_str(), name.c_str(), (unsigned)l.size);
+        n++;
+    });
+    if (next >= 0) out.printf("axis: more with @NET FILES %d\n", next);
+    else if (!n) out.println("axis: no Net Files listed");
+}
+
+#if AXIS_TRANSFERS
+static constexpr int      kNetServeMax = 1;            // fetch calls served at once (the one serve slot)
+static_assert(kNetServeMax == 1, "NetHost has one serve slot");
+// The trickle bound (a home board that sends too little can hold the caller's transfer): while the client has room for more
+// (time spent with a full window is the caller's own pace and is not counted), at least 1 KB (or what is left of the file)
+// must arrive in every 120 s, else the fetch ends "slow". A healthy home board keeps the window full; this only cuts one
+// that sends under about 8 bytes a second.
+static constexpr uint32_t kNetFetchSlowMs = 120000;
+static constexpr uint32_t kNetFetchSlowBytes = 1024;
+// netFetchBegin's answers.
+// level: the board's own listing, in an area above the caller's security level.
+enum NetFetchBegin { kNetFetchStarted = 0, kNetFetchBusy, kNetFetchGone, kNetFetchUnreachable, kNetFetchOff, kNetFetchOwn, kNetFetchLevel };
+static const char* const kNetFetchWords[] = {"started", "busy", "gone", "unreachable", "off", "own", "level"};
+
+// ---- the serve slot (an AXISFILE 1 call from another board)
+
+// check (fetch.h): the caller's board proves who it is first, then everything about it and the file.
+static axis::net::ServeFile netServeCheck(NetHost& h, const axis::net::NetFetch& f) {
+    axis::net::ServeFile r;
+    NetServe&            v = h.serve;
+    axis::net::NetCore&  core = *h.core;
+    v.id = f.listing;
+    v.from = f.board;
+    v.who = netLogText(f.handle);
+    v.who += '@';
+    v.who += f.board;
+    const axis::net::NetCard* card = core.state().card(f.board);
+    if (!card || !axis::net::verifyFetch(f, card->pub)) {
+        r.no = "sig";
+        return r;
+    }
+    v.proven = true;
+    axis::net::NetListing l;
+    if (core.state().banned(f.board) || netBlocked(f.board)) r.no = "banned";
+    else if (core.members().status(f.board) != axis::net::NetMembers::Status::Member) r.no = "member";
+    else if (!netFilesOn(h) || !core.findListing(f.listing, l) || l.board != core.board() || l.gone || !netFilesShared(l.area) ||
+             !(v.file = callerFiles().open(l.area, l.name)))
+        r.no = core.listingIndexReady() ? "gone" : "busy";  // (the index is built again after a drop: try later)
+    else if (v.file->size() != l.size) {
+        v.file.reset();
+        r.no = "size";
+    } else {
+        r.ok = true;
+        r.size = l.size;
+        axis::bbs::RandomFile* file = v.file.get();  // (the slot drops the server before the file)
+        r.read = [file](uint32_t off, uint8_t* buf, size_t n) { return file->readAt(off, buf, n); };
+        v.served = true;
+    }
+    return r;
+}
+
+static void netServePump(NetHost& h);
+// axisServe read "AXISFILE 1 ": one fetch call served at a time, apart from the sync sessions.
+static void netServeAccept(WiFiClient& c, const std::string& got) {
+    NetHost* h = netHost.get();
+    if (h && h->serve.closing) netServePump(*h);  // a half-closed call whose dialer closed frees the slot (a redial can come first)
+    uint32_t ip = (uint32_t)c.remoteIP();
+    bool     ok = h && h->appsLoaded && boardCfg->netSysop && !asFollower() && !h->serve.s && h->core->listingIndexReady() && netHeapOk() &&
+              !netBackedOff(ip);
+    NetServe* v = h ? &h->serve : nullptr;
+    if (ok) {
+        v->s.reset(new (std::nothrow) axis::net::FetchServer(h->core->board(), h->key, netNonce(), [h](const axis::net::NetFetch& f) {
+            return netServeCheck(*h, f);
+        }));
+        ok = v->s != nullptr;
+    }
+    if (!ok) {  // the slot is taken, short of memory, or not serving: the caller's board says "busy"
+        c.print("NO busy\r\n");
+        delay(10);
+        netDrainStop(c);
+        return;
+    }
+    v->c = c;
+    v->c.setNoDelay(true);
+    v->ip = ip;
+    v->proven = v->served = false;
+    v->id.clear();
+    v->who = c.remoteIP().toString().c_str();
+    v->from.clear();
+    v->s->feed(got.data(), got.size());
+}
+
+// The call is over and logged. A served one is half-closed (lwIP sends its FIN after the queued bytes) with the slot kept
+// while netServePump drops what the dialer still sends, until it closes or kFetchStallMs passes with nothing heard: a
+// dialer's late keepalive on a fully closed socket would be answered with a reset that throws away bytes it has not read
+// yet. Any other call closes at once (a stranger cannot hold the slot with stray bytes). Called again while closing (that
+// wait over, or the net turned off): the socket closes and the slot is free.
+static void netServeClose(NetHost& h, const char* why) {
+    NetServe& v = h.serve;
+    if (!v.closing) {
+        if (v.s) v.pend += v.s->takeOut(256);  // a NO line still to go
+        for (uint32_t t0 = millis(); !v.pend.empty() && v.c.connected() && millis() - t0 < 200;) {
+            if (!netSendRaw(v.c, v.pend)) break;
+            if (!v.pend.empty()) delay(2);
+        }
+        bool        done = v.s && v.s->finished() && !v.s->failed() && v.served;
+        std::string word = why ? why : v.s ? v.s->why() : "";
+        if (done) netFilesNote(h, v.from, "fetch served %s to %s", v.id.c_str(), v.who.c_str());
+        else
+            netFilesLog("fetch %s from %s %s (%s)", v.id.empty() ? "call" : v.id.c_str(), v.who.c_str(), v.served ? "stopped" : "refused", word.c_str());
+        if (!v.proven && (word == "sig" || word == "bad" || word == "timeout")) netStrike(v.ip);  // never proved who it is
+        else if (v.proven) netProven(v.ip);
+        int fd = v.c.fd();
+        if (done && !why && fd >= 0 && v.c.connected() && shutdown(fd, SHUT_WR) == 0) {  // served (a proven member) only
+            v.closing = true;
+            v.closeMs = v.closeAt = millis();
+            return;
+        }
+    }
+    netDrainStop(v.c);
+    v.closing = false;
+    v.s.reset();  // before the file it reads
+    v.file.reset();
+    v.pend.clear();
+    v.pend.shrink_to_fit();
+    v.c = WiFiClient();
+}
+
+static void netServePump(NetHost& h) {
+    NetServe& v = h.serve;
+    if (!v.s) return;
+    char   buf[256];
+    size_t fed = 0;
+    if (v.closing) {  // half-closed: drop what comes (a keepalive) until the dialer closes
+        for (int i = 0; i < 8 && v.c.available() > 0 && v.c.read((uint8_t*)buf, sizeof buf) > 0; i++) v.closeMs = millis();
+        // (a byte heard keeps a slow dialer reading its tail, but never past kFetchServeIdleMs from the half-close)
+        if (!v.c.connected() || millis() - v.closeMs >= axis::net::kFetchStallMs || millis() - v.closeAt >= axis::net::kFetchServeIdleMs)
+            netServeClose(h, nullptr);
+        return;
+    }
+    while (fed < 2048) {  // the GET line, then only the dialer's keepalives
+        int a = v.c.available();
+        if (a <= 0) break;
+        int r = v.c.read((uint8_t*)buf, (size_t)a < sizeof buf ? (size_t)a : sizeof buf);
+        if (r <= 0) break;
+        v.s->feed(buf, (size_t)r);
+        fed += (size_t)r;
+    }
+    bool     sent = true;
+    uint32_t t0 = millis();
+    for (int i = 0; i < 4 && sent && v.pend.empty() && (!i || millis() - t0 <= kNetFilesTurnMs); i++) {  // up to 4 pieces a turn
+        v.pend = v.s->takeOut(axis::net::kFetchChunk + 64);
+        if (v.pend.empty()) break;
+        sent = netSendRaw(v.c, v.pend);
+    }
+    if (!v.pend.empty() && sent) sent = netSendRaw(v.c, v.pend);
+    v.s->tick(millis());
+    if (v.s->failed()) netServeClose(h, nullptr);
+    else if (v.s->finished() && v.pend.empty()) netServeClose(h, nullptr);
+    else if (!sent || (!v.c.connected() && v.c.available() <= 0)) netServeClose(h, "closed");
+}
+
+// ---- the fetch slot (this board dials a home board for a caller here)
+
+static volatile uint32_t netFetchDnsGen = 0, netFetchDnsDone = 0, netFetchDnsAddr = 0;  // its own lookup: never a sync's
+static void netFetchDnsFound(const char*, const ip_addr_t* a, void* arg) {
+    uint32_t gen = (uint32_t)(uintptr_t)arg;
+    if (gen != netFetchDnsGen) return;
+    netFetchDnsAddr = a && IP_IS_V4(a) ? ip_2_ip4(a)->addr : 0;
+    netFetchDnsDone = gen;
+}
+
+static NetFetchSlot* netFetchFor(uint32_t gen) {
+    NetHost* h = netHost.get();
+    return h && h->fetch.ph != FetchPh::Idle && h->fetch.gen == gen ? &h->fetch : nullptr;
+}
+
+// The call's socket closed and its unsent text dropped (the client and its window stay unless the caller drops them).
+static void netFetchDrop(NetFetchSlot& s) {
+    netDrainStop(s.c);
+    s.c = WiFiClient();
+    s.pend.clear();
+}
+
+static void netFetchClear(NetHost& h) {
+    NetFetchSlot& s = h.fetch;
+    netFetchDrop(s);
+    s.f.reset();
+    s.pend.shrink_to_fit();
+    s.ph = FetchPh::Idle;
+    s.owner = s.job = nullptr;
+    s.redial = false;
+    s.gen++;  // a NetFetchFile or ready hook left from it is stale now
+}
+#if AXIS_FILES && AXIS_CLUSTER
+static void netRemoteRelease(const void* owner);
+static void netRemoteNote(const void* j, std::string& note);
+#endif
+static void netFetchRelease(const void* owner) {
+#if AXIS_FILES && AXIS_CLUSTER
+    netRemoteRelease(owner);  // (a follower's, held through the main; also cleared here after this board became main)
+#endif
+    if (netHost && owner && netHost->fetch.ph != FetchPh::Idle && netHost->fetch.owner == owner) netFetchClear(*netHost);
+}
+
+// The fetch can never deliver now: the socket closes and the window goes; reads fail, and the caller's sender cancels.
+static void netFetchFail(NetHost& h, const char* why) {
+    NetFetchSlot& s = h.fetch;
+    if (s.ph == FetchPh::Idle || s.ph == FetchPh::Failed) return;
+    netFetchDrop(s);
+    s.f.reset();
+    s.ph = FetchPh::Failed;
+    s.why = why && *why ? why : "bad";
+    netFilesLog("fetch %s for %s from %s stopped (%s)%s", axis::net::listingId(s.l).c_str(), s.handle.c_str(), s.home.c_str(), s.why,
+                heapText().c_str());
+}
+
+// The home board can be dialed: its card is held with a host, and the listing says internet.
+static bool netFetchReach(const NetHost& h, const axis::net::NetListing& l) {
+    const axis::net::NetCard* c = h.core->state().card(l.board);
+    return c && !c->host.empty() && c->port > 0 && l.reach.find('i') != std::string::npos;
+}
+
+static void netFetchConnect(NetHost& h, IPAddress ip) {
+    NetFetchSlot& s = h.fetch;
+    s.ip = (uint32_t)ip;
+    if (!s.c.connect(ip, (uint16_t)s.port, 1200)) {
+        netFetchFail(h, "unreachable");
+        return;
+    }
+    s.c.setNoDelay(true);
+    s.ph = FetchPh::Live;
+    s.pend += s.f->takeOut();  // the hello goes now: the home board's axisServe waits only 40 ms for a first byte
+    netSendRaw(s.c, s.pend);
+}
+
+// As netDial: an address (or the one found before) connects now; a name is looked up first, without waiting.
+static void netFetchDial(NetHost& h) {
+    NetFetchSlot& s = h.fetch;
+    IPAddress     ip;
+    if (s.ip) {
+        netFetchConnect(h, IPAddress(s.ip));
+        return;
+    }
+    if (ip.fromString(s.host.c_str())) {
+        netFetchConnect(h, ip);
+        return;
+    }
+    ip_addr_t a;
+    uint32_t  gen = ++netFetchDnsGen;
+    err_t     e = dns_gethostbyname(s.host.c_str(), &a, netFetchDnsFound, (void*)(uintptr_t)gen);
+    if (e == ERR_OK && IP_IS_V4(&a)) netFetchConnect(h, IPAddress(ip_2_ip4(&a)->addr));
+    else if (e != ERR_INPROGRESS) netFetchFail(h, "unreachable");
+    else {
+        s.dnsGen = gen;
+        s.ph = FetchPh::Looking;
+    }
+}
+
+
+// A fetch's crc checkpoint table (FetchClient::CrcMarks), counted with its window in the heap checks.
+constexpr size_t kNetFetchMarksBytes = axis::net::kFetchCrcMarks * sizeof(uint32_t);
+
+// A new client from a new offset (the caller's sender asked outside the window). While the crc is on, it asks again from
+// the crc checkpoint at or below that offset (for a seek ahead, the last one reached), with its state and the checkpoints,
+// so every byte from there is checked in order and the sender reads from its offset; with the crc off (a caller resuming
+// its own partial file) it starts at the offset, unchecked.
+static void netFetchRedial(NetHost& h) {
+    NetFetchSlot& s = h.fetch;
+    uint32_t      at = s.redialAt, cs = 0xFFFFFFFFu, cp = s.f ? s.f->crcPos() : axis::net::kFetchNoCrc;
+    axis::net::FetchClient::CrcMarks marks;
+    s.redial = false;
+    if (cp != axis::net::kFetchNoCrc && s.f->checkpoint(s.redialAt, at, cs)) marks = s.f->takeMarks();
+    else s.forward = true;
+    cp = s.forward ? axis::net::kFetchNoCrc : at;
+    netFetchDrop(s);
+    s.f.reset();  // (its window first, then the new one)
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kNetHeapFloor + axis::net::kFetchWindow + kNetFetchMarksBytes)
+        s.f.reset(new (std::nothrow) axis::net::FetchClient(s.l, s.homePub, s.handle, h.key, h.core->board(), netNonce(), at, cs, cp));
+    if (!s.f) {
+        netFetchFail(h, "memory");
+        return;
+    }
+    s.f->giveMarks(std::move(marks));
+    s.f->aim(s.redialAt);
+    netFilesLog("fetch %s asked again from %u (at %u)", axis::net::listingId(s.l).c_str(), (unsigned)s.redialAt, (unsigned)at);
+    s.at = at;
+    s.fedNow = 0;
+    s.slowMs = 0;
+    s.slowFed = s.fed;
+    s.f->tick(millis());
+    s.ph = FetchPh::Looking;
+    netFetchDial(h);
+}
+
+// Every byte arrived. A Done that the crc did not check counts only for a forward resume (the caller's program resuming its
+// own partial file), noted as such; any other is a failure. This runs in the pump that fed the last byte, before the
+// caller's sender can ask for it.
+static void netFetchDone(NetHost& h) {
+    NetFetchSlot& s = h.fetch;
+    if (!s.f->verified()) {
+        if (!s.forward) {
+            netFetchFail(h, "crc");
+            return;
+        }
+        netFilesNote(h, s.l.board, "fetch %s for %s unverified (resumed)", axis::net::listingId(s.l).c_str(), s.handle.c_str());
+    }
+    netFetchDrop(s);
+    s.ph = FetchPh::Done;
+}
+
+static void netFetchPump(NetHost& h) {
+    NetFetchSlot& s = h.fetch;
+    if (s.ph == FetchPh::Idle) return;
+    uint32_t now = millis();
+    // begun and never taken up (its caller or follower is gone); a job is not, nor a follower's transfer (job = its
+    // token) until the fetch ended (its "e" lost)
+    if (axis::net::fetchLetGo(s.job, s.owner, s.ph == FetchPh::Done || s.ph == FetchPh::Failed, now - s.touchMs)) {
+        if (s.ph != FetchPh::Failed) netFilesLog("fetch %s let go (nobody asked for it)", axis::net::listingId(s.l).c_str());
+        netFetchClear(h);
+        return;
+    }
+    if (s.redial && s.ph != FetchPh::Failed) netFetchRedial(h);
+    if (s.ph == FetchPh::Done || s.ph == FetchPh::Failed) return;
+    if (s.ph == FetchPh::Looking) {
+        s.f->tick(now);
+        if (s.f->state() == axis::net::FetchClient::St::Failed) netFetchFail(h, s.f->why());
+        else if (netFetchDnsDone == s.dnsGen) {
+            uint32_t addr = netFetchDnsAddr;
+            if (addr) netFetchConnect(h, IPAddress(addr));
+            else netFetchFail(h, "unreachable");
+        }
+        s.tickMs = now;
+        return;
+    }
+    uint8_t buf[1024];
+    size_t  got = 0;
+    while (got < 4096) {  // never more than the client has room for (a full window holds the home board back)
+        size_t room = std::min(s.f->room(), sizeof buf);
+        int    a = s.c.available();
+        if (!room || a <= 0) break;
+        int r = s.c.read(buf, std::min(room, (size_t)a));
+        if (r <= 0) break;
+        size_t t = s.f->feed((const char*)buf, (size_t)r);
+        s.fed += (uint32_t)t;
+        s.fedNow += (uint32_t)t;
+        got += (size_t)r;
+        if (t < (size_t)r) {
+            netFetchFail(h, "bad");
+            return;
+        }
+    }
+    s.pend += s.f->takeOut();
+    bool sent = netSendRaw(s.c, s.pend);
+    s.f->tick(now);
+    using St = axis::net::FetchClient::St;
+    St st = s.f->state();
+    if (st == St::Failed) netFetchFail(h, s.f->why());
+    else if (st == St::Done) netFetchDone(h);
+    else if (!sent || (!s.c.connected() && s.c.available() <= 0)) {  // gone before every byte came
+        netFilesLog("fetch %s closed at %u of %u", axis::net::listingId(s.l).c_str(), (unsigned)s.f->reached(), (unsigned)s.l.size);
+        if (st != St::Streaming || s.retries >= axis::net::kFetchRetries) netFetchFail(h, "closed");
+        else {  // asked again from where the sender reads (as for a seek outside the window)
+            s.retries++;
+            s.redial = true;
+            s.redialAt = s.f->aimed();
+        }
+    }
+    else if (st == St::Streaming) {
+        if (s.f->room() > 0) s.slowMs += now - s.tickMs;
+        if (s.slowMs >= kNetFetchSlowMs) {
+            uint32_t have = s.at + s.fedNow, left = s.l.size > have ? s.l.size - have : 0;
+            if (s.fed - s.slowFed < std::min(kNetFetchSlowBytes, left)) {
+                netFetchFail(h, "slow");
+                return;
+            }
+            s.slowMs = 0;
+            s.slowFed = s.fed;
+        }
+    }
+    s.tickMs = now;
+}
+
+// The caller's sender asks (Transfer::ReadyAt). True once the fetch can never deliver, so its read fails.
+static bool netFetchReadyAt(uint32_t gen, uint32_t off, size_t n) {
+    NetFetchSlot* s = netFetchFor(gen);
+    if (!s || s->ph == FetchPh::Failed) return true;
+    s->touchMs = millis();
+    if (s->redial || s->ph == FetchPh::Looking || !s->f) return false;
+    if (off < s->l.size && s->f->behind(off)) {  // outside the window: a new call from there
+        if (s->retries >= axis::net::kFetchRetries) {
+            netFetchFail(*netHost, "retries");
+            return true;
+        }
+        s->retries++;
+        s->redial = true;
+        s->redialAt = off;
+        return false;
+    }
+    return s->f->ready(off, n);
+}
+static bool netFetchRead(uint32_t gen, uint32_t off, uint8_t* buf, size_t n) {
+    NetFetchSlot* s = netFetchFor(gen);
+    if (!s || s->ph == FetchPh::Failed || s->redial || !s->f) return false;
+    s->touchMs = millis();
+    return s->f->read(off, buf, n);
+}
+
+// The fetched file as the caller's TransferJob reads it (size: the listing's). Dropping it lets the slot go.
+class NetFetchFile : public axis::bbs::RandomFile {
+public:
+    NetFetchFile(uint32_t gen, uint32_t size) : gen_(gen), size_(size) {}
+    ~NetFetchFile() override {
+        if (netFetchFor(gen_)) netFetchClear(*netHost);
+    }
+    uint32_t size() const override { return size_; }
+    bool     readAt(uint32_t off, uint8_t* buf, size_t n) override { return netFetchRead(gen_, off, buf, n); }
+
+private:
+    uint32_t gen_, size_;
+};
+
+// ---- the host API for the caller's Net Files list (Task 5) and a follower's fetch through the main (Task 6). owner is
+// whatever stays the same for the one asking (the caller's Node, a follower's token); the slot is one per board.
+
+// "" or why the listing's home board cannot be dialed now.
+static std::string netFetchUnreachable(const std::string& id) {
+    NetHost*              h = netHost.get();
+    axis::net::NetListing l;
+    if (!h || !h->core->findListing(id, l) || l.board == h->core->board() || netFetchReach(*h, l)) return std::string();
+    return "that board can't be reached right now";
+}
+
+// Starts a fetch of listing id for handle (the caller's, never empty) from offset: kNetFetchStarted, or why not (busy: the
+// slot is taken or memory is short; gone: no such live listing; unreachable; off: the net does not run here or no handle;
+// own: the listing is this board's, so the file is downloaded from its area here).
+static int netFetchBegin(const void* owner, const std::string& id, const std::string& handle, uint32_t offset) {
+    NetHost* hp = netHost.get();
+    std::string who;
+    for (char ch : handle)
+        if ((unsigned char)ch >= 0x20 && ch != 0x7f && who.size() < 30) who.push_back(ch);
+    if (!hp || !owner || who.empty() || !hp->appsLoaded || !boardCfg->netSysop || asFollower()) return kNetFetchOff;
+    NetHost&      h = *hp;
+    NetFetchSlot& s = h.fetch;
+    if (s.ph != FetchPh::Idle && s.owner == owner && !s.job) netFetchClear(h);  // the same caller again
+    if (s.ph != FetchPh::Idle) return kNetFetchBusy;
+    if (h.core->blockedHere(id.substr(0, 16))) return kNetFetchUnreachable;  // never dialed (its listings are not shown)
+    axis::net::NetListing l;
+    if (!h.core->findListing(id, l)) return h.core->listingIndexReady() ? kNetFetchGone : kNetFetchBusy;
+    if (l.board == h.core->board()) return kNetFetchOwn;
+    if (!netFetchReach(h, l)) return kNetFetchUnreachable;
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor + axis::net::kFetchWindow + kNetFetchMarksBytes) return kNetFetchBusy;
+    const axis::net::NetCard& card = *h.core->state().card(l.board);
+    s.f.reset(new (std::nothrow) axis::net::FetchClient(l, card.pub, who, h.key, h.core->board(), netNonce(), offset));
+    if (!s.f) return kNetFetchBusy;
+    s.l = l;
+    s.homePub = card.pub;
+    s.handle = who;
+    s.host = card.host;
+    s.port = card.port;
+    s.home = netLogText(netCardName(&card).c_str());
+    if (s.home.empty()) s.home = l.board;
+    s.owner = owner;
+    s.job = nullptr;
+    s.gen++;
+    s.ip = 0;
+    s.at = offset;
+    s.retries = 0;
+    s.forward = offset > 0;  // the caller's program resumes its own file: the crc cannot cover it
+    s.redial = false;
+    s.fed = s.fedNow = s.slowMs = s.slowFed = 0;
+    s.tickMs = s.touchMs = millis();
+    s.why = "";
+    s.ph = FetchPh::Looking;
+    s.f->tick(millis());  // its connect clock starts now (it covers the lookup too)
+    netFilesNote(h, l.board, "fetch %s for %s", id.c_str(), who.c_str());
+    netFetchDial(h);
+    return kNetFetchStarted;
+}
+
+// Where the owner's fetch is: 0 connecting; 1 ready, the bytes are coming (size: the whole file); -1 failed (word: the
+// home board's NO word, or "stall", "sig", "size", "crc", "bad", "memory", "unreachable", "closed", "slow", "retries",
+// "stopped" when the slot is not this owner's any more).
+static int netFetchPoll(const void* owner, uint32_t& size, const char*& word) {
+    NetHost* h = netHost.get();
+    if (!h || h->fetch.ph == FetchPh::Idle || h->fetch.owner != owner) {
+        word = "stopped";
+        return -1;
+    }
+    NetFetchSlot& s = h->fetch;
+    s.touchMs = millis();
+    if (s.ph == FetchPh::Failed) {
+        word = s.why;
+        return -1;
+    }
+    using St = axis::net::FetchClient::St;
+    if (s.ph == FetchPh::Done || (s.ph == FetchPh::Live && s.f && s.f->state() == St::Streaming)) {
+        size = s.l.size;
+        return 1;
+    }
+    return 0;
+}
+
+// Once netFetchPoll says ready: the caller's download job over the fetch (nullptr when it is not ready or already has one).
+// It can also be nullptr right after a ready poll (no memory for the job): the browser treats that as "stopped".
+// It reads through a NetFetchFile and holds its sender with the slot's ready hook; the job ending lets the slot go.
+static axis::bbs::TransferJob* netFetchJob(const void* owner, axis::bbs::FileLibrary& lib, const axis::bbs::TransferRequest& req,
+                                           axis::door::ByteStream& line) {
+    uint32_t    size = 0;
+    const char* word = "";
+    if (netFetchPoll(owner, size, word) != 1 || netHost->fetch.job) return nullptr;
+    NetFetchSlot&                          s = netHost->fetch;
+    uint32_t                               gen = s.gen;
+    std::unique_ptr<axis::bbs::RandomFile> file(new (std::nothrow) NetFetchFile(gen, size));
+    if (!file) return nullptr;
+    axis::bbs::TransferJob* j = new (std::nothrow) axis::bbs::TransferJob(
+        lib, req, line, std::move(file), size, s.l.name, [gen](uint32_t off, size_t n) { return netFetchReadyAt(gen, off, n); });
+    if (j) s.job = j;
+    return j;
+}
+
+// serviceJob: a Net Files download that ended because the fetch stopped gets a clear message, not the sender's "read error".
+static void netFetchJobNote(const void* j, std::string& note) {
+#if AXIS_FILES && AXIS_CLUSTER
+    netRemoteNote(j, note);
+#endif
+    if (netHost && netHost->fetch.ph == FetchPh::Failed && netHost->fetch.job == j) note = "the file transfer from " + netHost->fetch.home + " stopped";
+}
+
+#if AXIS_FILES
+static_assert(kNetFetchStarted == axis::bbs::NetFilesView::kStarted && kNetFetchBusy == axis::bbs::NetFilesView::kBusy &&
+                  kNetFetchGone == axis::bbs::NetFilesView::kGone && kNetFetchUnreachable == axis::bbs::NetFilesView::kUnreachable &&
+                  kNetFetchOff == axis::bbs::NetFilesView::kOff && kNetFetchOwn == axis::bbs::NetFilesView::kOwn &&
+                  kNetFetchLevel == axis::bbs::NetFilesView::kLevel,
+              "NetFilesView mirrors NetFetchBegin");
+
+// The caller's Net Files list (NetFilesView::page): every text in it comes from another board, made safe here. A row
+// whose home board cannot be dialed (no host on its card) says so in place of its description.
+static std::string netPageReach;  // the last page's rows: '1' reachable, '0' not (a follower's G reply)
+static int netFilesView(int skip, int max, std::vector<axis::bbs::FileEntry>& out, std::vector<std::string>& ids,
+                        std::vector<std::string>& homes) {
+    NetHost* h = netHost.get();
+    netPageReach.clear();
+    if (!h) return -1;
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) return axis::bbs::NetFilesView::kShort;
+    const axis::net::NetState& st = h->core->state();
+    return h->core->listingsPage(skip, max, [&](const axis::net::NetListing& l) {
+        bool reach = l.board == h->core->board() || netFetchReach(*h, l);
+        netPageReach += reach ? '1' : '0';
+        out.push_back({netLogText(l.name), l.size, reach ? netSafe(l.desc) : std::string("(can't be reached)"), l.date});
+        ids.push_back(axis::net::listingId(l));
+        homes.push_back(netSafe(netCardName(st.card(l.board)).c_str()));
+        if (homes.back().empty()) homes.back() = l.board;
+    });
+}
+
+// NetFilesView::callerRadioBps: -1 for a caller not on radio, else the modem's reported bps, else (no report yet) the
+// rate of the caller's LoRa tier, else the slowest tier's (SF12), so a radio caller is always told the time. Tier rates
+// are sf * 400000 / 2^sf: the LoRa raw rate (SF * BW / 2^SF, times the coding rate) fitted to the LFD3K modem's own
+// reports on the 2026-11-12 radio bench, SF5 62500 and SF10 3906 bps (the SF10 call is in docs/FEATURES.md); SF12
+// gives 1171.
+static int32_t netCallerBps(const axis::net::LinkInfo& k) {
+    if (!k.radio()) return -1;
+    if (k.bps > 0) return k.bps;
+    int sf = k.sf() ? k.sf() : 12;
+    return (int32_t)(400000u * (uint32_t)sf >> sf);
+}
+
+// NetFilesView::begin for a caller here (owner: their Node). This board's own listing is downloaded from its area, so
+// it is answered before the slot is asked (a busy slot never refuses a local file); only while the area is still
+// shared, as the serve check asks (unsharing does not take the listings back).
+// This board's own listing for a caller of security level `level`: own while its area is still shared and open to that
+// level (Node::openTo's rule), else gone or level.
+static int netFilesOwn(const axis::net::NetListing& l, int level) {
+    return axis::bbs::NetFilesView::ownAnswer(boardCfg->areas, netFilesShared(l.area), l.area, level);
+}
+// NetFilesView::begin on this board, for a caller here (owner: their Node) or a follower's (owner: its file server).
+static int netFilesBegin(const void* owner, const std::string& id, const std::string& handle, int level, std::string& area,
+                         std::string& name) {
+    axis::net::NetListing l;
+    if (netHost && netHost->core->findListing(id, l) && l.board == netHost->core->board()) {
+        area = l.area;
+        name = l.name;
+        return netFilesOwn(l, level);
+    }
+    return netFetchBegin(owner, id, handle, 0);
+}
+
+#if AXIS_CLUSTER
+static std::string netNo(const char* word) {  // a refusal or failure for a follower: "0<word>"
+    std::string r("0");
+    r += word;
+    return r;
+}
+
+// The main's answer to a follower's caller (FileServer: G page, b begin or poll, t take, e end; f has 8 fields). owner is
+// that follower's file server; the follower lets one of its callers at a time hold the fetch. Every answer comes from
+// what is here now: t reads the fetch's window only, so a follower never holds this loop longer than its own request.
+static std::string netFollowerOp(const void* owner, char op, const std::vector<std::string>& f) {
+    uint32_t a = (uint32_t)std::strtoul(f[0].c_str(), nullptr, 10), b = (uint32_t)std::strtoul(f[1].c_str(), nullptr, 10);
+    char     num[16];
+    if (op == 'G') {  // "G skip max": "1<next skip>", then a line per row: id name size desc home reach
+        std::vector<axis::bbs::FileEntry> v;
+        std::vector<std::string>          ids, homes;
+        int         next = netFilesView((int)a, b && b <= 15 ? (int)b : 15, v, ids, homes);
+        // (15 rows fit one link frame, about 4 KB at most; the guard is there as L has it)
+        std::string r("1");
+        r += std::to_string(next);
+        size_t head = r.size();
+        for (size_t i = 0; i < v.size(); i++) {
+            size_t at = r.size();
+            std::snprintf(num, sizeof num, "\x1f%u\x1f", (unsigned)v[i].size);
+            ((((((r += '\n') += ids[i]) += '\x1f') += v[i].name) += num) += v[i].desc) += '\x1f';
+            ((r += homes[i]) += '\x1f') += i < netPageReach.size() ? netPageReach[i] : '1';
+            if (r.size() > axis::cluster::FileServer::kListMax) {  // the rest on the next page
+                r.resize(at);
+                r.replace(1, head - 1, std::to_string((int)a + (int)i));
+                break;
+            }
+        }
+        return r;
+    }
+    NetHost* h = netHost.get();
+    if (!h) return netNo("off");
+    NetFetchSlot& s = h->fetch;
+    bool          mine = s.ph != FetchPh::Idle && s.owner == owner;
+    if (op == 'b') {  // "b id handle offset level": begin; the same id again (or no handle) asks how it goes
+        if (!mine || axis::net::listingId(s.l) != f[0]) {
+            if (f[1].empty()) return netNo("stopped");
+            std::string area, name;  // (the main's own file: the follower downloads it from that area; no level: refused)
+            int         r = netFilesBegin(owner, f[0], f[1], f[3].empty() ? -1 : (int)std::strtol(f[3].c_str(), nullptr, 10), area, name);
+            return r == kNetFetchOwn ? "3" + area + '\x1f' + name : r == kNetFetchStarted ? std::string("2") : netNo(kNetFetchWords[r]);
+        }
+        uint32_t    size = 0;
+        const char* word = "stopped";
+        int         r = netFetchPoll(owner, size, word);
+        if (r <= 0) return r ? netNo(word) : std::string("2");
+        s.job = owner;  // its transfer starts: held like a caller's job here (e, onNodeGone, slow, stall end it; fetchLetGo once ended)
+        std::snprintf(num, sizeof num, "1%u\x1f", (unsigned)size);
+        return num + s.home;
+    }
+    if (op == 't') {  // "t offset length": "1<bytes>", "2" not here yet, "0<word>"
+        if (!mine) return netNo("stopped");
+        if (b > axis::cluster::FileServer::kChunk || (uint64_t)a + b > s.l.size) return netNo("bad");
+        if (s.ph != FetchPh::Failed && !netFetchReadyAt(s.gen, a, b)) return std::string("2");
+        std::string r(1 + b, '1');
+        if (s.ph != FetchPh::Failed && netFetchRead(s.gen, a, (uint8_t*)&r[1], b)) return r;
+        return netNo(s.ph == FetchPh::Failed ? s.why : "closed");
+    }
+    if (op == 'e') netFetchRelease(owner);
+    return std::string("1");
+}
+
+// A follower's side: the main's fetch, held by one of this board's callers at a time.
+struct NetRemoteFetch {
+    const void*                           owner = nullptr;
+    const axis::cluster::RemoteFetchFile* file = nullptr;  // once the transfer runs
+    const void*                           job = nullptr;
+    std::string                           id, home;
+    uint32_t                              size = 0, askMs = 0;
+    bool                                  ready = false;  // the main said ready (size may be 0)
+};
+static NetRemoteFetch netRemote;
+static std::string    netRemoteWord;     // why the last one failed (kept after release: the browser shows it after)
+static constexpr uint32_t kNetRemoteAskMs = 250;  // how often a connecting fetch is asked about (a round trip each)
+
+static void netRemoteDrop() {  // this board holds nothing on the main now
+    netRemote.owner = netRemote.job = nullptr;  // (id and home are only read while it is held)
+    netRemote.file = nullptr;
+    netRemote.ready = false;
+}
+static void netRemoteRelease(const void* owner) {
+    if (!owner || netRemote.owner != owner) return;
+    std::string ignored;
+    remoteFiles.raw("e", ignored);
+    netRemoteDrop();
+}
+
+static void netRemoteNote(const void* j, std::string& note) {
+    if (j && netRemote.job == j && netRemote.file && !netRemote.file->word().empty()) note = "the file transfer from " + netRemote.home + " stopped";
+}
+
+// Once the poll says ready: the caller's download job over the main's fetch (nullptr when not ready or no memory). The
+// fetch is ended (netRemoteRelease) once the job is gone: serviceJob and hangUp release this caller's.
+static axis::bbs::TransferJob* netRemoteJob(const void* owner, const axis::bbs::TransferRequest& req, axis::door::ByteStream& line) {
+    if (!owner || netRemote.owner != owner || netRemote.file || !netRemote.ready) return nullptr;
+    uint32_t       size = netRemote.size;
+    auto*    f = new (std::nothrow) axis::cluster::RemoteFetchFile(remoteFiles, size, [] { return (uint32_t)millis(); });
+    if (!f) return nullptr;
+    netRemote.file = f;
+    std::unique_ptr<axis::bbs::RandomFile> file(f);
+    axis::bbs::TransferJob*                j = new (std::nothrow)
+        axis::bbs::TransferJob(remoteFiles, req, line, std::move(file), size, req.name, [f](uint32_t off, size_t n) { return f->ready(off, n); });
+    if (j) netRemote.job = j;
+    return j;
+}
+#endif
+
+// NetFilesView for a caller here: this board's fetch, or on a follower the main's (through the file link).
+static int netViewPage(int skip, int max, std::vector<axis::bbs::FileEntry>& out, std::vector<std::string>& ids,
+                       std::vector<std::string>& homes) {
+#if AXIS_CLUSTER
+    if (asFollower()) return remoteFiles.netPage(skip, max, out, ids, homes);  // (its rows marked as here)
+#endif
+    return netFilesView(skip, max, out, ids, homes);
+}
+static int netViewBegin(const axis::bbs::Node* n, const std::string& id, std::string& area, std::string& name) {
+#if AXIS_CLUSTER
+    if (asFollower()) {
+        // another caller here has the main's fetch, unless the main already said it holds nothing for it (a t "0stopped")
+        if (netRemote.file && netRemote.file->word() == "stopped") netRemoteDrop();
+        if (netRemote.owner && netRemote.owner != n) return kNetFetchBusy;
+        netRemoteRelease(n);
+        std::string a;
+        char        r = remoteFiles.netFetch(id, n->handle(), n->securityLevel(), a);
+        if (r == '1' || r == '2') {
+            netRemote.owner = n;
+            netRemote.id = id;
+            netRemote.askMs = millis();
+            return kNetFetchStarted;
+        }
+        if (r == '3') {  // "area<1F>name"
+            size_t k = a.find('\x1f');
+            area = a.substr(0, k);
+            name = k == std::string::npos ? std::string() : a.substr(k + 1);
+            return kNetFetchOwn;
+        }
+        for (int i = kNetFetchBusy; r == '0' && i <= kNetFetchLevel; i++)
+            if (a == kNetFetchWords[i]) return i;
+        return kNetFetchUnreachable;
+    }
+#endif
+    return netFilesBegin(n, id, n->handle(), n->securityLevel(), area, name);
+}
+static int netViewPoll(const void* owner, uint32_t& size, const char*& word) {
+#if AXIS_CLUSTER
+    if (asFollower()) {
+        word = "stopped";
+        if (!owner || netRemote.owner != owner) return -1;
+        if (millis() - netRemote.askMs < kNetRemoteAskMs) return 0;
+        netRemote.askMs = millis();
+        std::string a;
+        char        r = remoteFiles.netFetch(netRemote.id, "", 0, a);  // (no handle: only asks)
+        if (r == '2') return 0;
+        if (r == '1') {  // "size<1F>home"
+            size = netRemote.size = (uint32_t)std::strtoul(a.c_str(), nullptr, 10);
+            netRemote.home = a.substr(a.find('\x1f') + 1);
+            netRemote.ready = true;
+            return 1;
+        }
+        netRemoteWord = r == '0' ? a : "closed";
+        if (netRemoteWord == "stopped") netRemoteDrop();  // the main holds nothing for it (nothing to end there)
+        word = netRemoteWord.c_str();
+        return -1;
+    }
+#endif
+    return netFetchPoll(owner, size, word);
+}
+#endif
+
+// "@NET FETCHTEST <id>" (the bench): the listing fetched to nowhere, read in order as a sender would, a few KB a loop turn
+// (netFetchTestStep, from netTick) so the board goes on meanwhile; at most 10 minutes. The result goes to the event log
+// (and so to Serial); "@NET FETCHTEST" alone prints the last one.
+struct NetFetchTest {
+    bool        on = false;
+    uint32_t    gen = 0, off = 0, size = 0, t0 = 0;
+    std::string last;
+};
+static NetFetchTest netFetchTestRun;
+static const char   kNetFetchTestOwner = 0;
+
+static void netFetchTest(NetHost& h, const std::string& id, Print& out) {
+    NetFetchTest& t = netFetchTestRun;
+    if (id.empty()) {
+        out.println(t.on ? "axis: a fetch test is running" : t.last.empty() ? "axis: no fetch test yet" : t.last.c_str());
+        return;
+    }
+    if (t.on) {
+        out.println("@ERR a fetch test is running");
+        return;
+    }
+    int r = netFetchBegin(&kNetFetchTestOwner, id, netSysopName(), 0);
+    if (r != kNetFetchStarted) {
+        out.printf("@ERR %s\n", kNetFetchWords[r]);
+        return;
+    }
+    h.fetch.job = &kNetFetchTestOwner;  // (no idle let-go while it runs)
+    t.on = true;
+    t.gen = h.fetch.gen;
+    t.off = 0;
+    t.size = h.fetch.l.size;
+    t.t0 = millis();
+    out.printf("@OK fetching %s\n", id.c_str());
+}
+
+static void netFetchTestStep(NetHost& h) {
+    NetFetchTest& t = netFetchTestRun;
+    if (!t.on) return;
+    NetFetchSlot* s = netFetchFor(t.gen);
+    static uint8_t buf[1024];  // (off the loop task's stack)
+    for (int i = 0; s && i < 4 && t.off < t.size && s->ph != FetchPh::Failed; i++) {
+        size_t n = std::min<size_t>(sizeof buf, t.size - t.off);
+        if (!netFetchReadyAt(t.gen, t.off, n) || !netFetchRead(t.gen, t.off, buf, n)) break;
+        t.off += (uint32_t)n;
+    }
+    if (s && s->ph != FetchPh::Failed && millis() - t.t0 > 600000u) netFetchFail(h, "timeout");
+    char res[64];
+    if (!s) std::snprintf(res, sizeof res, "@ERR stopped");
+    else if (s->ph == FetchPh::Done && t.off >= t.size) std::snprintf(res, sizeof res, "@OK %u crc ok", (unsigned)t.off);
+    else if (s->ph != FetchPh::Failed) return;  // still going
+    else if (!std::strcmp(s->why, "crc")) std::snprintf(res, sizeof res, "@OK %u crc bad", (unsigned)t.size);
+    else std::snprintf(res, sizeof res, "@ERR %s", s->why);
+    t.on = false;
+    t.last = res;
+    netFilesLog("fetch test: %s", res);
+    if (s) netFetchClear(h);
+}
+#endif  // AXIS_TRANSFERS
+
+// @NET FILES, LISTALL and FETCHTEST. False when the words are none of them.
+static bool netFilesCommand(NetHost& h, const std::string& up, const std::string& a, Print& out) {
+    if (up == "FILES" || up.compare(0, 6, "FILES ") == 0) {
+        netFilesPage(h, up.size() > 6 ? std::atoi(up.c_str() + 6) : 0, out);
+        return true;
+    }
+#if AXIS_FILES
+    if (up.compare(0, 8, "LISTALL ") == 0) {
+        netListAll(h, a.substr(a.find_first_not_of(' ', 8) == std::string::npos ? a.size() : a.find_first_not_of(' ', 8)), out);
+        return true;
+    }
+#endif
+#if AXIS_TRANSFERS
+    if (up == "FETCHTEST" || up.compare(0, 10, "FETCHTEST ") == 0) {
+        netFetchTest(h, a.size() > 10 ? a.substr(10) : std::string(), out);
+        return true;
+    }
+#endif
+    return false;
 }
 
 static std::string netAgo(uint32_t t) { return t ? axis::net::netDateText(t) : std::string("never"); }
@@ -3245,15 +4778,24 @@ static void netStatus(NetHost& h, Print& out) {
     }
     int hist = core.historyState();
     out.printf("history %s\n", hist > 0 ? "done" : hist == 0 ? "not done" : "not asked yet");
+    using S = axis::net::NetMembers::Status;
+    S us = h.appsLoaded ? core.members().status(core.board()) : S::None;
+    // With net_user off: "off", then what the tally still holds for this board in brackets.
+    const char* held = us == S::Member ? "member" : us == S::Pending ? "application pending" : us == S::Denied ? "denied" : us == S::Vetoed ? "vetoed" : nullptr;
+    if (!h.appsLoaded) out.print("user net loading");
+    else if (!boardCfg->netUser) out.printf("user net off%s%s%s", held ? " (" : "", held ? held : "", held ? ")" : "");
+    else out.printf("user net %s", us == S::Pending ? "pending" : held ? held : "not applied");
+    if (h.appsLoaded && boardCfg->netUser && us == S::Pending) {
+        axis::net::NetMembers::Tally t = core.members().tally(core.board());
+        out.printf(", yes %u of %u, no %u of %u", (unsigned)t.yes, (unsigned)core.state().votesYes(), (unsigned)t.no, (unsigned)core.state().votesNo());
+    }
+    out.print("\n");
+#if AXIS_FILES
+    out.printf("files: %u listed, %u shared areas\n", (unsigned)netFilesListed(h), (unsigned)netFilesSharedCount());
+#endif
     if (h.record && h.record->failures()) out.printf("record writes failed %u\n", (unsigned)h.record->failures());
 }
 
-// A card field from another board, safe for a terminal: control bytes become '?'.
-static std::string netSafe(std::string s) {
-    for (char& c : s)
-        if ((unsigned char)c < 0x20 || c == 0x7f) c = '?';
-    return s;
-}
 
 static void netPeers(NetHost& h, Print& out) {
     const axis::net::NetState& st = h.core->state();
@@ -3271,6 +4813,186 @@ static void netPeers(NetHost& h, Print& out) {
         out.printf("%s | %s | %s\n  %s:%d | %s | %s | %s\n", netSafe(netCardName(&c).c_str()).c_str(), c.board.c_str(), netSafe(c.mac).c_str(),
                    netSafe(c.host).c_str(), c.port, link.c_str(), seen.c_str(), flags);
     });
+}
+
+// ---- User Net (net/members.h): applying, voting, the lists, and Rev's admit, deny, veto and votes
+
+// The seq of the board's application held now, as admit and deny name it ("1" when none is held; @NETADMIT and
+// @NETDENY refuse that case first, and the seals due always have one).
+static std::string netAppSeq(const NetHost& h, const std::string& board) {
+    uint32_t off, seq = 1;
+    h.core->members().heldApp(board, off, &seq);
+    return std::to_string(seq);
+}
+
+// "@NET APPS": one line per held application, the status from one tally for them all (members(), denied()). The
+// fields come from other boards: control bytes are shown as '?'.
+static void netApps(const NetHost& h, Print& out) {
+    const axis::net::NetMembers& mem = h.core->members();
+    const axis::net::NetState&   st = h.core->state();
+    std::vector<std::string>     in = mem.members(), dn = mem.denied();
+    std::string                  line;
+    uint32_t                     vo;
+    bool                         any = false;
+    for (uint32_t off : mem.offsets()) {
+        axis::net::NetApp  a;
+        axis::net::NetVote v;
+        if (!netAppsReadAt(off, line)) continue;
+        if (line[0] != 'A') break;  // the votes come after the applications
+        if (!axis::net::decode(line, a)) continue;
+        const axis::net::NetNotice*  n = st.memberNotice(a.board);
+        axis::net::NetMembers::Tally t = mem.tally(a.board);
+        const char* is = st.banned(a.board) ? "banned" : netHas(in, a.board) ? "member" : netHas(dn, a.board) ? "denied" : n && n->kind == "veto" ? "vetoed" : "pending";
+        const char* mine = mem.heldVote(h.core->board(), a.board, vo) && netAppsReadAt(vo, line) && axis::net::decode(line, v) && v.appSeq == a.seq ? (v.yes ? "yes" : "no") : "-";
+        out.printf("%s | %s | %s | %s | %s | %s | yes %u no %u | you %s\n", a.board.c_str(), netSafe(a.name).c_str(), netSafe(a.sysop).c_str(),
+                   netSafe(a.location).c_str(), netSafe(a.mac).c_str(), is, (unsigned)t.yes, (unsigned)t.no, mine);
+        any = true;
+    }
+    if (!any) out.println("axis: no applications held");
+}
+
+// "@NET WAITING": the applicants this board has not voted on (waitingFor), one a line: "<board> <yes> <no> <name>, <location>".
+static void netWaiting(const NetHost& h, Print& out) {
+    const axis::net::NetMembers& mem = h.core->members();
+    std::string                  line;
+    for (const std::string& b : mem.waitingFor(h.core->board())) {
+        axis::net::NetApp            a;
+        axis::net::NetMembers::Tally t = mem.tally(b);
+        uint32_t                     off;
+        if (mem.heldApp(b, off) && netAppsReadAt(off, line)) axis::net::decode(line, a);
+        out.printf("%s %u %u %s, %s\n", b.c_str(), (unsigned)t.yes, (unsigned)t.no, a.name.empty() ? "?" : netSafe(a.name).c_str(), netSafe(a.location).c_str());
+    }
+}
+
+// "@NET APP <board>": the board's application held now, field by field, its counts, then each member's vote on it:
+// "vote yes|no, <name or board>: <comment>".
+static void netAppShow(const NetHost& h, const std::string& board, Print& out) {
+    const axis::net::NetMembers& mem = h.core->members();
+    const axis::net::NetState&   st = h.core->state();
+    uint32_t                     off, seq = 0;
+    std::string                  line;
+    if (!mem.heldApp(board, off, &seq) || !netAppsReadAt(off, line) || line[0] != 'A') {
+        out.println("axis: no application held from that board");
+        return;
+    }
+    axis::net::recordFields(line, netOutLine, &out);
+    axis::net::NetMembers::Tally t = mem.tally(board);
+    out.printf("counts yes %u of %u, no %u of %u\n", (unsigned)t.yes, (unsigned)st.votesYes(), (unsigned)t.no, (unsigned)st.votesNo());
+    for (const std::string& m : mem.members()) {
+        axis::net::NetVote        v;
+        const axis::net::NetCard* c = st.card(m);
+        if (mem.heldVote(m, board, off) && netAppsReadAt(off, line) && axis::net::decode(line, v) && v.appSeq == seq)
+            out.printf("vote %s, %s: %s\n", v.yes ? "yes" : "no", c ? netSafe(c->name).c_str() : m.c_str(), netSafe(v.comment).c_str());
+    }
+}
+
+// APPS, MEMBERS (from @NET), @NETAPPLY, @NETVOTE (this board), @NETADMIT, @NETDENY, @NETVETO, @NETVOTES (Rev's board).
+// t is the first word of the arguments (lowercase), rest what follows it as typed. False if word is none of them.
+static bool netUserCommand(NetHost& h, const std::string& word, const std::string& arg, const std::string& a, const std::string& t,
+                           const std::string& rest, Print& out) {
+    bool apply = word == "@NETAPPLY", vote = word == "@NETVOTE", veto = word == "@NETVETO", list = word == "APPS" || word == "MEMBERS";
+    bool rev = word == "@NETADMIT" || word == "@NETDENY" || veto, votes = word == "@NETVOTES";
+    if (!apply && !vote && !rev && !votes && !list) return false;
+    axis::net::NetCore&    core = *h.core;
+    axis::net::NetMembers& mem = core.members();
+    using S = axis::net::NetMembers::Status;
+    uint32_t    now = unixNow(), off, appSeq = 0;
+    const char* no = !h.appsLoaded ? "User Net is still loading" : (rev || votes) && netRevSlot(h) < 0 ? "not Rev's board" : nullptr;
+    bool        ok = false;
+    if (!no && word == "APPS") netApps(h, out);
+    else if (!no && list)
+        for (const std::string& b : mem.members()) {
+            const axis::net::NetCard* c = core.state().card(b);
+            out.printf("%s %s%s\n", b.c_str(), c ? netSafe(c->name).c_str() : "-", core.isRevBoard(b) ? " (Rev)" : "");
+        }
+    if (!no && list) return true;
+    if (!no && votes) {  // "yes=<n>,no=<n>", each 1 to 20: NetState refuses any other value, and then no seq is used
+        if (a.compare(0, 4, "yes=") != 0 || !netNotice(h, "votes", "net", a, &out)) out.println("axis: @NETVOTES yes=<1-20>,no=<1-20>");
+        return true;
+    }
+    if (!no && rev) {
+        if (!netIsBoard(t) || t == core.board() || core.isRevBoard(t)) no = "bad board id (never this board or Rev's)";
+        else if (core.state().memberNoticeCount() >= axis::net::kMaxMemberNotices && !core.state().memberNotice(t)) no = "the member table is full (64 boards)";
+        else if (!veto && !mem.heldApp(t, off)) no = "no application held from that board (admit and deny name the application they decide)";
+        else if (veto && rest != "YES") {
+            out.printf("axis: a veto keeps %s out of User Net for good; to send: @NETVETO %s YES\n", t.c_str(), t.c_str());
+            return true;
+        } else {  // admit and deny name the application they decide, the one held now
+            netNotice(h, veto ? "veto" : word == "@NETADMIT" ? "admit" : "deny", t, veto ? std::string() : netAppSeq(h, t), &out);
+            return true;
+        }
+    } else if (!no && apply) {
+        S st = mem.status(core.board());
+        no = !boardCfg->netUser ? "net_user is off" : st == S::Member ? "already a member" : st == S::Pending ? "already applied" :
+             st == S::Vetoed ? "vetoed" : h.seqFloorDue ? "waiting for the clock" : nullptr;
+        // 30 days after a deny: from the day Rev's deny was applied here, or, denied by the count with no deny of Rev's,
+        // from the held application's own signed date. A local gate only: the tally does not change.
+        static char wait[64];
+        if (!no && st == S::Denied && now > axis::net::kNetClockSet) {
+            const axis::net::NetNotice* dn = core.state().memberNotice(core.board());
+            uint32_t heldSeq = 0;
+            bool     hasApp = mem.heldApp(core.board(), off, &heldSeq);
+            // As the tally: a deny stands unless the held application is newer than the one it names.
+            if (!dn || dn->kind != "deny" || (hasApp && heldSeq > (uint32_t)std::strtoul(dn->value.c_str(), nullptr, 10))) {
+                std::string       line;
+                axis::net::NetApp held;
+                // (an application dated before the clock was set, or one that cannot be read, does not hold it back)
+                if (hasApp && netAppsReadAt(off, line) && axis::net::decode(line, held) && held.date > axis::net::kNetClockSet &&
+                    now / 86400 < held.date / 86400 + 30) {
+                    unsigned left = (unsigned)(held.date / 86400 + 30 - now / 86400);
+                    std::snprintf(wait, sizeof wait, "denied by the vote count; may apply again in %u day%s", left, left == 1 ? "" : "s");
+                    no = wait;
+                }
+            } else {
+                uint32_t d = core.state().memberNoticeDay(core.board());
+                if (d < axis::net::kNetClockDay) d = now / 86400;  // a deny from before the clock
+                if (now / 86400 < d + 30) no = "denied less than 30 days ago";
+            }
+        }
+        if (!no) {
+            axis::net::NetApp ap;
+            ap.pub = axis::net::toHex(h.key.pub, 32);
+            ap.board = core.board();
+            ap.name = netField(boardCfg->netName.empty() ? boardCfg->bbsName : boardCfg->netName, 36);
+            ap.sysop = netField(boardCfg->netSysopName.empty() ? boardCfg->sysopHandle : boardCfg->netSysopName, 36);
+            ap.location = netField(boardCfg->netLocation, 36);
+            ap.mac = WiFi.macAddress().c_str();
+            for (char& ch : ap.mac) ch = (char)std::tolower((unsigned char)ch);
+            ap.blurb = netField(arg, axis::net::kNetMaxBlurb);
+            ap.date = now;
+            ap.seq = h.appSeq;  // the next one is saved first: a reset never hands this seq out again
+            ok = netSeqWrite(core.postSeq(), h.cardSeq, h.voteSeq, ap.seq + 1, h.seqFloorDue);
+            if (ok) h.appSeq = ap.seq + 1;
+            ok = ok && axis::net::signApp(ap, h.key) && core.takeApp(ap, "");
+        }
+    } else if (!no) {  // @NETVOTE <board> Y|N [comment]
+        std::string yn = rest.substr(0, rest.find(' ')), comment = yn.size() < rest.size() ? rest.substr(yn.size() + 1) : "";
+        for (char& ch : yn) ch = (char)std::toupper((unsigned char)ch);
+        no = !h.unMember ? "this board is not a member" : !netIsBoard(t) || (yn != "Y" && yn != "N") ? "@NETVOTE <board id> Y|N [comment]" :
+             t == core.board() ? "not on this board's own application" : !mem.heldApp(t, off, &appSeq) ? "no application held from that board" :
+             h.seqFloorDue ? "waiting for the clock" : nullptr;
+        if (!no) {
+            axis::net::NetVote v;
+            v.voter = core.board();
+            v.pub = axis::net::toHex(h.key.pub, 32);
+            v.app = t;
+            v.appSeq = appSeq;
+            v.seq = h.voteSeq;
+            v.date = now;
+            v.yes = yn == "Y";
+            v.comment = netField(comment, axis::net::kNetMaxComment);
+            ok = netSeqWrite(core.postSeq(), h.cardSeq, v.seq + 1, h.appSeq, h.seqFloorDue);
+            if (ok) h.voteSeq = v.seq + 1;
+            ok = ok && axis::net::signVote(v, h.key) && core.takeVote(v, "");
+        }
+    }
+    if (no) out.printf("@ERR %s\n", no);
+    else if (ok) {
+        netFlood(h);
+        logEvent(String("sysop: net ") + (apply ? "apply" : "vote ") + (apply ? "" : t.c_str()));
+        out.println(apply ? "@OK applied" : "@OK voted");
+    } else out.println("@ERR not taken");
+    return true;
 }
 
 // "@NETKEY SET <64 hex>" / "@NETKEY CLEAR", typed at the serial console (handleSerial gives the line straight here and
@@ -3363,6 +5085,8 @@ static void netCommand(const String& cmd, Print& out) {
     NetHost& h = *netHost;
     std::string a = arg;
     for (char& ch : a) ch = (char)std::tolower((unsigned char)ch);
+    std::string t = a.substr(0, a.find(' ')), rest;  // the first word (lowercase), then what follows it as typed
+    if (t.size() < arg.size()) rest = arg.substr(arg.find_first_not_of(' ', t.size()));
     if (word == "@NET") {
         std::string up = arg;
         for (char& ch : up) ch = (char)std::toupper((unsigned char)ch);
@@ -3376,6 +5100,7 @@ static void netCommand(const String& cmd, Print& out) {
             for (const std::string& s : h.hides) out.printf("hide %s\n", s.c_str());
             for (const std::string& s : h.blocks) out.printf("block %s\n", s.c_str());
         } else if (up.compare(0, 6, "RECORD") == 0) {
+            if (netRecordBrowse(h, a.substr(6), out)) return;  // FIND, KIND, MONTHS, SHOW
             char*         e = nullptr;
             unsigned long n = std::strtoul(up.c_str() + 6, &e, 10), skip = std::strtoul(e, nullptr, 10);
             if (!n) n = 20;
@@ -3387,7 +5112,13 @@ static void netCommand(const String& cmd, Print& out) {
                            s1 == std::string::npos ? "" : l.c_str() + s1 + 1);
             }
             if (v.empty()) out.println("axis: the record is empty");
-        } else out.println("axis: @NET, @NET SYNC, @NET PEERS, @NET RECORD [n], @NET LOCAL");
+        } else if (up == "APPS" || up == "MEMBERS") netUserCommand(h, up, arg, a, t, rest, out);  // (only its own words: never "@NET @NETAPPLY")
+        else if ((up == "WAITING" || t == "app") && !h.appsLoaded) out.println("axis: User Net is still loading");
+        else if (up == "WAITING") netWaiting(h, out);
+        else if (t == "app") netAppShow(h, a.size() > 4 ? a.substr(4) : std::string(), out);
+        else if (!netFilesCommand(h, up, a, out))
+            out.println("axis: @NET, SYNC, PEERS, LOCAL, APPS, MEMBERS, WAITING, APP <board>, RECORD [n [skip]], RECORD FIND|KIND|MONTHS|SHOW, "
+                        "FILES [skip], LISTALL <area>, FETCHTEST <id>");
         return;
     }
     // local moderation: this board only
@@ -3412,12 +5143,14 @@ static void netCommand(const String& cmd, Print& out) {
         } else if (it != v.end()) {
             v.erase(it);
         }
+        h.core->moderationChanged();  // (Net Files: what is shown changed)
         ok = netLocalSave(h);
         for (char& ch : word) ch = (char)std::tolower((unsigned char)ch);
         netNote(word.substr(4) + " " + a);
         out.printf(ok ? "@OK %s %s\n" : "@ERR %s %s not saved\n", word.c_str() + 4, a.c_str());
         return;
     }
+    if (netUserCommand(h, word, arg, a, t, rest, out)) return;
     // Rev's notices: only on Rev's board
     if (netRevSlot(h) < 0) {
         out.println("@ERR not Rev's board");
@@ -3426,13 +5159,12 @@ static void netCommand(const String& cmd, Print& out) {
     static const char* const kRev[4][2] = {{"@NETBAN", "ban"}, {"@NETHOLD", "hold"}, {"@NETKILL", "kill"}, {"@NETLIFT", "lift"}};
     for (const auto& r : kRev)
         if (word == r[0]) {  // ban: a board; hold, kill: a post; lift: either (the target's shape picks the group)
-            std::string t = a.substr(0, a.find(' '));
             bool        board = netIsBoard(t), post = netIsPostId(t), kill = r[1][0] == 'k';
             if (r[1][0] == 'b' && board && (t == h.core->board() || h.core->isRevBoard(t))) out.println("@ERR never this board or Rev's");
             else if (!(r[1][0] == 'b' ? board : r[1][0] == 'l' ? board || post : post)) out.println("@ERR bad board or post id");
             else if (kill && (arg.size() < 4 || arg.compare(arg.size() - 4, 4, " YES") != 0))
                 out.printf("axis: kill drops %s on every board; to send: @NETKILL %s YES\n", t.c_str(), t.c_str());
-            else netNotice(h, r[1], t, "", out);
+            else netNotice(h, r[1], t, "", &out);
             return;
         }
     if (word == "@NETLIMITS") {
@@ -3443,16 +5175,144 @@ static void netCommand(const String& cmd, Print& out) {
         ok = ok && std::strncmp(e, ",bytes=", 7) == 0 && std::isdigit((unsigned char)e[7]);
         if (ok) bytes = std::strtoul(e + 7, &e, 10);
         if (ok && !*e && posts && bytes && posts < 100000 && bytes < 100000000)
-            netNotice(h, "limits", "net", "posts=" + std::to_string(posts) + ",bytes=" + std::to_string(bytes), out);
+            netNotice(h, "limits", "net", "posts=" + std::to_string(posts) + ",bytes=" + std::to_string(bytes), &out);
         else out.println("@ERR @NETLIMITS posts=<n>,bytes=<n>");
     } else if (word == "@NETROTATE") {
         std::string hex = a.substr(0, a.find(' ')), yes = a.size() > 65 ? arg.substr(65) : "";
         if (&out != &Serial) out.println("@ERR serial console only");
         else if (hex.size() != 64 || hex.find_first_not_of("0123456789abcdef") != std::string::npos) out.println("@ERR @NETROTATE <64 hex public key> [YES]");
         else if (yes != "YES") out.printf("axis: replaces Rev's key %d net-wide; to send: @NETROTATE %s YES\n", 1 - netRevSlot(h), hex.c_str());
-        else netNotice(h, "rotate", netRevSlot(h) == 0 ? "1" : "0", hex, out);
+        else netNotice(h, "rotate", netRevSlot(h) == 0 ? "1" : "0", hex, &out);
     } else {
         out.println("axis: unknown @NET command");
+    }
+}
+
+// The User Net areas this board carries (a mask): all four on Rev's board, else net_user_areas while net_user is on.
+static uint8_t netCarried(const NetHost& h) { return netRevSlot(h) >= 0 ? 15 : boardCfg->netUser ? boardCfg->netUserAreas : 0; }
+static void netCarry(NetHost& h, uint8_t m) {
+    std::vector<std::string> v;
+    for (size_t i = 0; i < 4; i++)
+        if (m >> i & 1) v.push_back(axis::net::userNetAreas()[i].id);
+    h.core->setUserAreas(std::move(v));
+    h.carried = m;
+}
+
+// The boot load of /net/apps.txt, two lines a pass (each a signature check) and only with heap to spare; sessions
+// and the seals wait for its end. Then what this board carries and whether it is a member are taken as they are (a
+// restart resets no User Net pull), and the areas and seals are worked out on the next pass.
+static void netAppsLoadStep(NetHost& h) {
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) return;
+    axis::net::NetMembers& mem = h.core->members();
+    FILE*                  f = std::fopen(netPath("apps.txt").c_str(), "rb");
+    bool                   more = f && std::fseek(f, (long)h.appsPos, SEEK_SET) == 0;
+    std::string            line;
+    for (int i = 0; more && i < 2; i++) {
+        uint32_t at = h.appsPos;
+        more = netAppsNext(f, h.appsPos, line);
+        if (line.empty()) continue;
+        mem.loadLine(line, at);
+        h.appsLines++;
+        h.appsBytes += line.size() + 1;
+    }
+    if (f) std::fclose(f);
+    if (more) return;
+    mem.endLoad();
+    h.appsLoaded = true;
+    h.appsHeld = h.appsLines ? (uint32_t)((uint64_t)h.appsBytes * mem.offsets().size() / h.appsLines) : 0;
+    h.cfgUser = boardCfg->netUser;
+    h.cfgAreas = boardCfg->netUserAreas;
+    h.cfgLevel = boardCfg->netUserLevel;
+    netCarry(h, netCarried(h));
+    h.unMember = h.core->selfMember();
+    h.unDirty = true;
+}
+
+// /net/apps.txt rewritten with only the lines held now, once it is past twice their size (64 KB at least): streamed
+// into a temp file put in place of it, then each held record's offset is taken from the file in place (the old one if
+// the rewrite failed). Only with no session open.
+static void netAppsCompact(NetHost& h) {
+    std::string path = netPath("apps.txt"), tmp = netTmpPath("apps.txt"), line;
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0 || (uint32_t)st.st_size <= std::max<uint32_t>(2 * h.appsHeld, 64 * 1024)) return;
+    axis::net::NetMembers& mem = h.core->members();
+    FILE*                  in = std::fopen(path.c_str(), "rb");
+    FILE*                  out = in ? std::fopen(tmp.c_str(), "wb") : nullptr;
+    bool                   ok = out != nullptr;
+    uint32_t               pos = 0, size = 0;
+    while (ok && netAppsNext(in, pos, line))
+        if (!line.empty() && mem.holds(line)) {
+            ok = std::fwrite(line.data(), 1, line.size(), out) == line.size() && std::fputc('\n', out) != EOF;
+            size += line.size() + 1;
+        }
+    if (in) std::fclose(in);
+    if (out) ok = std::fclose(out) == 0 && ok;
+    if (ok) {  // the old file steps aside as apps.old until the new one is in place (netStart restores it if not)
+        std::string old = netPath("apps.old");
+        ::unlink(old.c_str());
+        ok = ::rename(path.c_str(), old.c_str()) == 0;
+        if (ok && ::rename(tmp.c_str(), path.c_str()) != 0) {
+            ::rename(old.c_str(), path.c_str());
+            ok = false;
+        }
+        if (ok) ::unlink(old.c_str());
+    }
+    if (!ok) ::unlink(tmp.c_str());
+    if ((in = std::fopen(path.c_str(), "rb")) != nullptr) {
+        pos = 0;
+        for (uint32_t at = 0; netAppsNext(in, pos, line); at = pos)
+            if (!line.empty()) mem.setOffset(line, at);
+        std::fclose(in);
+    }
+    h.appsHeld = ok ? size : (uint32_t)st.st_size;  // a failed one waits until the file is twice this
+}
+
+// User Net upkeep, at most once a pass and only when something changed (net_user, net_user_areas, net_user_level, or
+// an app, vote, card or notice taken): the areas carried, whether this board is a member (one tally), the areas callers
+// get, a new User Net pull when this board became a member or carries a new area, and on Rev's board the admits due
+// (four notices a pass at most; each one taken brings this back next pass).
+static void netUserTick(NetHost& h) {
+    const axis::bbs::BbsConfig& c = *boardCfg;
+    bool cfg = c.netUser != h.cfgUser || c.netUserAreas != h.cfgAreas || c.netUserLevel != h.cfgLevel;
+    if ((!cfg && !h.unDirty) || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kNetHeapFloor) return;
+    axis::net::NetCore& core = *h.core;
+    bool                reset = false;
+    if (cfg) {
+        h.cfgUser = c.netUser;
+        h.cfgAreas = c.netUserAreas;
+        h.cfgLevel = c.netUserLevel;
+        uint8_t m = netCarried(h);
+        reset = (m & ~h.carried) != 0;  // an area more
+        netCarry(h, m);
+        netAreasGen++;  // (the level may have changed)
+    }
+    h.unDirty = false;
+    bool member = core.selfMember();
+    reset = reset || (member && !h.unMember);
+    h.unMember = member;
+    if (reset) {
+        core.resetUserHistory();
+        h.dirty = true;
+    }
+    uint8_t un = member && c.netUser ? h.carried : 0;
+    if (un != netUnMask) {
+        netUnMask = un;
+        netAreasGen++;
+        if (cluster && cluster->role() == axis::cluster::Role::Main) cluster->shareSettings();  // the followers' callers too
+    }
+    if (netRevSlot(h) < 0) return;
+    // Only admits are signed: a deny by the count is already a tally fact on every board, and a signed deny would
+    // use one of the 64 member notice slots for each applicant turned down. Rev denies by hand (@NETDENY).
+    int n = 0;
+    for (const auto& d : core.members().sealsDue()) {
+        if (d.second != axis::net::NetMembers::Status::Member) continue;
+        if (n < 4 && netNotice(h, "admit", d.first, netAppSeq(h, d.first), nullptr)) {
+            n++;
+            h.sealSaid = false;  // a later failure is logged again
+        } else if (n < 4 && !h.sealSaid) {  // (the next change tries again)
+            logEvent(String("net: seal for ") + d.first.c_str() + " not taken");
+            h.sealSaid = true;
+        }
     }
 }
 
@@ -3491,15 +5351,36 @@ static bool netStart() {
     {
         NetHost*              hp = h.get();  // (the host outlives the core: both live in netHost from here on)
         axis::net::NetRecord* rec = h->record.get();
-        if (rec)
-            core.setOnEvent([rec](const std::string& who, const std::string& what, const std::string& line) {
-                if (!storageHasSd() && what.compare(0, 14, "post duplicate") == 0) return;  // internal flash: spare it the wear
-                rec->note(who, what, line);
-            });
+        core.setOnEvent([rec, hp](const std::string& who, const std::string& what, const std::string& line) {
+            // an app, vote, card or notice: User Net looks again (netUserTick); not for a post or a listing
+            if (what[0] != 'p' && what[0] != 'l') hp->unDirty = true;
+            if (!rec || (!storageHasSd() && what.compare(0, 14, "post duplicate") == 0)) return;  // internal flash: spare it the wear
+            rec->note(who, what, line);
+        });
         core.setLocalFilter([hp](const std::string& b) { return netHas(hp->blocks, b); },
                             [hp](const std::string& id) { return netHas(hp->hides, id); });
+        core.setAppsFile(netAppsAppend, netAppsScan, netAppsReadAt);
+        netIdxClose();  // (a handle from before is not trusted)
+        core.setListingIndex(netIdxRead, netIdxWrite, [](void* p, size_t n) {
+            for (size_t i = 0; i < n; i += 4) {
+                uint32_t r = esp_random();
+                std::memcpy((uint8_t*)p + i, &r, std::min<size_t>(4, n - i));
+            }
+        });
+        if (!storageHasSd()) core.setListingCaps(100, 100);  // internal flash only: 100 live listings, 100 from one board
     }
     core.state().load(netFileRead("state.txt"), day);
+    {  // /net/apps.txt is read a few lines a pass from the loop (netAppsLoadStep). A compaction stopped by a reset: with no
+        // apps.txt the old file (apps.old) comes back, else the temp file; the others go only once apps.txt is there.
+        std::string p = netPath("apps.txt"), t = netTmpPath("apps.txt"), o = netPath("apps.old");
+        struct stat st;
+        if (::stat(p.c_str(), &st) != 0 && ::rename(o.c_str(), p.c_str()) != 0) ::rename(t.c_str(), p.c_str());
+        if (::stat(p.c_str(), &st) == 0) {
+            ::unlink(t.c_str());
+            ::unlink(o.c_str());
+        }
+        core.members().beginLoad();
+    }
     core.seen().load(netFileRead("seen.txt"));
     core.loadCursors(netFileRead("cursors.txt"));  // (clears the link peers: the first peer goes back after)
     if (core.historyState() < 0) {  // no history flag saved yet: decided now, before a session adds posts
@@ -3522,9 +5403,11 @@ static bool netStart() {
         if (netFirstTarget(*h, t) && !t.board.empty()) core.setFirstPeer(t.board);
     }
     {  // the counters: /netseq.txt in internal flash; the old /net/postseq.txt and /net/card.txt are a floor
-        uint32_t    post = 0, card = 0;
+        uint32_t    v[4] = {0, 0, 0, 0};
+        int         n = 0;
         bool        floorDue = false;
-        bool        found = netSeqRead(post, card, floorDue) && !floorDue;  // still waiting for the clock: as not found
+        bool        found = netSeqRead(v, n, floorDue) && !floorDue;  // still waiting for the clock: as not found
+        uint32_t    post = v[0], card = v[1];
         std::string oldPost = netFileRead("postseq.txt", 32), oldCard = netFileRead("card.txt", 32);
         post = std::max(post, (uint32_t)std::strtoul(oldPost.c_str(), nullptr, 10));
         card = std::max(card, (uint32_t)std::strtoul(oldCard.c_str(), nullptr, 10));
@@ -3533,7 +5416,9 @@ static bool netStart() {
         post = axis::net::netSeqStart(post, found, now);
         if (!found && now > axis::net::kNetClockSet) card = std::max(card, now);
         h->seqFloorDue = !found && now <= axis::net::kNetClockSet;
-        if (!netSeqWrite(post, card, h->seqFloorDue)) {
+        h->voteSeq = axis::net::netSeqStart(v[2], found && n > 2, now);  // (a board from before User Net: from the clock)
+        h->appSeq = axis::net::netSeqStart(v[3], found && n > 3, now);
+        if (!netSeqWrite(post, card, h->voteSeq, h->appSeq, h->seqFloorDue)) {
             if (!netStartSaid) logEvent("net: /netseq.txt could not be written, Sysop Net is off, trying every 10 min");
             netStartSaid = true;
             return false;
@@ -3541,7 +5426,7 @@ static bool netStart() {
         core.setPostSeq(post);
         h->cardSeq = card;
         NetHost* hp = h.get();
-        core.setSeqReserve([hp](uint32_t next) { return netSeqWrite(next, hp->cardSeq, hp->seqFloorDue); });
+        core.setSeqReserve([hp](uint32_t next) { return netSeqWrite(next, hp->cardSeq, hp->voteSeq, hp->appSeq, hp->seqFloorDue); });
     }
     h->postSeq = core.postSeq();
     {  // the card held in the state; a new one only on first boot (a changed one is made once the log is open)
@@ -3560,6 +5445,7 @@ static bool netStart() {
     core.setRetention((uint32_t)boardCfg->netKeepPosts, (uint32_t)boardCfg->netKeepDays);
     netCardUpdate(*h);
     h->appendFails = core.appendFailures();
+    h->appsFails = core.appsFailures();
     h->minuteMs = h->saveMs = h->trimMs = millis();
     h->dialMs = millis() - (uint32_t)boardCfg->netSyncMin * 60000u + 30000u;  // the first dial 30 s from now
     netHost = std::move(h);
@@ -3589,20 +5475,41 @@ static void netTick() {
         if (h.in.phase != NetPhase::Idle) netClose(h, h.in, "net off");
         if (h.out.phase == NetPhase::Live) netClose(h, h.out, "net off");
         h.out.phase = NetPhase::Idle;
+#if AXIS_TRANSFERS
+        if (h.serve.s) netServeClose(h, "net off");
+        netFetchFail(h, "off");  // (its caller's transfer ends)
+        netFetchPump(h);         // a failed fetch nobody takes up is still let go
+        netFetchTestStep(h);
+#endif
         return;
     }
+    if (!h.appsLoaded) {  // no session until the User Net records are in
+        netAppsLoadStep(h);
+        return;
+    }
+#if AXIS_TRANSFERS
+    netServePump(h);  // Net Files calls, apart from the sync sessions (neither waits for the other)
+    netFetchPump(h);
+    netFetchTestStep(h);  // @NET FETCHTEST, a few KB a turn
+#endif
+#if AXIS_FILES
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= kNetHeapFloor) netShareStep(h);
+#endif
     bool heapOk = netHeapOk();
     netPump(h, h.in, heapOk);
     netDialStep(h);
     netPump(h, h.out, heapOk);
     axis::net::NetCore& core = *h.core;
     netPosted(h);  // (a post that went around the store)
+    netUserTick(h);
+    if (heapOk) core.listingIndexStep();  // the listing index: a look at it, or a piece of its rebuild
     if (h.file.broken || (!h.log->ok() && millis() - h.logTryMs >= kNetMinuteMs)) netLogOpen(h);
     if (millis() - h.minuteMs >= kNetMinuteMs) {
         h.minuteMs = millis();
         core.setRetention((uint32_t)boardCfg->netKeepPosts, (uint32_t)boardCfg->netKeepDays);
         netSeqFloor(h);
         netCardUpdate(h);
+        if (h.in.phase == NetPhase::Idle && h.out.phase == NetPhase::Idle && heapOk) netAppsCompact(h);
         uint32_t now = unixNow();
         if (now && now / 86400 != h.houseDay && heapOk) {  // once a day: retention, pruning, the log trimmed
             h.houseDay = now / 86400;
@@ -3620,6 +5527,10 @@ static void netTick() {
             logEvent(String("net: ") + String(core.appendFailures() - h.appendFails) + " outbound log entries could not be written");
             h.appendFails = core.appendFailures();
         }
+        if (core.appsFailures() > h.appsFails) {
+            logEvent(String("net: ") + String(core.appsFailures() - h.appsFails) + " application or vote lines could not be written to apps.txt");
+            h.appsFails = core.appsFailures();
+        }
         if ((h.dirty || h.in.s || h.out.s) && netSave(h)) h.dirty = h.in.s || h.out.s;
     }
     uint32_t every = (uint32_t)(boardCfg->netSyncMin < 1 ? 1 : boardCfg->netSyncMin) * 60000u;
@@ -3636,13 +5547,14 @@ static void netTick() {
 // is up and net_sysop is on; on a follower, when the main's last settings frame said so (never a request: no wait).
 static bool netAreasOn() { return asFollower() ? netMainUp : netHost && boardCfg->netSysop; }
 
-// The settings a new Node gets: the board's, plus the four Sysop Net areas for the sysop alone while the net runs.
-// Never saved: they are not in boardCfg->msgAreas.
+// The settings a new Node gets: the board's, plus the four Sysop Net areas for the sysop alone while the net runs, then
+// the User Net areas callers get now (netUnMask) at net_user_level. Never saved: they are not in boardCfg->msgAreas.
 static std::shared_ptr<const axis::bbs::BbsConfig> nodeCfg() {
     if (!netAreasOn()) return boardCfg;
-    // one shared copy per board settings, rebuilt when boardCfg is replaced
+    // one shared copy per board settings, rebuilt when boardCfg is replaced or the User Net areas may have changed
     static std::shared_ptr<const axis::bbs::BbsConfig> base, withNet;
-    if (!withNet || base != boardCfg) {
+    static uint32_t                                    gen = 0;
+    if (!withNet || base != boardCfg || gen != netAreasGen) {
         auto c = std::make_shared<axis::bbs::BbsConfig>(*boardCfg);
         for (const axis::net::NetArea& a : axis::net::sysopNetAreas()) {
             axis::bbs::FileArea f;
@@ -3651,6 +5563,15 @@ static std::shared_ptr<const axis::bbs::BbsConfig> nodeCfg() {
             f.minSecurity = axis::bbs::kSysopSecurity;
             c->msgAreas.push_back(f);
         }
+        for (size_t i = 0; i < 4; i++)  // (their names say "User Net: ")
+            if (netUnMask >> i & 1) {
+                axis::bbs::FileArea f;
+                f.id = axis::net::userNetAreas()[i].id;
+                f.name = axis::net::userNetAreas()[i].name;
+                f.minSecurity = boardCfg->netUserLevel;
+                c->msgAreas.push_back(f);
+            }
+        gen = netAreasGen;
         base = boardCfg;
         withNet = std::move(c);
     }
@@ -3678,6 +5599,12 @@ static bool axisServe(WiFiClient& c, std::string& giveBack) {
         idle = millis();
         if (ch == '\n') break;
         if (ch != '\r') first.push_back(ch);
+#if AXIS_NETS && AXIS_TRANSFERS
+        if (first == "AXISFILE 1 ") {  // Net Files: a fetch call; the rest of its line is the server's to read
+            netServeAccept(c, first);
+            return true;
+        }
+#endif
 #if AXIS_NETS
         if (first == "AXISNET 2 ") {  // Sysop Net: the rest of the hello (a whole card) is the session's to read
             netAccept(c, first);
@@ -4067,6 +5994,19 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
             WifiStream* l = (size_t)slot < sessions.size() ? sessionLine((size_t)slot) : nullptr;
             return l && l->backlog() >= axis::net::TelnetStream::kHoldLow;
         });
+#if AXIS_NETS && AXIS_FILES && AXIS_TRANSFERS
+        if (!asFollower() || netMainFiles) {  // Net Files: this board's fetch, or on a follower the main's (an older main never says so)
+            const axis::bbs::Node*  n = node.get();
+            axis::bbs::NetFilesView v;
+            v.page = netViewPage;
+            v.unreachable = netFetchUnreachable;  // (a follower: "", the main says it when the fetch begins)
+            v.callerRadioBps = [n] { return netCallerBps(n->link()); };  // (this board's own caller link)
+            v.begin = [n](const std::string& id, std::string& area, std::string& name) { return netViewBegin(n, id, area, name); };
+            v.poll = [n](uint32_t& size, const char*& word) { return netViewPoll(n, size, word); };
+            v.release = [n] { netFetchRelease(n); };
+            node->setNetFiles(std::move(v));
+        }
+#endif
         if (panelConsoleNew) {  // the sysop, from the panel: no password asked, and the WFC is the first screen
             node->beginLocal(millis());
             node->openWfc(millis());
@@ -4427,6 +6367,15 @@ static int callersBesideSysop() {
     return n;
 }
 
+// @PUT @LS @TYPE @RM @MKDIR @BAUD from the serial console (tools/sdput.py). @PUT and @RM may replace or remove
+// /net/files.idx or nf_list: the index is forgotten first (not for the others, which would restart a rebuild).
+static bool serialFiles(const String& cmd) {
+#if AXIS_NETS
+    if (cmd.startsWith("@PUT ") || cmd.startsWith("@RM ")) netIdxForget();
+#endif
+    return serialFileCommand(cmd);
+}
+
 // Erase and re-make the SD card: the touch menu's YES button and "@SDFORMAT FORMAT" (the sysop menu) share this.
 // False when it was refused because a caller is online; `result` says what happened either way. force: the
 // serial console's "@SDFORMAT FORMAT force" goes ahead anyway.
@@ -4435,6 +6384,9 @@ static bool sdFormatNow(String& result, bool& ok, bool force = false) {
         logEvent("sysop: SD format refused, a caller is online");
         return false;
     }
+#if AXIS_NETS
+    netIdxForget();
+#endif
     ok = storageFormatSd(result);
     logEvent(String("sysop: SD format ") + (ok ? "done" : "FAILED") + ": " + result);
     makeAreaFolders();
@@ -4468,9 +6420,14 @@ static void startCluster() {
         deliverChat(l);  // a chat line, a page or a node line: this board's console and sessions
     };
 #if AXIS_NETS
-    cluster->settings = [] {  // plus "net_up=1" while Sysop Net runs here (an old follower keeps it as an unknown key)
+    cluster->settings = [] {  // plus "net_up=1" while Sysop Net runs here and the User Net areas callers get (an old follower keeps them as unknown keys)
         std::string s = axis::bbs::formatConfig(*boardCfg);
-        if (netHost && boardCfg->netSysop) s += "net_up=1\n";
+        if (netHost && boardCfg->netSysop) {
+            s += "net_up=1\nnet_un=" + axis::bbs::userNetList(netUnMask) + "\n";
+#if AXIS_FILES && AXIS_TRANSFERS
+            s += "net_files=1\n";  // followers' callers get Net Files through this board (FileServer G b t e)
+#endif
+        }
         return s;
     };
 #else
@@ -4479,6 +6436,13 @@ static void startCluster() {
     cluster->onSettings = [](const std::string& ini) {  // one BBS: the main's settings, this board's name
 #if AXIS_NETS
         netMainUp = ini.find("\nnet_up=1\n") != std::string::npos;  // an old main never says it: off
+        netMainFiles = ini.find("\nnet_files=1\n") != std::string::npos;
+        size_t      un = ini.find("\nnet_un=");  // an old main never says it: no User Net areas
+        uint8_t     got = un == std::string::npos ? 0 : axis::bbs::userNetMask(ini.substr(un + 8, ini.find('\n', un + 8) - (un + 8)));
+        if (got != netUnMask) {
+            netUnMask = got;
+            netAreasGen++;
+        }
 #endif
         artCache.clear();  // the theme may have changed
         wfcAnsKey.clear();  // (and so may the waiting screen)
@@ -4538,7 +6502,8 @@ static void startCluster() {
         }
     };
     // A follower's request is told apart by its first letter. The file server (cluster/remotefiles.cpp) owns
-    // L R S A C W F D X N; the rest here are M O T U J V Y Z Q P K H B E and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
+    // L R S A C W F D X N, and with the nets G b t e (Net Files: lower case, as B T E are taken here); the rest here are
+    // M O T U J V Y Z Q P K H B E and "AN" (B: a follower's WFC stats). Scripts were "S" and @ commands "C"
     // until 2026-11-09: that took every file open (packs, views, downloads) and upload away from a follower.
     cluster->onRequest = [](int nodeNum, const std::string& req) {
         servedRequest = true;  // a follower waits on this: no nap this turn
@@ -4646,7 +6611,11 @@ static void startCluster() {
         }
 #if AXIS_FILES
         auto& srv = fileServers[nodeNum];
-#if AXIS_SD_POOL
+#if AXIS_NETS
+        // Through the callers' library with Net Files on top (rawCallerFiles: the pool while card followers are joined, else
+        // this card), so a follower's removal or rename in a shared area unlists it too.
+        if (!srv) srv.reset(new axis::cluster::FileServer(netSharingFiles));
+#elif AXIS_SD_POOL
         if (!srv) srv.reset(new axis::cluster::FileServer(pooledFiles));  // (just this card when it is the only one)
 #else
         if (!srv) srv.reset(new axis::cluster::FileServer(sdFiles));
@@ -4671,8 +6640,19 @@ static void startCluster() {
 #if AXIS_FILES
     cluster->onMainGone = [] { cardServer.reset(); };  // its half-done uploads and mirror copies are thrown away
 #endif
+#if AXIS_NETS && AXIS_FILES
+    axis::cluster::FileServer::uploaded = netFilesUploaded;  // a follower's upload into a shared area is listed
+    remoteFiles.who = [] { return node ? node->handle() : std::string(); };  // (a follower: the caller describing an upload)
+#if AXIS_TRANSFERS
+    axis::cluster::FileServer::netOp = netFollowerOp;
+#endif
+#endif
     cluster->onNodeGone = [](int nodeNum) {  // its unfinished uploads go, its door's files close, its locks free
 #if AXIS_FILES
+#if AXIS_NETS && AXIS_TRANSFERS
+        auto fs = fileServers.find(nodeNum);
+        if (fs != fileServers.end()) netFetchRelease(fs->second.get());  // its caller's Net Files fetch, if it had one
+#endif
         fileServers.erase(nodeNum);
 #endif
         auto it = doorServers.find(nodeNum);
@@ -5275,7 +7255,7 @@ static void runCommand(const String& cmd, Print& out) {
         }
     } else if (cmd.startsWith("@VALIDATE ") || cmd.startsWith("@DENY ") || cmd.startsWith("@SEC ") || cmd.startsWith("@PERM ") ||
                cmd.startsWith("@TWIT ")) {
-        // "@VALIDATE h", "@DENY h", "@SEC h 30", "@PERM h files|msgs|doors|freedl on|off", "@TWIT h on|off"
+        // "@VALIDATE h", "@DENY h", "@SEC h 30", "@PERM h files|msgs|doors|freedl|nets on|off", "@TWIT h on|off"
         String rest = cmd.substring(cmd.indexOf(' ') + 1), handle = rest, a1, a2;
         int    sp = rest.indexOf(' ');
         if (sp > 0 && !cmd.startsWith("@VALIDATE ") && !cmd.startsWith("@DENY ")) {
@@ -5302,6 +7282,7 @@ static void runCommand(const String& cmd, Print& out) {
             else if (a1 == "msgs") u->permMessages = on;
             else if (a1 == "doors") u->permDoors = on;
             else if (a1 == "freedl") u->freeDownloads = on;
+            else if (a1 == "nets") u->permNets = on;
             saveUsers();
             logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + u->handle.c_str());
             out.printf("axis: %s updated\n", u->handle.c_str());
@@ -5693,6 +7674,9 @@ static void runCommand(const String& cmd, Print& out) {
         screenFailNext();
         out.println("axis: the next full screen copy fails");
     } else if (cmd == "@SDCHECK") {  // look for the card again (cards swapped while running)
+#if AXIS_NETS
+        netIdxForget();
+#endif
         SD.end();
         storageInit();
         screenDirty = true;
@@ -5856,7 +7840,7 @@ static void runCommand(const String& cmd, Print& out) {
         ESP.restart();
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
-    } else if (&out == &Serial && serialFileCommand(cmd)) {
+    } else if (&out == &Serial && serialFiles(cmd)) {
         for (int32_t& c : listCount) c = -1;  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py) (a list file may have changed)
     } else if (cmd == "@RERUNSETUP" && boardIsHeadless()) {  // the wizard is on a screen this board hasn't got
         out.println("axis: setup refused: this board is headless (no screen to run setup on)");
@@ -6169,13 +8153,25 @@ __attribute__((noinline)) static void serviceJob() {
     }
     if (!running) {
         const auto& r = job->request();
-        if (r.upload && job->ok()) countUpload();
+        std::string note = job->note();
+#if AXIS_NETS && AXIS_TRANSFERS
+        netFetchJobNote(job.get(), note);  // a Net Files download whose fetch stopped
+#endif
+        if (r.upload && job->ok()) {
+            countUpload();
+#if AXIS_NETS && AXIS_FILES
+            netFilesUploaded(r.area, job->savedName(), r.desc, node->handle());  // listed when the area is shared on User Net
+#endif
+        }
         logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
-                 (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + job->note().c_str() + ")"));
+                 (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + note.c_str() + ")"));
         noteDoing("idle");
         if (line && line->carrier()) {
-            node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, job->note(), millis());
+            node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, note, millis());
             job.reset();  // gives the inflate window back
+#if AXIS_NETS && AXIS_TRANSFERS
+            netFetchRelease(node.get());  // (a follower: the main's fetch ends now; here the job's file already let it go)
+#endif
             noteZipHeap();
             sendApp(node->takeOutput());
         } else {
@@ -6255,6 +8251,22 @@ static void serviceSession(int i) {
                                            std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion};
                 noteDoing(String(node->transfer().upload ? "upload " : "download ") + node->transfer().name.c_str() + " by " +
                           node->handle().c_str());
+#if AXIS_NETS
+                if (node->transfer().net) {  // a Net Files download: over the fetch slot its connect left ready
+#if AXIS_FILES && AXIS_CLUSTER
+                    if (asFollower()) job.reset(netRemoteJob(node.get(), node->transfer(), *line));  // (the main's fetch)
+                    else
+#endif
+                        job.reset(netFetchJob(node.get(), callerFiles(), node->transfer(), *line));
+                    if (!job) {  // (no memory for the job right after ready: the fetch stopped)
+                        netFetchRelease(node.get());
+                        node->transferDone(false, 0, 0, "stopped", millis());
+                        noteDoing("idle");
+                        sendApp(node->takeOutput());
+                    }
+                    return;
+                }
+#endif
                 job.reset(new axis::bbs::TransferJob(callerFiles(), node->transfer(), *line, info));
                 return;
             }

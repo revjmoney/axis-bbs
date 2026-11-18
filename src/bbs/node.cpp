@@ -4,6 +4,7 @@
 #include "bbs/node.h"
 
 #include "bbs/axisnet.h"
+#include "bbs/features.h"
 #include "bbs/ansiterm.h"
 #include "bbs/login_art.h"
 #include "bbs/password.h"
@@ -2432,6 +2433,18 @@ void Node::key(char c) {
                     if (!mayDownload(*u)) return "Downloads open up once you've uploaded something: [U]pload first.";
                     return size ? ratioBlock(*u, size, cfg_->ratio, cfg_->freeKb) : std::string();
                 });
+#if AXIS_NET_FILES
+            if (netFiles_.page) {  // listings travel in User Net: Files, so the caller sees them when they may read it
+                int level = securityLevel();
+                for (const FileArea& a : cfg_->msgAreas)
+                    if (a.id == "un_files" && a.minSecurity <= level) {
+                        NetFilesView v = netFiles_;
+                        v.radioLimitKb = (uint32_t)std::max(0, cfg_->netFilesRadioKb);
+                        browser_->setNetFiles(std::move(v));
+                        break;
+                    }
+            }
+#endif
             browser_->setNewSince(prevCall_ ? prevCall_ : (unixNow_ && unixNow_() > 7 * 86400 ? unixNow_() - 7 * 86400 : 0));
             browser_->begin();
             break;
@@ -3549,9 +3562,17 @@ void Node::showUser() {
                                       {"up/down", std::to_string(u->uploads / 1024) + " / " + std::to_string(u->downloads / 1024) + " KB"},
                                       {"access", std::string(u->permFiles ? "files " : "") + (u->permMessages ? "msgs " : "") + (u->permDoors ? "doors " : "") +
                                                      (u->freeDownloads ? "free-dl" : "")},
-                                      {"twit", u->twit ? "YES" : "no"}});
+                                      {"twit", u->twit ? "YES" : "no"},
+#if AXIS_NETS
+                                      {"net posts", u->permNets ? "YES" : "no"},
+#endif
+                                     });
     out_ += "   " + theme::key("S", "ecurity  ") + theme::key("V", "alidate  ") + theme::key("D", "eny  ") + theme::key("T", "wit  ") + theme::key("F", "iles  ") +
-            theme::key("M", "sgs  ") + theme::key("O", " doors  ") + theme::key("L", " free dl  ") + theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
+            theme::key("M", "sgs  ") + theme::key("O", " doors  ") + theme::key("L", " free dl  ") +
+#if AXIS_NETS
+            theme::key("N", "et posts  ") +
+#endif
+            theme::key("Q", "uit") + theme::ORANGE + ": " + theme::WHITE;
 }
 
 void Node::userEditKey(char c) {
@@ -3615,6 +3636,9 @@ void Node::userEditKey(char c) {
         case 'm': u->permMessages = !u->permMessages; break;
         case 'o': u->permDoors = !u->permDoors; break;
         case 'l': u->freeDownloads = !u->freeDownloads; break;
+#if AXIS_NETS
+        case 'n': u->permNets = !u->permNets; break;  // (the nonet field is kept either way)
+#endif
         case 'q': showUsers(); return;
         default: return;
     }
@@ -3729,9 +3753,13 @@ void Node::poll(uint32_t nowMs) {
         net_.reset();
         showMainMenu();
     }
-    if (state_ == State::Files && browser_ && !browser_->tick(nowMs, lastInput_)) {
-        closeFiles();
-        showMainMenu();
+    if (state_ == State::Files && browser_) {
+        if (!browser_->tick(nowMs, lastInput_)) {
+            closeFiles();
+            showMainMenu();
+        } else if (browser_->wantsTransfer()) {
+            state_ = State::Transfer;  // a Net Files fetch ready (tick polls the host while it connects)
+        }
     }
     if (state_ == State::Messages && msgs_ && !msgs_->tick(nowMs, lastInput_)) {
         closeMsgs();

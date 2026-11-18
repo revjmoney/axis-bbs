@@ -198,6 +198,55 @@ TEST_CASE("the sysop can drop posts from an area and the rest stay whole") {
     CHECK(st.drop("nowhere", [](const Message&) { return true; }) == 0);
 }
 
+TEST_CASE("postAfter appends last + 1 without reading the area, and the area reads back as post's would") {
+    Dir              d;
+    FileMessageStore a((d.p / "a").string()), b((d.p / "b").string());
+    fs::create_directories(d.p / "a");
+    fs::create_directories(d.p / "b");
+    std::vector<Message> ms;
+    for (int i = 0; i < 5; i++) {
+        Message m = msg("Rev", "All", ("subj " + std::to_string(i)).c_str(), "line one\n\x01MSG lookalike\nend");
+        if (i % 2) m.net = std::string("L\x1f") + "board\x1f" + std::to_string(i);
+        ms.push_back(m);
+    }
+    int last = 0;
+    for (const Message& m : ms) {
+        CHECK(a.post("nf", m) == last + 1);
+        last = b.postAfter("nf", last, m);
+    }
+    CHECK(last == 5);
+    // Same bytes, same headers, same numbers, same offsets, same whole records at them.
+    std::vector<Message> ha, hb;
+    a.scanHeaders("nf", [&](const Message& m) { return ha.push_back(m), true; });
+    b.scanHeaders("nf", [&](const Message& m) { return hb.push_back(m), true; });
+    REQUIRE(ha.size() == 5);
+    REQUIRE(hb.size() == 5);
+    for (size_t i = 0; i < ha.size(); i++) {
+        CHECK(ha[i].num == hb[i].num);
+        CHECK(ha[i].at == hb[i].at);
+        CHECK(ha[i].subject == hb[i].subject);
+        CHECK(ha[i].net == hb[i].net);
+        Message x, y;
+        REQUIRE(a.readAt("nf", ha[i].at, ha[i].num, x));
+        REQUIRE(b.readAt("nf", hb[i].at, hb[i].num, y));
+        CHECK(x.body == y.body);
+        CHECK(y.body == "line one\n\x01MSG lookalike\nend");
+    }
+    CHECK(fs::file_size(d.p / "a" / "nf.msg") == fs::file_size(d.p / "b" / "nf.msg"));
+    // It takes the caller's word: told 100, the next is 101, and post goes on from there.
+    CHECK(b.postAfter("nf", 100, msg("Rev", "All", "far", "x")) == 101);
+    CHECK(b.post("nf", msg("Rev", "All", "next", "x")) == 102);
+    // The default (a store that only has post) is post.
+    struct Only : MessageStore {
+        int posts = 0;
+        std::vector<Message> headers(const std::string&) override { return {}; }
+        bool read(const std::string&, int, Message&) override { return false; }
+        int post(const std::string&, const Message&) override { return ++posts; }
+    } o;
+    CHECK(o.postAfter("nf", 41, msg("Rev", "All", "x", "x")) == 1);
+    CHECK(o.posts == 1);
+}
+
 TEST_CASE("message lightbar: Enter opens the highlighted area and reads the highlighted header") {
     Dir              d;
     FileMessageStore st(d.p.string());
@@ -291,4 +340,19 @@ TEST_CASE("message areas: counts are streamed (hidden writers left out, newest 2
         CHECK(std::regex_search(p, std::regex("General Chatter +2 msgs +1 new")));
         CHECK(std::regex_search(p, std::regex("Big Area +" + std::to_string(MessageStore::kMaxHeaders) + " msgs")));
     }
+}
+
+TEST_CASE("the message server reads missing request fields as empty") {
+    Dir               d;
+    FileMessageStore  st(d.p.string());
+    const std::string S(1, '\x1f');
+    CHECK(serveMessages(st, "Mp" + S + "cnc" + S + "Rev") == "11");  // to, subject, date and body left off
+    Message m;
+    REQUIRE(st.read("cnc", 1, m));
+    CHECK(m.from == "Rev");
+    CHECK(m.to.empty());
+    CHECK(m.subject.empty());
+    CHECK(serveMessages(st, "Mr" + S + "cnc") == "0");  // no number: none is 0
+    CHECK(serveMessages(st, "Mh" + S + "cnc").compare(0, 2, "11") == 0);
+    CHECK(serveMessages(st, "Mx" + S + "cnc") == "0");
 }

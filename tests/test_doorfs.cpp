@@ -217,4 +217,16 @@ TEST_CASE("after a write or a record lock the next read sees fresh data") {
     CHECK(std::string(b, 4) == "ccbb");
     rfs.close(h);
 }
+TEST_CASE("the door server reads missing request fields as empty") {
+    Main              m;
+    const std::string S(1, '\x1f');
+    // a lock and its unlock with offset, length and owner left off, then the same written out empty
+    std::string shortLock = m.server.handle("L" + S + "5"), shortUnlock = m.server.handle("U" + S + "5");
+    std::string fullLock = m.server.handle("L" + S + "5" + S + S + S), fullUnlock = m.server.handle("U" + S + "5" + S + S + S);
+    CHECK(shortLock == fullLock);
+    CHECK(shortUnlock == fullUnlock);
+    CHECK(m.server.handle("R") == m.server.handle("R" + S + "0"));
+    CHECK(m.server.handle("o") == m.server.handle("o" + S));  // no door begun: refused either way
+}
+
 #endif  // AXIS_CLUSTER

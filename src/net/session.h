@@ -40,6 +40,10 @@ constexpr size_t kSyncOutHigh = 2048;                 // no new data lines while
 constexpr size_t kSyncOutMax = 16 * 1024;             // more unsent than this: the peer is not reading
 constexpr uint32_t kSyncHistoryMax = 800;             // H lines taken per session (4 areas x 200)
 constexpr size_t kSyncCardsAhead = 64;                // origins whose card went ahead of their posts, remembered
+constexpr uint32_t kSyncUserHistoryMax = 400;         // U post lines taken per session (4 areas x 100)
+constexpr uint32_t kSyncUserRecordsMax = 512;         // U application and vote lines taken per session
+constexpr uint32_t kSyncUserListingsMax = 1400;       // U listing lines taken per session (500 live and 200 tombstones, with room)
+constexpr uint32_t kSyncUserEMax = 64;                // E application, vote and listing lines taken per session; then NAK store
 
 class NetSession {
 public:
@@ -57,6 +61,9 @@ public:
     NetSession& operator=(const NetSession&) = delete;
 
     void feed(const char* p, size_t n);  // bytes from the socket
+    // A listing line waits for the listing index to be built (NetCore::listingIndexWait): it and what came after it
+    // are held, unread, and taken again from tick. The host reads nothing more from the socket meanwhile.
+    bool parked() const { return !parked_.empty(); }
     std::string takeOut();               // bytes for the socket (send them before closing)
     void tick(uint32_t nowMs, bool heapOk);
 
@@ -93,6 +100,9 @@ private:
     void takeEntry(std::string_view idx, std::string_view rec, std::string& line);
     void takeState(std::string_view rec);
     void takeHistory(std::string_view rec, std::string& line);
+    void takeUser(std::string_view rec, std::string& line);
+    bool takeRecord(std::string_view rec);
+    bool sendWalk(size_t& budget, bool& streamed, bool user);
     void ack(std::string_view idx, bool nak, std::string_view reason);
     bool cardAhead(const std::string& postLine);
     void countDone();
@@ -102,6 +112,7 @@ private:
     void fail(const char* why, const char* bye);
     bool roomForData() const { return out_.size() < kSyncOutHigh; }
     bool outOverflow();
+    void resume();
 
     NetCore& core_;
     NetCard me_;
@@ -114,23 +125,42 @@ private:
     bool failed_ = false;
     std::string why_;
     std::string in_, out_;
+    std::string parked_;   // a listing line waiting for the index, and the bytes after it (parked())
+    bool wait_ = false;    // the line just handled must wait (set by takeEntry or takeUser)
 
     std::string peer_, peerNonce_;
     NetCard peerCard_;  // held from the hello to the proof only
     bool wasLink_ = false;  // a link peer at its hello (decides the snapshot on first contact)
+    bool peerNet2_ = false;  // its card has net2 in its links: a Phase 2 board, it may get UWANT
+    bool peerNet3_ = false;  // its card has net3: a Phase 3 board, it may get listings (L) on E and U lines
     bool trusted_ = false;  // a trusted link peer at its hello (decides the deadline and the cooldown)
     bool counted_ = false;  // this session's completion went to NetCore::sessionDone
     uint32_t deadline_ = kSyncDeadlineMs;
 
     // Sync progress, this side.
     uint32_t mySeq_ = 0;
-    bool wantDecided_ = false, sentWant_ = false;
+    bool wantDecided_ = false, sentWant_ = false, sentUwant_ = false;
     bool sendSnap_ = false, snapLoaded_ = false, sentSend_ = false;
     std::vector<std::string> snap_;
     size_t snapPos_ = 0;
     bool histDone_ = false;
     uint32_t histDays_ = 0;
-    HistoryCursor hist_;
+    HistoryCursor hist_;  // the one walk at a time: history (H), then the User Net pull's posts (U)
+    // The User Net pull this side gives (the peer sent UWANT): the asked areas (bit i: userNetAreas()[i]),
+    // the apps file offsets of the records held when it started (4 bytes each, at most about 300) and how
+    // far it is through them, the stage (0 applications and votes, 1 live listings, 2 tombstones, 3 posts),
+    // the listing lines of the batch read now (at most kNetPendingBytes), where the next batch starts in the
+    // hidden area and whether the scan reached its end, whether the listings were sent (then UEND F), and
+    // whether UEND has gone.
+    uint8_t uMask_ = 0;
+    std::vector<uint32_t> uOffs_;
+    size_t uAt_ = 0;
+    bool uListed_ = false, uDone_ = false;
+    uint8_t uStage_ = 0;
+    std::vector<std::string> uLines_;
+    size_t uLineAt_ = 0;
+    uint32_t uPos_ = 0;
+    bool uEnd_ = false, uFiles_ = false;
     std::deque<std::pair<uint32_t, std::string>> fetched_;
     // Log index, and whether a nocard NAK for it can be cured: a post whose origin's card the peer has
     // from the handshake or got ahead of it this session. Without one, nocard is final for that entry.
@@ -141,12 +171,20 @@ private:
 
     // Sync progress, the peer.
     bool peerSeq_ = false, peerWant_ = false, peerSend_ = false, peerHend_ = false, peerDone_ = false;
+    bool peerUwant_ = false, peerUend_ = false;
 
     bool started_ = false, heard_ = false;  // heard_: a complete line came in since the last tick
     uint32_t startMs_ = 0, lastRxMs_ = 0;
     uint32_t linesRx_ = 0;
 
     uint32_t histTaken_ = 0;  // H lines passed to take this session
+    uint32_t userPostsTaken_ = 0, userRecsTaken_ = 0;  // U lines taken this session (posts; applications and votes)
+    uint32_t userETaken_ = 0;                          // E application, vote and listing lines taken this session
+    bool userGot_ = false;  // a U line this side took or already held: only then does UEND mark the pull done
+    // The listings pull this side asked for (un_files in its UWANT to a net3 peer); UEND F marks it done. U listing
+    // lines taken this session.
+    bool uAskFiles_ = false, uFilesHeld_ = false;  // held: an L U line was refused "store"
+    uint32_t userListsTaken_ = 0;
     uint32_t postsSent_ = 0, postsTaken_ = 0, naks_ = 0, naksSent_ = 0;
 };
 

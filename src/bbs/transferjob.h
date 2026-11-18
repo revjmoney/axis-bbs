@@ -19,6 +19,9 @@ struct TransferRequest {
     bool        upload = false;
     std::string area, name, desc;  // name: the file to send, or the name to save an XMODEM upload as
     char        proto = 'Z';       // Z ZMODEM, X XMODEM (CRC, 128), K XMODEM-1K
+#if AXIS_NETS
+    bool net = false;  // a Net Files download: the host makes the job over its fetch slot (name: for its log and screen)
+#endif
 };
 
 std::string cleanUploadName(const std::string& name);  // upper case, safe characters, no path
@@ -27,6 +30,13 @@ std::string cleanUploadName(const std::string& name);  // upper case, safe chara
 class TransferJob {
 public:
     TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info = {});
+#if AXIS_NETS
+    // A download from a file that is already open (a Net Files fetch: req.area and req.name are only for the
+    // host's log and screen). ready, when set, holds the sender until the data is there (transfer.h). The
+    // senders' answer timers do not run while it waits; this job has no stall timer of its own.
+    TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, std::unique_ptr<RandomFile> file,
+                uint32_t size, const std::string& name, net::Transfer::ReadyAt ready = nullptr);
+#endif
     ~TransferJob();
     bool               step(uint32_t nowMs);  // false once finished
     // a ZIP upload has arrived and wants checking: the host lends the board's inflate window (owner: this job,
@@ -45,6 +55,7 @@ public:
     const TransferRequest& request() const { return req_; }
 
 private:
+    void startSender(const std::string& name);  // a download: src_ and size_ are set
     bool startFile(const std::string& name, uint32_t size);
     bool writeData(const uint8_t* p, size_t n);
     void endFile(bool complete);

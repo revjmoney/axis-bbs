@@ -118,7 +118,15 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "net_name") c.netName = v;
         else if (k == "net_sysop_name") c.netSysopName = v;
         else if (k == "net_location") c.netLocation = v;
-        else if (k == "net_up") {}  // the main's settings frame says its Sysop Net runs (main.cpp); never kept
+        else if (k == "net_user") c.netUser = n != 0;
+        else if (k == "net_user_areas") c.netUserAreas = userNetMask(v);
+        else if (k == "net_user_level") c.netUserLevel = n < 1 ? 1 : n > 255 ? 255 : n;
+#if AXIS_NETS
+        else if (k == "net_files_areas") c.netFilesAreas = v;
+        else if (k == "net_files_radio_kb") c.netFilesRadioKb = n < 0 ? 0 : n;
+#endif
+        else if (k == "net_up" || k == "net_un" || k == "net_files") {}  // the main's settings frame: its Sysop Net runs, its User Net
+                                                                          // areas, it serves followers Net Files (main.cpp); never kept
         else if (k == "ratio") c.ratio = (int)n;
         else if (k == "nuv_yes") c.nuvYes = (int)n;
         else if (k == "nuv_no") c.nuvNo = (int)n;
@@ -213,6 +221,28 @@ bool areaFrom(const std::string& v, FileArea& a) {  // "id|name", "id|name|level
 }
 }  // namespace
 
+static const char* const kUserNetIds[4] = {"un_chat", "un_tech", "un_games", "un_files"};
+uint8_t userNetMask(const std::string& list) {
+    uint8_t     m = 0;
+    std::string id;
+    for (char ch : list + ",") {
+        if (ch != ',') {
+            if (ch != ' ') id += ch;
+            continue;
+        }
+        for (int i = 0; i < 4; i++)
+            if (id == kUserNetIds[i]) m |= (uint8_t)(1u << i);
+        id.clear();
+    }
+    return m;
+}
+std::string userNetList(uint8_t mask) {
+    std::string s;
+    for (int i = 0; i < 4; i++)
+        if (mask >> i & 1) s += std::string(s.empty() ? "" : ",") + kUserNetIds[i];
+    return s;
+}
+
 std::string areaText(const FileArea& a) {
     if (a.mirror) return a.id + "|" + a.name + "|" + std::to_string(a.minSecurity) + "|m";
     return a.id + "|" + a.name + (a.minSecurity ? "|" + std::to_string(a.minSecurity) : "");
@@ -268,6 +298,13 @@ std::string formatConfig(const BbsConfig& c) {
     kv("net_name", c.netName);
     kv("net_sysop_name", c.netSysopName);
     kv("net_location", c.netLocation);
+    kv("net_user", c.netUser ? "1" : "0");
+    kv("net_user_areas", userNetList(c.netUserAreas));
+    kv("net_user_level", std::to_string(c.netUserLevel));
+#if AXIS_NETS
+    kv("net_files_areas", c.netFilesAreas);
+    kv("net_files_radio_kb", std::to_string(c.netFilesRadioKb));
+#endif
     kv("theme", c.theme);
     kv("wfc", c.wfc);
     kv("ratio", std::to_string(c.ratio));

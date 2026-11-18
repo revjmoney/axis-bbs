@@ -7,7 +7,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <string>
@@ -99,6 +101,74 @@ inline NetNotice makeNotice(const KeyPair& k, int keyIdx, const std::string& kin
     return n;
 }
 
+// A signed User Net application from the board with key k.
+inline NetApp makeApp(const KeyPair& k, uint32_t seq = 1, uint32_t date = kNow, const std::string& blurb = "A board for testing",
+                      const std::string& mac = "02:00:00:00:00:01") {
+    NetApp a;
+    a.pub = pubOf(k);
+    a.board = boardId(a.pub);
+    a.name = "Test Board";
+    a.sysop = "Tester";
+    a.location = "Nowhere";
+    a.mac = mac;
+    a.blurb = blurb;
+    a.seq = seq;
+    a.date = date;
+    REQUIRE(signApp(a, k));
+    return a;
+}
+
+// A signed vote from the board with key k on the application app-a<appSeq>.
+inline NetVote makeVote(const KeyPair& k, const std::string& app, uint32_t appSeq, uint32_t seq, bool yes,
+                        uint32_t date = kNow, const std::string& comment = "") {
+    NetVote v;
+    v.pub = pubOf(k);
+    v.voter = boardId(v.pub);
+    v.app = app;
+    v.appSeq = appSeq;
+    v.seq = seq;
+    v.date = date;
+    v.yes = yes;
+    v.comment = comment;
+    REQUIRE(signVote(v, k));
+    return v;
+}
+
+// An apps file (/net/apps.txt) in RAM, wired into a NetCore with setAppsFile.
+struct AppsFile {
+    std::string text;
+    void wire(NetCore& core) {
+        core.setAppsFile(
+            [this](const std::string& line, uint32_t& off) {
+                off = (uint32_t)text.size();
+                text += line;
+                text += '\n';
+                return true;
+            },
+            [this](const NetCore::AppsLineFn& each) {
+                for (const auto& l : splitText())
+                    if (!each(l)) return;
+            },
+            [this](uint32_t off, std::string& line) {
+                if (off >= text.size()) return false;
+                size_t e = text.find('\n', off);
+                line = text.substr(off, e == std::string::npos ? std::string::npos : e - off);
+                return true;
+            });
+    }
+    std::vector<std::string> splitText() const {
+        std::vector<std::string> out;
+        size_t pos = 0;
+        while (pos < text.size()) {
+            size_t e = text.find('\n', pos);
+            if (e == std::string::npos) e = text.size();
+            if (e > pos) out.push_back(text.substr(pos, e - pos));
+            pos = e + 1;
+        }
+        return out;
+    }
+};
+
 // A temp folder of its own per object, removed afterwards.
 struct TempDir {
     fs::path p;
@@ -131,8 +201,16 @@ public:
         return inner_.read(a, num, out);
     }
     int post(const std::string& a, const axis::bbs::Message& m) override { return inner_.post(a, m); }
+    int postAfter(const std::string& a, int last, const axis::bbs::Message& m) override { return inner_.postAfter(a, last, m); }
     int drop(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& gone) override {
         return inner_.drop(a, gone);
+    }
+    void scanHeadersFrom(const std::string& a, uint32_t& pos, const std::function<bool(const axis::bbs::Message&)>& each) override {
+        inner_.scanHeadersFrom(a, pos, each);
+    }
+    bool readAt(const std::string& a, uint32_t at, int num, axis::bbs::Message& out) override {
+        if (failReads) return false;
+        return inner_.readAt(a, at, num, out);
     }
 
 private:
@@ -154,19 +232,81 @@ public:
     }
     bool read(const std::string& a, int num, axis::bbs::Message& out) override { return inner_.read(a, num, out); }
     int post(const std::string& a, const axis::bbs::Message& m) override { return inner_.post(a, m); }
+    int postAfter(const std::string& a, int last, const axis::bbs::Message& m) override { return inner_.postAfter(a, last, m); }
     int drop(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& gone) override {
         return inner_.drop(a, gone);
+    }
+    void scanHeadersFrom(const std::string& a, uint32_t& pos, const std::function<bool(const axis::bbs::Message&)>& each) override {
+        inner_.scanHeadersFrom(a, pos, each);
+    }
+    bool readAt(const std::string& a, uint32_t at, int num, axis::bbs::Message& out) override {
+        return inner_.readAt(a, at, num, out);
     }
 
 private:
     axis::bbs::MessageStore& inner_;
 };
 
+// A store that counts what is asked of one area (Net Files' nf_list by default) and passes everything through: whole
+// scans, scans from an offset, reads by number and reads at an offset, posts (each a whole-area read in the file
+// store), posts after a known last number, and drops.
+class CountingStore : public axis::bbs::MessageStore {
+public:
+    explicit CountingStore(axis::bbs::MessageStore& inner, std::string area = kNetFilesArea)
+        : inner_(inner), area_(std::move(area)) {}
+    int headerCalls = 0, scans = 0, scansFrom = 0, reads = 0, readsAt = 0, posts = 0, postAfters = 0, drops = 0;
+    std::vector<axis::bbs::Message> headers(const std::string& a) override {
+        headerCalls += a == area_;
+        return inner_.headers(a);
+    }
+    void scanHeaders(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& each) override {
+        scans += a == area_;
+        inner_.scanHeaders(a, each);
+    }
+    void scanHeadersFrom(const std::string& a, uint32_t& pos, const std::function<bool(const axis::bbs::Message&)>& each) override {
+        scansFrom += a == area_;
+        inner_.scanHeadersFrom(a, pos, each);
+    }
+    bool read(const std::string& a, int num, axis::bbs::Message& out) override {
+        reads += a == area_;
+        return inner_.read(a, num, out);
+    }
+    bool readAt(const std::string& a, uint32_t at, int num, axis::bbs::Message& out) override {
+        readsAt += a == area_;
+        return inner_.readAt(a, at, num, out);
+    }
+    // post reads the whole area for its last number (the file store); postAfter is told it and only appends.
+    int post(const std::string& a, const axis::bbs::Message& m) override {
+        posts += a == area_;
+        return inner_.post(a, m);
+    }
+    int postAfter(const std::string& a, int last, const axis::bbs::Message& m) override {
+        postAfters += a == area_;
+        return inner_.postAfter(a, last, m);
+    }
+    int drop(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& gone) override {
+        drops += a == area_;
+        return inner_.drop(a, gone);
+    }
+    void reset() { headerCalls = scans = scansFrom = reads = readsAt = posts = postAfters = drops = 0; }
+
+private:
+    axis::bbs::MessageStore& inner_;
+    std::string area_;
+};
+
 // A message store in RAM with the file store's rules (numbers per area never reused, headers give
-// at most the newest 200 without bodies and only the start of the net line), for tests that post
-// hundreds of times.
+// at most the newest 200 without bodies and only the start of the net line; a whole-area scan gives a
+// Net Files listing line whole, as the file store does), for tests that post hundreds of times. A
+// message's at is its place in the area, which readAt checks.
 class MemStore : public axis::bbs::MessageStore {
 public:
+    // The net line as headers() give it: "<kind>" 0x1F "<first field>" (a post's id, a listing's home board).
+    static std::string cut(const std::string& net) {
+        if (net.size() < 2 || net[1] != '\x1F') return std::string();
+        size_t e = net.find('\x1F', 2);
+        return net.substr(0, e);
+    }
     std::vector<axis::bbs::Message> headers(const std::string& a) override {
         std::vector<axis::bbs::Message> out;
         auto& v = areas_[a];
@@ -174,21 +314,29 @@ public:
         for (size_t i = from; i < v.size(); i++) {
             axis::bbs::Message m = v[i];
             m.body.clear();
-            std::string id = netPostId(m.net);
-            m.net = id.empty() ? std::string() : std::string("P\x1F") + id;
+            m.net = cut(m.net);
+            m.at = (uint32_t)i;
             out.push_back(m);
         }
         return out;
     }
-    // Like the file store: every message of the area, one at a time, in header form.
+    // Like the file store: every message of the area, one at a time, in header form, a listing (L) line whole.
     void scanHeaders(const std::string& a, const std::function<bool(const axis::bbs::Message&)>& each) override {
-        for (const auto& full : areas_[a]) {
-            axis::bbs::Message m = full;
+        auto& v = areas_[a];
+        for (size_t i = 0; i < v.size(); i++) {
+            axis::bbs::Message m = v[i];
             m.body.clear();
-            std::string id = netPostId(m.net);
-            m.net = id.empty() ? std::string() : std::string("P\x1F") + id;
+            if (m.net.compare(0, 2, "L\x1F") != 0) m.net = cut(m.net);
+            m.at = (uint32_t)i;
             if (!each(m)) return;
         }
+    }
+    bool readAt(const std::string& a, uint32_t at, int num, axis::bbs::Message& out) override {
+        auto& v = areas_[a];
+        if (at >= v.size() || v[at].num != num) return false;
+        out = v[at];
+        out.at = at;
+        return true;
     }
     bool read(const std::string& a, int num, axis::bbs::Message& out) override {
         for (const auto& m : areas_[a])
@@ -280,6 +428,150 @@ struct Node {
     }
 };
 
+// The node says net2 on its card (a Phase 2 board: peers send it UWANT and User Net records).
+inline void sayNet2(Node& n) {
+    NetCard c = n.card;
+    c.links = "internet,net2";
+    c.seq = n.card.seq + 1;
+    REQUIRE(signCard(c, n.key));
+    REQUIRE(n.core.setOwnCard(c));
+    n.card = c;
+}
+
+// A Phase 2 node with User Net on: net2 on its card, an apps file in RAM, and (carry) every User Net area carried.
+struct UNode : Node {
+    AppsFile apps;
+    explicit UNode(uint8_t seedByte, bool carry = true) : Node(seedByte) {
+        apps.wire(core);
+        sayNet2(*this);
+        if (carry) {
+            std::vector<std::string> all;
+            for (const auto& a : userNetAreas()) all.push_back(a.id);
+            core.setUserAreas(all);
+        }
+    }
+    // Rev's admit, deny or veto of a board, applied here.
+    bool seal(const std::string& kind, const std::string& board, uint32_t seq) {
+        return core.takeNotice(makeNotice(rev0(), 0, kind, board, seq, kind == "veto" ? "" : "1"), "");
+    }
+};
+
+// The node's card says what a Phase 3 board's says (kNetCardLinks: net2 and net3): peers send it listings.
+inline void sayNet3(Node& n) {
+    NetCard c = n.card;
+    c.links = kNetCardLinks;
+    c.seq = n.card.seq + 1;
+    REQUIRE(signCard(c, n.key));
+    REQUIRE(n.core.setOwnCard(c));
+    n.card = c;
+}
+
+// /net/files.idx in RAM, wired into a NetCore with setListingIndex. Each build draws its key from a counter, so two
+// builds draw different keys. Reads past the end fail, as a missing file's do.
+struct IdxFile {
+    std::string bytes;
+    uint8_t     draw = 0x40;
+    int         draws = 0;
+    int         reads = 0;  // read calls (each a seek and a read on the board's one handle)
+    uint32_t    failFrom = 0xFFFFFFFFu;  // writes that reach this offset fail (a full card past the file's old end)
+    void wire(NetCore& core) {
+        core.setListingIndex(
+            [this](uint32_t off, void* p, size_t n) {
+                reads++;
+                if ((size_t)off + n > bytes.size()) return false;
+                std::memcpy(p, bytes.data() + off, n);
+                return true;
+            },
+            [this](uint32_t off, const void* p, size_t n) {
+                if ((uint64_t)off + n > failFrom) return false;
+                if (bytes.size() < (size_t)off + n) bytes.resize((size_t)off + n);
+                std::memcpy(&bytes[off], p, n);
+                return true;
+            },
+            [this](void* p, size_t n) {
+                draws++;
+                for (size_t i = 0; i < n; i++) ((uint8_t*)p)[i] = (uint8_t)(draw + i * 7);
+                draw = (uint8_t)(draw + 0x11);
+            });
+    }
+    // The head's words: magic, clean, count, key[4], hasLast, lastNum, lastAt, end.
+    uint32_t word(size_t i) const {
+        uint32_t w = 0;
+        if (bytes.size() >= (i + 1) * 4) std::memcpy(&w, bytes.data() + i * 4, 4);
+        return w;
+    }
+    std::string key() const { return bytes.size() >= 28 ? bytes.substr(12, 16) : std::string(); }
+    void setWord(size_t i, uint32_t w) { std::memcpy(&bytes[i * 4], &w, 4); }
+};
+
+// Steps the listing index until it is ready (or n calls).
+inline int indexReady(NetCore& core, int n = 100000) {
+    int steps = 0;
+    while (steps < n && core.listingIndexStep()) steps++;
+    return steps;
+}
+
+// A Phase 3 node: User Net carried, net3 on its card, the listing index in RAM and built.
+struct FNode : UNode {
+    IdxFile idx;
+    explicit FNode(uint8_t seedByte, bool carry = true) : UNode(seedByte, carry) {
+        sayNet3(*this);
+        idx.wire(core);
+        indexReady(core);
+        REQUIRE(core.listingIndexReady());
+    }
+    // Rev admits each board here (seqs from 1, in order).
+    void admit(std::initializer_list<const std::string*> boards) {
+        uint32_t seq = admitted_;
+        for (const std::string* b : boards) REQUIRE(seal("admit", *b, ++seq));
+        admitted_ = seq;
+    }
+    // Every record in nf_list, oldest first (a header scan of the file store).
+    std::vector<NetListing> records() {
+        std::vector<NetListing> out;
+        files.scanHeaders(kNetFilesArea, [&](const axis::bbs::Message& m) {
+            NetListing l;
+            if (decode(m.net, l)) out.push_back(l);
+            return true;
+        });
+        return out;
+    }
+    // The seqs of the live (not gone) records of one name.
+    std::vector<uint32_t> liveSeqs(const std::string& name, const std::string& home = "") {
+        std::vector<uint32_t> out;
+        for (const auto& l : records())
+            if (l.name == name && !l.gone && (home.empty() || l.board == home)) out.push_back(l.seq);
+        return out;
+    }
+    // The ids listingsPage shows, newest first.
+    std::vector<std::string> page(int skip = 0, int max = 1000, int* next = nullptr) {
+        std::vector<std::string> out;
+        int n = core.listingsPage(skip, max, [&](const NetListing& l) { out.push_back(listingId(l)); });
+        if (next) *next = n;
+        return out;
+    }
+    uint32_t admitted_ = 0;
+};
+
+// A signed listing (or removal) from the board with key k.
+inline NetListing makeListing(const KeyPair& k, uint32_t seq, const std::string& name = "FILE.ZIP", bool gone = false,
+                              uint32_t date = kNow, const std::string& area = "files", uint32_t size = 1234) {
+    NetListing l;
+    l.board = boardOf(k);
+    l.area = area;
+    l.name = name;
+    l.desc = gone ? "" : "A file";
+    l.uploader = "Sysop";
+    l.reach = "i";
+    l.seq = seq;
+    l.size = gone ? 0 : size;
+    l.crc = gone ? 0 : 0x1234u + seq;
+    l.date = date;
+    l.gone = gone;
+    REQUIRE(signListing(l, k));
+    return l;
+}
+
 inline NetPost decodePost(const std::string& line) {
     NetPost p;
     REQUIRE(decode(line, p));
@@ -313,6 +605,29 @@ inline void run(NetSession& a, NetSession& b, uint32_t& ms, int rounds = 5000, b
             return;
         }
     }
+}
+
+// Like run, keeping what each side said: fromA is what a sent to b, fromB what b sent to a.
+inline void runBoth(NetSession& a, NetSession& b, std::string& fromA, std::string& fromB, int rounds = 5000) {
+    uint32_t ms = 0;
+    for (int i = 0; i < rounds; i++) {
+        std::string x = a.takeOut();
+        fromA += x;
+        if (!x.empty()) b.feed(x.data(), x.size());
+        std::string y = b.takeOut();
+        fromB += y;
+        if (!y.empty()) a.feed(y.data(), y.size());
+        a.tick(ms, true);
+        b.tick(ms, true);
+        ms += 10;
+        if (settled(a) && settled(b)) break;
+    }
+    std::string x = a.takeOut();
+    fromA += x;
+    if (!x.empty()) b.feed(x.data(), x.size());
+    std::string y = b.takeOut();
+    fromB += y;
+    if (!y.empty()) a.feed(y.data(), y.size());
 }
 
 inline std::vector<std::string> lines(const std::string& s) {

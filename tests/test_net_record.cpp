@@ -240,3 +240,385 @@ TEST_CASE("tampered post fails verify") {
     CHECK(verifyPost(t, pubOf(k)));
     CHECK_FALSE(verifyPost(p, pubOf(keyOf(0x34))));
 }
+
+TEST_CASE("app and vote round trip") {
+    KeyPair k = keyOf(0x41), voter = keyOf(0x42);
+    NetApp a = makeApp(k, 3, kNow, "line one\nline two \\ end");
+    std::string line = encode(a);
+    REQUIRE(!line.empty());
+    CHECK(line.find('\n') == std::string::npos);
+    NetApp a2;
+    REQUIRE(decode(line, a2));
+    CHECK(a2.board == a.board);
+    CHECK(a2.pub == a.pub);
+    CHECK(a2.name == a.name);
+    CHECK(a2.sysop == a.sysop);
+    CHECK(a2.location == a.location);
+    CHECK(a2.mac == a.mac);
+    CHECK(a2.blurb == a.blurb);
+    CHECK(a2.seq == 3);
+    CHECK(a2.date == kNow);
+    CHECK(a2.sig == a.sig);
+    CHECK(verifyApp(a2));
+    CHECK(appId(a2) == a.board + "-a3");
+
+    NetVote v = makeVote(voter, a.board, 3, 7, true, kNow, "good board");
+    NetVote v2;
+    REQUIRE(decode(encode(v), v2));
+    CHECK(v2.voter == v.voter);
+    CHECK(v2.pub == v.pub);
+    CHECK(v2.app == a.board);
+    CHECK(v2.appSeq == 3);
+    CHECK(v2.seq == 7);
+    CHECK(v2.date == kNow);
+    CHECK(v2.yes);
+    CHECK(v2.comment == "good board");
+    CHECK(v2.sig == v.sig);
+    CHECK(verifyVote(v2));
+    NetVote no = makeVote(voter, a.board, 3, 8, false);
+    REQUIRE(decode(encode(no), v2));
+    CHECK_FALSE(v2.yes);
+
+    // The blurb and comment caps: 240 and 72 fit, one more does not (encode, sign and decode all refuse).
+    NetApp big = a;
+    big.blurb = std::string(kNetMaxBlurb, 'b');
+    CHECK(signApp(big, k));
+    CHECK(!encode(big).empty());
+    std::vector<std::string> f = fields(encode(big));
+    REQUIRE(f.size() == 11);
+    f[7] += "b";  // a 241 byte blurb
+    CHECK_FALSE(decode(join(f), a2));
+    big.blurb = std::string(kNetMaxBlurb + 1, 'b');
+    CHECK_FALSE(signApp(big, k));
+    big.sig = sig128();
+    CHECK(encode(big).empty());
+
+    NetVote longer = v;
+    longer.comment = std::string(kNetMaxComment, 'c');
+    CHECK(signVote(longer, voter));
+    std::vector<std::string> vf = fields(encode(longer));
+    REQUIRE(vf.size() == 10);
+    vf[8] += "c";  // a 73 byte comment
+    CHECK_FALSE(decode(join(vf), v2));
+    longer.comment = std::string(kNetMaxComment + 1, 'c');
+    CHECK_FALSE(signVote(longer, voter));
+    longer.sig = sig128();
+    CHECK(encode(longer).empty());
+
+    // A bad MAC: wrong separators, a non-hex digit, the wrong length.
+    for (const char* mac : {"02-00-00-00-00-01", "02:00:00:00:00:0g", "02:00:00:00:00", "0200000000001"}) {
+        NetApp m = a;
+        m.mac = mac;
+        CHECK_FALSE(signApp(m, k));
+        std::vector<std::string> mf = fields(line);
+        mf[6] = mac;
+        CHECK_FALSE(decode(join(mf), a2));
+    }
+    // Upper case hex digits in the MAC are fine.
+    NetApp upper = a;
+    upper.mac = "02:AB:00:00:00:01";
+    CHECK(signApp(upper, k));
+    REQUIRE(decode(encode(upper), a2));
+    CHECK(verifyApp(a2));
+
+    // An app whose boardId(pub) is not its board: signing refuses it; the line decodes (decode checks no
+    // signature or key), but it never verifies.
+    NetApp other = a;
+    other.board = boardOf(keyOf(0x43));
+    CHECK_FALSE(signApp(other, k));
+    std::vector<std::string> of = fields(line);
+    of[1] = other.board;
+    REQUIRE(decode(join(of), a2));
+    CHECK_FALSE(verifyApp(a2));
+    // The same for a vote whose voter is not boardId(pub).
+    NetVote wrong = v;
+    wrong.voter = boardOf(keyOf(0x43));
+    CHECK_FALSE(signVote(wrong, voter));
+    // A key that is not the app's own cannot sign it.
+    NetApp stolen = a;
+    CHECK_FALSE(signApp(stolen, keyOf(0x44)));
+
+    // Seqs start at 1.
+    NetApp zero = a;
+    zero.seq = 0;
+    CHECK_FALSE(signApp(zero, k));
+    NetVote vz = v;
+    vz.appSeq = 0;
+    CHECK_FALSE(signVote(vz, voter));
+    vz = v;
+    vz.seq = 0;
+    CHECK_FALSE(signVote(vz, voter));
+    // y or n only.
+    vf = fields(encode(v));
+    vf[7] = "Y";
+    CHECK_FALSE(decode(join(vf), v2));
+}
+
+TEST_CASE("an application with no MAC is accepted by signApp and decode") {
+    KeyPair k = keyOf(0x45);
+    NetApp a = makeApp(k, 1, kNow, "no mac", "");
+    NetApp b;
+    REQUIRE(decode(encode(a), b));
+    CHECK(b.mac.empty());
+    CHECK(verifyApp(b));
+}
+
+TEST_CASE("tampered app or vote fails verify") {
+    KeyPair k = keyOf(0x46), voter = keyOf(0x47);
+    NetApp a = makeApp(k, 2, kNow, "blurb");
+    CHECK(verifyApp(a));
+    NetApp t = a;
+    t.blurb = "blurc";
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.name = "Other";
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.mac = "02:00:00:00:00:02";
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.seq = 3;
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.date += 1;
+    CHECK_FALSE(verifyApp(t));
+    t = a;
+    t.sig[0] = t.sig[0] == 'a' ? 'b' : 'a';
+    CHECK_FALSE(verifyApp(t));
+
+    NetVote v = makeVote(voter, a.board, 2, 1, true, kNow, "yes please");
+    CHECK(verifyVote(v));
+    NetVote w = v;
+    w.yes = false;
+    CHECK_FALSE(verifyVote(w));
+    w = v;
+    w.comment = "no thanks";
+    CHECK_FALSE(verifyVote(w));
+    w = v;
+    w.appSeq = 3;
+    CHECK_FALSE(verifyVote(w));
+    w = v;
+    w.seq = 2;
+    CHECK_FALSE(verifyVote(w));
+    w = v;
+    w.app = boardOf(keyOf(0x48));
+    CHECK_FALSE(verifyVote(w));
+    // Another key's pub with the voter id left: the board id no longer matches the pub.
+    w = v;
+    w.pub = pubOf(keyOf(0x48));
+    CHECK_FALSE(verifyVote(w));
+}
+
+// Net Files records: L (a listing or its removal) and Q (a fetch request), and the board's own card.
+
+namespace {
+NetFetch makeFetch(const KeyPair& k, const std::string& listing, uint32_t offset = 0) {
+    NetFetch f;
+    f.board = boardOf(k);
+    f.listing = listing;
+    f.handle = "Caller";
+    f.dialNonce = nonce(0x11);
+    f.servNonce = nonce(0x22);
+    f.offset = offset;
+    REQUIRE(signFetch(f, k));
+    return f;
+}
+}  // namespace
+
+TEST_CASE("listing and fetch round trip") {
+    KeyPair    k = keyOf(0x61);
+    NetListing l = makeListing(k, 42, "TOOL.NC", false, kNow, "files", 340 * 1024);
+    l.desc = "A G-code test, with | and spaces";
+    REQUIRE(signListing(l, k));
+    std::string line = encode(l);
+    REQUIRE(!line.empty());
+    CHECK(line[0] == 'L');
+    CHECK(fields(line).size() == 13);
+    NetListing back;
+    REQUIRE(decode(line, back));
+    CHECK(back.board == l.board);
+    CHECK(back.area == "files");
+    CHECK(back.name == "TOOL.NC");
+    CHECK(back.desc == l.desc);
+    CHECK(back.uploader == "Sysop");
+    CHECK(back.reach == "i");
+    CHECK(back.seq == 42);
+    CHECK(back.size == 340u * 1024);
+    CHECK(back.crc == l.crc);
+    CHECK(back.date == kNow);
+    CHECK_FALSE(back.gone);
+    CHECK(encode(back) == line);
+    CHECK(listingId(back) == l.board + "-42");
+    CHECK(verifyListing(back, pubOf(k)));
+
+    NetListing g = makeListing(k, 43, "TOOL.NC", true);
+    NetListing gb;
+    REQUIRE(decode(encode(g), gb));
+    CHECK(gb.gone);
+    CHECK(gb.size == 0);
+    CHECK(gb.desc.empty());
+
+    NetFetch f = makeFetch(keyOf(0x62), listingId(l), 1234);
+    std::string fl = encode(f);
+    REQUIRE(!fl.empty());
+    CHECK(fl[0] == 'Q');
+    CHECK(fields(fl).size() == 8);
+    NetFetch fb;
+    REQUIRE(decode(fl, fb));
+    CHECK(fb.board == f.board);
+    CHECK(fb.listing == listingId(l));
+    CHECK(fb.handle == "Caller");
+    CHECK(fb.dialNonce == nonce(0x11));
+    CHECK(fb.servNonce == nonce(0x22));
+    CHECK(fb.offset == 1234);
+    CHECK(encode(fb) == fl);
+    CHECK(verifyFetch(fb, pubOf(keyOf(0x62))));
+}
+
+TEST_CASE("listing and fetch field rules") {
+    KeyPair k = keyOf(0x63);
+    auto refused = [&](NetListing l) {
+        l.sig.clear();
+        return !signListing(l, k) && encode(l).empty();
+    };
+    NetListing ok = makeListing(k, 1, "OK.ZIP");
+    CHECK_FALSE(refused(ok));
+    NetListing l = ok;
+    l.name = "dir/FILE.ZIP";  // a path in the name
+    CHECK(refused(l));
+    l = ok;
+    l.name = "..";
+    CHECK(refused(l));
+    l = ok;
+    l.desc = std::string(kNetListDesc + 1, 'd');  // 121 bytes
+    CHECK(refused(l));
+    l.desc = std::string(kNetListDesc, 'd');      // 120 is fine
+    CHECK_FALSE(refused(l));
+    l = ok;
+    l.gone = true;  // a removal with a size (or a crc, or a description) left on
+    CHECK(refused(l));
+    l.size = 0;
+    l.crc = 0;
+    CHECK(refused(l));  // the description still there
+    l.desc.clear();
+    CHECK_FALSE(refused(l));
+    l = ok;
+    l.seq = 0;
+    CHECK(refused(l));
+    l = ok;
+    l.reach = "x";
+    CHECK(refused(l));
+    l = ok;
+    l.area = "Files";  // areas are lowercase ids
+    CHECK(refused(l));
+    l = ok;
+    l.uploader = std::string(31, 'u');
+    CHECK(refused(l));
+
+    // The same rules on the way in: a line that encode would refuse does not decode.
+    std::vector<std::string> f = fields(encode(ok));
+    std::vector<std::string> bad = f;
+    bad[3] = "dir/FILE.ZIP";
+    NetListing out;
+    CHECK_FALSE(decode(join(bad), out));
+    bad = f;
+    bad[4] = std::string(kNetListDesc + 1, 'd');
+    CHECK_FALSE(decode(join(bad), out));
+    bad = f;
+    bad[11] = "1";  // gone, with the size still there
+    CHECK_FALSE(decode(join(bad), out));
+    bad = f;
+    bad[11] = "2";
+    CHECK_FALSE(decode(join(bad), out));
+    bad = f;
+    bad[12] = std::string(128, 'A');  // an uppercase signature
+    CHECK_FALSE(decode(join(bad), out));
+
+    NetFetch q = makeFetch(keyOf(0x64), ok.board + "-1");
+    std::vector<std::string> qf = fields(encode(q));
+    NetFetch qo;
+    CHECK(decode(join(qf), qo));
+    std::vector<std::string> qb = qf;
+    qb[4] = "AAAAAAAAAAAAAAAA";  // an uppercase nonce
+    CHECK_FALSE(decode(join(qb), qo));
+    qb = qf;
+    qb[5] = "abc";  // a short one
+    CHECK_FALSE(decode(join(qb), qo));
+    qb = qf;
+    qb[5] = "";  // an empty one
+    CHECK_FALSE(decode(join(qb), qo));
+    qb = qf;
+    qb[2] = "not-an-id";
+    CHECK_FALSE(decode(join(qb), qo));
+    NetFetch up = q;
+    up.dialNonce = "ABCDEF0123456789";
+    CHECK_FALSE(signFetch(up, keyOf(0x64)));
+    CHECK(encode(up).empty());
+}
+
+TEST_CASE("a listing and a fetch are signed by their own board's key; a changed byte fails verify") {
+    KeyPair    k = keyOf(0x65), other = keyOf(0x66);
+    NetListing l = makeListing(k, 7, "SIGNED.ZIP");
+    CHECK(verifyListing(l, pubOf(k)));
+    CHECK_FALSE(verifyListing(l, pubOf(other)));
+    NetListing w = l;
+    CHECK_FALSE(signListing(w, other));  // another board's key cannot sign for k's board
+    for (int field = 0; field < 7; field++) {
+        NetListing t = l;
+        switch (field) {
+            case 0: t.name = "SIGNEE.ZIP"; break;
+            case 1: t.desc = "A filf"; break;
+            case 2: t.size += 1; break;
+            case 3: t.crc ^= 1; break;
+            case 4: t.seq += 1; break;
+            case 5: t.area = "filez"; break;
+            case 6: t.sig[5] = t.sig[5] == 'a' ? 'b' : 'a'; break;
+        }
+        CAPTURE(field);
+        CHECK_FALSE(verifyListing(t, pubOf(k)));
+    }
+    // A changed byte on the wire: the line still decodes, and fails verify.
+    std::string line = encode(l);
+    size_t at = line.find("A file");
+    REQUIRE(at != std::string::npos);
+    line[at] = 'B';
+    NetListing back;
+    REQUIRE(decode(line, back));
+    CHECK_FALSE(verifyListing(back, pubOf(k)));
+
+    NetFetch f = makeFetch(k, l.board + "-7", 10);
+    CHECK(verifyFetch(f, pubOf(k)));
+    CHECK_FALSE(verifyFetch(f, pubOf(other)));
+    NetFetch t = f;
+    t.offset = 11;
+    CHECK_FALSE(verifyFetch(t, pubOf(k)));
+    t = f;
+    t.servNonce = nonce(0x23);
+    CHECK_FALSE(verifyFetch(t, pubOf(k)));
+    t = f;
+    t.handle = "Other";
+    CHECK_FALSE(verifyFetch(t, pubOf(k)));
+}
+
+TEST_CASE("this board's own card signs with its real links, which carry net2 and net3") {
+    KeyPair k = keyOf(0x67);
+    NetCard c = makeCard(k, "Board One");
+    c.links = kNetCardLinks;  // what the board (main.cpp) and the PC peer put on their cards
+    c.seq = 2;
+    REQUIRE(signCard(c, k));
+    std::string line = encode(c);
+    REQUIRE(!line.empty());
+    NetCard back;
+    REQUIRE(decode(line, back));
+    CHECK(verifyCard(back));
+    CHECK(back.links == kNetCardLinks);
+    std::string links = "," + back.links + ",";
+    CHECK(links.find(",net2,") != std::string::npos);
+    CHECK(links.find(",net3,") != std::string::npos);
+    // The Task 2 to 6 links: 18 characters, past the card's 16, so no card could be made at all.
+    NetCard old = c;
+    old.links = "internet,net2,net3";
+    old.sig.clear();
+    CHECK_FALSE(signCard(old, k));
+    CHECK(encode(old).empty());
+}

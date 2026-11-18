@@ -222,6 +222,7 @@ void ZmodemSender::sendData(uint32_t now) {
     uint8_t buf[kBlock];
     for (int k = 0; k < kBlocksPerStep && st_ == St::Streaming; k++) {
         uint32_t n = size_ - pos_ < kBlock ? size_ - pos_ : (uint32_t)kBlock;
+        if (n && !dataReady(pos_, n)) return;  // next step (Streaming runs no timer, so nothing times out meanwhile)
         if (n && !read_(pos_, buf, n)) {
             cancel(line_);
             finish(Result::Failed, "read error");

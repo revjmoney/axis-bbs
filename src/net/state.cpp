@@ -50,13 +50,25 @@ bool parseLimits(const std::string& v, uint32_t& posts, uint32_t& bytes) {
            parseU32(v.substr(mid + b.size()), bytes);
 }
 
-enum class Group { None, Post, Board, Limits, Rotate };
+// value = "yes=<1..20>,no=<1..20>"
+bool parseVotes(const std::string& v, uint32_t& yes, uint32_t& no) {
+    static const std::string a = "yes=", b = ",no=";
+    if (v.compare(0, a.size(), a) != 0) return false;
+    size_t mid = v.find(b);
+    if (mid == std::string::npos || mid < a.size()) return false;
+    if (!parseU32(v.substr(a.size(), mid - a.size()), yes) || !parseU32(v.substr(mid + b.size()), no)) return false;
+    return yes >= 1 && yes <= kMaxVotesNeeded && no >= 1 && no <= kMaxVotesNeeded;
+}
+
+enum class Group { None, Post, Board, Member, Limits, Votes, Rotate };
 
 const char* groupName(Group g) {
     switch (g) {
         case Group::Post: return "post";
         case Group::Board: return "board";
+        case Group::Member: return "member";
         case Group::Limits: return "limits";
+        case Group::Votes: return "votes";
         case Group::Rotate: return "rotate";
         default: return "";
     }
@@ -65,6 +77,7 @@ const char* groupName(Group g) {
 // The group is decided by the kind and the shape of the target. None means rejected.
 Group groupOf(const NetNotice& n) {
     if (n.kind == "limits") return n.target == "net" ? Group::Limits : Group::None;
+    if (n.kind == "votes") return n.target == "net" ? Group::Votes : Group::None;
     if (n.kind == "rotate") return (n.target == "0" || n.target == "1") ? Group::Rotate : Group::None;
     if (n.target.find('-') != std::string::npos) {
         if (n.kind == "hold" || n.kind == "kill" || n.kind == "lift") return Group::Post;
@@ -72,6 +85,7 @@ Group groupOf(const NetNotice& n) {
     }
     if (isLowerHex(n.target, 16)) {
         if (n.kind == "ban" || n.kind == "lift") return Group::Board;
+        if (n.kind == "admit" || n.kind == "deny" || n.kind == "veto") return Group::Member;
         return Group::None;
     }
     return Group::None;
@@ -194,6 +208,10 @@ void NetState::reverify() {
         posts_ = kDefaultPostsPerDay;
         bytes_ = kDefaultBytesPerDay;
     }
+    if (notices_.find(std::make_pair(std::string("votes"), std::string("net"))) == notices_.end()) {
+        votesYes_ = kDefaultVotesYes;
+        votesNo_ = kDefaultVotesNo;
+    }
     if (dropped) {
         highSeq_ = 0;
         for (const Entry& r : rotates_) highSeq_ = std::max(highSeq_, r.n.seq);
@@ -211,6 +229,7 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
     Group g = groupOf(n);
     if (g == Group::None) return false;
     if (!verifyAt(n)) return false;
+    gen_++;  // (what banned, held and killed say may change)
 
     if (g == Group::Rotate) {
         if (rotates_.size() >= kMaxRotates) return false;
@@ -243,6 +262,17 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
     }
     uint32_t posts = 0, bytes = 0;
     if (g == Group::Limits && !parseLimits(n.value, posts, bytes)) return false;
+    uint32_t yes = 0, no = 0;
+    if (g == Group::Votes && !parseVotes(n.value, yes, no)) return false;
+    if (g == Group::Member) {
+        // admit and deny name the application seq; a veto names none.
+        uint32_t appSeq = 0;
+        if (n.kind == "veto" ? !n.value.empty() : (!parseU32(n.value, appSeq) || appSeq == 0)) return false;
+        if (it == notices_.end()) {
+            // Full: a new target is refused. Never evicted, the tally depends on every seal.
+            if (memberNoticeCount() >= kMaxMemberNotices) return false;
+        }
+    }
 
     Entry e;
     e.n = n;
@@ -252,6 +282,9 @@ bool NetState::applyNotice(const NetNotice& n, uint32_t nowDay) {
     if (g == Group::Limits) {
         posts_ = posts;
         bytes_ = bytes;
+    } else if (g == Group::Votes) {
+        votesYes_ = yes;
+        votesNo_ = no;
     } else if (g == Group::Board && n.kind == "ban") {
         cards_.erase(n.target);  // the ban notice alone records the ban
     }
@@ -272,6 +305,7 @@ void NetState::restamp(uint32_t nowDay) {
 
 void NetState::prune(uint32_t nowDay) {
     restamp(nowDay);
+    gen_++;
     for (auto i = notices_.begin(); i != notices_.end();) {
         if (i->first.first == "post" && nowDay > i->second.day &&
             nowDay - i->second.day > kPostNoticeDays)
@@ -284,6 +318,26 @@ void NetState::prune(uint32_t nowDay) {
 bool NetState::banned(const std::string& board) const {
     auto it = notices_.find(std::make_pair(std::string("board"), board));
     return it != notices_.end() && it->second.n.kind == "ban";
+}
+const NetNotice* NetState::memberNotice(const std::string& board) const {
+    auto it = notices_.find(std::make_pair(std::string("member"), board));
+    return it == notices_.end() ? nullptr : &it->second.n;
+}
+uint32_t NetState::memberNoticeDay(const std::string& board) const {
+    auto it = notices_.find(std::make_pair(std::string("member"), board));
+    return it == notices_.end() ? 0 : it->second.day;
+}
+size_t NetState::memberNoticeCount() const {
+    size_t n = 0;
+    for (auto i = notices_.lower_bound(std::make_pair(std::string("member"), std::string()));
+         i != notices_.end() && i->first.first == "member"; ++i)
+        ++n;
+    return n;
+}
+void NetState::forEachMemberNotice(const std::function<void(const std::string& board, const NetNotice&)>& f) const {
+    for (auto i = notices_.lower_bound(std::make_pair(std::string("member"), std::string()));
+         i != notices_.end() && i->first.first == "member"; ++i)
+        f(i->first.second, i->second.n);
 }
 bool NetState::held(const std::string& postId) const {
     auto it = notices_.find(std::make_pair(std::string("post"), postId));
@@ -351,12 +405,15 @@ std::string NetState::save() const {
 }
 
 void NetState::load(const std::string& text, uint32_t nowDay) {
+    gen_++;
     cards_.clear();
     notices_.clear();
     rotates_.clear();
     highSeq_ = 0;
     posts_ = kDefaultPostsPerDay;
     bytes_ = kDefaultBytesPerDay;
+    votesYes_ = kDefaultVotesYes;
+    votesNo_ = kDefaultVotesNo;
     setRevKey(0, builtinRevKey(0));
     setRevKey(1, builtinRevKey(1));
 

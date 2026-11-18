@@ -84,6 +84,9 @@ set(AXISCORE_SOURCES
     src/net/outlog.cpp
     src/net/session.cpp
     src/net/netrecord.cpp
+    src/net/recordview.cpp
+    src/net/members.cpp
+    src/net/fetch.cpp
     dosemu/door/cpu.cpp
     dosemu/door/guestmem.cpp
     dosemu/door/mz.cpp
@@ -195,6 +198,11 @@ add_executable(axis_tests
     tests/test_net_core.cpp
     tests/test_net_session.cpp
     tests/test_net_record_log.cpp
+    tests/test_net_members.cpp
+    tests/test_net_usernet.cpp
+    tests/test_net_recordview.cpp
+    tests/test_net_fetch.cpp
+    tests/test_net_listing.cpp
     tests/test_features.cpp
     tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)

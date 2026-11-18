@@ -3,6 +3,7 @@
 // BBS settings from the first-boot setup, stored as key=value lines (axis.ini).
 #pragma once
 #include <cctype>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,6 +52,10 @@ inline bool lordGameExe(const std::string& exe) {
 
 // A file area. Its files live in /files/<id>/ on the SD card.
 struct FileArea;
+// The User Net areas (un_chat, un_tech, un_games, un_files: net/areas.h userNetAreas order) as a mask, bit i for area i,
+// from a comma list (other ids and spaces are dropped), and back.
+uint8_t     userNetMask(const std::string& list);
+std::string userNetList(uint8_t mask);
 std::string areaText(const FileArea& a);  // "id|name", "id|name|level" or "id|name|level|m", as the settings keep it
 
 struct FileArea {
@@ -101,6 +106,17 @@ struct BbsConfig {
     std::string netFirstPeer;
     int         netSyncMin = 15, netKeepPosts = 500, netKeepDays = 90;
     std::string netName, netSysopName, netLocation;
+    // User Net (net/members.h): "net_user" (off unless 1) this board wants it; "net_user_areas" the un_ areas it carries
+    // (comma list, kept as a mask: userNetMask); "net_user_level" the lowest security that may read and post in them.
+    bool        netUser = false;
+    uint8_t     netUserAreas = 15;
+    int         netUserLevel = 20;
+#if AXIS_NETS
+    // Net Files (User Net): "net_files_areas" the local file area ids shared on User Net (comma list, blank = none);
+    // "net_files_radio_kb" the size in KB over which a caller on a radio link is asked before a fetch.
+    std::string netFilesAreas;
+    int         netFilesRadioKb = 64;
+#endif
     bool        setupDone = false;
     // "doorN=id|name|exe|args|drop"; LORD unless the settings list doors
     // an exe starting with '*' is a door built into the firmware ("*ANSIVIEW": args = the area it shows)

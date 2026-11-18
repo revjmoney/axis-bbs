@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// Net state: board cards, Rev's signed notices (ban, hold, kill, lift, limits, rotate) applied
-// by sequence number, the seen-post dedupe set, and per-board daily ingress limits.
+// Net state: board cards, Rev's signed notices (ban, hold, kill, lift, limits, rotate, and for User
+// Net admit, deny, veto and votes) applied by sequence number, the seen-post dedupe set, and per-board daily ingress limits.
 // Days are day numbers (unix time / 86400) supplied by the caller; nothing here reads a clock.
 #pragma once
 #include <cstddef>
@@ -30,6 +30,13 @@ constexpr uint32_t kPostNoticeDays = 150;
 constexpr size_t kMaxRotates = 16;
 constexpr size_t kMaxPostNotices = 64;   // hold/kill/lift of posts: the oldest applied goes first
 constexpr size_t kMaxBoardNotices = 64;  // ban/lift of boards: the oldest lift goes first, then the oldest ban
+// admit/deny/veto of User Net boards: the hard User Net size. A new target past it is refused, never
+// evicted, since the tally depends on every seal. Only Rev's own commands and the auto seal's admits
+// (never denies) make them, so an outsider cannot use them up.
+constexpr size_t kMaxMemberNotices = 64;
+constexpr uint32_t kDefaultVotesYes = 3;  // yes votes that admit an applicant, until a votes notice
+constexpr uint32_t kDefaultVotesNo = 3;   // no votes that deny one
+constexpr uint32_t kMaxVotesNeeded = 20;  // a votes notice asks for 1..20 of each
 constexpr uint32_t kDefaultPostsPerDay = 50;
 constexpr uint32_t kDefaultBytesPerDay = 64 * 1024;
 // Below this day number the board's clock was not set (1700000000 / 86400, as kNetClockSet in areas.h).
@@ -49,12 +56,25 @@ public:
     bool banned(const std::string& board) const;
     bool held(const std::string& postId) const;
     bool killed(const std::string& postId) const;
+    // Moves whenever a notice is applied, notices are pruned or the state is loaded: what banned, held and killed
+    // answer may have changed (NetCore's cached count of live listings).
+    uint32_t gen() const { return gen_; }
     uint32_t highSeq() const { return highSeq_; }
     // The highest notice seq ever applied here, kept across pruning and restarts (save writes it as "H <seq>");
     // a new notice from Rev's board takes the one after max(this, highSeq), so no seq is ever used twice.
     uint32_t usedSeq() const { return usedSeq_ > highSeq_ ? usedSeq_ : highSeq_; }
     uint32_t postsPerDay() const { return posts_; }
     uint32_t bytesPerDay() const { return bytes_; }
+    uint32_t votesYes() const { return votesYes_; }
+    uint32_t votesNo() const { return votesNo_; }
+    // Rev's current admit, deny or veto for this board, or nullptr if none.
+    const NetNotice* memberNotice(const std::string& board) const;
+    // The local day that notice was applied (0 if none).
+    uint32_t memberNoticeDay(const std::string& board) const;
+    // How many admit, deny and veto notices are held (at most kMaxMemberNotices).
+    size_t memberNoticeCount() const;
+    // Visits every current admit, deny and veto (no copies), in board id order.
+    void forEachMemberNotice(const std::function<void(const std::string& board, const NetNotice&)>& f) const;
     size_t cardCount() const { return cards_.size(); }
     const NetCard* card(const std::string& board) const;
     // Visits every current card (no copies), for callers that need the list of known boards.
@@ -62,7 +82,7 @@ public:
     // Boards whose cards are never evicted to make room (besides cards carrying a current Rev key).
     void setPinned(std::function<bool(const std::string& board)> pinned) { pinned_ = std::move(pinned); }
     // The encoded line of the notice stored now for (group, target), or "" if none. Groups are
-    // "post", "board" and "limits" (target "net"); see noticeGroup.
+    // "post", "board", "member", "limits" and "votes" (both target "net"); see noticeGroup.
     std::string noticeLine(const std::string& group, const std::string& target) const;
     // The encoded rotate notice with this seq from the rotate chain, or "" if none.
     std::string rotateLine(uint32_t seq) const;
@@ -93,13 +113,17 @@ private:
     std::vector<Entry> rotates_;                                     // seq order, at most kMaxRotates
     std::function<bool(const std::string&)> pinned_;
     uint64_t counter_ = 0;
+    uint32_t gen_ = 0;
     uint32_t highSeq_ = 0;
     uint32_t usedSeq_ = 0;  // never lowered
     uint32_t posts_ = kDefaultPostsPerDay;
     uint32_t bytes_ = kDefaultBytesPerDay;
+    uint32_t votesYes_ = kDefaultVotesYes;
+    uint32_t votesNo_ = kDefaultVotesNo;
 };
 
-// The group a notice is stored under: "post", "board", "limits" or "rotate"; "" if it is invalid.
+// The group a notice is stored under: "post", "board", "member", "limits", "votes" or "rotate"; "" if
+// it is invalid.
 std::string noticeGroup(const NetNotice& n);
 
 // Seen posts, per origin board: post ids are "<board>-<seq>", and each board keeps its highest seq

@@ -142,6 +142,10 @@ public:
     // Whether this caller's line is backed up (a slow radio caller): while it is, the login sequence does not start its next
     // step or the menu after it (poll does once there is room), so one turn draws at most one screen.
     void        setBackedUp(std::function<bool()> backedUp) { backedUp_ = std::move(backedUp); }
+#if AXIS_NET_FILES
+    // The host's Net Files: Files ends with a "Net Files (User Net)" row while the caller may read User Net: Files.
+    void        setNetFiles(NetFilesView v) { netFiles_ = std::move(v); }
+#endif
     // With direct set, a screen leaves in pieces of about this size as it is drawn, instead of piling up whole in the output.
     static constexpr size_t kOutSpill = 2048;
     void        begin(uint32_t nowMs);
@@ -165,6 +169,7 @@ public:
     std::string tagline() const;       // the caller's tagline (signs their posts), "" if none
     std::string activityText() const;  // what the caller is doing, in a few words ("files: ANSI Packs")
     const std::string& handle() const { return handle_; }
+    int                securityLevel() const;  // the sysop 255, a caller their account's, no accounts 0
     // the door the caller picked ("" unless InDoor); the host runs it, then calls resumeAfterDoor
     std::string      doorRequested() const { return state_ == State::InDoor ? door().id : ""; }
     const DoorEntry& door() const { return door_ < doorList_.size() ? doorList_[door_] : cfg_->doors[door_]; }
@@ -358,7 +363,6 @@ private:
     int                       mnTo_ = 0, splitWith_ = 0, splitAsk_ = 0;  // the node asked, in split chat with, asking us
     int                       splitRow_[2] = {2, 14}, splitCol_[2] = {1, 1};  // split chat cursors: their half, mine
     std::vector<FileArea>     myAreas_, myMsgAreas_;  // the areas this caller's security level opens
-    int                       securityLevel() const;  // the sysop 255, a caller their account's, no accounts 0
     std::vector<FileArea>     openTo(const std::vector<FileArea>& all) const;
     std::string               splitHandle_;        // who is asking us
     std::vector<std::string>  notes_;              // notes that came while a door or transfer had the screen
@@ -427,6 +431,9 @@ private:
     std::unique_ptr<NewUserApp> app_;
     FileLibrary*              files_;
     std::unique_ptr<FileBrowser> browser_;
+#if AXIS_NET_FILES
+    NetFilesView                 netFiles_;
+#endif
     std::unique_ptr<AxisNetMenu> net_;
     net::LinkInfo                link_;
     std::shared_ptr<bool>        liteNow_ = std::make_shared<bool>(false);  // lite(), for the art loaders (survives a move)
