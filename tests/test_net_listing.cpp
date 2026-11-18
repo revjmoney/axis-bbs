@@ -213,9 +213,9 @@ TEST_CASE("listings: the per-board cap drops that board's oldest; the total cap 
         CHECK(bs == std::vector<uint32_t>{6, 7, 8});
         CHECK(own == 2);
     }
-    {  // total 6 (3 + 3 + 2 = 8 live): one at a time from whoever holds the most, never this board's own
+    {  // total 4 of others (3 + 3 = 6, this board's 2 not counted): one at a time from whoever holds the most
         r.now += kDay;  // the trim runs once a day
-        r.core.setListingCaps(6, 200);
+        r.core.setListingCaps(4, 200);
         r.core.trim(r.now);
         indexReady(r.core);
         std::vector<uint32_t> as, bs;
@@ -231,9 +231,9 @@ TEST_CASE("listings: the per-board cap drops that board's oldest; the total cap 
         CHECK(bs == std::vector<uint32_t>{7, 8});
         CHECK(own == 2);
     }
-    {  // a total below this board's own count: only others' go
+    {  // a total of 0: every other board's go, never this board's own
         r.now += kDay;
-        r.core.setListingCaps(1, 200);
+        r.core.setListingCaps(0, 200);
         r.core.trim(r.now);
         size_t own = 0, others = 0;
         for (const auto& l : r.records()) (l.board == r.board ? own : others)++;
@@ -320,7 +320,8 @@ TEST_CASE("listings: with a clock the trim still keeps at most kNetGoneKeepCount
     p.r.core.setListingCaps(kNetListingsMax, kNetGoneKeepCount + 50);
     uint32_t n = kNetGoneKeepCount + 5;
     for (uint32_t s = 1; s <= n; s++)
-        REQUIRE(p.take(makeListing(p.h.key, s, "G" + std::to_string(s), true, kNow - 10 * kDay)) == Took::Stored);
+        REQUIRE(p.r.core.takeListing(makeListing(p.h.key, s, "G" + std::to_string(s), true, kNow - 10 * kDay), p.h.board, true) ==
+                Took::Stored);  // (a history pull: past the daily ingress limit)
     p.r.core.trim(kNow);
     indexReady(p.r.core);
     std::vector<uint32_t> seqs;
