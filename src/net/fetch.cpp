@@ -247,7 +247,7 @@ bool FetchClient::checkpoint(uint32_t off, uint32_t& at, uint32_t& state) const 
 }
 
 FetchClient::CrcMarks FetchClient::takeMarks() {
-    CrcMarks& m = marks_;
+    CrcMarks& m = marks_;  // (moved out below: a member, so the move is needed)
     if (crcOn_ && crcPos_) {
         if (m.nEnds == kFetchRetries + 1) {  // (more calls than a download makes: the oldest end goes)
             for (uint8_t e = 1; e < m.nEnds; e++) m.ends[e - 1] = m.ends[e];
@@ -255,7 +255,7 @@ FetchClient::CrcMarks FetchClient::takeMarks() {
         }
         m.ends[m.nEnds++] = {crcPos_, crc_};
     }
-    return std::move(m);
+    return std::move(marks_);
 }
 
 void FetchClient::giveMarks(CrcMarks m) {

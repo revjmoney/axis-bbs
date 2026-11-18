@@ -171,9 +171,9 @@ public:
         std::unique_ptr<uint32_t[]> state;  // kFetchCrcMarks entries (taken once, at the first checkpoint), count used
         uint32_t                    count = 0, step = (uint32_t)kFetchWindow;
         struct End {
-            uint32_t pos, state;
+            uint32_t pos = 0, state = 0;
         };
-        End     ends[kFetchRetries + 1];  // where each earlier call stopped, and its state there
+        End     ends[kFetchRetries + 1] = {};  // where each earlier call stopped, and its state there
         uint8_t nEnds = 0;
     };
     // The checkpoint at or below off (and at or below crcPos): its offset and state. Before any byte of a pass came, that

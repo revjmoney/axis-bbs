@@ -349,7 +349,8 @@ constexpr size_t kIdxConfirm = 4;  // records a take reads back at most; past th
 
 uint32_t NetCore::idxHash(const std::string& s) const {
     uint32_t h = 0;
-    crypto_blake2b_keyed((uint8_t*)&h, sizeof h, (const uint8_t*)hd_.key, sizeof hd_.key, (const uint8_t*)s.data(), s.size());
+    crypto_blake2b_keyed(reinterpret_cast<uint8_t*>(&h), sizeof h, reinterpret_cast<const uint8_t*>(hd_.key), sizeof hd_.key,
+                         reinterpret_cast<const uint8_t*>(s.data()), s.size());
     return h;
 }
 
