@@ -8,10 +8,10 @@
 #include <sys/types.h>
 #include <utime.h>
 
-#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <vector>
 
 namespace axis::cluster {
@@ -104,6 +104,8 @@ bool cardPathOk(const std::string& rel) {
 bool cardPathMirrored(const std::string& rel) {
     if (!cardPathOk(rel)) return false;
     if (endsWithNoCase(rel, ".log") || endsWithNoCase(rel, ".ax_")) return false;
+    // the ANSI viewer's view cache (bbs/viewcache.h): made again from the packs wherever the BBS runs
+    if (underNoCase(rel, "files/viewpacks") || underNoCase(rel, "files/viewcache")) return false;
     size_t start = 0;
     for (size_t i = 0; i <= rel.size(); i++) {
         if (i == rel.size() || rel[i] == '/') {
@@ -199,6 +201,24 @@ std::string CardTreeServer::stat1(const std::string& rel) const {
 }
 
 std::string CardTreeServer::handleRead(const std::string& req) {
+    try {
+        return readOne(req);
+    } catch (const std::bad_alloc&) {  // a board low on memory: the asker tries again later
+        closeRead();
+        return no();
+    }
+}
+
+std::string CardTreeServer::handleWrite(const std::string& req) {
+    try {
+        return writeOne(req);
+    } catch (const std::bad_alloc&) {
+        closeWrite(true);
+        return no();
+    }
+}
+
+std::string CardTreeServer::readOne(const std::string& req) {
     if (req.size() < 3 || req[0] != 'I' || req[1] != kSep) return no();
     char op = req[2];
     auto f = splitN(req.size() > 4 ? req.substr(4) : std::string(), 3);
@@ -206,36 +226,45 @@ std::string CardTreeServer::handleRead(const std::string& req) {
     switch (op) {
         case 'V':
             return "12";
-        case 'D': {
+        case 'D': {  // in the folder's own order, never every name at once (a folder may hold thousands)
             const std::string& dir = f[0];
             uint64_t           skip;
             if (!parseNum(f[1], skip)) return no();
             if (!dir.empty() && !cardPathMirrored(dir)) return no();
             DIR* d = ::opendir(full(dir).c_str());
             if (!d) return no();
-            std::vector<std::string> names;
+            struct Close {  // (every way out, a bad_alloc too)
+                DIR* d;
+                ~Close() { ::closedir(d); }
+            } closer{d};
+            std::string out = "1";
+            uint64_t    at = 0;  // the mirrored entries passed so far
+            bool        more = false;
             while (dirent* e = ::readdir(d)) {
                 std::string n = e->d_name;
                 if (n == "." || n == "..") continue;
-                if (cardPathMirrored(dir.empty() ? n : dir + "/" + n)) names.push_back(n);
-            }
-            ::closedir(d);
-            std::sort(names.begin(), names.end());
-            std::string out = "1";
-            size_t      i = (size_t)skip;
-            for (; i < names.size(); i++) {
+                std::string rel = dir.empty() ? n : dir + "/" + n;
+                if (!cardPathMirrored(rel)) continue;
+                if (at < skip) {
+                    at++;
+                    continue;
+                }
                 struct stat st;
                 std::string line;
-                if (::stat(full(dir.empty() ? names[i] : dir + "/" + names[i]).c_str(), &st) == 0) {
+                if (::stat(full(rel).c_str(), &st) == 0) {
                     if (S_ISDIR(st.st_mode))
-                        line = std::string("d") + kSep + names[i] + "\n";
+                        line = std::string("d") + kSep + n + "\n";
                     else
-                        line = std::string("f") + kSep + names[i] + kSep + num((uint64_t)st.st_size) + kSep + num((uint64_t)st.st_mtime) + "\n";
+                        line = std::string("f") + kSep + n + kSep + num((uint64_t)st.st_size) + kSep + num((uint64_t)st.st_mtime) + "\n";
                 }
-                if (out.size() + line.size() + 24 > kTreeListMax) break;
+                if (out.size() + line.size() + 24 > kTreeListMax) {
+                    more = true;
+                    break;
+                }
                 out += line;
+                at++;
             }
-            if (i < names.size()) out += std::string("+") + kSep + num(i) + "\n";
+            if (more) out += std::string("+") + kSep + num(at) + "\n";
             return out;
         }
         case 'S':
@@ -244,7 +273,7 @@ std::string CardTreeServer::handleRead(const std::string& req) {
             uint64_t off, len;
             if (!cardPathMirrored(f[0]) || !parseNum(f[1], off) || !parseNum(f[2], len)) return no();
             if (len > kTreePiece) len = kTreePiece;
-            if (!rd_ || rdPath_ != f[0]) {
+            if (!rd_ || rdPath_ != f[0] || off == 0) {  // (a file's first piece opens it again: it may have been rewritten)
                 closeRead();
                 struct stat st;
                 if (::stat(full(f[0]).c_str(), &st) != 0 || !S_ISREG(st.st_mode)) return no();
@@ -269,7 +298,7 @@ std::string CardTreeServer::handleRead(const std::string& req) {
     }
 }
 
-std::string CardTreeServer::handleWrite(const std::string& req) {
+std::string CardTreeServer::writeOne(const std::string& req) {
     if (req.size() < 3 || req[0] != 'I' || req[1] != kSep) return no();
     char op = req[2];
     auto f = splitN(req.size() > 4 ? req.substr(4) : std::string(), 2);
@@ -315,10 +344,7 @@ std::string CardTreeServer::handleWrite(const std::string& req) {
             }
             if (std::rename(tmp.c_str(), dst.c_str()) != 0) {  // (a FAT card will not rename over a file)
                 std::remove(dst.c_str());
-                if (std::rename(tmp.c_str(), dst.c_str()) != 0) {
-                    std::remove(tmp.c_str());
-                    return no();
-                }
+                if (std::rename(tmp.c_str(), dst.c_str()) != 0) return no();  // path.ax_ is kept: the only copy now
             }
             struct utimbuf ut;
             ut.actime = ut.modtime = (time_t)mtime;

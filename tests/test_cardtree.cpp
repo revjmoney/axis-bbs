@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -56,7 +57,7 @@ std::vector<std::string> lines(const std::string& s) {
 }
 }  // namespace
 
-TEST_CASE("a directory listing comes in sorted pages under 7 KB, with size and time") {
+TEST_CASE("a directory listing comes in pages under 7 KB that cover every entry once, with size and time") {
     Card card("list");
     for (int i = 0; i < 400; i++) {
         char name[40];
@@ -88,14 +89,12 @@ TEST_CASE("a directory listing comes in sorted pages under 7 KB, with size and t
         REQUIRE(pages < 20);
     }
     CHECK(pages >= 2);
-    REQUIRE(names.size() == 401);  // 400 files and the folder
-    for (size_t i = 1; i < names.size(); i++) {  // sorted by name over all the pages
-        std::string a = names[i - 1].substr(2, names[i - 1].find('\x1f', 2) - 2), b = names[i].substr(2, names[i].find('\x1f', 2) - 2);
-        CHECK(a < b);
-    }
-    CHECK(names[0] == std::string("f") + kSepS + "file-with-a-longer-name-0000.dat" + kSepS + "0" + kSepS + "1700000399");  // i = 399: size 399 % 7 = 0
-    CHECK(names[1] == std::string("f") + kSepS + "file-with-a-longer-name-0001.dat" + kSepS + "6" + kSepS + "1700000398");  // i = 398: 398 % 7 = 6
-    CHECK(names.back() == std::string("d") + kSepS + "zdir");
+    REQUIRE(names.size() == 401);  // 400 files and the folder, each once (the folder's own order, not sorted)
+    std::set<std::string> once(names.begin(), names.end());
+    CHECK(once.size() == 401);
+    CHECK(once.count(std::string("f") + kSepS + "file-with-a-longer-name-0000.dat" + kSepS + "0" + kSepS + "1700000399"));  // i = 399: size 399 % 7 = 0
+    CHECK(once.count(std::string("f") + kSepS + "file-with-a-longer-name-0001.dat" + kSepS + "6" + kSepS + "1700000398"));  // i = 398: 398 % 7 = 6
+    CHECK(once.count(std::string("d") + kSepS + "zdir"));
 }
 
 TEST_CASE("paths that leave the card are refused") {
@@ -123,9 +122,12 @@ TEST_CASE("paths that leave the card are refused") {
     CHECK_FALSE(cardPathOk(std::string(65, 'a')));
 }
 
-TEST_CASE("logs, temp files and System Volume Information are never listed or served") {
+TEST_CASE("logs, temp files, System Volume Information and the view cache are never listed or served") {
     Card card("hidden");
     card.put("ok.txt", "fine");
+    card.put("files/viewpacks/1A2B3C4D-0042.ZIP", "x");
+    card.put("files/ViewCache/piece.ans", "x");
+    card.put("files/viewpacks2/kept.zip", "x");  // (only those two folders)
     card.put("a.log", "log");
     card.put("B.LOG", "log");
     card.put("half.ax_", "temp");
@@ -134,9 +136,19 @@ TEST_CASE("logs, temp files and System Volume Information are never listed or se
     card.put("sub/ok2.txt", "fine");
     card.put("sub/system volume information/y.txt", "x");
     CardTreeServer s(card.root.string());
-    CHECK(rd(s, "D", kSepS + "0") == "1f" + kSepS + "ok.txt" + kSepS + "4" + kSepS + "1700000000\nd" + kSepS + "sub\n");
+    std::string root = rd(s, "D", kSepS + "0");  // (in the folder's own order)
+    std::set<std::string> top;
+    for (const std::string& l : lines(root.substr(1)))
+        if (!l.empty()) top.insert(l);
+    CHECK(root[0] == '1');
+    CHECK(top == std::set<std::string>{"f" + kSepS + "ok.txt" + kSepS + "4" + kSepS + "1700000000", "d" + kSepS + "sub",
+                                       "d" + kSepS + "files"});
     CHECK(rd(s, "D", "sub" + kSepS + "0") == "1f" + kSepS + "ok2.txt" + kSepS + "4" + kSepS + "1700000000\n");
-    for (const char* p : {"a.log", "B.LOG", "half.ax_", "Half.AX_", "System Volume Information/WPSettings.dat", "sub/system volume information/y.txt"}) {
+    CHECK(rd(s, "D", "files" + kSepS + "0") == "1d" + kSepS + "viewpacks2\n");
+    CHECK(cardPathMirrored("files/viewpacks2/kept.zip"));
+    CHECK_FALSE(cardPathMirrored("files/viewpacks"));
+    for (const char* p : {"a.log", "B.LOG", "half.ax_", "Half.AX_", "System Volume Information/WPSettings.dat", "sub/system volume information/y.txt",
+                          "files/viewpacks/1A2B3C4D-0042.ZIP", "files/ViewCache/piece.ans", "FILES/VIEWPACKS/x"}) {
         INFO("path: " << p);
         CHECK(rd(s, "S", p) == "0");
         CHECK(rd(s, "R", std::string(p) + kSepS + "0" + kSepS + "10") == "0");

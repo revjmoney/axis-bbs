@@ -57,6 +57,11 @@ constexpr uint32_t kMinCharge = 256;           // a request counts at least this
 // agree with the manifest; a difference copies it again. At most kVerifyMax paths; more asks for a compare pass.
 constexpr uint32_t kVerifyMs = 15000;
 constexpr size_t   kVerifyMax = 64;
+// A compare pass that would remove more than kMassMax files, or more than a quarter of the manifest (and more than
+// kMassFloor), is a blank or swapped card more likely than the sysop's deletions: it changes nothing until FORCE.
+constexpr size_t   kMassMax = 200;
+constexpr size_t   kMassFloor = 5;
+constexpr long     kFreshSaveS = 300;  // the manifest's #fresh= is written again once it is this much behind
 
 enum class Pass { None, First, Check };
 
@@ -121,6 +126,17 @@ bool                       walkFailed = false;  // the main could not list a fol
 
 bool     stopped = false;  // disk full
 uint32_t stoppedAt = 0;
+
+// the mass-removal guard
+bool     forceRemove = false;  // @CARDMIRROR CHECK FORCE: the next walk's removals are made whatever their number
+bool     massStop = false;     // walkDone found too many removals: endPass reports it
+bool     massHeld = false;     // since then no pass has finished (the mirror is not called in step with the card)
+size_t   massN = 0, massOf = 0;
+
+// in step with a card main (the takeover's freshness): this run, by the monotonic clock
+bool     followedCard = false;
+uint32_t freshMono = 0;
+uint32_t maxAgeMs = 60 * 60000;
 
 Copy cur;
 
@@ -294,6 +310,7 @@ void readConf() {
     if (confRead) return;
     confRead = true;
     pace.reset(new Pace((uint32_t)hostConfInt("mirror_rate", 65536, 1024, 1000000000L)));
+    maxAgeMs = (uint32_t)hostConfInt("mirror_max_age_minutes", 60, 1, 10000) * 60000;
     std::string n = hostConfStr("noon", "12:00");
     int         h = -1, m = -1;
     char        extra = 0;
@@ -359,6 +376,18 @@ void removeLocal(const std::string& rel) {
     if (man.files.erase(rel)) dirty = true;
 }
 
+// the mirror is in step with the main's card (a pass finished, or the feed answered with nothing missed): noted only
+// while following a card main, and #fresh= written again only once it is kFreshSaveS behind (not every feed answer)
+void markFresh() {
+    Cluster* c = Cluster::instance();
+    if (!c || c->mainKind() != axis::cluster::CardKind::Card || massHeld) return;
+    followedCard = true;
+    freshMono = monoMs();
+    int64_t t = (int64_t)time(nullptr);
+    if (t - man.fresh >= kFreshSaveS || t < man.fresh) dirty = true;
+    man.fresh = t;
+}
+
 void startPass(Pass p, const char* why, uint32_t now) {
     pass = p;
     walking = true;
@@ -388,7 +417,13 @@ std::string today(int& minutes) {
 
 void endPass(uint32_t now) {
     char what[160];
-    if (walkFailed) {
+    if (massStop) {  // (nothing copied or removed; asked again in 10 minutes, or at once with FORCE)
+        passWaiting = true;
+        passAgainAt = now + kLogMs;
+        std::snprintf(what, sizeof what, "%s stopped: it would remove %zu of %zu files (@CARDMIRROR CHECK FORCE)",
+                      pass == Pass::First ? "first copy" : "check", massN, massOf);
+        if (pass == Pass::Check && !noonPass) checkWanted = true;
+    } else if (walkFailed) {
         passWaiting = true;
         passAgainAt = now + kFirstAgainMs;
         if (pass == Pass::Check && !noonPass) checkWanted = true;  // (noon is still due, so it comes back by itself)
@@ -423,10 +458,12 @@ void endPass(uint32_t now) {
             man.noon = today(m);
         }
     }
+    if (!massStop && !walkFailed && !failed && !stopped && man.complete) markFresh();
     lastCheckAt = time(nullptr);
     lastCheck = std::string(noonPass ? "noon " : "") + what;
     noonPass = false;
     walkFailed = false;
+    massStop = false;
     pass = Pass::None;
     walking = false;
     walkStack.clear();
@@ -440,6 +477,19 @@ void endPass(uint32_t now) {
 void walkDone(uint32_t now) {
     walking = false;
     MirrorDiff d = diffListing(man, listing);
+    bool       force = forceRemove;
+    forceRemove = false;  // (FORCE is good for one walk)
+    size_t n = d.remove.size(), of = man.files.size();
+    if (!force && (n > kMassMax || (n > kMassFloor && n * 4 > of))) {  // a blank or swapped card? nothing is changed
+        errLine("check would remove %zu of %zu files, not removing: use @CARDMIRROR CHECK FORCE", n, of);
+        massStop = massHeld = true;
+        massN = n;
+        massOf = of;
+        listing.clear();
+        endPass(now);
+        return;
+    }
+    massHeld = false;
     for (const std::string& r : d.remove) {
         removeLocal(r);
         removed++;
@@ -757,6 +807,7 @@ void feedStep(uint32_t now) {
     }
     for (size_t i = 1; i < lines.size(); i++)
         if (!lines[i].empty() && axis::cluster::cardPathMirrored(lines[i])) pending[lines[i]] = now;
+    if (man.complete && pass == Pass::None && !checkWanted && !stopped) markFresh();  // (nothing missed, nothing owed)
 }
 
 bool someoneOn() {
@@ -774,9 +825,32 @@ bool mirrorComplete() {
     return man.complete;
 }
 
-void mirrorCheckSoon() {
+void mirrorCheckSoon(bool force) {
     checkWanted = true;
-    checkWhy = "asked for";
+    checkWhy = force ? "asked for, with FORCE" : "asked for";
+    if (force) {
+        forceRemove = true;
+        passWaiting = false;  // (a pass held by the guard starts again at once)
+    }
+}
+
+bool mirrorTakeoverOk(std::string& why) {
+    ensureLoaded();
+    readConf();
+    if (!man.complete) why = "the first copy is not finished";
+    else if (massHeld) why = "the last check found most of the card gone (@CARDMIRROR CHECK FORCE)";
+    else if (!followedCard) why = "this run has not been in step with the card board yet";
+    else if (monoMs() - freshMono > maxAgeMs) why = mirrorAge() + ", over mirror_max_age_minutes";
+    else return true;
+    return false;
+}
+
+std::string mirrorAge() {
+    ensureLoaded();
+    if (!man.fresh) return "the mirror has never been in step with the card board";
+    long m = ((long)time(nullptr) - (long)man.fresh) / 60;
+    if (m < 0) m = 0;
+    return "the mirror was last in step with the card board " + std::to_string(m) + (m == 1 ? " minute ago" : " minutes ago");
 }
 
 bool mirrorSaveForTakeover() {
@@ -814,6 +888,8 @@ MirrorStatus mirrorStatus() {
     s.lastErrAt = (long)lastErrAt;
     s.lastErr = lastErr;
     s.stopped = stopped;
+    s.freshAt = (long)man.fresh;
+    s.held = massHeld;
     return s;
 }
 

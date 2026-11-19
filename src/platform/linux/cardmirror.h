@@ -20,9 +20,10 @@ struct Manifest {
     uint32_t                         gen = 0, seq = 0;  // the main's change feed: how far this mirror has read it
     bool                             complete = false;  // the first full copy finished
     std::string                      noon;              // "YYYY-MM-DD" of the last noon check (other compare passes leave it)
+    int64_t                          fresh = 0;         // seconds since 1970: last in step with a card main (0: never)
 };
 
-// "#gen=", "#seq=", "#complete=", "#noon=" lines, then one file a line: path 0x1F size 0x1F mtime
+// "#gen=", "#seq=", "#complete=", "#noon=", "#fresh=" lines, then one file a line: path 0x1F size 0x1F mtime
 std::string formatManifest(const Manifest& m);
 // false on anything it cannot read (the caller then treats the manifest as missing); `out` is only set on true. A
 // path that cluster/cardtree.h's cardPathMirrored refuses is dropped (never a path outside the mirror).

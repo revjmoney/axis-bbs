@@ -23,7 +23,8 @@ constexpr uint32_t kTidyIdleMs = 10000;  // every node idle this long: the main 
 constexpr uint32_t kAuthMs = 5000;       // a link that hasn't proved the key by now is dropped
 constexpr uint32_t kProbeAgainMs = 10000;  // a main that failed a check on another main's address waits this long to check it again
 constexpr uint32_t kTurnedAwayMs = 60000;  // "turned away" goes in the log at most this often
-constexpr uint32_t kMirrorYieldMs = 90000;  // a cardless main this long a main, with no card board linked, may hand main to a card mirror
+constexpr uint32_t kMirrorYieldMs = 90000;  // a cardless main with no card board linked this long may hand main to a card mirror
+constexpr uint32_t kMirrorYieldLogMs = 600000;  // that hand-over goes in the log once per mirror, then at most this often
 int rank(CardKind k) { return k == CardKind::Mirror ? 2 : k == CardKind::Card ? 1 : 0; }  // two mains: the higher rank wins
 std::string num(uint32_t v) { return std::to_string(v); }
 std::string num64(uint64_t v) { return std::to_string((unsigned long long)v); }
@@ -428,6 +429,10 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
                      : epoch != epoch_      ? epoch > epoch_
                      : number != number_    ? number < number_
                                             : ip < net_.myIp();
+#if AXIS_NATIVE
+        // a card main on older firmware reads this program's 'm' as no card and stays main too: the host steps down
+        if (theirKind == CardKind::Card && theirVer < kProtocolVersion && host_.onOlderCardMain) host_.onOlderCardMain();
+#endif
         // never on the announcement alone (it may be a recording): check that main holds the key first
         if (theyWin) probeMain(ip, epoch, now);
         return;
@@ -895,9 +900,9 @@ void Cluster::tick(uint32_t now) {
                 tidyNumbers(now);
             }
             serveUserSync();
-            if (kind_ == CardKind::None && now - mainSince_ >= kMirrorYieldMs && (!lastYield_ || now - lastYield_ >= kYieldAgainMs)) {
-                // a cardless main that has had no card board for a while hands main to a linked card mirror (the Linux
-                // program), again every kYieldAgainMs until it takes it
+            if (kind_ == CardKind::None) {
+                // a cardless main that has had no card board linked for kMirrorYieldMs hands main to a linked card
+                // mirror (the Linux program), again every kYieldAgainMs until it takes it
                 Link* mirror = nullptr;
                 bool  card = false;
                 for (Link& l : links_)
@@ -905,9 +910,14 @@ void Cluster::tick(uint32_t now) {
                         if (l.kind == CardKind::Card) card = true;
                         else if (l.kind == CardKind::Mirror && !mirror) mirror = &l;
                     }
-                if (mirror && !card) {
+                if (card) mainSince_ = now;  // (the clock counts from the last card board linked)
+                if (mirror && !card && now - mainSince_ >= kMirrorYieldMs && (!lastYield_ || now - lastYield_ >= kYieldAgainMs)) {
                     lastYield_ = now;
-                    event("node " + num((uint32_t)mirror->node) + " holds a card mirror: handing main to it");
+                    if (mirror->board != mirrorYieldLogged_ || now - mirrorYieldLogAt_ >= kMirrorYieldLogMs) {  // (the log is on flash)
+                        mirrorYieldLogged_ = mirror->board;
+                        mirrorYieldLogAt_ = now;
+                        event("node " + num((uint32_t)mirror->node) + " holds a card mirror: handing main to it");
+                    }
                     put(*mirror, Frame::Yield, {});
                 }
             }

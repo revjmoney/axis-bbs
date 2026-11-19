@@ -7,15 +7,16 @@
 // request letter 'I'. Its fields are split by 0x1F: "I" 1F op 1F args... (an 'I P' request's data is the last field,
 // taken whole). A reply is '1' and its data, or '0'. Every path is relative to the card, checked by cardPathMirrored.
 //   I V                      read   the tree service's version ("2")
-//   I D dir skip             read   the folder's entries, sorted: "f" 1F name 1F size 1F mtime, "d" 1F name; from entry
-//                                   skip, stopping before kTreeListMax; a last line "+" 1F next-skip when more
+//   I D dir skip             read   the folder's entries in its own order: "f" 1F name 1F size 1F mtime, "d" 1F name;
+//                                   from entry skip, stopping before kTreeListMax; a last line "+" 1F next-skip when more
 //   I S path                 both   "size" 1F "mtime", or '0' when missing
 //   I R path off len         read   up to kTreePiece bytes at off (the file stays open for the next piece)
 //   I C gen seq              read   "gen" 1F "seq" 1F "lost" '\n' then one changed path per line after seq
 //   I O path                 write  opens path.ax_ truncated, making the parent folders
 //   I P off data             write  appends data when off equals the bytes written so far
 //   I F size mtime           write  closes, checks size, renames over path and sets its time; "size" 1F "mtime" as the card
-//                                   now reports them; a wrong size deletes the temp and answers '0'
+//                                   now reports them; a wrong size deletes the temp and answers '0'. When the file
+//                                   it replaces is removed but the rename still fails, path.ax_ stays (a recovery copy)
 //   I X path                 write  removes it (missing counts as done)
 //   I E                      write  ends a hand-back: finished() turns true
 #pragma once
@@ -35,7 +36,8 @@ constexpr size_t kTreeListMax = 7 * 1024;
 // Relative to the card: not empty, at most 200 bytes, no leading '/', no '\', no ':', no byte below 0x20, no empty,
 // "." or ".." component, components at most 64 bytes.
 bool cardPathOk(const std::string& rel);
-// cardPathOk, and not a log (.log) or a temp (.ax_), in any case, and nowhere under "System Volume Information".
+// cardPathOk, and not a log (.log) or a temp (.ax_), in any case, nowhere under "System Volume Information", and not
+// the view cache (files/viewpacks, files/viewcache).
 bool cardPathMirrored(const std::string& rel);
 
 // The last changed paths on the card, newest last. It records only while on (a card mirror is linked to the main).
@@ -76,10 +78,13 @@ public:
     std::string handleWrite(const std::string& req);  // S O P F X E (the main, when it is a card mirror)
     bool        finished() const { return finished_; }
     void        drop();  // the link is gone: closes the open files, deletes a half-written temp
+    void        dropRead() { closeRead(); }  // no card mirror is linked: the file it was reading is closed
 
 private:
     std::string full(const std::string& rel) const { return rel.empty() ? root_ : root_ + "/" + rel; }
     std::string stat1(const std::string& rel) const;
+    std::string readOne(const std::string& req);
+    std::string writeOne(const std::string& req);
     void        closeRead();
     void        closeWrite(bool removeTemp);
 

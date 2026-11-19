@@ -6165,7 +6165,7 @@ static std::string lordFolderId() {
 static bool writeWarrior(const std::string& handle) {
     if (!AXIS_LORD) return true;  // no LORD in this build: no warrior to write
     std::string id = lordFolderId();
-    bool remote = !storageHasSd() && asFollower();
+    bool remote = asFollower() && (!storageHasSd() || cluster->mainKind() == axis::cluster::CardKind::Mirror);  // (a mirror main: its copy is the game)
     std::unique_ptr<axis::door::HostFs> fs;
     std::unique_ptr<axis::door::LockTable> remoteLocks;
     axis::door::LockTable* locks = &doorLocks;
@@ -6193,7 +6193,7 @@ static void startDoorInner() {
         dropLord();
         std::string dir = std::string(storageRoot()) + "/doors/" + d.id;
         int me = sessionNumber(curSession);
-        bool remote = !storageHasSd() && cluster && cluster->role() == axis::cluster::Role::Follower;
+        bool remote = asFollower() && (!storageHasSd() || cluster->mainKind() == axis::cluster::CardKind::Mirror);  // (a mirror main: its copy is the game)
         axis::door::LockTable* locks = &doorLocks;
         if (remote) {
             auto ask = [](const std::string& req, std::string& reply) { return cluster && cluster->request(req, reply, 8000); };
@@ -8485,7 +8485,7 @@ void loop() {
         return;
     }
     if (cluster) cluster->tick(millis());
-    if (cluster) axis::cluster::cardFeed().setOn(cluster->role() == axis::cluster::Role::Main && cluster->hasMirrorFollower(), hwRandom());
+    if (cluster) { bool mf = cluster->role() == axis::cluster::Role::Main && cluster->hasMirrorFollower(); axis::cluster::cardFeed().setOn(mf, hwRandom()); if (!mf) cardTreeServer().dropRead(); }
     cardTreeRestartTick();
     statsSync();
     if (localNode) {  // the sysop at the board's own screen

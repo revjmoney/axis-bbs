@@ -5,8 +5,9 @@
 // things up: the mirror's pass and the hand-back's requests and restart run from clusterHostPoll.
 //   @CARDMIRROR          the card mirror: profile, standing, first copy, manifest, last check, live follow, last error
 //   @CARDMIRROR CHECK    a compare pass at the next chance (Follower)
+//   @CARDMIRROR CHECK FORCE  the same, and its removals are made however many (once: the mass-removal guard)
 //   @HANDBACK            what a hand-back would copy, to which card board, callers online, how one is going
-//   @HANDBACK GO [node]  starts it (MirrorMain, with a linked card board)
+//   @HANDBACK GO [node] [NOW]  starts it (MirrorMain, with a linked card board; NOW: even with callers on)
 //   @HANDBACK STOP       stops it after the file in hand
 #include <Arduino.h>
 
@@ -62,17 +63,20 @@ const char* standing() {
 
 void cardMirror(const std::vector<std::string>& w, std::string& out) {
     auto line = [&](const std::string& s) { out += "axis: card mirror: " + s + "\n"; };
-    if (w.size() >= 2 && upper(w[1]) == "CHECK") {
+    bool force = w.size() == 3 && upper(w[2]) == "FORCE";
+    if (w.size() >= 2 && upper(w[1]) == "CHECK" && (w.size() == 2 || force)) {
         if (axisProfile() != Profile::Follower) {
             line("refused: only a follower checks its mirror against the main's card");
             return;
         }
-        mirrorCheckSoon();
-        line("a check of the whole card starts at the next chance");
+        mirrorCheckSoon(force);
+        line(force ? "a check of the whole card starts at the next chance, and removes from the mirror whatever is "
+                     "gone from the card, however many files"
+                   : "a check of the whole card starts at the next chance");
         return;
     }
     if (w.size() >= 2) {
-        line("unknown: @CARDMIRROR or @CARDMIRROR CHECK");
+        line("unknown: @CARDMIRROR, @CARDMIRROR CHECK or @CARDMIRROR CHECK FORCE");
         return;
     }
     MirrorStatus s = mirrorStatus();
@@ -86,6 +90,9 @@ void cardMirror(const std::vector<std::string>& w, std::string& out) {
     line("live follow: " + many(s.pending, "path") + " waiting, " + std::to_string(s.verifying) +
          " being checked until they settle");
     if (s.stopped) line("copying waits: the disk was full");
+    if (s.held) line("checks wait: the last one would have removed most of the mirror (@CARDMIRROR CHECK FORCE)");
+    line(s.freshAt ? "last in step with the card board " + when(s.freshAt) + " (" + mirrorAge() + ")"
+                   : std::string("never in step with the card board yet"));
     line("last error: " + (s.lastErr.empty() ? std::string("none in this run") : when(s.lastErrAt) + " " + s.lastErr));
     if (axisProfile() == Profile::MirrorMain)
         line(many(handbackChangeCount(), "path") + " changed here since the takeover (@HANDBACK)");
@@ -93,10 +100,12 @@ void cardMirror(const std::vector<std::string>& w, std::string& out) {
 
 void handBack(const std::vector<std::string>& w, std::string& out) {
     std::string sub = w.size() >= 2 ? upper(w[1]) : "";
+    bool        now = w.size() >= 3 && upper(w.back()) == "NOW";
+    size_t      args = w.size() - (now ? 1 : 0);  // (the words before NOW)
     if (sub.empty()) handbackShow(out);
-    else if (sub == "GO" && w.size() <= 3) handbackGo(w.size() == 3 ? w[2] : "", out);
+    else if (sub == "GO" && args <= 3) handbackGo(args == 3 ? w[2] : "", now, out);
     else if (sub == "STOP" && w.size() == 2) handbackStop(out);
-    else out += "axis: handback: unknown: @HANDBACK, @HANDBACK GO [node] or @HANDBACK STOP\n";
+    else out += "axis: handback: unknown: @HANDBACK, @HANDBACK GO [node] [NOW] or @HANDBACK STOP\n";
 }
 
 }  // namespace

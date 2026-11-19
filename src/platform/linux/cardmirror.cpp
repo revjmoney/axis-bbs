@@ -34,7 +34,7 @@ bool parseI64(const std::string& s, int64_t& v) {
 
 std::string formatManifest(const Manifest& m) {
     std::string out = "#gen=" + std::to_string(m.gen) + "\n#seq=" + std::to_string(m.seq) +
-                      "\n#complete=" + (m.complete ? "1" : "0") + "\n#noon=" + m.noon + "\n";
+                      "\n#complete=" + (m.complete ? "1" : "0") + "\n#noon=" + m.noon + "\n#fresh=" + std::to_string(m.fresh) + "\n";
     for (const auto& kv : m.files) {
         const CardEntry& e = kv.second;
         out += e.path;
@@ -69,6 +69,8 @@ bool parseManifest(const std::string& text, Manifest& out) {
                 m.complete = v == "1";
             } else if (k == "noon") {
                 m.noon = v;
+            } else if (k == "fresh") {
+                if (!parseI64(v, m.fresh)) return false;
             }  // (an unknown header is left alone: a later version may add one)
             continue;
         }

@@ -131,6 +131,11 @@ void stopEverything() {
     once = true;
     std::printf("axis: restarting: %s\n", why ? why : "");
     stopEverything();
+    if (hostShutdownRequested()) {  // a SIGTERM during the hang-up: it ends the program, not a new one
+        std::printf("axis: a shutdown was asked during the restart, so ending instead\n");
+        std::fflush(nullptr);
+        _exit(0);
+    }
     std::fflush(nullptr);
     // Terminal mode moved the log onto fd 1 and kept the console on another descriptor: the new program starts on
     // the terminal again, as the first one did.

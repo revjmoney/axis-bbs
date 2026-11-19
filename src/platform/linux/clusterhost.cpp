@@ -55,6 +55,8 @@ constexpr uint32_t kBroadcastMs = 60000;    // the drain tells the callers how l
 constexpr uint32_t kSetupCheckMs = 2000;    // a board not set up yet: configLoad() looked at this often
 constexpr uint32_t kYieldLogMs = 60000;     // takeoverWanted's line, at most this often
 constexpr long     kSoloBackoffS = 600;     // after the watchdog's restart to solo: solo this long, mains ignored
+constexpr uint32_t kYieldFreshMs = 40000;   // a takeover is called off when the main has not sent a Yield this long
+constexpr uint32_t kHandedBackMs = 30 * 60000;  // state handedback with no card main followed this long: follower
 
 Profile      started = Profile::Solo;  // clusterHostStart's profile
 ClusterState saved;                    // the state file as it was at the start (state handedback changes once)
@@ -89,6 +91,21 @@ uint32_t yieldAt = 0;
 bool     taking = false;
 uint32_t takingAt = 0;
 uint32_t takeoverWaitMs = 120000;
+uint32_t yieldHeardAt = 0;              // the last Yield while taking
+uint32_t yieldIp = 0, yieldEpoch = 0;  // the main that sent the first one
+
+uint32_t handedBackAt = 0;  // when this run began in state handedback (clusterHostPoll's first turn)
+
+// MirrorMain: a card main on older firmware was heard (Cluster::HostHooks::onOlderCardMain, inside the tick)
+bool     olderCardMain = false;
+bool     olderCardLogged = false;
+uint32_t olderCardAt = 0;
+
+// the back-off after a failed join is still on (a solo_until more than kSoloBackoffS ahead is a clock that jumped)
+bool soloBackoff(const ClusterState& s) {
+    long now = (long)time(nullptr);
+    return s.soloUntil > now && s.soloUntil - now <= kSoloBackoffS;
+}
 
 std::string stateFile() { return axisDataDir().empty() ? "" : axisDataDir() + "/cluster/state"; }
 std::string keyFile() { return axisDataDir().empty() ? "" : axisDataDir() + "/cluster.key"; }
@@ -117,6 +134,13 @@ bool writeFile(const std::string& path, const std::string& text) {
     if (!ok || ::rename(tmp.c_str(), path.c_str()) != 0) {
         ::unlink(tmp.c_str());
         return false;
+    }
+    size_t      slash = path.rfind('/');
+    std::string dir = slash == std::string::npos ? "." : slash == 0 ? "/" : path.substr(0, slash);
+    int         dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);  // the rename itself to the disk
+    if (dfd >= 0) {
+        ::fsync(dfd);
+        ::close(dfd);
     }
     return true;
 }
@@ -197,7 +221,8 @@ bool clusterStateSave(const ClusterState& s) {
 std::string clusterKeyRead() {
     std::string k;
     if (!readFile(keyFile(), k)) return "";
-    while (!k.empty() && (k.back() == '\n' || k.back() == '\r')) k.pop_back();  // (a key written by hand)
+    while (!k.empty() && (k.back() == '\n' || k.back() == '\r' || k.back() == ' ' || k.back() == '\t'))
+        k.pop_back();  // (a key written by hand)
     return k;
 }
 
@@ -217,7 +242,7 @@ Profile decideProfile(uint32_t listenMs) {
         std::printf("axis: cluster: the saved state is main but there is no cluster key, so not taking main\n");
     }
     if (haveState && st.state == Standing::HandedBack) return Profile::Follower;
-    if (haveState && st.soloUntil > (long)time(nullptr)) {  // the watchdog gave up on a main a moment ago
+    if (haveState && soloBackoff(st)) {  // the watchdog gave up on a main a moment ago
         std::printf("axis: cluster: staying solo for %ld minutes after a failed join\n", kSoloBackoffS / 60);
         return Profile::Solo;
     }
@@ -286,6 +311,7 @@ void clusterHostStart(Profile p) {
         h.mirror = true;
         h.claimMain = true;
         h.claimEpoch = saved.epoch;
+        h.onOlderCardMain = [] { olderCardMain = true; };  // (clusterHostPoll steps down)
     } else {
         soloKey = clusterKeyRead();
     }
@@ -293,25 +319,32 @@ void clusterHostStart(Profile p) {
 }
 
 bool takeoverWanted() {
-    if (taking) return false;  // (a Yield again while the callers here finish)
-    uint32_t    now = millis();
-    const char* no = saved.state == Standing::HandedBack ? "axis: mirror: not taking main: just handed it back\n"
-                     : !mirrorComplete()                 ? "axis: mirror: not taking main: the first copy is not finished\n"
-                                                         : nullptr;
-    if (no) {
+    uint32_t now = millis();
+    if (taking) {  // a Yield again while the callers here finish: still wanted (takeoverPoll checks it is the same main)
+        yieldHeardAt = now;
+        return false;
+    }
+    std::string why;
+    if (saved.state == Standing::HandedBack) why = "just handed it back";
+    else mirrorTakeoverOk(why);
+    if (!why.empty()) {
         if (!yieldLogged || now - yieldAt >= kYieldLogMs) {
-            std::printf("%s", no);
+            std::printf("axis: mirror: not taking main: %s\n", why.c_str());
             yieldLogged = true;
             yieldAt = now;
         }
         return false;
     }
+    Cluster* c = Cluster::instance();
     taking = true;  // clusterHostPoll does the rest
-    takingAt = now;
+    takingAt = yieldHeardAt = now;
+    yieldIp = c ? c->mainIp() : 0;
+    yieldEpoch = c ? c->epoch() : 0;
     modemLineHold(true);
     hostnetHold(true);
-    std::printf("axis: mirror: the main yields to the card mirror: taking main once nobody is on here (at most %u s)\n",
-                (unsigned)(takeoverWaitMs / 1000));
+    std::printf("axis: mirror: the main yields to the card mirror: taking main once nobody is on here (at most %u s; "
+                "%s)\n",
+                (unsigned)(takeoverWaitMs / 1000), mirrorAge().c_str());
     return false;
 }
 
@@ -320,7 +353,7 @@ void soloWatchHeard(const std::string& d, uint32_t fromIp) {
     uint32_t version = 0;
     if (started != Profile::Solo || !announcement(soloKey, d, version)) return;
     if (version >= axis::cluster::kProtocolVersion) {
-        if (saved.soloUntil > (long)time(nullptr)) return;  // the back-off after a failed join: no drain yet
+        if (soloBackoff(saved)) return;  // the back-off after a failed join: no drain yet
         heardMain = true;
         heardAt = millis();
     } else {
@@ -384,17 +417,32 @@ void soloPoll(uint32_t now) {
     }
 }
 
-void noMain() {
-    if (kNoMainAction == NoMainAction::TakeOver && !mirrorComplete())
-        std::printf("axis: mirror: not taking main: the first copy is not finished\n");
-    else if (kNoMainAction == NoMainAction::TakeOver) {
-        ClusterState st;
-        st.state = Standing::Main;
-        st.epoch = lastMainEpoch + 1;
-        st.since = (long)time(nullptr);
-        if (clusterStateSave(st)) hostRestart("no main on the LAN: taking main");
-        std::printf("axis: cluster: cannot save the cluster state, so not taking main\n");
+// Every takeover, the Yield's and noMain's: the mirror's gates (mirrorTakeoverOk), the card's state kept for the
+// hand-back (mirrorSaveForTakeover puts a half-copied file back), state main, and a restart. False (and the callers
+// let in again) when any of it says no.
+bool takeMain(uint32_t epoch, const char* why) {
+    std::string no;
+    bool        ok = mirrorTakeoverOk(no);
+    if (!ok) std::printf("axis: mirror: not taking main: %s\n", no.c_str());
+    else if (!(ok = mirrorSaveForTakeover()))
+        std::printf("axis: mirror: cannot keep the card's state for the hand-back, so not taking main\n");
+    ClusterState st = saved;
+    st.state = Standing::Main;
+    st.epoch = epoch;
+    st.since = (long)time(nullptr);
+    st.soloUntil = 0;
+    if (ok && !(ok = clusterStateSave(st))) std::printf("axis: cluster: cannot save the cluster state, so not taking main\n");
+    if (!ok) {
+        hostnetHold(false);
+        modemLineHold(false);
+        return false;
     }
+    std::printf("axis: mirror: taking main: %s\n", mirrorAge().c_str());
+    hostRestart(why);
+}
+
+void noMain() {
+    if (kNoMainAction == NoMainAction::TakeOver) takeMain(lastMainEpoch + 1, "no main on the LAN: taking main");
     ClusterState st = saved;  // the back-off: decideProfile and the solo watch leave mains alone for a while
     st.soloUntil = (long)time(nullptr) + kSoloBackoffS;
     if (!clusterStateSave(st)) std::printf("axis: cluster: cannot save the cluster state\n");
@@ -409,7 +457,15 @@ void followerPoll(uint32_t now) {
         lastMainEpoch = c->epoch();
     }
     if (saved.state == Standing::HandedBack) {  // after @HANDBACK: no watchdog until a card main has been followed
-        if (!following || c->mainKind() != CardKind::Card) return;
+        if (!following || c->mainKind() != CardKind::Card) {
+            if (now - handedBackAt < kHandedBackMs) return;
+            saved.state = Standing::Follower;  // (the card board never came back as main: the usual rules again)
+            if (!clusterStateSave(saved)) std::printf("axis: cluster: cannot save the cluster state\n");
+            std::printf("axis: cluster: no card board main followed in %u minutes since the hand-back: following the "
+                        "usual rules again\n",
+                        (unsigned)(kHandedBackMs / 60000));
+            return;
+        }
         saved.state = Standing::Follower;
         saved.epoch = c->epoch();
         saved.since = (long)time(nullptr);
@@ -421,28 +477,48 @@ void followerPoll(uint32_t now) {
 }
 
 // the takeover takeoverWanted started: once nobody is on here (or the wait is up), state main and a restart
+// (called off when, meanwhile, this is no longer a follower of the same cardless main that keeps asking: say the card
+// board came back, the cardless main yielded to it and this program now follows the card board)
 void takeoverPoll(uint32_t now) {
     if (!taking) return;
+    Cluster*    c = Cluster::instance();
+    const char* off = !c || c->role() != Role::Follower           ? "this computer no longer follows that main"
+                      : c->mainKind() != CardKind::None              ? "the main now holds a card"
+                      : c->mainIp() != yieldIp || c->epoch() != yieldEpoch ? "another main"
+                      : now - yieldHeardAt >= kYieldFreshMs          ? "the main stopped asking"
+                                                                     : nullptr;
+    if (off) {
+        taking = false;
+        hostnetHold(false);
+        modemLineHold(false);
+        std::printf("axis: mirror: the takeover is called off: %s\n", off);
+        return;
+    }
     if ((hostnetBbsCallersOpen() || modemLineBusy()) && now - takingAt < takeoverWaitMs) return;
     taking = false;
-    if (!mirrorSaveForTakeover()) {
-        std::printf("axis: mirror: cannot keep the card's state for the hand-back, so not taking main\n");
-        hostnetHold(false);
-        modemLineHold(false);
-        return;
-    }
-    Cluster*     c = Cluster::instance();
+    takeMain(c->epoch() + 1, "taking over as main from the mirror");
+}
+
+// MirrorMain heard a card main on older firmware: it reads this program's 'm' as no card, so both would stay main.
+// This program steps down: state follower and a restart (the next start hears an older main and stays solo).
+void olderCardMainPoll(uint32_t now) {
+    if (!olderCardMain) return;
+    olderCardMain = false;
+    if (olderCardLogged && now - olderCardAt < kOlderLogMs) return;
+    olderCardLogged = true;
+    olderCardAt = now;
+    std::printf("axis: cluster: A CARD BOARD ON OLDER FIRMWARE IS ALSO MAIN: this computer stops being main and "
+                "restarts as a follower; flash that board to cluster with this computer (%zu changed paths not handed "
+                "back stay in mirror.changes and the mirror)\n",
+                handbackChangeCount());
     ClusterState st = saved;
-    st.state = Standing::Main;
-    st.epoch = (c ? c->epoch() : lastMainEpoch) + 1;
+    st.state = Standing::Follower;
     st.since = (long)time(nullptr);
     if (!clusterStateSave(st)) {
-        std::printf("axis: cluster: cannot save the cluster state, so not taking main\n");
-        hostnetHold(false);
-        modemLineHold(false);
+        std::printf("axis: cluster: cannot save the cluster state, so staying main\n");
         return;
     }
-    hostRestart("taking over as main from the mirror");
+    hostRestart("a card board on older firmware is main");
 }
 
 void setupPoll(uint32_t now) {
@@ -464,6 +540,7 @@ void clusterHostPoll(uint32_t now) {
         lastFollowing = now;
         keyAt = now;
         setupAt = now;
+        handedBackAt = now;
     }
     if (started == Profile::Solo) soloPoll(now);
     else if (started == Profile::Follower) {
@@ -471,6 +548,7 @@ void clusterHostPoll(uint32_t now) {
         followerPoll(now);
         mirrorPoll(now);
     } else if (started == Profile::MirrorMain) {
+        olderCardMainPoll(now);
         handbackPoll(now);  // (its end restarts from here, never from inside loop())
     }
     setupPoll(now);

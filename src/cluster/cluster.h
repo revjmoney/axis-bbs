@@ -88,6 +88,7 @@ public:
         bool     claimMain = false;     // start(): becomeMain at once at claimEpoch (key required, else alone as today)
         uint32_t claimEpoch = 0;
         std::function<bool()> onYield;  // a Yield arrived (checked at the end of tick, where yield_ acts): true takes main now
+        std::function<void()> onOlderCardMain;  // main: a card main announcing a protocol below kProtocolVersion was heard
     };
     static HostHooks defaultHost;       // copied into each new Cluster by its constructor
     void             setHost(const HostHooks& h) { host_ = h; }  // the tests set one per board
@@ -256,7 +257,9 @@ private:
     Role                  role_ = Role::Off;
     int                   number_ = 0, wantNumber_ = 0, lastMain_ = 0;
     CardKind              mainKind_ = CardKind::None;
-    uint32_t              mainVersion_ = 1, mainSince_ = 0;  // mainSince_: when this board last became main
+    uint32_t              mainVersion_ = 1, mainSince_ = 0;  // mainSince_: when this board last became main or last had a card board linked
+    uint32_t              mirrorYieldLogAt_ = 0;  // the mirror hand-over's last line in the log, and to which board
+    std::string           mirrorYieldLogged_;
     uint32_t              epoch_ = 0, mainIp_ = 0, since_ = 0, lastBeat_ = 0, lastAnnounce_ = 0, minEpoch_ = 0, idleSince_ = 0;
     uint32_t              listenMs_ = 3000;  // how long discovery waits for a main before becoming one
     std::string           key_;

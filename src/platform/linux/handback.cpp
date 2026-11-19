@@ -946,7 +946,7 @@ void handbackShow(std::string& out) {
     for (const std::string& r : lastResult) line(r);
 }
 
-bool handbackGo(const std::string& nodeArg, std::string& out) {
+bool handbackGo(const std::string& nodeArg, bool now, std::string& out) {
     auto no = [&](const std::string& why) {
         out += "axis: handback refused: " + why + "\n";
         return false;
@@ -970,6 +970,10 @@ bool handbackGo(const std::string& nodeArg, std::string& out) {
     } else {
         board = cards[0].id;
     }
+    int on = callersOn();
+    if (on && !now)
+        return no(many(on, "caller") + " on: its end restarts this computer and drops them. @HANDBACK GO" +
+                  (nodeArg.empty() ? "" : " " + nodeArg) + " NOW starts it anyway");
     std::string why;
     knownLoaded = false;  // (read again: it may have been put right by hand since)
     if (!loadKnown(why)) return no(why);
