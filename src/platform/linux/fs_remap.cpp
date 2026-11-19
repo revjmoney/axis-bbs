@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <unistd.h>
+#include <utime.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -50,6 +51,7 @@ int   __real_rmdir(const char* path);
 int   __real_access(const char* path, int how);
 int   __real_truncate(const char* path, off_t len);
 int   __real_statvfs(const char* path, struct statvfs* st);
+int   __real_utime(const char* path, const struct utimbuf* t);
 
 // fopen's mode with glibc's "e" (close-on-exec) added
 static std::string cloexec(const char* mode) {
@@ -104,4 +106,5 @@ int  __wrap_rmdir(const char* path) { return __real_rmdir(hostPath(path).c_str()
 int  __wrap_access(const char* path, int how) { return __real_access(hostPath(path).c_str(), how); }
 int  __wrap_truncate(const char* path, off_t len) { return __real_truncate(hostPath(path).c_str(), len); }
 int  __wrap_statvfs(const char* path, struct statvfs* st) { return __real_statvfs(hostPath(path).c_str(), st); }
+int  __wrap_utime(const char* path, const struct utimbuf* t) { return __real_utime(hostPath(path).c_str(), t); }  // (cardtree.cpp)
 }

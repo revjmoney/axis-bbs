@@ -349,7 +349,7 @@ if(UNIX AND NOT APPLE)
     # The board's paths (/sd, /littlefs) become the data folder's at link time: every call below, from main.cpp,
     # the core or the platform files, goes through src/platform/linux/fs_remap.cpp. Only this executable is wrapped.
     foreach(fn fopen fopen64 freopen open open64 __open_2 __open64_2 stat stat64 lstat lstat64 mkdir rename remove
-            opendir unlink rmdir access truncate statvfs)
+            opendir unlink rmdir access truncate statvfs utime)
       target_link_options(axis PRIVATE "-Wl,--wrap=${fn}")
     endforeach()
     # configLoad and configSave (the board's config_store.cpp) map the board's telnet port 23 to lan_port and back,
