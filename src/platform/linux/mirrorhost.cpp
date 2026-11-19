@@ -12,6 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -122,6 +123,25 @@ bool     stopped = false;  // disk full
 uint32_t stoppedAt = 0;
 
 Copy cur;
+
+// for @CARDMIRROR: the last pass's end and what it found, and the last thing that went wrong
+time_t      lastCheckAt = 0;
+std::string lastCheck;
+time_t      lastErrAt = 0;
+std::string lastErr;
+
+// a line in the log ("axis: mirror: ...") that @CARDMIRROR also shows as the last error
+void errLine(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void errLine(const char* fmt, ...) {
+    char    buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    std::printf("axis: mirror: %s\n", buf);
+    lastErr = buf;
+    lastErrAt = time(nullptr);
+}
 
 uint32_t monoMs() {
     timespec t;
@@ -263,7 +283,7 @@ bool saveManifest(uint32_t now) {
     if (manPath.empty()) return false;
     savedAt = now;
     if (!writeWhole(manPath, formatManifest(man))) {
-        std::printf("axis: mirror: cannot write %s: %s\n", manPath.c_str(), std::strerror(errno));
+        errLine("cannot write %s: %s", manPath.c_str(), std::strerror(errno));
         return false;
     }
     dirty = false;
@@ -367,24 +387,28 @@ std::string today(int& minutes) {
 }
 
 void endPass(uint32_t now) {
+    char what[160];
     if (walkFailed) {
         passWaiting = true;
         passAgainAt = now + kFirstAgainMs;
         if (pass == Pass::Check && !noonPass) checkWanted = true;  // (noon is still due, so it comes back by itself)
-        std::printf("axis: mirror: the main could not list a folder of its card: %s stopped, trying again in a "
-                    "minute\n",
-                    pass == Pass::First ? "the first copy" : "the check");
+        errLine("the main could not list a folder of its card: %s stopped, trying again in a minute",
+                pass == Pass::First ? "the first copy" : "the check");
+        std::snprintf(what, sizeof what, "%s stopped: the main could not list a folder",
+                      pass == Pass::First ? "first copy" : "check");
     } else if (pass == Pass::First) {
         if (!failed && !stopped) {
             man.complete = true;
             std::printf("axis: mirror: first copy finished: %zu files (copied %u, kept %u)\n", man.files.size(), copied,
                         matched);
+            std::snprintf(what, sizeof what, "first copy finished: copied %u, kept %u", copied, matched);
         } else {
             passWaiting = true;
             passAgainAt = now + kFirstAgainMs;
-            std::printf("axis: mirror: first copy not finished: %u files changed while copied or could not be "
-                        "copied, trying again in a minute\n",
-                        failed);
+            errLine("first copy not finished: %u files changed while copied or could not be copied, trying again in a "
+                    "minute",
+                    failed);
+            std::snprintf(what, sizeof what, "first copy not finished: %u files left", failed);
         }
     } else {
         if (copied || removed || failed)
@@ -392,11 +416,15 @@ void endPass(uint32_t now) {
                         failed ? " (some files changed while copied: the next check takes them)" : "");
         else
             std::printf("axis: mirror: check: matches (%u files)\n", matched);
+        std::snprintf(what, sizeof what, "check: copied %u, removed %u, matched %u%s", copied, removed, matched,
+                      failed ? ", some left for the next check" : "");
         if (noonPass) {
             int m;
             man.noon = today(m);
         }
     }
+    lastCheckAt = time(nullptr);
+    lastCheck = std::string(noonPass ? "noon " : "") + what;
     noonPass = false;
     walkFailed = false;
     pass = Pass::None;
@@ -435,7 +463,7 @@ void walkDone(uint32_t now) {
 }
 
 void diskFull(uint32_t now) {
-    std::printf("axis: mirror: disk full, copy stopped\n");
+    errLine("disk full, copy stopped");
     stopped = true;
     stoppedAt = now;
     dropTemp();
@@ -584,7 +612,7 @@ void copyStep(uint32_t now) {
                 cur.fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
             }
             if (cur.fd < 0) {
-                std::printf("axis: mirror: cannot write %s: %s\n", local(cur.path + ".ax_").c_str(), std::strerror(errno));
+                errLine("cannot write %s: %s", local(cur.path + ".ax_").c_str(), std::strerror(errno));
                 if (!cur.live) failed++;
                 cur = Copy();
                 return;
@@ -613,7 +641,7 @@ void copyStep(uint32_t now) {
             moved = ::rename(tmp.c_str(), dst.c_str()) == 0;
         }
         if (!moved) {
-            std::printf("axis: mirror: cannot finish %s: %s\n", dst.c_str(), std::strerror(errno));
+            errLine("cannot finish %s: %s", dst.c_str(), std::strerror(errno));
             ::unlink(tmp.c_str());
             if (!cur.live) failed++;
             cur = Copy();
@@ -642,7 +670,7 @@ void copyStep(uint32_t now) {
         ssize_t w = ::write(cur.fd, reply.data() + 1 + done, n - done);
         if (w < 0 && errno == EINTR) continue;
         if (w <= 0) {
-            std::printf("axis: mirror: cannot write %s: %s\n", local(cur.path + ".ax_").c_str(), std::strerror(errno));
+            errLine("cannot write %s: %s", local(cur.path + ".ax_").c_str(), std::strerror(errno));
             bool live = cur.live;
             dropTemp();
             if (!live) failed++;
@@ -758,10 +786,35 @@ bool mirrorSaveForTakeover() {
     uint32_t now = monoMs();
     if (!saveManifest(now)) return false;
     if (!writeWhole(takePath, formatManifest(man))) {
-        std::printf("axis: mirror: cannot write %s: %s\n", takePath.c_str(), std::strerror(errno));
+        errLine("cannot write %s: %s", takePath.c_str(), std::strerror(errno));
+        return false;
+    }
+    // a new takeover starts a new change log (one left from an earlier takeover was handed back, or the mirror has
+    // been copied from the card since)
+    std::string changes = axisDataDir() + "/mirror.changes";
+    if (::unlink(changes.c_str()) != 0 && errno != ENOENT) {
+        errLine("cannot clear %s: %s", changes.c_str(), std::strerror(errno));
         return false;
     }
     return true;
+}
+
+MirrorStatus mirrorStatus() {
+    ensureLoaded();
+    MirrorStatus s;
+    s.complete = man.complete;
+    s.files = man.files.size();
+    for (const auto& f : man.files) s.bytes += f.second.size;
+    s.noon = man.noon;
+    s.lastCheckAt = (long)lastCheckAt;
+    s.lastCheck = lastCheck;
+    s.pass = pass == Pass::First ? "first copy" : pass == Pass::Check ? (noonPass ? "noon check" : "check") : "";
+    s.pending = pending.size() + liveQ.size() + (cur.active && cur.live ? 1 : 0);
+    s.verifying = verify.size();
+    s.lastErrAt = (long)lastErrAt;
+    s.lastErr = lastErr;
+    s.stopped = stopped;
+    return s;
 }
 
 void mirrorPoll(uint32_t now) {
@@ -818,7 +871,7 @@ void mirrorPoll(uint32_t now) {
             waiting = true;
             waitUntil = now + kNoTreeBackoffMs;
             if (!noTreeLogged || now - noTreeAt >= kLogMs) {
-                std::printf("axis: mirror: the main does not serve its card tree yet (no card, or older firmware)\n");
+                errLine("the main does not serve its card tree yet (no card, or older firmware)");
                 noTreeLogged = true;
                 noTreeAt = now;
             }

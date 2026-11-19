@@ -62,3 +62,34 @@ void mirrorPoll(uint32_t nowMs);
 bool mirrorComplete();         // the manifest says the first full copy is finished
 void mirrorCheckSoon();        // a compare pass at the next chance
 bool mirrorSaveForTakeover();  // writes the manifest now and copies it to <data>/mirror.takeover
+
+// What @CARDMIRROR shows of the mirror (mirrorhost.cpp; the manifest is read once if it was not yet).
+struct MirrorStatus {
+    bool        complete = false;  // the first full copy is finished
+    size_t      files = 0;         // in the manifest
+    uint64_t    bytes = 0;
+    std::string noon;              // the day of the last noon check ("" none yet)
+    long        lastCheckAt = 0;   // when the last pass ended in this run (seconds since 1970, 0: none)
+    std::string lastCheck;         // what it found
+    std::string pass;              // the pass running now ("" none)
+    size_t      pending = 0;       // live follow: changed paths waiting to be copied
+    size_t      verifying = 0;     // live follow: copies checked again until they settle
+    long        lastErrAt = 0;
+    std::string lastErr;           // "" none in this run
+    bool        stopped = false;   // disk full: copying waits
+};
+MirrorStatus mirrorStatus();
+
+// The hand-back (handback.cpp), MirrorMain only.
+// takeoverNote: fs_remap.cpp calls it after every successful write-type call on a "/sd/..." path in MirrorMain (the
+// same calls as the board's cardwatch.cpp). The card path is kept in a set and, when new, appended to
+// <data>/mirror.changes (one a line, read back at the start). mirrorSaveForTakeover clears that file.
+void takeoverNote(const char* boardPath);
+// From clusterHostPoll, MirrorMain only, never inside itself: at most one request a turn while a hand-back runs,
+// paced like the mirror; its end sends 'I E', saves state handedback and restarts (hostRestart).
+void handbackPoll(uint32_t nowMs);
+// For @HANDBACK (nativecmd.cpp): the lines it prints; GO only sets the hand-back up (handbackPoll runs it).
+void handbackShow(std::string& out);
+bool handbackGo(const std::string& node, std::string& out);  // node: "" (the one live card board) or a node number
+bool handbackStop(std::string& out);
+size_t handbackChangeCount();

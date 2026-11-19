@@ -330,6 +330,7 @@ if(UNIX AND NOT APPLE)
         src/platform/linux/clusterhost.cpp
         src/platform/linux/cardmirror.cpp
         src/platform/linux/mirrorhost.cpp
+        src/platform/linux/handback.cpp
         src/platform/linux/nativecmd.cpp
         src/platform/cyd/clusternet.cpp    # the board's own: the cluster's UDP and link sockets through WiFiUDP and WiFiClient
         src/platform/cyd/config_store.cpp  # the board's own: LittleFS is the data folder's flash/ (fs.cpp)

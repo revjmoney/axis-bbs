@@ -76,6 +76,19 @@ With the same cluster key as the boards (`@CLUSTERKEY`, kept in `<data>/cluster.
   a quarter of that while someone is on. You can pre-load `<data>/mirror` from a copy of the card:
   files at the main's size are kept. If a main without a card hands main to it, it waits until
   nobody is on here (at most `takeover_wait_seconds`, default 120) and restarts as the main.
+- `@CARDMIRROR` shows the card mirror: the profile, the standing, whether the first copy is
+  complete, the files and bytes it holds, the last check, the changed paths waiting, and the last
+  error. `@CARDMIRROR CHECK` (as a follower) checks the whole card at the next chance.
+- While axis is main from its mirror, every card path the BBS writes is noted in
+  `<data>/mirror.changes`. When the card board is back and linked, `@HANDBACK` shows what would be
+  copied to it, its node, and the callers online. `@HANDBACK GO` (or `@HANDBACK GO <node>` with more
+  than one card board) first checks every one of those files on the card against how it was at the
+  takeover. If any changed on the card since, it stops before writing anything, lists them, and axis
+  stays main. Otherwise it copies the changes (at `mirror_rate`), in up to 3 passes, since the BBS
+  keeps running. Anything changed during the last pass goes into `<data>/handback-left/` instead and
+  is listed. Then the card board restarts as the main and axis restarts as its follower.
+  `@HANDBACK STOP` stops after the file in hand; axis stays main and `@HANDBACK GO` can run again.
+  A folder with nothing in it is not made on the card.
 
 ## Run it in a terminal or a window instead
 

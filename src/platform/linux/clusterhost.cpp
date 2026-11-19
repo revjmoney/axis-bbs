@@ -470,6 +470,8 @@ void clusterHostPoll(uint32_t now) {
         takeoverPoll(now);
         followerPoll(now);
         mirrorPoll(now);
+    } else if (started == Profile::MirrorMain) {
+        handbackPoll(now);  // (its end restarts from here, never from inside loop())
     }
     setupPoll(now);
 }
