@@ -162,6 +162,8 @@ void expand(const std::string& in, const AcsUser& who, const ArtValue& value, Ou
             int n = std::atoi(in.substr(i + 1, 2).c_str());
             if (style.dialect == Dialect::Renegade && n >= 16 && n <= 31) {  // |16..|23 background, |24..|31 the same blinking (iCE bright)
                 out.put(std::string("\x1b[") + (n >= 24 ? "5;" : "") + "4" + kAnsi[(n - 16) & 7] + "m");
+            } else if (style.dialect == Dialect::Renegade && n < 16) {  // |00..|15 set the foreground and keep the background (|17|15 is white on blue)
+                out.put(std::string("\x1b[") + (n & 8 ? "1" : "22") + ";25;3" + kAnsi[n & 7] + "m");
             } else if (n == 23) out.put("\x1b[0m");  // reset
             else out.put(std::string("\x1b[0;") + (n & 8 ? "1;" : "") + "3" + kAnsi[n & 7] + "m");
             i += 2;
