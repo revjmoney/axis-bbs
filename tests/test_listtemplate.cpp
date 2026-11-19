@@ -149,8 +149,9 @@ TEST_CASE("a right-aligned number wider than its field keeps every digit") {
     CHECK(renderRow(t, who, f) == "#12345|abcd|");
     // a hidden {{ACS}} group blanks to the width the field really has
     ListTemplate h;
-    REQUIRE(parseListTemplate("geom=3,6,20,14\nrow={{ACS:99}}@NM>4@{{/ACS}}!\n", h));
+    REQUIRE(parseListTemplate("geom=3,6,20,14\nrow={{S255}}@NM>4@{{/}}!\n", h));
     CHECK(renderRow(h, who, f).find("12345") == std::string::npos);
+    CHECK(renderRow(h, who, f) == "     !");
     // the visible clip still takes the whole line
     ListTemplate c;
     REQUIRE(parseListTemplate("geom=3,6,3,14\nrow=@NM>4@\n", c));
