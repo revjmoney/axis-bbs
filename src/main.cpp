@@ -78,6 +78,10 @@
 #include "bbs/memlog.h"
 #include "bbs/setup_wizard.h"
 #include "platform/cyd/ansi_screen.h"
+#include "platform/cyd/boardhost.h"
+#include "app/boarddata.h"
+#include "app/stats.h"
+#include "app/themeprovider.h"
 #include "platform/cyd/board.h"
 #include "platform/cyd/clusternet.h"
 #include "platform/cyd/config_store.h"
@@ -167,7 +171,6 @@ static void heapTraceLow(uint32_t freeB, uint32_t largest) {
     esp_rom_printf("@HT end\n");
 }
 #endif
-static size_t                artMax = 0;  // largest art string read from the SD (theme or menu file)
 
 static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
     boardDiag_.door = how;
@@ -266,214 +269,15 @@ static bool servedRequest = false;  // the main answered a follower this loop tu
 static uint32_t shotDoneMs = 0;      // the last @SHOT (it stalls the loop ~13 s on purpose)
 #endif
 
-// The oneliner wall: the newest 20, in internal flash on the main; followers read and post over the link.
-static std::vector<std::string> oneLiners;
-static void linersLoad() {
-    std::string text = flashRead("/oneliners.txt");
-    oneLiners.clear();
-    size_t pos = 0;
-    while (pos < text.size()) {
-        size_t e = text.find('\n', pos);
-        if (e == std::string::npos) e = text.size();
-        if (e > pos) oneLiners.push_back(text.substr(pos, e - pos));
-        pos = e + 1;
-    }
-}
-static void linersAddLocal(const std::string& line) {
-    oneLiners.push_back(line.substr(0, 100));
-    while (oneLiners.size() > 20) oneLiners.erase(oneLiners.begin());
-    std::string text;
-    for (auto& l : oneLiners) text += l + "\n";
-    flashWrite("/oneliners.txt", text);
-}
-// The last callers: the newest 20 logins ("handle|node|time|location"), kept like the oneliners.
-static std::vector<std::string> lastCallers;
-static void callersLoad() {
-    std::string text = flashRead("/callers.txt");
-    lastCallers.clear();
-    for (size_t pos = 0; pos < text.size();) {
-        size_t e = text.find('\n', pos);
-        if (e == std::string::npos) e = text.size();
-        if (e > pos) lastCallers.push_back(text.substr(pos, e - pos));
-        pos = e + 1;
-    }
-}
-static void callersAddLocal(const std::string& line) {
-    lastCallers.push_back(line.substr(0, 120));
-    while (lastCallers.size() > 20) lastCallers.erase(lastCallers.begin());
-    std::string text;
-    for (auto& l : lastCallers) text += l + "\n";
-    flashWrite("/callers.txt", text);
-}
+// The board's shared data (app/boarddata.h): the oneliner wall, the last callers and the lists, in internal flash on
+// the main; followers read and post over the link.
+static void                 logEvent(const String& what);
+static BoardHost            boardHost([](const std::string& line) { logEvent(line.c_str()); });
+static axis::app::BoardData boardData(boardHost);
 static bool asFollower();
 static bool writeWarrior(const std::string& handle);
 // A node's warrior hook: none when LORD is left out of the build, so registration says nothing about a warrior.
 static bool (*const warriorHook)(const std::string&) = AXIS_LORD ? writeWarrior : nullptr;
-
-// The board's small shared lists (rumors, the BBS list): 50 lines each in internal flash on the main.
-static bool listName(const std::string& n) {
-    return n == "rumors" || n == "bbslist" || n == "votes" || n == "ballots" || n == "axisnet" || n == "netnotes";
-}
-// How many lines a plain list keeps (0: axisnet and netnotes, which keep their own merge and size rules).
-static size_t listCap(const std::string& n) {
-    return n == "ballots" ? 500u : n == "rumors" ? 300u : n == "bbslist" || n == "votes" ? 50u : 0u;
-}
-// Lines counted per list the first time it is touched, then kept in step by listAppendLocal. listStore forgets it.
-static int32_t listCount[4] = {-1, -1, -1, -1};  // rumors, bbslist, votes, ballots; -1 = not counted yet
-static int     listIdx(const std::string& n) { return n == "rumors" ? 0 : n == "bbslist" ? 1 : n == "votes" ? 2 : n == "ballots" ? 3 : -1; }
-static std::string                   listPath(const std::string& n) { return "/list_" + n + ".txt"; }
-static size_t                        listCountOf(const std::string& n) {
-    int i = listIdx(n);
-    if (i < 0) return 0;
-    if (listCount[i] >= 0) return (size_t)listCount[i];
-    size_t c = 0;
-    File   f = LittleFS.open(listPath(n).c_str(), "r");
-    while (f && f.available()) {
-        String l = f.readStringUntil('\n');
-        if (l.length()) c++;
-    }
-    if (f) f.close();
-    listCount[i] = (int32_t)c;
-    return c;
-}
-// A plain list is trimmed lazily (listAppendLocal), so the file can hold up to cap + cap/4 lines: readers see the newest cap.
-static size_t listSkip(const std::string& n) {
-    size_t cap = listCap(n);
-    if (!cap) return 0;
-    return axis::bbs::listReadSkip(listCountOf(n), cap);
-}
-// One random line of a list, read a line at a time (the main menu's rumor: the whole list is more than the main can spare then)
-static std::vector<std::string> listOne(const std::string& n) {
-    std::vector<std::string> v;
-    if (!listName(n)) return v;
-    size_t   skip = listSkip(n);
-    File     f = LittleFS.open(listPath(n).c_str(), "r");
-    uint32_t seen = 0;
-    while (f && f.available()) {
-        String l = f.readStringUntil('\n');
-        if (!l.length()) continue;
-        if (skip) {
-            skip--;
-            continue;
-        }
-        if (esp_random() % ++seen == 0) v.assign(1, l.c_str());
-    }
-    if (f) f.close();
-    return v;
-}
-static std::vector<std::string> listLoad(const std::string& n) {
-    std::vector<std::string> v;
-    if (n == "rumor") return listOne("rumors");  // the main menu's one rumor
-    if (!listName(n)) return v;
-    size_t skip = listSkip(n);
-    File   f = LittleFS.open(listPath(n).c_str(), "r");  // a line at a time: one 8 KB block is more than the main can spare
-    while (f && f.available()) {
-        String l = f.readStringUntil('\n');
-        if (!l.length()) continue;
-        if (skip) {
-            skip--;
-            continue;
-        }
-        v.push_back(l.c_str());
-    }
-    if (f) f.close();
-    return v;
-}
-static void listStore(const std::string& n, const std::vector<std::string>& v) {
-    if (!listName(n)) return;
-    if (listIdx(n) >= 0) listCount[listIdx(n)] = -1;  // the file is rewritten: count it again when next needed
-    size_t      cap = n == "axisnet" || n == "netnotes" ? 180u : 120u;
-    std::string text;
-    for (auto& l : v) {
-        text += l.substr(0, cap);
-        text += '\n';
-    }
-    flashWrite(listPath(n).c_str(), text);
-}
-// A plain list gets its line appended to the file; once it is cap/4 over, the newest cap lines are streamed to a
-// temp file that replaces it (a failure leaves the original). No copy of the list is held in RAM.
-static bool listAppendLocal(const std::string& n, const std::string& line, size_t cap) {
-    if (!listName(n) || !cap) return false;
-    std::string out = line.substr(0, 120) + '\n';
-    size_t      add = 0;  // non-empty segments written (a follower's text may hold newlines)
-    for (size_t p = 0; p < out.size();) {
-        size_t e = out.find('\n', p);
-        if (e > p) add++;
-        p = e + 1;
-    }
-    if (!add) return false;  // an empty line is never shown: write nothing
-    size_t had = listCountOf(n);  // before the append, so a first count does not include the new line
-    File   f = LittleFS.open(listPath(n).c_str(), "a");
-    if (!f) return false;
-    bool        ok = f.write((const uint8_t*)out.data(), out.size()) == out.size();
-    f.close();
-    if (!ok) {
-        listCount[listIdx(n)] = -1;  // maybe half a line landed: recount
-        return false;
-    }
-    size_t now = had + add;
-    listCount[listIdx(n)] = (int32_t)now;
-    const size_t skipOld = axis::bbs::listTrimSkip(now, cap);  // (the newest cap stay once it is cap/4 over)
-    if (!skipOld) return true;
-    std::string tmp = "/list_" + n + ".tmp";
-    File        in = LittleFS.open(listPath(n).c_str(), "r");
-    File        t = LittleFS.open(tmp.c_str(), "w");
-    if (!in || !t) {
-        if (in) in.close();
-        if (t) {
-            t.close();
-            LittleFS.remove(tmp.c_str());
-        }
-        return true;  // the line is in; the trim waits for the next one
-    }
-    size_t skip = skipOld, kept = 0;
-    bool   wrote = true;
-    while (wrote && in.available()) {
-        String l = in.readStringUntil('\n');
-        if (!l.length()) continue;
-        if (skip) {
-            skip--;
-            continue;
-        }
-        String w = l.length() > 120 ? l.substring(0, 120) : l;
-        w += '\n';
-        wrote = t.write((const uint8_t*)w.c_str(), w.length()) == w.length();
-        kept++;
-    }
-    in.close();
-    t.close();
-    if (!wrote || (!LittleFS.rename(tmp.c_str(), listPath(n).c_str()) && !(LittleFS.remove(listPath(n).c_str()) && LittleFS.rename(tmp.c_str(), listPath(n).c_str())))) {
-        LittleFS.remove(tmp.c_str());
-        return true;
-    }
-    listCount[listIdx(n)] = (int32_t)kept;
-    return true;
-}
-static void listAddLocal(const std::string& n, const std::string& line) {
-    if (!listName(n)) return;
-    if (n == "axisnet") {
-        axis::bbs::AxisCard c;
-        if (!axis::bbs::axisParse(line, c) || c.host.empty()) return;
-        std::vector<std::string> v = listLoad(n);
-        axis::bbs::axisMerge(v, c, 24);
-        listStore(n, v);
-        return;
-    }
-    if (n == "netnotes") {
-        auto tail = [](const std::string& s) {
-            size_t p = s.find('|');
-            return p == std::string::npos ? s : s.substr(p + 1);
-        };
-        std::vector<std::string> v = listLoad(n);
-        for (auto& e : v)
-            if (tail(e) == tail(line)) return;
-        v.push_back(line.substr(0, 180));
-        while (v.size() > 40) v.erase(v.begin());
-        listStore(n, v);
-        return;
-    }
-    listAppendLocal(n, line, listCap(n));
-}
 
 // The sysop's own screens for the theme (MATRIX.ANS, MAIN.ANS): from the card on the main.
 // The Downloads screensets run 6 to 11 KB, so the main keeps 12 KB and cuts at the SAUCE record.
@@ -491,371 +295,33 @@ static void announceOut(const std::string& line) {
 }
 #endif
 
-// The follower's theme art, at most kArtCacheCap bytes in all (bbs/artfetch.h).
-constexpr size_t kArtCacheCap = 16384;
-static axis::bbs::ArtCache artCache(kArtCacheCap);
-constexpr size_t kThemeArtCap = 12288;
-constexpr size_t kPosterCap = 49152;  // SAYLOR.ANS is 37 KB, SAYLORLG.ANS is 45 KB. Not cached.
-constexpr size_t kPosterChunk = 7000;  // a cluster frame is 8 KB, so a follower pulls the poster in pieces
-static bool posterName(const std::string& name) { return name == "SAYLOR.ANS" || name == "SAYLORLG.ANS"; }
-// (readFileAppend: one piece of a file, cut at the first 0x1a: bbs/artfetch.h)
-static bool readThemeFileAppend(const char* folder, const std::string& name, size_t cap, size_t offset, std::string& out) {
-    if (!folder || !folder[0]) return false;
-    std::string path = std::string("/sd/themes/") + folder + "/" + name;
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return false;
-    const size_t old = out.size();
-    axis::bbs::readFileAppend(f, cap, offset, out);
-    fclose(f);
-    if (out.size() - old > artMax) artMax = out.size() - old;
-    return true;
-}
-static std::string readThemeFile(const char* folder, const std::string& name, size_t cap, size_t offset, bool* opened) {
-    std::string s;
-    bool        ok = readThemeFileAppend(folder, name, cap, offset, s);
-    if (opened) *opened = ok;
-    return s;
-}
-static std::string readThemeFile(const char* folder, const std::string& name) {
-    return readThemeFile(folder, name, kThemeArtCap, 0, nullptr);
-}
-// One piece of the Saylor poster, from the theme's folder (`want` bytes at most, never more than a cluster frame takes).
-// It is never read whole: Node streams it a piece at a time (Node::setPoster). A short read at a later offset means
-// the end of the file, not "try the other folder".
-static bool posterPieceLocalAppend(const std::string& name, size_t offset, size_t want, std::string& out) {
-    if (!storageHasSd() || !posterName(name) || offset >= kPosterCap) return false;
-    if (want > kPosterChunk) want = kPosterChunk;
-    if (want > kPosterCap - offset) want = kPosterCap - offset;
-    if (readThemeFileAppend(boardCfg->theme.c_str(), name, want, offset, out)) return true;
-    if (readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(boardCfg->theme), name, want, offset, out)) return true;
-    return readThemeFileAppend("axis", name, want, offset, out);  // a look without its own poster shows the axis one
-}
-static std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened) {
-    std::string s;
-    *opened = posterPieceLocalAppend(name, offset, want, s);
-    return s;
-}
-// A follower asks the main for the same piece ("T name offset want"); *exists false when the main has none (or did not answer).
+// The screens a caller sees (app/themeprovider.h): the theme's art, the menu files and the scripts, from this board's
+// storage, or on a follower from the main over the link. The functions below hand them to each Node.
+static axis::app::ThemeProvider themeProvider(boardHost);
+static std::string themeArt(const std::string& name) { return themeProvider.themeArt(name); }
+static std::string themeArtTop(const std::string& name, int rows) { return themeProvider.themeArtTop(name, rows); }
+static std::shared_ptr<const std::string> wfcArtShared() { return themeProvider.wfcArtShared(); }
 static std::string posterPiece(const std::string& name, size_t offset, size_t want, bool* exists) {
-    *exists = false;
-    if (!asFollower()) return posterPieceLocal(name, offset, want, exists);
-    std::string reply;
-    if (!cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(offset) + "\x1f" + std::to_string(want), reply, 3000) ||
-        reply.empty() || reply[0] != '1')
-        return "";
-    *exists = true;
-    reply.erase(0, 1);  // (in place: no second copy)
-    if (reply.size() > want) reply.resize(want);
-    return reply;
+    return themeProvider.posterPiece(name, offset, want, exists);
 }
-static bool wfcScreen(const std::string& name) {  // a waiting screen (or its lite one): from the WFC skin's folder
-    return name == "WFC.ANS" || name == "WFCCYD.ANS" || name == "WFC.LITE.ANS" || name == "WFCCYD.LITE.ANS";
+static std::string menuFile(const std::string& name) { return themeProvider.menuFile(name); }
+static bool        menuExists(const std::string& name) { return themeProvider.menuExists(name); }
+static bool        menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) { return themeProvider.menuArtPieces(name, piece); }
+static std::string menuArtPiece(const std::string& name, size_t offset, size_t want, bool* exists) {
+    return themeProvider.menuArtPiece(name, offset, want, exists);
 }
-static std::string themeArtLocal(const std::string& name) {
-    if (!storageHasSd() || name.find('/') != std::string::npos) return "";
-    std::string look, file;
-    if (axis::bbs::theme::splitLookFile(name, look, file)) {  // "crt:MAIN.ANS": that look's screen (the sysop's preview)
-        std::string s = readThemeFile(look.c_str(), file);
-        if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(look), file);
-        return s;
-    }
-    if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never read whole
-    // The waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme.
-    const std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(*boardCfg) : boardCfg->theme;
-    std::string s = readThemeFile(folder.c_str(), name);
-    if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name);
-    return s;
-}
-// The main's answer to "T name offset": one piece of a theme file, at most kPosterChunk bytes, so the reply stays under the
-// cluster's 8 KB frame (a bigger one drops the link). The piece is appended to out (the reply being built: no second copy).
-// Returns whether the file is there.
-static bool themeArtPieceAppend(const std::string& name, size_t off, size_t want, std::string& out) {
-    if (!storageHasSd() || name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
-    if (posterName(name)) return posterPieceLocalAppend(name, off, want, out);
-    size_t cap = kThemeArtCap;
-    if (off >= cap) return false;
-    if (!want || want > kPosterChunk) want = kPosterChunk;
-    if (want > cap - off) want = cap - off;
-    // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
-    // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
-    std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(*boardCfg) : boardCfg->theme, file = name, look;
-    if (axis::bbs::theme::splitLookFile(name, look, file)) folder = look;
-    if (readThemeFileAppend(folder.c_str(), file, want, off, out)) return true;
-    return readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, out);
-}
-// A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
-static std::string themeArtRemote(const std::string& name, bool* answered) {
-    constexpr size_t kFollowerWant = 4096;  // a follower asks for 4 KB pieces: the main's reply (and this reply) stay small
-    return axis::bbs::assembleArt(posterName(name) ? kPosterCap : kThemeArtCap, kFollowerWant, !posterName(name),
-                                  [&name](size_t off, std::string& reply) {
-                                      return cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off) + "\x1f" +
-                                                                  std::to_string(kFollowerWant),
-                                                              reply, 3000);
-                                  },
-                                  answered);
-}
-static std::string themeArt(const std::string& name) {
-    if (!asFollower()) return themeArtLocal(name);
-    if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never fetched whole
-    bool poster = posterName(name) || name.find(':') != std::string::npos;  // (a preview is seen once: never cached either)
-    if (!poster) {
-        if (const std::string* hit = artCache.find(name)) return *hit;
-    }
-    bool        answered = false;
-    std::string art = themeArtRemote(name, &answered);
-    if (!poster && answered) artCache.put(name, art);  // (the poster is one login screen, then it can go; a failed ask is asked again)
-    return art;
-}
-// A theme file's first `rows` lines, read from the card and stopped there (the list screens keep only a header's top rows:
-// MSGS.ANS read whole for them was 8 KB held, the slow call's lowest heap on board 1). Elsewhere the whole-file reader.
-static std::string readThemeTop(const char* folder, const std::string& name, int rows) {
-    if (!folder || !folder[0]) return "";
-    FILE* f = fopen((std::string("/sd/themes/") + folder + "/" + name).c_str(), "rb");
-    if (!f) return "";
-    std::string s;
-    axis::bbs::readTopRowsAppend(f, rows, kThemeArtCap, s);
-    fclose(f);
-    if (s.size() > artMax) artMax = s.size();
-    return s;
-}
-static std::string themeArtTop(const std::string& name, int rows) {
-    // a follower's art comes whole from the main (and its cache); previews, the poster and the waiting screens keep their own reader
-    if (asFollower() || name.find(':') != std::string::npos || posterName(name) || wfcScreen(name)) return themeArt(name);
-    if (!storageHasSd() || name.find('/') != std::string::npos) return "";
-    std::string s = readThemeTop(boardCfg->theme.c_str(), name, rows);
-    if (s.empty()) s = readThemeTop(axis::bbs::theme::legacyThemeFolder(boardCfg->theme), name, rows);
-    return s;
-}
-// The cleaned WFC.ANS every WFC screen (telnet, serial, local) draws: read once, shared, and read again only when something may have
-// changed. wfcAnsKey says what it was read from: the WFC folder plus (here on a board with the card) the file's size and time in the
-// folder and its legacy folder, so a new WFC.ANS from any writer (the sysop's @PUT, the web, a theme install) is seen on the next draw,
-// as when it was read every time. On a follower the key is the folder and the settings arrival clears it (with artCache). A follower
-// that got no art does not keep the key, so it asks again as before. Null (no art): the built-in screen.
-static std::shared_ptr<const std::string> wfcAnsShared;
-static std::string                        wfcAnsKey;
-static std::shared_ptr<const std::string> wfcArtShared() {
-    const std::string folder = axis::bbs::wfcFolder(*boardCfg);
-    std::string       key = folder;
-    if (!asFollower()) {
-        const char* dirs[2] = {folder.c_str(), axis::bbs::theme::legacyThemeFolder(folder)};
-        for (const char* d : dirs) {
-            struct stat st;
-            key += '|';
-            if (d && d[0] && storageHasSd() && stat((std::string("/sd/themes/") + d + "/WFC.ANS").c_str(), &st) == 0)
-                key += std::to_string((unsigned long)st.st_size) + "." + std::to_string((unsigned long)st.st_mtime);
-        }
-    } else {
-        key += "|F";
-    }
-    if (key == wfcAnsKey) return wfcAnsShared;
-    std::string art = axis::bbs::cleanWfcArt(themeArt("WFC.ANS"));
-    wfcAnsShared = art.empty() ? nullptr : std::make_shared<const std::string>(std::move(art));
-    if (wfcAnsShared || !asFollower()) wfcAnsKey = key;
-    else wfcAnsKey.clear();
-    return wfcAnsShared;
-}
-// ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): this board's own /menus first (its SD card or flash),
-// then the main's over the cluster. Only the small .MNU files are cached; art is fetched each time it shows.
-static std::map<std::string, std::string> menuCache;
-// A menu screen the theme draws (MAIN.ANS, PDMATRIX.ANS as MATRIX.ANS ...): the theme's file, so switching the theme
-// switches the menus too. Null when the theme has none (or the name is a menu file): the menu set's own then.
-static FILE* openThemeScreen(const std::string& name) {
-    const char* file = axis::bbs::theme::menuScreenFile(name);
-    if (!file || !storageHasSd() || boardCfg->theme.empty()) return nullptr;
-    FILE* f = fopen((std::string("/sd/themes/") + boardCfg->theme + "/" + file).c_str(), "rb");
-    if (!f)
-        if (const char* old = axis::bbs::theme::legacyThemeFolder(boardCfg->theme)) f = fopen((std::string("/sd/themes/") + old + "/" + file).c_str(), "rb");
-    return f;
-}
-// theme: a menu screen the theme draws comes from the theme (off for the main's "U" answer to a follower: theme
-// screens run past the 8 KB cluster frame, so a follower pulls those through "T" in pieces instead)
-static std::string menuFileLocal(const std::string& name, bool theme = true) {
-    std::string s;
-    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return s;
-    size_t cap = 8192;
-    FILE*  f = theme ? openThemeScreen(name) : nullptr;
-    if (f) cap = kThemeArtCap;  // (theme screens run to 11 KB)
-    else f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
-    if (f) {
-        axis::bbs::readFileAppend(f, cap, 0, s);
-        fclose(f);
-    }
-    if (s.size() > artMax) artMax = s.size();
-    return s;
-}
-static std::string menuFile(const std::string& name) {
-    if (asFollower() && cluster)
-        if (const char* screen = axis::bbs::theme::menuScreenFile(name)) {  // the theme's screen from the main, in pieces (not cached)
-            bool        answered = false;
-            std::string art = themeArtRemote(screen, &answered);
-            if (!art.empty()) return art;
-        }
-    std::string s = menuFileLocal(name);
-    if (!s.empty() || !asFollower()) return s;
-    bool mnu = name.size() > 4 && name.compare(name.size() - 4, 4, ".MNU") == 0;
-    if (mnu)
-        if (auto it = menuCache.find(name); it != menuCache.end()) return it->second;
-    std::string reply;
-    if (cluster->request(std::string("U\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1') {
-        reply.erase(0, 1);  // (in place: art is several KB, no second copy)
-        s = std::move(reply);
-    }
-    if (mnu) menuCache[name] = s;
-    return s;
-}
-
-// Does a menu screen exist and have a body? The same lookup as menuFileLocal (theme screen first, then /menus/name) but only
-// fopen + the file's size, no read: showPrelogon probes up to ten names and must not load 16 to 24 KB for each.
-static bool menuExistsLocal(const std::string& name, bool theme = true) {
-    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
-    FILE* f = theme ? openThemeScreen(name) : nullptr;
-    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
-    if (!f) return false;
-    bool has = fseek(f, 0, SEEK_END) == 0 && ftell(f) > 0;
-    fclose(f);
-    return has;
-}
-// The follower's answers from the main ("E"), kept until the theme may change (cleared with artCache).
-static std::map<std::string, bool> existsCache;
-static uint32_t                    lastEMissMs = 0;  // millis() of the last unanswered "E" (0: none)
-static bool                        mainKnowsExists = false;  // the main has answered "E" with a "1" once: its "0" can be trusted
-static bool menuExists(const std::string& name) {
-    if (menuExistsLocal(name)) return true;
-    if (!asFollower() || !cluster) return false;
-    if (auto it = existsCache.find(name); it != existsCache.end()) return it->second;
-    if (lastEMissMs && millis() - lastEMissMs < 10000) return !menuFile(name).empty();  // the main was silent a moment ago: no second wait
-    std::string reply;
-    bool        asked = cluster->request(std::string("E\x1f") + name, reply, 3000);
-    if (!asked) lastEMissMs = millis() | 1;
-    if (asked && reply == "1") {
-        mainKnowsExists = true;
-        return existsCache[name] = true;
-    }
-    if (asked && reply == "0" && mainKnowsExists) return existsCache[name] = false;
-    // No answer, or a "0" from a main that may be older (it answers every letter it doesn't know with "0"): read it as before
-    bool has = !menuFile(name).empty();
-    if (asked) existsCache[name] = has;  // (an unanswered ask is asked again)
-    return has;
-}
-
 #if AXIS_SCRIPTS
-// /scripts/NAME.axs. 8000 bytes so a follower can carry the file in one 8 KB cluster frame.
-static std::string scriptRead(const std::string& path) {
-    std::string s;
-    if (FILE* f = fopen(path.c_str(), "rb")) {
-        char b[512];
-        for (size_t n; s.size() < 8000 && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
-        fclose(f);
-    }
-    return s;
-}
-static std::vector<std::string> scriptNamesLocal() {
-    std::vector<std::string> v;
-    if (!storageHasSd()) return v;
-    std::string dirp = std::string(storageRoot()) + "/scripts";
-    if (DIR* d = opendir(dirp.c_str())) {
-        while (dirent* e = readdir(d)) {
-            std::string n = e->d_name;
-            if (n.size() <= 4) continue;
-            std::string ext = n.substr(n.size() - 4);
-            for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-            if (ext != ".axs") continue;
-            std::string base = n.substr(0, n.size() - 4);
-            if (axis::bbs::scriptNameOk(base)) v.push_back(base);
-        }
-        closedir(d);
-    }
-    std::sort(v.begin(), v.end());
-    if (v.size() > 35) v.resize(35);
-    return v;
-}
-static std::string scriptFile(const std::string& name) {
-    if (!axis::bbs::scriptNameOk(name)) return {};
-    if (storageHasSd()) return scriptRead(std::string(storageRoot()) + "/scripts/" + name + ".axs");
-    if (!asFollower() || !cluster) return {};
-    std::string reply;
-    if (cluster->request(std::string("J\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1') reply.erase(0, 1);
-    else reply.clear();
-    return reply;
-}
-static std::vector<std::string> scriptNames() {
-    if (storageHasSd() || !asFollower() || !cluster) return scriptNamesLocal();
-    std::vector<std::string> v;
-    std::string reply;
-    if (cluster->request(std::string("J\x1f"), reply, 3000) && !reply.empty() && reply[0] == '1') {
-        for (size_t pos = 1; pos < reply.size();) {
-            size_t e = reply.find('\n', pos);
-            if (e == std::string::npos) e = reply.size();
-            std::string n = reply.substr(pos, e - pos);
-            if (!n.empty() && n.back() == '\r') n.pop_back();
-            if (axis::bbs::scriptNameOk(n)) v.push_back(n);
-            pos = e + 1;
-        }
-    }
-    return v;
-}
 static void wireScripts(axis::bbs::Node* n) {
     if (!n) return;
-    n->setScripts([](const std::string& name) { return scriptFile(name); }, [] { return scriptNames(); });
+    n->setScripts([](const std::string& name) { return themeProvider.scriptFile(name); }, [] { return themeProvider.scriptNames(); });
 }
 #else
 static void wireScripts(axis::bbs::Node*) {}  // scripts are left out of this build: no loader, nothing runs
 #endif
 
-// a menu's art from this board's own storage a piece at a time (false when it isn't here: the whole-file path)
-static bool menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) {
-    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
-    if (asFollower() && axis::bbs::theme::menuScreenFile(name)) return false;  // a follower: the theme's screen comes from the main (menuFile)
-    FILE* f = openThemeScreen(name);  // the theme's screen first
-    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
-    if (!f) return false;
-    char b[512];
-    for (size_t n, total = 0; total < 16384 && (n = fread(b, 1, sizeof b, f)) > 0; total += n) {
-        const void* sauce = memchr(b, 0x1a, n);  // the SAUCE record: not part of the picture
-        piece(b, sauce ? (size_t)((const char*)sauce - b) : n);
-        if (sauce) break;
-    }
-    fclose(f);
-    return true;
-}
-
-// One piece of a menu screen for the art drawer (Node::setMenuArt): the same file menuArtPieces reads, `want` bytes from
-// `offset`, so a screen is never in RAM whole. *exists false: not here (a follower's theme screen comes whole from the main).
-static std::string menuArtPiece(const std::string& name, size_t offset, size_t want, bool* exists) {
-    *exists = false;
-    std::string s;
-    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos || offset >= 16384) return s;
-    if (asFollower() && axis::bbs::theme::menuScreenFile(name)) return s;
-    FILE* f = openThemeScreen(name);  // the theme's screen first
-    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
-    if (!f) return s;
-    *exists = true;
-    axis::bbs::readFileAppend(f, want < 16384 - offset ? want : 16384 - offset, offset, s);
-    fclose(f);
-    return s;
-}
-
 // The shared lists for the local console (callers use the same over their own node setup).
-static std::vector<std::string> sharedList(const std::string& n) {
-    if (!asFollower()) return n == "callers" ? lastCallers : listLoad(n);
-    std::vector<std::string> v;
-    std::string              reply;
-    if (cluster->request(n == "callers" ? std::string("K") : std::string("Y\x1f") + n, reply, 3000) && !reply.empty() && reply[0] == '1')
-        for (size_t pos = 1; pos < reply.size();) {
-            size_t e = reply.find('\n', pos);
-            if (e == std::string::npos) e = reply.size();
-            if (e > pos) v.push_back(reply.substr(pos, e - pos));
-            pos = e + 1;
-        }
-    return v;
-}
-static void sharedListAdd(const std::string& n, const std::string& line) {
-    if (!asFollower()) listAddLocal(n, line);
-    else {
-        std::string reply;
-        cluster->request(std::string("Z\x1f") + n + "\x1f" + line, reply, 3000);
-    }
-}
+static std::vector<std::string> sharedList(const std::string& n) { return boardData.sharedList(n); }
+static void sharedListAdd(const std::string& n, const std::string& line) { boardData.sharedListAdd(n, line); }
 static uint32_t lastServedMs = 0;  // main: a follower's door files
 #if AXIS_SD_POOL && !AXIS_FILES
 #error "AXIS_SD_POOL needs the file areas (AXIS_FILES)"
@@ -930,15 +396,15 @@ static std::unique_ptr<axis::bbs::Node>         node;
 static std::unique_ptr<axis::bbs::SetupGate>    gate;
 static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
 static uint32_t callStartMs = 0;
-// Calls, posts and uploads today and the lifetime call total, in internal flash (/stats.txt) so a reboot keeps them.
-// The day counters roll at local midnight; until the clock is set they just keep counting.
-static axis::bbs::DayStats dayStats;
+// Calls, posts and uploads today and the lifetime call total, in internal flash (/stats.txt) so a reboot keeps them
+// (app/stats.h). The day counters roll at local midnight; until the clock is set they just keep counting.
 // In a cluster the main owns them. A follower (or a board still finding the main) adds its calls and uploads to
 // statsShare and sends them up (statsSync); it shows the main's numbers from the heartbeat plus what it has not had
 // acknowledged, and never rolls, counts into, saves or overwrites its own dayStats and /stats.txt (the card board can be
 // a follower for a moment, before a cardless main hands main back: its own numbers must survive that). A follower that
 // stands in as main counts on its own file. Posts need no sending: a follower's caller posts straight into the main's
 // message base (CountingMsgs), which counts them there.
+static axis::app::Stats      stats(boardHost);
 static axis::bbs::StatsShare statsShare;
 static axis::bbs::StatsInbox statsInbox;  // main: the follower batches already applied
 static bool statsOwner() {
@@ -946,53 +412,32 @@ static bool statsOwner() {
     auto r = cluster->role();
     return r == axis::cluster::Role::Main || r == axis::cluster::Role::Off;
 }
-static void statsSave() {
-    if (!flashWrite("/stats.txt", dayStats.format())) Serial.println("axis: stats save failed");
-}
-static void rollDayCounters() {
-    if (!statsOwner()) return;  // only the main's midnight counts
-    time_t now = time(nullptr);
-    if (now < 1700000000) return;
-    struct tm* t = localtime(&now);
-    if (dayStats.roll((t->tm_year + 1900) * 400 + t->tm_yday)) statsSave();
-}
-// At boot, after the users: the saved counters, or (no file yet) a total seeded from every account's call count.
-static void statsLoad() {
-    if (!LittleFS.exists("/stats.txt")) {
-        for (auto& u : users.all()) dayStats.total += u.calls;
-        statsSave();
-    } else if (!dayStats.parse(flashRead("/stats.txt"))) {
-        Serial.println("axis: /stats.txt unreadable, stats start from zero");
-    }
-}
 // What the screens and @STATS show: this board's own numbers on the main, the main's last ones on a follower (none
 // before it has heard them), plus anything still waiting to be sent up.
 static axis::bbs::DayStats statsShown() {
-    if (statsOwner()) return statsShare.shown(dayStats);
+    if (statsOwner()) return statsShare.shown(stats.dayStats);
     return statsShare.shown();
 }
 static bool statsSendNow = false;  // a follower counted something: send it at the top of the next loop turn
-static void countCall() {
-    if (statsOwner()) {
-        rollDayCounters();
-        dayStats.call();
-        statsSave();
-    } else statsShare.call(), statsSendNow = true;
+// The shared services' ties to this board: its settings, its place in the cluster and the follower's link to the main.
+static bool wireSharedServices() {
+    auto askMain = [](const std::string& req, std::string& reply) { return cluster && cluster->request(req, reply, 3000); };
+    boardData.follower = asFollower;
+    boardData.remote = askMain;
+    themeProvider.config = []() -> const axis::bbs::BbsConfig& { return *boardCfg; };
+    themeProvider.follower = asFollower;
+    themeProvider.remote = askMain;
+    stats.owner = statsOwner;
+    stats.share = [](axis::app::Stats::Count c) {
+        if (c == axis::app::Stats::Count::Call) statsShare.call();
+        else if (c == axis::app::Stats::Count::Upload) statsShare.upload();
+        else statsShare.post();
+        statsSendNow = true;
+    };
+    stats.console = [](const char* line) { Serial.println(line); };
+    return true;
 }
-__attribute__((noinline)) static void countUpload() {
-    if (statsOwner()) {
-        rollDayCounters();
-        dayStats.upload();
-        statsSave();
-    } else statsShare.upload(), statsSendNow = true;
-}
-static void countPost() {
-    if (statsOwner()) {
-        rollDayCounters();
-        dayStats.post();
-        statsSave();
-    } else statsShare.post(), statsSendNow = true;
-}
+static const bool sharedServicesWired = wireSharedServices();
 
 // Several callers per board. Each loop turn serves one session at a time: its line, node, game,
 // movie, and transfer are moved into the globals above, then moved back.
@@ -1242,9 +687,9 @@ struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for
         int n = axis::bbs::FileMessageStore::post(area, m);
 #if AXIS_NETS
         // net posts and Net Files listings are not this board's
-        if (n && area != "email" && !axis::net::isNetAreaId(area) && area != axis::net::kNetFilesArea) countPost();
+        if (n && area != "email" && !axis::net::isNetAreaId(area) && area != axis::net::kNetFilesArea) stats.countPost();
 #else
-        if (n && area != "email") countPost();
+        if (n && area != "email") stats.countPost();
 #endif
         return n;
     }
@@ -2312,7 +1757,7 @@ static axis::bbs::AxisCard axisSelfCard() {
 
 static std::vector<std::string> axisNotesFor(const axis::bbs::AxisCard& peer) {
     std::vector<std::string> out;
-    for (const std::string& n : listLoad("netnotes")) {
+    for (const std::string& n : boardData.listLoad("netnotes")) {
         size_t bar = n.find('|');
         if (bar == std::string::npos) continue;
         std::string rest = n.substr(bar + 1);
@@ -2327,17 +1772,17 @@ static std::vector<std::string> axisNotesFor(const axis::bbs::AxisCard& peer) {
 
 static void axisApply(const std::string& reply) {
     if (asFollower()) return;
-    std::vector<std::string> lines = listLoad("axisnet"), before = lines;
+    std::vector<std::string> lines = boardData.listLoad("axisnet"), before = lines;
     axis::bbs::AxisHeard     heard = axis::bbs::axisTake(reply, lines, axisSelfCard().host);
     if (!heard.ok) return;
     if (lines != before) {
-        listStore("axisnet", lines);
+        boardData.listSave("axisnet", lines);
         axisDirty = true;
         logEvent("axis net: directory updated");
     }
     uint32_t now = unixNow();
     for (const std::string& n : heard.notes) {
-        listAddLocal("netnotes", std::to_string(now) + "|" + n);
+        boardData.listAdd("netnotes", std::to_string(now) + "|" + n);
         axisDirty = true;
     }
 }
@@ -5654,7 +5099,7 @@ static bool axisServe(WiFiClient& c, std::string& giveBack) {
         size_t e = all.find('\n', hello);
         axis::bbs::axisParse(all.substr(hello + 6, e == std::string::npos ? std::string::npos : e - (hello + 6)), them);
     }
-    std::string greet = axis::bbs::axisGreet(axisSelfCard(), listLoad("axisnet"), axisNotesFor(them));
+    std::string greet = axis::bbs::axisGreet(axisSelfCard(), boardData.listLoad("axisnet"), axisNotesFor(them));
     c.print(greet.c_str());
     c.flush();
     delay(20);
@@ -5665,7 +5110,7 @@ static bool axisServe(WiFiClient& c, std::string& giveBack) {
 
 static void axisProbeOne() {
     if (asFollower() || axisBridge.on) return;
-    std::vector<std::string> lines = listLoad("axisnet");
+    std::vector<std::string> lines = boardData.listLoad("axisnet");
     if (lines.empty()) return;
     if (axisProbeIx >= lines.size()) axisProbeIx = 0;
     axis::bbs::AxisCard peer;
@@ -5676,7 +5121,7 @@ static void axisProbeOne() {
         return;
     }
     out.setNoDelay(true);
-    out.print(axis::bbs::axisGreet(axisSelfCard(), listLoad("axisnet"), axisNotesFor(peer)).c_str());
+    out.print(axis::bbs::axisGreet(axisSelfCard(), boardData.listLoad("axisnet"), axisNotesFor(peer)).c_str());
     out.flush();
     std::string reply = axisRead(out, 1200);
     out.stop();
@@ -5826,7 +5271,7 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
 #endif
     const auto& ev = events.lines();
     for (auto it = ev.rbegin(); it != ev.rend() && w.events.size() < 8; ++it) w.events.push_back(*it);
-    rollDayCounters();
+    stats.rollDayCounters();
     axis::bbs::DayStats st = statsShown();
     w.callsToday = st.calls;
     w.postsToday = st.posts;
@@ -5888,7 +5333,7 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
     line->start();
     if (!giveBack.empty()) line->inject(giveBack);
     if (boardCfg->setupDone && mode == Mode::Normal) {
-        countCall();
+        stats.countCall();
         node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, nodeCfg(), callerLib()));
         int slot = curSession;
         node->setAccounts(&users, saveUsers, hwRandom, unixNow);
@@ -5947,73 +5392,17 @@ static void answerIn(WiFiClient incoming, const std::string& giveBack) {
         wireScripts(node.get());
         axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
         axis::bbs::theme::setArtTop(themeArtTop);  // (a list screen's header: its top rows only)
-        node->setOneLiners(
-            [] {  // the wall: here on the main, over the link on a follower
-                if (!asFollower()) return oneLiners;
-                std::vector<std::string> v;
-                std::string              reply;
-                if (cluster->request("O", reply, 3000) && !reply.empty() && reply[0] == '1') {
-                    size_t pos = 1;
-                    while (pos < reply.size()) {
-                        size_t e = reply.find('\n', pos);
-                        if (e == std::string::npos) e = reply.size();
-                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
-                        pos = e + 1;
-                    }
-                }
-                return v;
-            },
-            [](const std::string& line) {
-                logEvent(("oneliner: " + line).c_str());
-                if (!asFollower()) linersAddLocal(line);
-                else {
-                    std::string reply;
-                    cluster->request(std::string("P\x1f") + line, reply, 3000);
-                }
-            });
-        node->setLists(
-            [](const std::string& n) {
-                if (!asFollower()) return listLoad(n);
-                std::vector<std::string> v;
-                std::string              reply;
-                if (cluster->request(std::string("Y\x1f") + n, reply, 3000) && !reply.empty() && reply[0] == '1')
-                    for (size_t pos = 1; pos < reply.size();) {
-                        size_t e = reply.find('\n', pos);
-                        if (e == std::string::npos) e = reply.size();
-                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
-                        pos = e + 1;
-                    }
-                return v;
-            },
-            [](const std::string& n, const std::string& line) {
-                if (n == "rumors") logEvent(("rumor: " + line).c_str());
-                if (!asFollower()) listAddLocal(n, line);
-                else {
-                    std::string reply;
-                    cluster->request(std::string("Z\x1f") + n + "\x1f" + line, reply, 3000);
-                }
-            });
-        node->setLastCallers(
-            [] {
-                if (!asFollower()) return lastCallers;
-                std::vector<std::string> v;
-                std::string              reply;
-                if (cluster->request("K", reply, 3000) && !reply.empty() && reply[0] == '1')
-                    for (size_t pos = 1; pos < reply.size();) {
-                        size_t e = reply.find('\n', pos);
-                        if (e == std::string::npos) e = reply.size();
-                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
-                        pos = e + 1;
-                    }
-                return v;
-            },
-            [](const std::string& line) {
-                if (!asFollower()) callersAddLocal(line);
-                else {
-                    std::string reply;
-                    cluster->request(std::string("Q\x1f") + line, reply, 3000);
-                }
-            });
+        node->setOneLiners([] { return boardData.sharedOneLiners(); },  // the wall: here on the main, over the link on a follower
+                           [](const std::string& line) {
+                               logEvent(("oneliner: " + line).c_str());
+                               boardData.sharedAddOneLiner(line);
+                           });
+        node->setLists([](const std::string& n) { return boardData.sharedListLoad(n); },
+                       [](const std::string& n, const std::string& line) {
+                           if (n == "rumors") logEvent(("rumor: " + line).c_str());
+                           boardData.sharedListAdd(n, line);
+                       });
+        node->setLastCallers([] { return boardData.sharedLastCallers(); }, [](const std::string& line) { boardData.sharedNoteCaller(line); });
         // The login art from flash, and any screen as it is drawn (2 KB at a time), straight to this session's own line:
         // looked up by slot each time (the line moves between `line` and sessions[slot], and hangUp drops it first).
         node->setDirect([slot](const char* p, size_t n) {
@@ -6474,10 +5863,7 @@ static void startCluster() {
             netAreasGen++;
         }
 #endif
-        artCache.clear();  // the theme may have changed
-        wfcAnsKey.clear();  // (and so may the waiting screen)
-        existsCache.clear();
-        mainKnowsExists = false;  // (this may be another main: an older one answers every unknown letter "0")
+        themeProvider.forgetRemote();  // the theme may have changed (and so may the waiting screen and the menu screens)
         if (storageHasSd()) {  // the SD board keeps the BBS's settings: a stand-in main's older copy must not replace them
             Serial.println("axis: settings from a main without the card: kept our own");
             return;
@@ -6515,7 +5901,7 @@ static void startCluster() {
     };
     cluster->heapLargest = [] { return (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT); };
     cluster->beatExtra = [] {  // the main's WFC stats ride every heartbeat (about 60 bytes)
-        return axis::bbs::encodeStatsSnapshot(dayStats, lastCaller.c_str());
+        return axis::bbs::encodeStatsSnapshot(stats.dayStats, lastCaller.c_str());
     };
     cluster->onBeatExtra = [](const std::string& x) { statsHeard(statsShare.heard(x)); };
     cluster->onUser = [](const std::string& rec) {
@@ -6544,7 +5930,7 @@ static void startCluster() {
         }
         if (req == "O") {  // the oneliner wall
             std::string out = "1";
-            for (auto& l : oneLiners) out += l + "\n";
+            for (auto& l : boardData.oneLiners()) out += l + "\n";
             return out;
         }
         if (req.rfind("T\x1f", 0) == 0) {  // a theme screen, "T name offset": every file in pieces, so the frame stays under 8 KB
@@ -6560,35 +5946,36 @@ static void startCluster() {
                         to = &want;
                         continue;
                     }
-                    if (ch < '0' || ch > '9' || *to > kPosterCap) break;
+                    if (ch < '0' || ch > '9' || *to > axis::app::ThemeProvider::kPosterCap) break;
                     *to = *to * 10 + (size_t)(ch - '0');
                 }
             }
-            if (off > (posterName(name) ? kPosterCap : kThemeArtCap)) return std::string("0");
+            if (off > (axis::app::ThemeProvider::posterName(name) ? axis::app::ThemeProvider::kPosterCap : axis::app::ThemeProvider::kThemeArtCap))
+                return std::string("0");
             // built once, in place: '1' then the piece (reserved up front, with room for the cluster to put its frame header and tag round it)
-            size_t w = want ? want : kPosterChunk;
-            if (w > kPosterChunk) w = kPosterChunk;
+            size_t w = want ? want : axis::app::ThemeProvider::kPosterChunk;
+            if (w > axis::app::ThemeProvider::kPosterChunk) w = axis::app::ThemeProvider::kPosterChunk;
             std::string r;
             r.reserve(1 + w + 64);
             r = '1';
-            bool opened = themeArtPieceAppend(name, off, w, r);
-            if (!opened && posterName(name)) return std::string("0");
+            bool opened = themeProvider.themeArtPieceAppend(name, off, w, r);
+            if (!opened && axis::app::ThemeProvider::posterName(name)) return std::string("0");
             return r;
         }
         if (req.rfind("U\x1f", 0) == 0) {
             HeapScope scope("U");
-            return "1" + menuFileLocal(req.substr(2), false);
+            return "1" + themeProvider.menuFileLocal(req.substr(2), false);
         }  // a menu file or its art (/menus only: under 8 KB)
-        if (req.rfind("E\x1f", 0) == 0) return std::string(menuExistsLocal(req.substr(2)) ? "1" : "0");  // does a menu screen exist: no read
+        if (req.rfind("E\x1f", 0) == 0) return std::string(themeProvider.menuExistsLocal(req.substr(2)) ? "1" : "0");  // does a menu screen exist: no read
 #if AXIS_SCRIPTS
         if (req.rfind("J\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
             std::string name = req.substr(2);
             if (name.empty()) {
                 std::string out = "1";
-                for (const std::string& n : scriptNamesLocal()) out += n + "\n";
+                for (const std::string& n : themeProvider.scriptNamesLocal()) out += n + "\n";
                 return out;
             }
-            return std::string("1") + scriptFile(name);
+            return std::string("1") + themeProvider.scriptFile(name);
         }
 #endif
         if (req.rfind("V\x1f", 0) == 0) return "1" + axis::bbs::followerCommand(req.substr(2), sysopRun);  // a follower's @ command (never a board-only one)
@@ -6598,35 +5985,35 @@ static void startCluster() {
         }
         if (req.rfind("Y\x1f", 0) == 0) {  // a shared list
             std::string out = "1";
-            for (auto& l : listLoad(req.substr(2))) out += l + "\n";
+            for (auto& l : boardData.listLoad(req.substr(2))) out += l + "\n";
             return out;
         }
         if (req.rfind("Z\x1f", 0) == 0) {
             size_t sep = req.find('\x1f', 2);
-            if (sep != std::string::npos) listAddLocal(req.substr(2, sep - 2), req.substr(sep + 1));
+            if (sep != std::string::npos) boardData.listAdd(req.substr(2, sep - 2), req.substr(sep + 1));
             return std::string("1");
         }
         if (req.rfind("B\x1f", 0) == 0) {  // a follower's calls and uploads for the WFC stats: applied once, answered with ours
-            rollDayCounters();
+            stats.rollDayCounters();
             std::string last = lastCaller.c_str();
-            if (statsInbox.apply(req, dayStats, last) == axis::bbs::StatsInbox::Result::Applied) {
-                statsSave();
+            if (statsInbox.apply(req, stats.dayStats, last) == axis::bbs::StatsInbox::Result::Applied) {
+                stats.statsSave();
                 lastCaller = last.c_str();
                 screenDirty = true;
             }
-            return "1" + axis::bbs::encodeStatsSnapshot(dayStats, lastCaller.c_str());
+            return "1" + axis::bbs::encodeStatsSnapshot(stats.dayStats, lastCaller.c_str());
         }
         if (req == "K") {  // the last callers
             std::string out = "1";
-            for (auto& l : lastCallers) out += l + "\n";
+            for (auto& l : boardData.lastCallers()) out += l + "\n";
             return out;
         }
         if (req.rfind("Q\x1f", 0) == 0) {
-            callersAddLocal(req.substr(2));
+            boardData.noteCaller(req.substr(2));
             return std::string("1");
         }
         if (req.rfind("P\x1f", 0) == 0) {
-            linersAddLocal(req.substr(2));
+            boardData.addOneLiner(req.substr(2));
             return std::string("1");
         }
         if (!req.empty() && req[0] == 'H') {  // a follower's door, on this board's door folders
@@ -7336,18 +6723,18 @@ static void runCommand(const String& cmd, Print& out) {
         if (asFollower()) {
             out.println("@VOTEDEL the booth lives on the main: run it there");
         } else {
-            std::vector<std::string> v = listLoad("votes"), b = listLoad("ballots");
+            std::vector<std::string> v = boardData.listLoad("votes"), b = boardData.listLoad("ballots");
             int                      q = cmd.substring(9).toInt();
             bool                     ok = axis::bbs::voteDelete(v, b, q);
             if (ok) {
-                listStore("votes", v);
-                listStore("ballots", b);
+                boardData.listSave("votes", v);
+                boardData.listSave("ballots", b);
                 logEvent("voting booth: question " + String(q) + " taken out");
             }
             out.println(ok ? "@VOTEDEL OK" : "@VOTEDEL no such question");
         }
     } else if (cmd == "@RUMORS" || cmd == "@BBSLIST" || cmd == "@VOTES" || cmd == "@LINERS") {
-        std::vector<std::string> v = cmd == "@LINERS" ? oneLiners : sharedList(cmd == "@RUMORS" ? "rumors" : cmd == "@BBSLIST" ? "bbslist" : "votes");
+        std::vector<std::string> v = cmd == "@LINERS" ? boardData.oneLiners() : sharedList(cmd == "@RUMORS" ? "rumors" : cmd == "@BBSLIST" ? "bbslist" : "votes");
         for (auto& l : v) out.println(l.c_str());
     } else if ((cmd == "@STATS" || cmd.startsWith("@STATS ")) && !statsOwner()) {
         // a follower: the main owns the counters; this is the main's last word plus what is still to be sent up
@@ -7369,8 +6756,8 @@ static void runCommand(const String& cmd, Print& out) {
             out.println("@STATS use @STATS or @STATS total=<n> (n from 0 to 4294967295)");
         } else {
             if (cmd.length() > 7) {
-                dayStats.total = n;
-                statsSave();
+                stats.dayStats.total = n;
+                stats.statsSave();
                 screenDirty = true;
                 logEvent("sysop: lifetime calls set to " + String(n));
             }
@@ -7403,7 +6790,7 @@ static void runCommand(const String& cmd, Print& out) {
         sample.stkTimer = stk("esp_timer");
         sample.outMax = (uint32_t)axis::bbs::Node::outMax();
         sample.holdMax = (uint32_t)axis::net::TelnetStream::holdPeak();
-        sample.artMax = (uint32_t)artMax;
+        sample.artMax = (uint32_t)themeProvider.artMax();
         char line[384];
         std::snprintf(line, sizeof line, "id=%s role=%s nodes=%d on=%d heap=%u largest=%u up=%lu rssi=%d sd_mb=%u ip=%s",
                       WiFi.macAddress().c_str(),
@@ -7882,7 +7269,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
     } else if (&out == &Serial && serialFiles(cmd)) {
-        for (int32_t& c : listCount) c = -1;  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py) (a list file may have changed)
+        boardData.forgetCounts();  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py) (a list file may have changed)
     } else if (cmd == "@RERUNSETUP" && boardIsHeadless()) {  // the wizard is on a screen this board hasn't got
         out.println("axis: setup refused: this board is headless (no screen to run setup on)");
     } else if (cmd == "@RERUNSETUP" && callersBesideSysop()) {
@@ -8035,13 +7422,12 @@ void setup() {
         for (auto& d : cfgEdit().doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
     if (lordArgs) configSave(*boardCfg);
     users.parse(flashRead("/users.dat"));
-    linersLoad();
-    callersLoad();
-    if (!lastCallers.empty()) {  // the WFC's last caller: the newest saved login ("handle|node|time|location")
-        std::string h = lastCallers.back().substr(0, lastCallers.back().find('|'));
+    boardData.load();  // the oneliners and the last callers
+    if (!boardData.lastCallers().empty()) {  // the WFC's last caller: the newest saved login ("handle|node|time|location")
+        std::string h = boardData.lastCallers().back().substr(0, boardData.lastCallers().back().find('|'));
         if (!h.empty()) lastCaller = h.c_str();
     }
-    statsLoad();
+    stats.statsLoad(users);
     userSync.changed(users);  // what we have counts as sent: only new changes go over the link
     for (auto& l : eventFile.tail(40)) events.add(l);  // the Logs screen picks up where it left off
     eventFileReady = true;
@@ -8212,7 +7598,7 @@ __attribute__((noinline)) static void serviceJob() {
         netFetchJobNote(job.get(), note);  // a Net Files download whose fetch stopped
 #endif
         if (r.upload && job->ok()) {
-            countUpload();
+            stats.countUpload();
 #if AXIS_NETS && AXIS_FILES
             netFilesUploaded(r.area, job->savedName(), r.desc, node->handle());  // listed when the area is shared on User Net
 #endif
@@ -8558,7 +7944,7 @@ void loop() {
     static uint32_t lastRoll = 0;  // the day counters roll at midnight on every board, screen or not (the WFC used to be the only one)
     if (millis() - lastRoll > 5000u) {
         lastRoll = millis();
-        rollDayCounters();
+        stats.rollDayCounters();
     }
     static uint32_t lastTick = 0;  // keep the clock and the time-online count moving
     if (millis() - lastTick > 300u) {  // the status lights blink, long lines scroll, the times tick

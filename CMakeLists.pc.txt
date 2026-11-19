@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-O2 -Wall -Wextra)
 
 set(AXISCORE_SOURCES
+    src/app/boarddata.cpp
+    src/app/stats.cpp
+    src/app/themeprovider.cpp
     src/net/telnet.cpp
     src/net/telnetstream.cpp
     src/net/crc.cpp
