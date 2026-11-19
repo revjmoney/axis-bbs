@@ -1287,4 +1287,273 @@ TEST_CASE("the main's file answer moved into its frame is the same bytes as a pl
         CHECK(found == 1);
     }
 }
+#if AXIS_NATIVE  // the Linux program's cluster rules: card kinds and the host hooks
+namespace {
+// A board on the LAN that only listens: every datagram a board sends lands in its queue (and who sent it).
+struct Sniffer {
+    FakeNet net;
+    explicit Sniffer(FakeLan& lan) {
+        net.lan = &lan;
+        net.ip = 200;
+        lan.nets.push_back(&net);
+    }
+    // the last announcement from this address, without its tag, split at spaces
+    std::vector<std::string> lastAnnouncement(uint32_t from) {
+        std::vector<std::string> out;
+        for (auto& d : net.datagrams) {
+            std::string text = d.first;
+            if (d.second != from || !openDatagram(kTestKey, text) || text.rfind("AXIS! ", 0) != 0) continue;
+            out.clear();
+            for (size_t pos = 6; pos <= text.size();) {  // after "AXIS! ": ip, epoch, node, kind, version
+                size_t sp = text.find(' ', pos);
+                out.push_back(text.substr(pos, sp == std::string::npos ? std::string::npos : sp - pos));
+                if (sp == std::string::npos) break;
+                pos = sp + 1;
+            }
+        }
+        return out;
+    }
+    int announcementsFrom(uint32_t from) {
+        int n = 0;
+        for (auto& d : net.datagrams) {
+            std::string text = d.first;
+            if (d.second == from && openDatagram(kTestKey, text) && text.rfind("AXIS! ", 0) == 0) n++;
+        }
+        return n;
+    }
+};
+
+// the Linux program as a follower (clusterhost.cpp's Profile::Follower)
+Cluster::HostHooks mirrorHost(std::function<bool()> onYield = nullptr) {
+    Cluster::HostHooks h;
+    h.mirror = true;
+    h.neverMain = true;
+    h.minMainVersion = kProtocolVersion;
+    h.onYield = onYield;
+    return h;
+}
+// and as a main on its own account (Profile::MirrorMain); claimEpoch 0 leaves it to start as any board would
+Cluster::HostHooks mirrorMainHost(uint32_t claimEpoch) {
+    Cluster::HostHooks h;
+    h.mirror = true;
+    if (claimEpoch) {
+        h.claimMain = true;
+        h.claimEpoch = claimEpoch;
+    }
+    return h;
+}
+
+int yieldsSent(const std::string& bytes) {  // Yield frames in what a board sent (the type byte is never sealed)
+    FrameReader r;
+    r.add(bytes);
+    Frame       t;
+    std::string body;
+    int         n = 0;
+    while (r.next(t, body))
+        if (t == Frame::Yield) n++;
+    return n;
+}
+}  // namespace
+
+TEST_CASE("a cardless main hands main to a mirror follower only after 90 s with no card follower") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    Sniffer  sn(lan);
+    uint32_t now = 0;
+    b.c->setHost(mirrorHost([] { return true; }));
+    b.c->setHasFiles(true);
+    a.c->start(now);
+    run({&a}, now, 4000);  // A is main from 3050 on
+    b.c->start(now);
+    run({&a, &b}, now, 92050 - now);  // A has been main for 89 s
+    REQUIRE(a.c->role() == Role::Main);
+    CHECK(b.c->role() == Role::Follower);
+    run({&a, &b}, now, 2000);  // 91 s
+    CHECK(b.c->role() == Role::Main);
+    run({&a, &b}, now, 8000);
+    CHECK(a.c->role() == Role::Follower);
+    auto ann = sn.lastAnnouncement(102);
+    REQUIRE(ann.size() >= 5);
+    CHECK(ann[3] == "m");
+    CHECK(ann[4] == "2");
+}
+
+TEST_CASE("a cardless main that hears a card board inside the 90 s hands main to the card board, not the mirror") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b"), c(lan, 103, "board-c");
+    uint32_t now = 0;
+    int      asked = 0;
+    b.c->setHost(mirrorHost([&asked] {
+        asked++;
+        return true;
+    }));
+    b.c->setHasFiles(true);
+    c.c->setHasFiles(true);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 40000);  // 40 s: the mirror has joined, nobody has yielded
+    CHECK(b.c->role() == Role::Follower);
+    c.c->start(now);
+    run({&a, &b, &c}, now, 120000);
+    CHECK(c.c->role() == Role::Main);
+    CHECK(a.c->role() == Role::Follower);
+    CHECK(b.c->role() == Role::Follower);
+    CHECK(asked == 0);  // the mirror was never asked
+}
+
+TEST_CASE("a cardless main hands main to the card follower, not the mirror one") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b"), c(lan, 103, "board-c");
+    uint32_t now = 0;
+    int      asked = 0;
+    b.c->setHost(mirrorHost([&asked] {
+        asked++;
+        return true;
+    }));
+    b.c->setHasFiles(true);
+    c.c->setHasFiles(true);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    c.c->start(now);
+    run({&a, &b, &c}, now, 150000);
+    CHECK(c.c->role() == Role::Main);
+    CHECK(b.c->role() == Role::Follower);
+    CHECK(a.c->role() == Role::Follower);
+    CHECK(asked == 0);
+}
+
+TEST_CASE("a card main never hands main to a mirror follower") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    int      asked = 0;
+    b.c->setHost(mirrorHost([&asked] {
+        asked++;
+        return true;
+    }));
+    b.c->setHasFiles(true);
+    a.c->setHasFiles(true);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 100000);  // past the 90 s a cardless main waits
+    CHECK(a.c->role() == Role::Main);
+    CHECK(b.c->role() == Role::Follower);
+    CHECK(asked == 0);
+}
+
+TEST_CASE("a mirror main keeps main when a card board joins") {
+    FakeLan            lan;
+    Board              a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t           now = 0;
+    Cluster::HostHooks h = mirrorMainHost(5);
+    b.c->setHost(h);
+    b.c->setHasFiles(true);
+    a.c->setHasFiles(true);
+    std::string sent;
+    b.net.tap = &sent;
+    b.c->start(now);
+    REQUIRE(b.c->role() == Role::Main);
+    run({&b}, now, 1000);
+    a.c->start(now);
+    run({&a, &b}, now, 30000);
+    CHECK(b.c->role() == Role::Main);
+    CHECK(a.c->role() == Role::Follower);
+    CHECK(yieldsSent(sent) == 0);
+}
+
+TEST_CASE("two mains: a mirror main stays main over a card main") {
+    FakeLan  lanA, lanB;
+    Board    a(lanA, 101, "board-a"), b(lanB, 102, "board-b");
+    uint32_t now = 0;
+    a.c->setHasFiles(true);
+    b.c->setHost(mirrorMainHost(0));
+    b.c->setHasFiles(true);
+    a.c->start(now);
+    b.c->start(now);
+    run({&a, &b}, now, 4000);  // two separate LANs: each is main
+    REQUIRE(a.c->role() == Role::Main);
+    REQUIRE(b.c->role() == Role::Main);
+    lanB.nets.clear();  // now they share one LAN
+    b.net.lan = &lanA;
+    lanA.nets.push_back(&b.net);
+    run({&a, &b}, now, 15000);
+    CHECK(b.c->role() == Role::Main);
+    CHECK(a.c->role() == Role::Follower);
+}
+
+TEST_CASE("a follower that may never be main keeps looking when its main is lost") {
+    FakeLan            lan;
+    Board              a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    Sniffer            sn(lan);
+    uint32_t           now = 0;
+    b.c->setHost(mirrorHost());
+    b.c->setHasFiles(true);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 4000);
+    REQUIRE(b.c->role() == Role::Follower);
+    a.net.powerOff();
+    run({&a, &b}, now, 60000);
+    CHECK(b.c->role() == Role::Discovering);
+    CHECK(sn.announcementsFrom(102) == 0);  // it never announced itself as a main
+    CHECK(b.saw("looking for a main"));
+}
+
+TEST_CASE("a follower that needs version 2 does not join a main without it") {
+    FakeLan            lan;
+    Board              b(lan, 102, "board-b");
+    uint32_t           now = 0;
+    b.c->setHost(mirrorHost());  // never main, and wants the protocol version (2)
+    b.c->start(now);
+    b.net.datagrams.emplace_back(sealDatagram(kTestKey, "AXIS! 5 1 1 1"), 5);  // a main at address 5, no version field: protocol 1
+    run({&b}, now, 5000);
+    CHECK(b.c->role() == Role::Discovering);
+    CHECK(b.net.dialed.empty());
+    b.net.datagrams.emplace_back(sealDatagram(kTestKey, "AXIS! 5 1 1 1 2"), 5);  // the same with version 2: it dials
+    run({&b}, now, 200);
+    REQUIRE(b.net.dialed.size() == 1);
+    CHECK(b.net.dialed[0] == 5);
+}
+
+TEST_CASE("a Yield the host declines leaves the board a follower") {
+    FakeLan  lan;
+    Board    a(lan, 101, "board-a"), b(lan, 102, "board-b");
+    uint32_t now = 0;
+    int      asked = 0;
+    b.c->setHost(mirrorHost([&asked] {
+        asked++;
+        return false;
+    }));
+    b.c->setHasFiles(true);
+    a.c->start(now);
+    run({&a}, now, 4000);
+    b.c->start(now);
+    run({&a, &b}, now, 125000);  // A yields at 90 s and again every 30 s
+    CHECK(asked >= 1);
+    CHECK(b.c->role() == Role::Follower);
+    CHECK(a.c->role() == Role::Main);
+}
+
+TEST_CASE("the announcement says kind and version, and an old reader sees m as no card") {
+    FakeLan            lan;
+    Board              b(lan, 102, "board-b");
+    Sniffer            sn(lan);
+    uint32_t           now = 0;
+    Cluster::HostHooks h = mirrorMainHost(3);
+    b.c->setHost(h);
+    b.c->setHasFiles(true);
+    b.c->start(now);
+    run({&b}, now, 3000);
+    auto ann = sn.lastAnnouncement(102);
+    REQUIRE(ann.size() >= 5);
+    CHECK(ann[3] == "m");
+    CHECK(ann[4] == "2");
+    CHECK_FALSE(ann[3] == "1");  // a board from before card kinds asks field == "1" for a card
+    CHECK(kindOf(ann[3]) == CardKind::Mirror);
+}
+#endif  // AXIS_NATIVE
 #endif  // AXIS_CLUSTER

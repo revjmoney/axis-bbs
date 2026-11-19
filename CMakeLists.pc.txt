@@ -187,6 +187,7 @@ add_executable(axis_tests
     tests/test_accounts.cpp
     tests/test_wifipicker.cpp
     tests/test_cluster.cpp
+    tests/test_cardtree.cpp
     tests/test_remotefiles.cpp
     tests/test_pooledlib.cpp
     tests/test_relay.cpp
