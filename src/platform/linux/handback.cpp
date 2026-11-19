@@ -63,7 +63,7 @@ constexpr uint32_t kMinCharge = 256;      // a request counts at least this many
 constexpr uint32_t kSaveMs = 5000;        // the takeover state is written at most this often while it changes
 constexpr size_t   kShowMax = 30;         // @HANDBACK lists at most this many paths
 
-// ---- the change log ----
+// The change log.
 
 // "1 file", "2 files"
 std::string many(uint64_t n, const char* one) { return std::to_string(n) + " " + one + (n == 1 ? "" : "s"); }
@@ -152,7 +152,7 @@ void markFresh(const std::string& rel) {  // sent while it changed: the next pas
     fresh.insert(rel);
 }
 
-// ---- the card's state as this program knows it (mirror.takeover, kept up to date) ----
+// The card's state as this program knows it (mirror.takeover, kept up to date).
 
 Manifest known;  // .files: each file as the card last reported it
 bool     knownLoaded = false;
@@ -188,7 +188,7 @@ bool knownUnder(const std::string& rel, const std::string& path) {  // path is u
     return path.size() > rel.size() && path.compare(0, rel.size(), rel) == 0 && path[rel.size()] == '/';
 }
 
-// ---- what a pass does ----
+// What a pass does.
 
 struct Plan {
     std::set<std::string>    check;    // 'I S' for each before anything is written
@@ -306,7 +306,7 @@ bool makePlan(const std::set<std::string>& base, Plan& plan, std::string& why) {
     return true;
 }
 
-// ---- the hand-back ----
+// The hand-back.
 
 enum class Phase { Plan, Check, Work, Finish };
 enum class CardIs { Missing, File, Folder };
@@ -508,8 +508,15 @@ void checkStep(uint32_t now) {
             else known.files.erase(p);
             knownDirty = true;
             std::printf("axis: handback: %s on the card is already as the mirror has it\n", p.c_str());
+            lastResult.push_back("pass " + std::to_string(job.passNo) + ": " + p +
+                                 " on the card is already as the mirror has it (taken as the card's state)");
         } else {
-            job.differ.push_back(p);
+            std::string card = is == CardIs::Missing ? "missing"
+                               : is == CardIs::Folder ? "a folder"
+                                                      : "size " + std::to_string(size) + " mtime " + std::to_string(mtime);
+            std::string then = k == known.files.end() ? "not there"
+                               : "size " + std::to_string(k->second.size) + " mtime " + std::to_string(k->second.mtime);
+            job.differ.push_back(p + " (card now: " + card + "; at the takeover: " + then + ")");
         }
     }
     job.checkAt++;
@@ -736,6 +743,22 @@ void finish(uint32_t now) {
         stop("the end", "the card board did not take the end of the hand-back", now);
         return;
     }
+    // State handedback first, before anything else changes: if it cannot be saved, this computer stays main with
+    // its mirror, change log and manifest untouched (the card board restarts and follows it, and GO can run again).
+    // Once it is saved, a crash before the tidying below is harmless: the next start follows the card board.
+    {
+        ClusterState st;
+        clusterStateLoad(st);
+        st.state = Standing::HandedBack;
+        st.since = (long)time(nullptr);
+        st.soloUntil = 0;
+        if (!clusterStateSave(st)) {
+            stop("the end", "cannot save the cluster state, so this computer stays main (nothing else was changed; "
+                            "the card board restarts and follows it)",
+                 now);
+            return;
+        }
+    }
     // the card restarts as it is now: the mirror's manifest is the card's state, without what was left behind (a
     // compare pass copies those from the card again; this computer's copies are in handback-left)
     Manifest    m = known;
@@ -775,15 +798,6 @@ void finish(uint32_t now) {
         for (const std::string& l : leftLines) result("  " + l);
     }
     job.running = false;
-    ClusterState st;
-    clusterStateLoad(st);
-    st.state = Standing::HandedBack;
-    st.since = (long)time(nullptr);
-    st.soloUntil = 0;
-    if (!clusterStateSave(st)) {
-        result("cannot save the cluster state: this computer stays main (the card board is restarting and follows it)");
-        return;
-    }
     hostRestart("main handed back");
 }
 

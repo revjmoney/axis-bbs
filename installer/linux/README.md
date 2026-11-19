@@ -89,6 +89,13 @@ With the same cluster key as the boards (`@CLUSTERKEY`, kept in `<data>/cluster.
   is listed. Then the card board restarts as the main and axis restarts as its follower.
   `@HANDBACK STOP` stops after the file in hand; axis stays main and `@HANDBACK GO` can run again.
   A folder with nothing in it is not made on the card.
+- If `@HANDBACK` keeps stopping on a file (it lists the card's size and mtime now and at the
+  takeover) and you want this computer's copy to win over the card's, edit that file's line in
+  `<data>/mirror.takeover` while no hand-back runs, then `@HANDBACK GO` again. Its fields are
+  split by the 0x1F byte. Put in the card's numbers:
+  `sed -i 's|^msgs/x.dat\x1f.*|msgs/x.dat\x1f<size>\x1f<mtime>|' mirror.takeover`. If the card
+  shows it missing or a folder, delete the line instead:
+  `sed -i '\|^msgs/x.dat\x1f|d' mirror.takeover`. The card's version of that file is then lost.
 
 ## Run it in a terminal or a window instead
 
