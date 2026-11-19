@@ -2945,7 +2945,7 @@ void Node::showAbout() {
         {"runs on", s.hardware},
         {"board", cfg_->bbsName},
     };
-    if (!cfg_->publicHost.empty()) rows.push_back({"telnet", cfg_->publicHost + " port " + std::to_string(cfg_->telnetPort)});
+    if (!cfg_->publicHost.empty()) rows.push_back({"telnet", cfg_->publicHost + " port " + std::to_string(cfg_->advertisedPort())});
     if (!cfg_->sysopHandle.empty()) rows.push_back({"sysop", cfg_->sysopHandle});
     if (!cfg_->location.empty()) rows.push_back({"where", cfg_->location});
     rows.push_back({"credit", "Rev. J. Money, rotatocam.com, jmscnc.com"});

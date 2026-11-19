@@ -878,6 +878,8 @@ extern "C" bool                 __real__Z10configSaveRKN4axis3bbs9BbsConfigE(con
 extern "C" axis::bbs::BbsConfig __wrap__Z10configLoadv() {
     axis::bbs::BbsConfig c = __real__Z10configLoadv();
     if (c.telnetPort == 23) c.telnetPort = lanPort;
+    // the externally reachable port, for the advertised address: axis.conf public_port, 0 in a cluster (LAN only)
+    c.publicPort = axisProfile() == Profile::Solo ? (int)hostConfInt("public_port", 0, 0, 65535) : 0;
     if (axisProfile() != Profile::Solo && c.sessions > 4) c.sessions = 4;
     return c;
 }

@@ -224,6 +224,7 @@ bool PcBbs::loadConfig() {
     bbs::BbsConfig c = ini.empty() ? bbs::BbsConfig() : bbs::parseConfig(ini);
     uint16_t lan = (uint16_t)hostConfInt("lan_port", 2323, 1, 65535);
     if (c.telnetPort == 23) c.telnetPort = lan;
+    c.publicPort = (int)hostConfInt("public_port", 0, 0, 65535);  // the advertised external port
     cfgSet(std::move(c));
     return !ini.empty();
 }

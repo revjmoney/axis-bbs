@@ -1670,7 +1670,7 @@ static axis::bbs::AxisCard axisSelfCard() {
     // The public address only: no publicHost means no advertised host (never the LAN IP, which peer boards would
     // then show to their own callers). The board stays reachable on its own LAN by mDNS, just not advertised.
     me.host = boardCfg->publicHost;
-    me.port = boardCfg->telnetPort > 0 ? boardCfg->telnetPort : 23;
+    me.port = boardCfg->advertisedPort();
     me.location = boardCfg->location;
     me.sysop = boardCfg->sysopHandle;
     me.blurb = std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion;

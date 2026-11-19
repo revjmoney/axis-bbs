@@ -81,6 +81,11 @@ struct BbsConfig {
     std::string nupSalt, nupHash;  // NUP: the new user password asked before Apply ("" = none; wizard, @NUP)
     std::string bbsName = "Axis Underground CNC", location, boardName = "axis", publicHost;
     int         telnetPort = 23;
+    // The externally reachable telnet port behind publicHost, when it differs from telnetPort. On the Linux host a
+    // separate public_port in axis.conf maps to the public address, while telnetPort is the LAN port; external callers
+    // reach the board on this one. 0 = unset (the board forwards its single port): advertise telnetPort instead. It is
+    // not stored in axis.ini (which both programs share): the host stamps it at runtime from axis.conf.
+    int         publicPort = 0;
     std::string timezone = "EASTERN";
     std::string ftnAddress = "99:1/0";
     int         newUserSecurity = 10, dailyMinutes = 60, idleMinutes = 5;
@@ -134,6 +139,13 @@ struct BbsConfig {
     // the main menu as data ("menu.main.N=hotkey|name|command"); empty = the built-in menu
     std::vector<MenuItem> mainMenu;
     std::vector<std::pair<std::string, std::string>> unknown;  // keys from newer firmware, kept on save
+
+    // The telnet port to advertise to callers (About, the welcome card, the AXIS-net self card): the public port when
+    // the host set one, else the LAN/telnet port, never 0.
+    int advertisedPort() const {
+        int p = publicPort ? publicPort : telnetPort;
+        return p > 0 ? p : 23;
+    }
 };
 
 // The file areas: switched on in the settings ("files_on") and built into this firmware (features.h). A build without
