@@ -27,6 +27,7 @@ struct WfcNode {
 // What a node's board runs on, from its cluster id: the Linux program's id is a locally administered address (made from
 // the machine id), which an ESP32's factory MAC never is. "pc" or "esp"; "" for an id that isn't a MAC.
 std::string nodePlatform(const std::string& boardId);
+std::string nodeLine(const WfcNode& n);  // "3 pc  waiting", "1 esp Rev  Messages": one row of the node list
 
 // The newest LFD3K-SM link report on this board (the |R? codes), as the screen shows it; all "" before the first one.
 // "The same" means the same caller, modem and tier: the numbers (label with RSSI, bps, SNR, RSSI, retrains, LZ) move at
