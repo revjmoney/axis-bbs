@@ -929,7 +929,7 @@ void Cluster::tick(uint32_t now) {
                 if (host_.neverMain) {  // never main by itself: look for the next main
                     event("MAIN NODE LOST (" + std::string(links_.empty() ? "link closed" : "no heartbeat " + num((now - lastBeat_) / 1000) + "s") +
                           "), looking for a main");
-                    minEpoch_ = epoch_ + 1;
+                    minEpoch_ = epoch_;  // not +1: the lost main may still be up, and a None main at this epoch must be accepted again
                     wantNumber_ = number_;
                     discover(now);
                     break;
