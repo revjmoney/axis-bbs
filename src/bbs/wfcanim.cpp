@@ -4,7 +4,7 @@
 // Rev's own, GPLv3) moved from a 1-bit OLED word to coloured 7x10 text cells: each one takes its part away and brings it
 // back as it was, so at its start and its end the part is exactly the still screen.
 #ifdef ARDUINO
-#pragma GCC optimize("O2")  // drawn per pixel: speed (frames measured with @WFCFX: frame_us)
+#pragma GCC optimize("O2")  // drawn per pixel: speed (frames measured with @WFCFX, bench builds only: frame_us)
 #endif
 #include "bbs/wfcanim.h"
 

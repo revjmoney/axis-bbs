@@ -31,7 +31,7 @@ void announce(const String& line);                // queue a Discord line (dropp
 bool setDiscord(const String& webhookUrl);        // "" turns it off
 bool setDdns(const String& spec);                 // "domain|host|key|secret", "" turns it off
 bool setNoip(const String& spec);                 // No-IP: "host|username|password", "" turns it off
-void ddnsSoon();                                  // bench: the next tick hands the web task a DNS check
+void ddnsSoon();                                  // @DDNS now (bench builds only): the next tick hands the web task a DNS check
 void noipNow();                                   // bench: update No-IP right now (blocking)
 String status();                                  // for the serial console: what's set (no secrets)
 String ping();                                    // bench: the public IP over HTTPS (proves TLS and the roots), blocking

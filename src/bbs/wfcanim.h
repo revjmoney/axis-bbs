@@ -67,7 +67,7 @@ public:
     // attribute at coverage 0 (background) and 4 (foreground), as AnsiScreen builds it
     void renderBand(uint8_t* fb, int band, uint32_t now, const uint8_t (*lut)[5]) const;
 
-    // bench (@WFCFX): start an effect now (part -1: any), hold the time tau ms into it (-1: let it run), stop everything
+    // bench (@WFCFX, bench builds only; the host tests use these too): start an effect now (part -1: any), hold the time tau ms into it (-1: let it run), stop everything
     bool        force(int fx, uint32_t now, int part = -1);
     void        hold(int32_t tau);
     void        calm(uint32_t now);  // a still spell starts now (the jiggle goes on)
@@ -127,7 +127,7 @@ private:
     uint32_t                heldNow_ = 0, nextStart_ = 0, spellEnd_ = 0, orbitAt_ = 0;
     int8_t                  ox_ = 0, drawnOx_ = 0;
     uint8_t                 orbitStep_ = 0, lastMask_ = 0;
-    int8_t                  forced_ = -1;  // the act @WFCFX started (hold times it)
+    int8_t                  forced_ = -1;  // the act force() started (@WFCFX; hold times it)
     uint16_t                bag_ = 0;  // content effects used this round (each one once before any again)
     Walker                  walker_;
     int16_t                 lastDrainX_ = -1000, lastDrainY_ = -1000;

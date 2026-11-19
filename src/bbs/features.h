@@ -39,6 +39,12 @@
 #ifndef AXIS_GPIO
 #define AXIS_GPIO 0
 #endif
+// Bench and test tooling only (not a selectable feature): the @ commands only the bench scripts and the host tests
+// send (@SHOT, @TAP, @HEAPWIN and the rest, see runCommand in main.cpp). Off in the release image (env cyd); on in
+// env cyd-bench, env cyd-trace, the native Linux build and the host tests. Off, those commands are unknown commands.
+#ifndef AXIS_BENCH
+#define AXIS_BENCH 0
+#endif
 
 // Dependencies (the "needs" lists in installer/features.json).
 static_assert(!AXIS_ANSIVIEW || AXIS_FILES, "AXIS_ANSIVIEW needs AXIS_FILES");
