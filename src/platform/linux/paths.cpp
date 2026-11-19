@@ -16,6 +16,7 @@
 namespace {
 
 std::string dataDir;  // set once by axisDataSetup, before setup(); read only after that
+Profile     profile = Profile::Solo;  // set once by axisSetProfile, before setup()
 
 // true when `p` is `dir` itself or a path under it ("/sd", "/sd/x"; not "/sdcard")
 bool under(const std::string& p, const char* dir) {
@@ -140,12 +141,29 @@ bool copyTree(const std::string& from, const std::string& to, int& files, std::s
 
 std::string axisDataDir() { return dataDir; }
 
+void    axisSetProfile(Profile p) { profile = p; }
+Profile axisProfile() { return profile; }
+const char* axisProfileName(Profile p) {
+    return p == Profile::Follower ? "follower" : p == Profile::MirrorMain ? "mirror main" : "solo";
+}
+
+std::string axisPrefsDir() {
+    if (dataDir.empty()) return "";
+    return dataDir + (profile == Profile::Solo ? "/prefs" : "/cluster/prefs");
+}
+
 std::string hostPath(const char* p) {
     if (!p) return "";
     if (p[0] != '/' || p[1] == 0) return p;  // the fast way out: nothing the board names starts otherwise
     std::string s = p;
-    if (under(s, "/sd")) return dataDir.empty() ? "" : dataDir + "/sd" + s.substr(3);
-    if (under(s, "/littlefs")) return dataDir.empty() ? "" : dataDir + "/flash" + s.substr(9);
+    if (under(s, "/sd")) {
+        if (dataDir.empty() || profile == Profile::Follower) return "";  // a follower has no card: fails as a cardless board's
+        return dataDir + (profile == Profile::MirrorMain ? "/mirror" : "/sd") + s.substr(3);
+    }
+    if (under(s, "/littlefs")) {
+        if (dataDir.empty()) return "";
+        return dataDir + (profile == Profile::Solo ? "/flash" : "/cluster/flash") + s.substr(9);
+    }
     return s;
 }
 
@@ -180,7 +198,7 @@ bool axisDataSetup(const std::string& requested, const std::string& seed, std::s
         }
         std::printf("axis: data: %s was open to other users (mode %03o), now 0700\n", dir.c_str(), (unsigned)(st.st_mode & 0777));
     }
-    for (const char* sub : {"/sd", "/flash", "/prefs", "/log"})
+    for (const char* sub : {"/sd", "/flash", "/prefs", "/log", "/cluster", "/cluster/flash", "/cluster/prefs", "/mirror"})
         if (::mkdir((dir + sub).c_str(), 0700) != 0 && errno != EEXIST) {
             why = "cannot make " + dir + sub + ": " + std::strerror(errno);
             return false;

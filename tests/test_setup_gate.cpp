@@ -57,6 +57,9 @@ TEST_CASE("node idle minutes come from config") {
     BbsConfig c;
     c.idleMinutes = 2;
     Node n(1, info, c);
+    axis::net::LinkInfo radio;  // a radio caller: spared the pre-login leash, so only idle_minutes applies here
+    radio.any = true;
+    n.setLink(radio);
     n.begin(0);
     n.poll(119000);
     CHECK_FALSE(n.wantsHangup());

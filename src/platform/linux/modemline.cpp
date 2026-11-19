@@ -20,15 +20,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <utility>
 #include <vector>
 
-#include "platform/linux/host.h"
 #include "platform/linux/hostconf.h"
-#include "platform/linux/hostnet.h"
-
-uint32_t millis();
 
 namespace {
+ModemLineHooks hooks;  // the program's (modemLineSetHooks)
 constexpr const char* kModemName = "LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM";
 constexpr uint32_t    kRetryMs = 5000;       // a missing or failed tty is tried again this often
 constexpr uint32_t    kSettleMs = 500;       // after opening: the modem's boot chatter is thrown away
@@ -101,6 +99,7 @@ ModemLine         M;
 std::thread::id   mainThread;
 bool              busy = false;
 bool              stopping = false;  // the program is stopping: no call is answered, the one up is hung up
+bool              holding = false;   // modemLineHold: the BBS is joining its cluster, so a RING is not answered
 
 void say(const std::string& s) { std::printf("axis: modem: %s\n", s.c_str()); }
 
@@ -439,7 +438,8 @@ void startCall(uint32_t now, const std::string& connect, const std::string& rest
         return;
     }
     M.sock = sv[0];
-    hostnetInjectClient(sv[1], inet_addr("127.0.0.2"));  // the telnet server's next caller, from 127.0.0.2
+    if (hooks.inject) hooks.inject(sv[1]);  // the program's next caller (the Linux axis: its telnet server, from 127.0.0.2)
+    else ::close(sv[1]);  // (no program to take it: the call ends at once)
     M.toAxis.clear();
     M.held.clear();
     M.up = M.down = 0;
@@ -492,6 +492,10 @@ void resultLines(uint32_t now, const std::string& data) {
         if (text.compare(0, 4, "RING") == 0) {
             if (stopping) {
                 say("RING, not answered (axis is stopping)");
+                continue;
+            }
+            if (holding) {
+                say("RING, not answered (this BBS is joining its cluster)");
                 continue;
             }
             say("RING, answering");
@@ -728,8 +732,11 @@ void step(uint32_t now) {
     if (M.fd >= 0) ttyFlush(now);
 }
 
-void delayHook() { modemLinePoll(millis()); }
+uint32_t clockMs() { return hooks.nowMs ? hooks.nowMs() : 0; }
+void     delayHook() { modemLinePoll(clockMs()); }
 }  // namespace
+
+void modemLineSetHooks(ModemLineHooks h) { hooks = std::move(h); }
 
 void modemLineStart(const std::string& path) {
     mainThread = std::this_thread::get_id();
@@ -744,9 +751,11 @@ void modemLineStart(const std::string& path) {
     }
     M.path = path;
     enter(St::Closed, 0);
-    axis::host::delayHook = delayHook;
-    modemLinePoll(millis());
+    if (hooks.delaySlot) *hooks.delaySlot = delayHook;
+    modemLinePoll(clockMs());
 }
+
+void modemLineHold(bool on) { holding = on; }
 
 bool modemLineBusy() {  // a stranded call counts until the stop's own try at it has failed
     return M.st == St::Call || M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2 || M.st == St::Ath ||
@@ -754,7 +763,7 @@ bool modemLineBusy() {  // a stranded call counts until the stop's own try at it
 }
 
 void modemLineHangUp() {
-    uint32_t now = millis();
+    uint32_t now = clockMs();
     bool     wasStranded = M.st == St::Stranded;
     stopping = true;  // from here: guards clamped to kStopGuardMs, and one +++ try only
     if (M.st == St::Call) {
@@ -770,7 +779,7 @@ void modemLineHangUp() {
 }
 
 void modemLineFinish() {
-    if (M.fd >= 0 && !M.toTty.empty()) ttyFlush(millis());  // an ATH still queued goes out before the exit
+    if (M.fd >= 0 && !M.toTty.empty()) ttyFlush(clockMs());  // an ATH still queued goes out before the exit
     if (M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2 || M.st == St::Ath)
         say("WARNING: the hang-up did not finish before the exit: the modem may still be online (the next start hangs "
             "it up)");

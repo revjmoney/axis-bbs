@@ -3,8 +3,8 @@
 // The LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM on a serial port: radio calls it answers become telnet
 // callers. A port of the GHOSTBOARD's tools/lfd3k_bridge.py into the program, run between loop() turns and from
 // delay() so it never blocks the board's loop:
-//   RING: send ATA. CONNECT ...: a socketpair, one end handed to the telnet server (hostnetInjectClient, from
-//   127.0.0.2), bytes pumped both ways. AXIS's telnet requests are refused for the caller (a plain terminal) and IAC
+//   RING: send ATA. CONNECT ...: a socketpair, one end handed to the program (ModemLineHooks::inject: the Linux axis's
+//   telnet server, from 127.0.0.2; axispc's own caller line), bytes pumped both ways. AXIS's telnet requests are refused for the caller (a plain terminal) and IAC
 //   is taken out of what goes over the air. After AXIS's opening negotiation it offers LFD3K-LINK (WILL 90); once
 //   AXIS says DO 90 a report "v=1 modem=<station> kind=radio caller=- tier=SFn bps=n" (from the CONNECT line) goes
 //   at once and every 10 s, so main.cpp tags the caller RADIO SFn. NO CARRIER ends the call; AXIS hanging up sends
@@ -17,7 +17,20 @@
 // logs "axis: modem gone" and is opened again every 5 s.
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
+
+// What the line needs from the program around it, set once before modemLineStart().
+struct ModemLineHooks {
+    // A call is up: `fd` is the BBS end of its socketpair, the program's to own and close (empty: the call is closed).
+    std::function<void(int fd)> inject;
+    // The clock modemLinePoll()'s nowMs comes from, in ms (empty: 0).
+    std::function<uint32_t()> nowMs;
+    // A program that can wait inside one turn (the Linux axis's delay()) gives its hook here: the line puts its poll in it
+    // while a modem is asked for. nullptr: the program polls between its turns only.
+    void (**delaySlot)() = nullptr;
+};
+void modemLineSetHooks(ModemLineHooks h);
 
 // Once, before setup(): `path` is the tty (--modem or axis.conf's modem=); empty means no modem.
 void modemLineStart(const std::string& path);
@@ -30,6 +43,9 @@ void modemLinePoll(uint32_t nowMs);
 // modemLinePoll() keeps being called. With modem_guard_ms at its 1200 default that is about 2.5 s; a longer guard is
 // clamped to 1500 ms for the stop, and the stop makes one +++ try only (a stranded call gets one more).
 void modemLineHangUp();
+
+// On: a RING is not answered (the BBS is draining its callers to join its cluster). A call already up carries on.
+void modemLineHold(bool on);
 
 // A call is up or being hung up (the shutdown keeps polling until this is false, or its time runs out).
 bool modemLineBusy();

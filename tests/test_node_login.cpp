@@ -82,6 +82,31 @@ TEST_CASE("front door: ten wanders without logging in disconnect") {
     CHECK(r.n.state() == Node::State::Done);
 }
 
+TEST_CASE("before login: a minute with no key, or three minutes in all, logs the caller off") {
+    Rig r;
+    r.start();
+    r.type("j");  // one key at 1000 ms, then nothing
+    r.n.poll(1000 + Node::kPreLoginIdleMs - 1);
+    CHECK(r.n.state() != Node::State::Done);
+    r.n.poll(1000 + Node::kPreLoginIdleMs + 1);
+    CHECK(r.n.state() == Node::State::Done);
+    CHECK(plain(r.n.takeOutput()).find("no login in time") != std::string::npos);
+
+    Rig t;  // a key every 50 s still ends at the three minute mark
+    t.start();
+    uint32_t at = 0;
+    for (; at < Node::kPreLoginMaxMs - 50000; at += 50000) {
+        uint8_t k = ' ';
+        t.n.input(&k, 1, at);
+        t.n.poll(at);
+    }
+    CHECK(t.n.state() != Node::State::Done);
+    uint8_t k = ' ';
+    t.n.input(&k, 1, Node::kPreLoginMaxMs + 1);
+    t.n.poll(Node::kPreLoginMaxMs + 1);
+    CHECK(t.n.state() == Node::State::Done);
+}
+
 TEST_CASE("LOGIN.ANS markers put the handle and password where the art says, and are blanked") {
     Rig r;
     r.fs["LOGIN.ANS"] = "\x1b[5;10HUser: |{P}\x1b[6;10HPass: |{O}";
@@ -171,7 +196,7 @@ TEST_CASE("login sequence: user stats and who's online are the existing screens"
     r.fs["LOGIN.SEQ"] = "step=USERSTATS|0|0|0|\nstep=WHOISONLINE|0|0|0|\nstep=DISPLAYFILE|0|0|0|AFTER\n";
     r.fs["AFTER.ANS"] = "AFTER ART";
     std::string out = loginAll(r);
-    CHECK(out.find("KB free") != std::string::npos);
+    CHECK(out.find("time left") != std::string::npos);  // your stats
     CHECK(out.find("WHO'S ONLINE") == std::string::npos);  // the stats stay up: who's online clears the screen
     std::string next = r.type(" ");
     CHECK(next.find("WHO'S ONLINE") != std::string::npos);

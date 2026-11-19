@@ -8,6 +8,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-O2 -Wall -Wextra)
 
 set(AXISCORE_SOURCES
+    src/app/boarddata.cpp
+    src/app/commands.cpp
+    src/app/session.cpp
+    src/app/stats.cpp
+    src/app/themeprovider.cpp
     src/net/telnet.cpp
     src/net/telnetstream.cpp
     src/net/crc.cpp
@@ -51,6 +56,7 @@ set(AXISCORE_SOURCES
     src/bbs/menufile.cpp
     src/bbs/lightbar.cpp
     src/bbs/listscreen.cpp
+    src/bbs/listtemplate.cpp
     src/bbs/menurunner.cpp
     src/bbs/loginseq.cpp
     src/bbs/newuser.cpp
@@ -62,6 +68,7 @@ set(AXISCORE_SOURCES
     src/cluster/mirrorjob.cpp
     src/cluster/relay.cpp
     src/cluster/doorfs.cpp
+    src/cluster/cardtree.cpp
     src/cluster/cluster.cpp
     src/bbs/nuv.cpp
     src/bbs/votebooth.cpp
@@ -136,6 +143,8 @@ add_executable(axis_tests
     tests/test_acs.cpp
     tests/test_pipecodes.cpp
     tests/test_menufile.cpp
+    tests/test_listtemplate.cpp
+    tests/test_listscreen.cpp
     tests/test_lightbar.cpp
     tests/test_menurunner.cpp
     tests/test_node_menus.cpp
@@ -186,6 +195,7 @@ add_executable(axis_tests
     tests/test_accounts.cpp
     tests/test_wifipicker.cpp
     tests/test_cluster.cpp
+    tests/test_cardtree.cpp
     tests/test_remotefiles.cpp
     tests/test_pooledlib.cpp
     tests/test_relay.cpp
@@ -207,8 +217,11 @@ add_executable(axis_tests
     tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
-if(UNIX AND NOT APPLE)  # the native Linux program's accept gate: plain C++ and POSIX, so the tests can link it
-  target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp)
+if(UNIX AND NOT APPLE)  # the native Linux program's accept gate and card mirror bookkeeping: plain C++ and POSIX, so the tests can link them
+  target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp
+                                    tests/test_cardmirror.cpp src/platform/linux/cardmirror.cpp
+                                    tests/test_app_session.cpp
+                                    tests/test_pcline.cpp src/pcapp/pcline.cpp)
 endif()
 if(WIN32)
   target_link_libraries(axiscore PUBLIC ws2_32)
@@ -239,6 +252,7 @@ endif()
 
 target_compile_definitions(axiscore PUBLIC AXIS_SD_POOL=1)  # the PC build and tests cover the pool build too
 target_compile_definitions(axiscore PUBLIC AXIS_BENCH=1)  # the tests drive the bench commands' code (bbs/features.h)
+target_compile_definitions(axiscore PUBLIC AXIS_NATIVE=1)  # the cluster's host hooks (cluster.h), as the axis program has them
 
 # Switched-off core for host tests: cmake -DAXIS_OFF=lord,scripts (same names as the firmware build).
 set(AXIS_OFF "" CACHE STRING "Comma list of features to switch off (see installer/features.json)")
@@ -254,6 +268,30 @@ if(AXIS_OFF)
   if(AXIS_OFF_FLAGS MATCHES "AXIS_TRANSFERS=0")  # the XMODEM/ZMODEM test tool has nothing to link
     set_target_properties(xfertest PROPERTIES EXCLUDE_FROM_ALL TRUE)
   endif()
+endif()
+
+# The PC program's core (axispc, Project 1a): the caller line and what the app builds on it. Linux for now (the line is
+# Winsock-ready behind _WIN32, but nothing here builds on Windows yet). axispc and the PC tests link it.
+if(UNIX)
+  find_package(Threads REQUIRED)
+  add_library(axispc_core STATIC src/pcapp/pcline.cpp)
+  target_link_libraries(axispc_core PUBLIC axiscore Threads::Threads)
+endif()
+# The PC program itself (Linux): the shared core through axispc_core, the Linux program's accept gate, axis.conf, data
+# folder and radio line (none of them needs the Arduino shim), and the board's SD file library on <data>/sd/files. No
+# main.cpp, no arduino_core.cpp, no LovyanGFX.
+if(UNIX AND NOT APPLE)
+  add_executable(axispc
+      src/pcapp/main.cpp
+      src/pcapp/pchost.cpp
+      src/pcapp/listener.cpp
+      src/pcapp/console.cpp
+      src/platform/linux/netgate.cpp
+      src/platform/linux/hostconf.cpp
+      src/platform/linux/paths.cpp
+      src/platform/linux/modemline.cpp
+      src/platform/cyd/sdfiles.cpp)
+  target_link_libraries(axispc PRIVATE axispc_core)
 endif()
 
 # The native Linux program, axis: the board's own src/main.cpp, unchanged, on a Linux host layer
@@ -297,12 +335,13 @@ if(UNIX AND NOT APPLE)
     endif()
     target_link_libraries(lgfx_host PUBLIC pthread)
 
-    # The core again, built the way axis is: no cluster yet (AXIS_CLUSTER=0) and no SD pool (the pool is the
-    # cluster's), every other feature at the board's default (bbs/features.h). axiscore above keeps the test flags.
-    add_library(axiscore_solo STATIC ${AXISCORE_SOURCES})
-    target_include_directories(axiscore_solo PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
-    target_compile_definitions(axiscore_solo PUBLIC AXIS_CLUSTER=0 AXIS_BENCH=1)  # (and axis: the bench commands stay in)
-    target_compile_options(axiscore_solo PRIVATE -w)  # as the board builds it: the core's warnings are its own
+    # The core again, built the way axis is: the cluster with the host's hooks (AXIS_CLUSTER=1 AXIS_NATIVE=1, see
+    # src/cluster/cluster.h) and no SD pool (AXIS_SD_POOL stays unset, so 0), every other feature at the board's
+    # default (bbs/features.h). axiscore above keeps the test flags.
+    add_library(axiscore_native STATIC ${AXISCORE_SOURCES})
+    target_include_directories(axiscore_native PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
+    target_compile_definitions(axiscore_native PUBLIC AXIS_CLUSTER=1 AXIS_NATIVE=1 AXIS_BENCH=1)  # (and axis: the bench commands stay in)
+    target_compile_options(axiscore_native PRIVATE -w)  # as the board builds it: the core's warnings are its own
 
     add_executable(axis
         src/main.cpp
@@ -323,6 +362,12 @@ if(UNIX AND NOT APPLE)
         src/platform/linux/modemline.cpp
         src/platform/linux/startmode.cpp
         src/platform/linux/netgate.cpp
+        src/platform/linux/clusterhost.cpp
+        src/platform/linux/cardmirror.cpp
+        src/platform/linux/mirrorhost.cpp
+        src/platform/linux/handback.cpp
+        src/platform/linux/nativecmd.cpp
+        src/platform/cyd/clusternet.cpp    # the board's own: the cluster's UDP and link sockets through WiFiUDP and WiFiClient
         src/platform/cyd/config_store.cpp  # the board's own: LittleFS is the data folder's flash/ (fs.cpp)
         src/platform/cyd/sdfiles.cpp       # the board's own: its /sd/files paths go through fs_remap.cpp
         src/platform/cyd/screen.cpp        # the board's own: pure LovyanGFX, nothing to port
@@ -335,19 +380,65 @@ if(UNIX AND NOT APPLE)
         PROPERTIES COMPILE_OPTIONS "-include;Arduino.h")
     # main.cpp is the board's file, built with -w as the board builds it (src/platform/linux keeps its warnings).
     set_source_files_properties(src/main.cpp PROPERTIES COMPILE_OPTIONS "-w")
+    set_source_files_properties(src/platform/cyd/clusternet.cpp PROPERTIES COMPILE_OPTIONS "-w")  # the board's too
     target_include_directories(axis BEFORE PRIVATE src/platform/linux/arduino)
     target_include_directories(axis PRIVATE src/platform/cyd third_party/monocypher)
-    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=0 LGFX_USE_V1= AXIS_WINDOW=$<BOOL:${AXIS_WINDOW}>)
-    target_link_libraries(axis PRIVATE axiscore_solo lgfx_host)
+    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=1 AXIS_NATIVE=1 LGFX_USE_V1= AXIS_WINDOW=$<BOOL:${AXIS_WINDOW}>)
+    target_link_libraries(axis PRIVATE axiscore_native lgfx_host)
     target_link_options(axis PRIVATE -Wl,--gc-sections)
     # The board's paths (/sd, /littlefs) become the data folder's at link time: every call below, from main.cpp,
     # the core or the platform files, goes through src/platform/linux/fs_remap.cpp. Only this executable is wrapped.
     foreach(fn fopen fopen64 freopen open open64 __open_2 __open64_2 stat stat64 lstat lstat64 mkdir rename remove
-            opendir unlink rmdir access truncate statvfs)
+            opendir unlink rmdir access truncate statvfs utime)
       target_link_options(axis PRIVATE "-Wl,--wrap=${fn}")
     endforeach()
     # configLoad and configSave (the board's config_store.cpp) map the board's telnet port 23 to lan_port and back,
     # so the port main.cpp shows is the one axis listens on (src/platform/linux/hostnet.cpp, at its end).
     target_link_options(axis PRIVATE "-Wl,--wrap=_Z10configLoadv" "-Wl,--wrap=_Z10configSaveRKN4axis3bbs9BbsConfigE")
   endif()
+endif()
+
+# Packaging for axispc (Project 1a, Task 6): install rules and a CPack Debian package. Only axispc and
+# its installer files are installed, so cpack never pulls in axis_tests, the tools or the axis program.
+# This block adds no compile step, so the board build (which never includes this file, it uses the
+# ESP-IDF branch of CMakeLists.txt) and the host tests are unaffected. axispc uses no LovyanGFX, so the
+# package builds whether or not LOVYANGFX_DIR is set.
+if(UNIX AND NOT APPLE AND TARGET axispc)
+  # The package version is kAxisVersion in src/bbs/version.h, the one place the version lives.
+  file(READ ${CMAKE_CURRENT_LIST_DIR}/src/bbs/version.h _axispc_version_h)
+  string(REGEX MATCH "kAxisVersion[ \t]*=[ \t]*\"([0-9][0-9.]*)\"" _axispc_vmatch "${_axispc_version_h}")
+  if(NOT CMAKE_MATCH_1)
+    message(WARNING "axispc packaging: no version read from src/bbs/version.h (kAxisVersion); the .deb is not configured")
+  endif()
+endif()
+# Skip packaging (not an error) if the version could not be read, so a plain host-test configure
+# never fails over it; the .deb is only configured when there is a version.
+if(UNIX AND NOT APPLE AND TARGET axispc AND CMAKE_MATCH_1)
+  set(AXISPC_VERSION "${CMAKE_MATCH_1}")
+
+  include(GNUInstallDirs)
+  # Package directories are the usual drwxr-xr-x (set before the install() rules so it takes effect).
+  set(CMAKE_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS
+      OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  install(TARGETS axispc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})  # /usr/bin/axispc
+  install(FILES installer/pc/axispc.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+  install(FILES installer/pc/axispc.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+  install(FILES installer/pc/axispc.service DESTINATION lib/systemd/system)  # /usr/lib/systemd/system
+  install(FILES installer/pc/README.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/axispc)
+
+  set(CPACK_GENERATOR "DEB")
+  set(CPACK_PACKAGE_NAME "axispc")
+  set(CPACK_PACKAGE_VERSION "${AXISPC_VERSION}")
+  set(CPACK_PACKAGE_CONTACT "Rev. J. Money <axis@jmscnc.com>")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "AXIS BBS, the native PC bulletin board program")
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Rev. J. Money <axis@jmscnc.com>")
+  set(CPACK_DEBIAN_PACKAGE_SECTION "comm")
+  # Depends only on libc6 and libstdc++6: axispc links the BBS core statically and uses pthread (in libc6).
+  # Hardcoded, so the automatic shared library scan is off (it would add versioned entries).
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libstdc++6")
+  # Names the file axispc_<version>_<debarch>.deb. The architecture is dpkg's on a native build, or
+  # cpack -D CPACK_DEBIAN_PACKAGE_ARCHITECTURE=armhf for the 32-bit ARM cross build.
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  include(CPack)
 endif()

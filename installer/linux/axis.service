@@ -21,7 +21,9 @@ ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/axis
 PrivateTmp=yes
-CapabilityBoundingSet=
+# Port 23: clustered, axis also answers on the boards' telnet port, where a full board passes its callers.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 LimitNOFILE=4096
 MemoryMax=512M

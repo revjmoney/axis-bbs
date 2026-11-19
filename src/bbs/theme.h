@@ -11,6 +11,10 @@
 #include <utility>
 #include <vector>
 
+namespace axis::bbs {
+struct ListTemplate;
+}
+
 namespace axis::bbs::theme {
 
 constexpr const char* RESET = "\x1b[0m";
@@ -72,8 +76,14 @@ void setArt(std::function<std::string(const std::string&)> art);
 // whole file through setArt's reader and cuts it.
 void setArtTop(std::function<std::string(const std::string&, int rows)> top);
 std::string artFor(const std::string& title, int rows = 0);  // "" when there is none; rows > 0: only its first rows
+// A look's list template (FILES.LST, MSGS.LST, USERS.LST): `read` gives the raw text by name ("" when the look has none), read on
+// demand and never kept here; `bad` hears a name whose file would not parse, once per name (the log line).
+void setListTemplate(std::function<std::string(const std::string& name)> read, std::function<void(const std::string& name)> bad = nullptr);
+// true and `out` filled when the look has NAME.LST and it parses; false otherwise (the caller draws its built-in frame)
+bool listTemplate(const std::string& name, ListTemplate& out);
 // a lite caller (a slow radio tier) is being served: artFor tries NAME.LITE.ANS first (a Node sets it while it works)
 void setLite(bool on);
+bool lite();  // is a lite caller being served (setLite)
 // fills a header screen's codes (%BN, %NN, %UN...) for the caller being served; a Node sets it while it works
 void setMci(std::function<std::string(const std::string&)> fill);
 std::string titleBar(const std::string& text);  // the Oblivion look's title: a fading rule around "M E N U"

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=AXIS BBS
+GenericName=Bulletin Board System
+Comment=Run the AXIS BBS on this PC in a terminal (the sysop WFC screen)
+Exec=axispc --terminal
+Icon=axispc
+Terminal=true
+Categories=Network;
+Keywords=bbs;telnet;modem;terminal;

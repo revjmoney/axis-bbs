@@ -32,3 +32,18 @@ size_t hostnetCallersOpen();
 
 // The accept gate every TCP caller passes (for logs and the tests' view of it).
 NetGate& hostGate();
+
+// The solo watch heard a main (clusterhost.cpp): the public listener closes now and is not opened again in this run
+// (the LAN port stays). The cluster profiles never open it at all (hostnetStart logs that public_port is off).
+void hostnetClosePublic();
+
+// On: every new telnet caller (and a radio call that connects meanwhile) is told "This BBS is joining its cluster.
+// Please call back in a few minutes." and closed. Off: callers are taken again.
+void hostnetHold(bool on);
+
+// The port to dial when this program, as main, passes a caller to another node: here the board's telnet port 23 shows
+// as lan_port (the configLoad wrap), but the boards (and this program, clustered) answer on 23.
+uint16_t hostnetPassPort(uint16_t port);
+
+// Callers of the BBS itself still open: telnet and radio, not the panel's connections (the drain waits for these).
+size_t hostnetBbsCallersOpen();

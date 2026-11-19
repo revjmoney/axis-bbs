@@ -17,6 +17,10 @@
 #include "bbs/features.h"
 #include "cluster/protocol.h"
 
+#ifndef AXIS_NATIVE
+#define AXIS_NATIVE 0  // 1 only in the Linux program (the build sets it); the hooks under it cost the boards nothing
+#endif
+
 namespace axis::cluster {
 
 class Net {
@@ -63,7 +67,36 @@ struct ChatLine {
 #if AXIS_CLUSTER
 class Cluster {
 public:
-    Cluster(Net& net, std::string boardId) : net_(net), id_(std::move(boardId)) {}
+    Cluster(Net& net, std::string boardId) : net_(net), id_(std::move(boardId)) {
+#if AXIS_NATIVE
+        host_ = defaultHost;
+        instance_ = this;
+#endif
+    }
+#if AXIS_NATIVE
+    ~Cluster() {
+        if (instance_ == this) instance_ = nullptr;
+    }
+    Cluster(const Cluster&) = delete;
+    Cluster& operator=(const Cluster&) = delete;
+
+    // What the Linux program changes about the cluster's rules (the boards never set any of it).
+    struct HostHooks {
+        bool     mirror = false;        // this program holds a mirror: setHasFiles(x) means CardKind::Mirror
+        bool     neverMain = false;     // never main by itself: Discovering keeps asking, a lost main means discover()
+        uint32_t minMainVersion = 1;    // Discovering joins only a main announcing at least this
+        bool     claimMain = false;     // start(): becomeMain at once at claimEpoch (key required, else alone as today)
+        uint32_t claimEpoch = 0;
+        std::function<bool()> onYield;  // a Yield arrived (checked at the end of tick, where yield_ acts): true takes main now
+        // main: a card main announcing a protocol below kProtocolVersion was heard (its announced address); true asks
+        // the board to check that address holds the key (the two mains' probe), and onOlderCardProved says it did
+        std::function<bool(uint32_t ip)> onOlderCardMain;
+        std::function<void(uint32_t ip)> onOlderCardProved;
+    };
+    static HostHooks defaultHost;       // copied into each new Cluster by its constructor
+    void             setHost(const HostHooks& h) { host_ = h; }  // the tests set one per board
+    static Cluster*  instance() { return instance_; }            // the last Cluster constructed and not destroyed, else nullptr
+#endif
     void start(uint32_t nowMs, int previousNumber = 0);
     void tick(uint32_t nowMs);
 
@@ -72,8 +105,18 @@ public:
     const std::vector<int>&      numbers() const { return numbers_; }   // one per session (setSlots)
     uint32_t                     epoch() const { return epoch_; }
     uint32_t                     mainIp() const { return mainIp_; }
-    // follower: the main said it holds the SD card (its announcement's sd field, heard when this board joined)
-    bool                         mainHasCard() const { return mainHasCard_; }
+    // follower: what the main said it holds (its announcement's kind field, heard when this board joined), and the
+    // protocol version it announced (1 when the announcement had none)
+    CardKind                     mainKind() const { return mainKind_; }
+    bool                         mainHasCard() const { return mainKind_ == CardKind::Card; }
+    uint32_t                     mainVersion() const { return mainVersion_; }
+    // main: a linked follower said it holds a card mirror
+    bool hasMirrorFollower() const {
+        if (role_ != Role::Main) return false;
+        for (const Link& l : links_)
+            if (l.kind == CardKind::Mirror && !l.board.empty() && l.auth == 2 && !l.dead) return true;
+        return false;
+    }
     const std::vector<NodeInfo>& nodes() const { return nodes_; }
 
     // The shared cluster key and a source of random numbers (the board's hardware RNG). Without
@@ -93,7 +136,18 @@ public:
     void setSlots(int sessions) { slots_ = sessions < 1 ? 1 : sessions > 4 ? 4 : sessions; }  // callers this board takes at once
     void setStatus(const std::string& handle, const std::string& activity) { setStatus(0, handle, activity); }
     void setStatus(int slot, const std::string& handle, const std::string& activity);
-    void setHasFiles(bool sd) { hasFiles_ = sd; }  // this board holds the file areas (an SD card)
+    void setCardKind(CardKind k) { kind_ = k; }  // what this board holds for the file areas
+    CardKind cardKind() const { return kind_; }
+    void setHasFiles(bool sd) {  // this board holds the file areas (an SD card; the Linux program's mirror under host_.mirror)
+#if AXIS_NATIVE
+        if (host_.mirror) {  // always Mirror: the Follower holds the mirror but has no /sd, and its Hello must say 'm'
+            (void)sd;
+            setCardKind(CardKind::Mirror);
+            return;
+        }
+#endif
+        setCardKind(sd ? CardKind::Card : CardKind::None);
+    }
     // this board's card's free space; a follower tells the main when it changes
     void     setFreeBytes(uint64_t bytes);
     uint64_t freeBytes() const { return freeBytes_; }
@@ -159,6 +213,7 @@ private:
         std::string mainNonce, followerNonce, linkKey;
         uint32_t    sent = 0, got = 0;  // frames sealed / opened on this link
         uint32_t    since = 0;          // when it opened: a link that hasn't proved the key in 5 s goes
+        CardKind    kind = CardKind::None;  // main: what this follower said it holds (Hello)
         bool        probe = false;      // a main checking another main holds the key (it speaks as a follower)
         // main: copying the user base to this board, one record at a time in id order (never the whole base at once)
         bool        syncing = false, syncPaused = false;
@@ -204,13 +259,17 @@ private:
     std::vector<std::pair<std::string, std::string>> status_{{"", ""}};  // per session: handle, activity
     Role                  role_ = Role::Off;
     int                   number_ = 0, wantNumber_ = 0, lastMain_ = 0;
-    bool                  mainHasCard_ = false;
+    CardKind              mainKind_ = CardKind::None;
+    uint32_t              mainVersion_ = 1, mainSince_ = 0;  // mainSince_: when this board last became main or last had a card board linked
+    uint32_t              mirrorYieldLogAt_ = 0;  // the mirror hand-over's last line in the log, and to which board
+    std::string           mirrorYieldLogged_;
     uint32_t              epoch_ = 0, mainIp_ = 0, since_ = 0, lastBeat_ = 0, lastAnnounce_ = 0, minEpoch_ = 0, idleSince_ = 0;
     uint32_t              listenMs_ = 3000;  // how long discovery waits for a main before becoming one
     std::string           key_;
     uint32_t              (*rng_)() = nullptr;
     bool                  alone_ = false;  // no key: no cluster
-    bool                  hasFiles_ = false, yield_ = false;  // yield_: the main handed over, act at the end of tick()
+    CardKind              kind_ = CardKind::None;
+    bool                  yield_ = false;  // yield_: the main handed over, act at the end of tick()
     uint32_t              nextReq_ = 1;
     uint32_t              wantReq_ = 0;      // request() is waiting for this reply
     std::string*          replyTo_ = nullptr;
@@ -247,6 +306,11 @@ private:
     bool                  inTick_ = false, restart_ = false, keyPending_ = false;  // restart_: start() again at the top of the next tick
     int                   restartNumber_ = 0;
     std::string           newKey_;
+#if AXIS_NATIVE
+    HostHooks             host_;
+    bool                  probeOlder_ = false;  // the probe running is the host's check of an older card main: never step down on it
+    static Cluster*       instance_;
+#endif
 };
 #else  // !AXIS_CLUSTER
 // Built without the cluster the board runs alone: main.cpp's `cluster` is a null pointer that never changes, so

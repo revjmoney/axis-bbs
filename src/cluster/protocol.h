@@ -16,6 +16,17 @@ constexpr uint32_t kMaxFrame = 8 * 1024;  // file pieces are 2 KB; anything bigg
 constexpr size_t   kMaxBuffered = 32 * 1024;  // unread bytes one link may hold (a few frames waiting while the main asks another board)
 constexpr char     kFieldSep = '\x1f';
 
+// Version 2 of the protocol adds card kinds (the announcement's and Hello's sd field is '0', '1' or 'm', and the
+// announcement ends with this version). Old boards read anything but "1" as no card and ignore extra fields.
+constexpr uint32_t kProtocolVersion = 2;
+// What a board holds for the BBS files: nothing, a real SD card, or (the Linux program) a mirror of the main's card.
+enum class CardKind : uint8_t { None, Card, Mirror };
+char     kindChar(CardKind k);                   // '0' '1' 'm'
+CardKind kindOf(const std::string& field);       // "1" Card, "m" Mirror, anything else None
+// A datagram with the cluster key's tag (" ~" and 16 bytes of hex) and back; open strips the tag, false if it is wrong.
+std::string sealDatagram(const std::string& key, const std::string& d);
+bool        openDatagram(const std::string& key, std::string& d);
+
 enum class Frame : uint8_t {
     Hello = 1,      // follower -> main: id, node number it had before (0 = none), has a user replica, has an SD card, its IP
     Welcome = 2,    // main -> follower: node number, epoch

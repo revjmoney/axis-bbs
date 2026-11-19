@@ -18,7 +18,11 @@ std::string clip(const std::string& s, size_t n) {
     }
     return o;
 }
+
+int rowAt(int r) { return r < 1 ? 1 : r > 24 ? 24 : r; }
 }  // namespace
+
+bool listScreenTemplate(const std::string& name, ListTemplate& out) { return !theme::lite() && theme::listTemplate(name, out); }
 
 std::string listScreenHead(const std::string& artKey, const std::string& title, int rows) {
     std::string art = theme::artFor(artKey, rows);  // FILES.ANS / MSGS.ANS when the theme pack is on the card
@@ -27,13 +31,26 @@ std::string listScreenHead(const std::string& artKey, const std::string& title, 
     return theme::banner(title);
 }
 
-std::string listScreenTop(const std::string& title, const std::string& columns) {
+std::string listScreenTop(const std::string& title, const std::string& columns, const ListTemplate* tpl, const ArtValue& caption) {
     // The lightbar is pinned at row 6. A header .ANS is taller than that, so keep its top
     // (the block title) and park the column line on row 4.
     std::string key = title == "FILE AREAS" ? "FILES" : title == "MESSAGE AREAS" ? "MSGS" : title;
     // Only the art's top 3 rows: the rest was read, kept and sent (a theme's MSGS.ANS is 8 KB, 17 s for an SF10 radio caller)
     // just to be wiped by the clear below. 2026-11-16 board 1: the message areas screen took the heap 11 KB under the call's low.
     std::string s = theme::CLS;
+    if (tpl) {
+        s += listScreenHead(tpl->head.empty() ? key : tpl->head, title, 3);
+        int capRow = tpl->y - 2 < 4 ? 4 : tpl->y - 2, ruleRow = tpl->y - 1;
+        s += "\x1b[" + std::to_string(capRow) + ";1H\x1b[J";
+        if (!tpl->caption.empty())  // a plain caller (the caption is not per caller); values only from `caption`
+            s += "\x1b[" + std::to_string(capRow) + ";" + std::to_string(tpl->x) + "H" +
+                 renderLine(tpl->caption, tpl->width, AcsUser{}, caption ? caption : ArtValue([](const std::string&) { return std::string(); })) +
+                 theme::RESET;
+        if (tpl->rule && ruleRow > capRow)
+            s += "\x1b[" + std::to_string(ruleRow) + ";" + std::to_string(tpl->x) + "H" + theme::ORANGE +
+                 std::string((size_t)tpl->width, '\xcd') + theme::RESET;
+        return s;
+    }
     s += listScreenHead(key, title, 3);
     s += "\x1b[4;1H\x1b[J";
     s += std::string("  ") + theme::DGREY + columns + "\r\n";
@@ -41,11 +58,20 @@ std::string listScreenTop(const std::string& title, const std::string& columns) 
     return s;
 }
 
-std::string listScreenStatus(const std::string& line) {
+std::string listScreenStatus(const std::string& line, const ListTemplate* tpl) {
+    if (tpl)
+        return "\x1b[" + std::to_string(rowAt(tpl->y + tpl->rows + 1)) + ";1H\x1b[2K" + theme::TEXT +
+               std::string((size_t)(tpl->x - 1), ' ') + clipVisible(line, (size_t)(79 - tpl->x < 1 ? 1 : 79 - tpl->x));  // (the built-in status's right edge: 76 columns from x=3)
     return "\x1b[" + std::to_string(kListStatusRow) + ";1H\x1b[2K" + theme::TEXT + "  " + clip(line, 76);
 }
 
-std::string listScreenKeys(const std::string& keys) {
+std::string listScreenKeys(const std::string& keys, const ListTemplate* tpl) {
+    if (tpl)
+        return "\x1b[" + std::to_string(rowAt(tpl->y + tpl->rows + 3)) + ";1H\x1b[2K" +
+               std::string((size_t)(tpl->x - 1), ' ') +
+               (tpl->keys.empty() ? clipVisible(keys, (size_t)(81 - tpl->x))  // (the built-in keys run to the screen edge, as today)
+                                  : renderLine(tpl->keys, tpl->width, AcsUser{}, [](const std::string&) { return std::string(); })) +
+               theme::RESET;
     return "\x1b[" + std::to_string(kListKeyRow) + ";1H\x1b[2K  " + keys + theme::RESET;
 }
 

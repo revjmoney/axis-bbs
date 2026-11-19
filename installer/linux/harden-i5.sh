@@ -21,6 +21,7 @@ AUTO_UPG="/etc/apt/apt.conf.d/20auto-upgrades"
 AXIS_CONF="/var/lib/axis/axis.conf"
 PANEL_PORT=2326
 CLUSTER_PORT=2325
+LINK_PORT=2324
 SSH_PORT=22
 
 dry=0
@@ -293,6 +294,7 @@ fi
 say "LAN BBS port:            $lan_port/tcp (from the LAN)"
 say "Panel port:              $PANEL_PORT/tcp (from the LAN)"
 say "Cluster port:            $CLUSTER_PORT/udp (from the LAN)"
+say "Cluster link port:       $LINK_PORT/tcp (from the LAN)"
 if [ -n "$public_port" ]; then
     say "Public BBS port:         $public_port/tcp (from anywhere)"
 fi
@@ -331,7 +333,7 @@ fi
 
 # Things listening on the network that this script adds no rule for (they get blocked
 # from outside once incoming is deny, unless an existing rule already opens them).
-allowed=("$SSH_PORT/tcp" "$lan_port/tcp" "$PANEL_PORT/tcp" "$CLUSTER_PORT/udp" "${extra_lan[@]}")
+allowed=("$SSH_PORT/tcp" "$lan_port/tcp" "$PANEL_PORT/tcp" "$CLUSTER_PORT/udp" "$LINK_PORT/tcp" "${extra_lan[@]}")
 for p in "${rdp_ports[@]}"; do allowed+=("$p/tcp"); done
 [ -n "$public_port" ] && allowed+=("$public_port/tcp")
 others=""
@@ -486,6 +488,7 @@ for src in "${lan_srcs[@]}"; do
     run ufw allow from "$src" to any port "$lan_port" proto tcp comment "$TAG bbs lan"
     run ufw allow from "$src" to any port "$PANEL_PORT" proto tcp comment "$TAG panel"
     run ufw allow from "$src" to any port "$CLUSTER_PORT" proto udp comment "$TAG cluster"
+    run ufw allow from "$src" to any port "$LINK_PORT" proto tcp comment "$TAG cluster link"
     for e in "${extra_lan[@]}"; do
         run ufw allow from "$src" to any port "${e%/*}" proto "${e#*/}" comment "$TAG lan ${e%/*}"
     done

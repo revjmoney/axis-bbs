@@ -12,6 +12,12 @@ constexpr char kSep = '\x1f';
 bool known(uint8_t t) { return t >= (uint8_t)Frame::Hello && t <= (uint8_t)Frame::Auth; }  // keep in step with Frame
 }  // namespace
 
+char kindChar(CardKind k) { return k == CardKind::Card ? '1' : k == CardKind::Mirror ? 'm' : '0'; }
+
+CardKind kindOf(const std::string& field) {
+    return field == "1" ? CardKind::Card : field == "m" ? CardKind::Mirror : CardKind::None;
+}
+
 std::string frame(Frame type, const std::vector<std::string>& f) {
     size_t len = f.empty() ? 0 : f.size() - 1;  // one allocation, no body copy: the main joins a board on a fragmented heap
     for (const std::string& s : f) len += s.size();

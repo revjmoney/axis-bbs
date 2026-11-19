@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// Where the BBS keeps its data, on Linux: the data folder's sd/ is the card, and it is always there. storageRoot()
-// is the board's own name for it ("/sd"); fs_remap.cpp turns that into <data>/sd wherever a path reaches the C library.
+// Where the BBS keeps its data, on Linux: the profile's card folder (paths.h: <data>/sd solo, <data>/mirror as the
+// mirror main) is the card, and it is always there; a cluster follower has none, as a cardless board. storageRoot()
+// is the board's own name for it ("/sd"); fs_remap.cpp turns that into the folder wherever a path reaches the C library.
 #include "platform/cyd/storage.h"
 
 #include <SD.h>
@@ -26,8 +27,10 @@ void storageInit() {
     if (haveSd)
         summary = String("data folder ") + dir.c_str() + ", " + String((uint32_t)((SD.totalBytes() - SD.usedBytes()) >> 20)) +
                   " MB free";
+    else if (axisProfile() == Profile::Follower)
+        summary = "no card: a cluster follower uses the main's files";
     else
-        summary = String("data folder ") + (dir.empty() ? "not set" : dir.c_str()) + " has no sd folder";
+        summary = String("data folder ") + (dir.empty() ? "not set" : dir.c_str()) + " has no card folder";
     Serial.printf("axis: storage: %s\n", summary.c_str());
 }
 

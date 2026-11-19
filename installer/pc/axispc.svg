@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="axis-title axis-desc">
+  <title id="axis-title">AXIS BBS</title>
+  <desc id="axis-desc">An amber letter A on a dark terminal panel, the AXIS BBS mark.</desc>
+  <rect x="8" y="8" width="240" height="240" rx="28" fill="#12161c"/>
+  <rect x="8" y="8" width="240" height="240" rx="28" fill="none" stroke="#f0a000" stroke-width="6"/>
+  <g stroke="#2a3240" stroke-width="4">
+    <line x1="24" y1="72" x2="232" y2="72"/>
+    <line x1="24" y1="184" x2="232" y2="184"/>
+  </g>
+  <g fill="none" stroke="#f0a000" stroke-width="20" stroke-linecap="square" stroke-linejoin="miter">
+    <polyline points="78,196 128,60 178,196"/>
+    <line x1="98" y1="150" x2="158" y2="150"/>
+  </g>
+  <circle cx="128" cy="60" r="10" fill="#ffd45a"/>
+</svg>

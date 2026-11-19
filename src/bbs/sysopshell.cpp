@@ -68,7 +68,7 @@ bool inGroups(const std::string& k) {
 }  // namespace
 
 bool boardOnlyCommand(const std::string& cmd) {
-    static const char* const kMine[] = {"@CLUSTERKEY", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
+    static const char* const kMine[] = {"@CLUSTERKEY", "@HANDBACK", "@CARDMIRROR", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
                                         "@BEEP",       "@STATION", "@LED",       "@WIFIPICK",   "@STATS",   "@DOORSTATE",
 #if AXIS_BENCH  // bench builds only (bbs/features.h); elsewhere they are unknown commands, sent on like any other
                                         "@SHOT",       "@TAP",     "@LKEY",      "@LSCREEN",    "@HEAPWIN", "@SPRITEFAIL",

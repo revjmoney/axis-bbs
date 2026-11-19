@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// Preferences as <data>/prefs/<namespace>.ini (see arduino/Preferences.h).
+// Preferences as <prefs>/<namespace>.ini, and the cluster key as <data>/cluster.key (see arduino/Preferences.h).
 #include <Preferences.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -11,9 +11,19 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "platform/linux/clusterhost.h"
 #include "platform/linux/paths.h"
 
 namespace {
+
+const char kKeyName[] = "key";  // namespace "clu": the cluster key, kept in its own file (never in the .ini, never logged)
+
+// the cluster key file over whatever an .ini held under that name (the file is the only place it lives)
+void overlayKey(std::map<std::string, std::string>& keys) {
+    keys.erase(kKeyName);
+    std::string k = clusterKeyRead();
+    if (!k.empty()) keys[kKeyName] = k;
+}
 
 std::string escape(const std::string& s, bool key) {
     std::string out;
@@ -93,16 +103,19 @@ bool okName(const char* name) {  // one file in prefs/, never a path out of it
 bool Preferences::begin(const char* name, bool readOnly, const char* partition) {
     (void)partition;
     end();
-    std::string dir = axisDataDir();
+    std::string dir = axisPrefsDir();
     if (dir.empty() || !okName(name)) return false;
-    file_ = dir + "/prefs/" + name + ".ini";
+    file_ = dir + "/" + name + ".ini";
+    clu_ = std::strcmp(name, "clu") == 0;
     keys_.clear();
     Load got = load(file_, keys_);
     if (got == Load::Failed) {  // never open on an empty copy: a put would then save over the real settings
         std::printf("axis: prefs: cannot read %s: %s\n", file_.c_str(), std::strerror(errno));
         return false;
     }
-    if (readOnly && got == Load::Missing) return false;  // NVS cannot open a namespace read-only before it was ever written
+    if (clu_) overlayKey(keys_);
+    // NVS cannot open a namespace read-only before it was ever written ("clu" was, if its key file is there)
+    if (readOnly && got == Load::Missing && keys_.empty()) return false;
     open_ = true;
     readOnly_ = readOnly;
     return true;
@@ -116,10 +129,11 @@ void Preferences::end() {
 // Each change re-reads the file first, so two Preferences open on the same namespace do not undo each other's writes.
 bool Preferences::save() {
     std::string tmp = file_ + ".tmp";
-    int         fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    int         fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     if (fd < 0) return false;
     std::string text;
-    for (auto& kv : keys_) text += escape(kv.first, true) + "=" + escape(kv.second, false) + "\n";
+    for (auto& kv : keys_)
+        if (!clu_ || kv.first != kKeyName) text += escape(kv.first, true) + "=" + escape(kv.second, false) + "\n";
     bool ok = true;
     for (size_t done = 0; done < text.size();) {
         ssize_t w = ::write(fd, text.data() + done, text.size() - done);
@@ -143,13 +157,19 @@ bool Preferences::clear() {
     if (!open_ || readOnly_) return false;
     std::map<std::string, std::string> now;
     if (load(file_, now) == Load::Failed) return false;  // (the file stays as it is)
+    if (clu_) clusterKeyRemove();
     keys_.clear();
     return save();
 }
 
 bool Preferences::remove(const char* key) {
     if (!open_ || readOnly_ || !key) return false;
+    if (clu_ && std::strcmp(key, kKeyName) == 0) {
+        keys_.erase(kKeyName);
+        return clusterKeyRemove();
+    }
     if (load(file_, keys_) == Load::Failed) return false;  // re-read first; a file it cannot read is left alone
+    if (clu_) overlayKey(keys_);
     if (!keys_.erase(key)) return false;
     return save();
 }
@@ -166,7 +186,13 @@ const std::string* Preferences::find(const char* key) const {
 
 size_t Preferences::put(const char* key, const std::string& v, size_t bytes) {
     if (!open_ || readOnly_ || !key || !*key) return 0;
+    if (clu_ && std::strcmp(key, kKeyName) == 0) {
+        if (!clusterKeyWrite(v)) return 0;
+        keys_[kKeyName] = v;
+        return bytes;
+    }
     if (load(file_, keys_) == Load::Failed) return 0;  // re-read first; a file it cannot read is left alone
+    if (clu_) overlayKey(keys_);
     keys_[key] = v;
     return save() ? bytes : 0;
 }

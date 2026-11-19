@@ -6,14 +6,26 @@
 #pragma once
 #include <string>
 
+#include "bbs/listtemplate.h"
+
 namespace axis::bbs {
 
 // Cursor rows the frame leaves for the bar (ScrollList is placed at row 6, 14 rows tall).
 constexpr int kListRow = 6, kListRows = 14, kListStatusRow = 21, kListKeyRow = 23;
 
 std::string listScreenHead(const std::string& artKey, const std::string& title, int rows = 0);  // theme .ANS (rows > 0: its top rows), else banner
-std::string listScreenTop(const std::string& title, const std::string& columns);
-std::string listScreenStatus(const std::string& line);  // one line, positioned, clipped
-std::string listScreenKeys(const std::string& keys);
+// The active look's list template (NAME.LST) into `out`; false when the look has none, and always false for a lite (slow radio)
+// caller, who keeps the built-in list. Load it once when a list opens, into a local, and pass &local (or nullptr) below: no
+// cache, so a live look swap or a sysop edit is seen by the next list.
+bool listScreenTemplate(const std::string& name, ListTemplate& out);
+
+// With a template: the head art (tpl->head, else the title's), the caption (expanded art) at row y-2 and the rule (when
+// tpl->rule) at row y-1 from column x, width wide; the status line at row y+rows+1 and the keys two rows below it (all
+// kept on the 24-row screen). `line`/`keys` arrive already expanded by the caller. nullptr: today's fixed layout.
+// `caption` gives the caption's values (a page number, a count); none: the caption has no values.
+std::string listScreenTop(const std::string& title, const std::string& columns, const ListTemplate* tpl = nullptr,
+                          const ArtValue& caption = ArtValue());
+std::string listScreenStatus(const std::string& line, const ListTemplate* tpl = nullptr);  // one line, positioned, clipped
+std::string listScreenKeys(const std::string& keys, const ListTemplate* tpl = nullptr);  // tpl->keys, when set, replaces `keys` (cut at width; `keys` at the screen edge)
 
 }  // namespace axis::bbs

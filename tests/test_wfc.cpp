@@ -22,6 +22,16 @@ TEST_CASE("wfc values fill the codes") {
     CHECK(expandArt("|SD |UP |MB", {}, wfcValues(s)) == "1.2G 3d 04:12 main board");
 }
 
+TEST_CASE("each node says pc or esp, from its board id") {
+    CHECK(nodePlatform("8c94df4f1c4c") == "esp");  // an ESP32's factory MAC (universally administered)
+    CHECK(nodePlatform("8C:94:DF:00:00:01") == "esp");
+    CHECK(nodePlatform("1ec0ffee0001") == "pc");  // the Linux program's made-up id: locally administered
+    CHECK(nodePlatform("") == "");
+    CHECK(nodeLine({3, "", "", "", "pc"}) == "3 pc  waiting");
+    CHECK(nodeLine({1, "", "", "", "esp"}) == "1 esp waiting");
+    CHECK(nodeLine({2, "Rev", "Messages", "", "esp"}) == "2 esp Rev  Messages");
+}
+
 TEST_CASE("a node past the art's slots is left off") {
     WfcSnapshot s;
     for (int i = 1; i <= 9; i++) s.nodes.push_back({i, "h", ""});

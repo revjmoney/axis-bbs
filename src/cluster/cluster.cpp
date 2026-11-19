@@ -23,6 +23,9 @@ constexpr uint32_t kTidyIdleMs = 10000;  // every node idle this long: the main 
 constexpr uint32_t kAuthMs = 5000;       // a link that hasn't proved the key by now is dropped
 constexpr uint32_t kProbeAgainMs = 10000;  // a main that failed a check on another main's address waits this long to check it again
 constexpr uint32_t kTurnedAwayMs = 60000;  // "turned away" goes in the log at most this often
+constexpr uint32_t kMirrorYieldMs = 90000;  // a cardless main with no card board linked this long may hand main to a card mirror
+constexpr uint32_t kMirrorYieldLogMs = 600000;  // that hand-over goes in the log once per mirror, then at most this often
+int rank(CardKind k) { return k == CardKind::Mirror ? 2 : k == CardKind::Card ? 1 : 0; }  // two mains: the higher rank wins
 std::string num(uint32_t v) { return std::to_string(v); }
 std::string num64(uint64_t v) { return std::to_string((unsigned long long)v); }
 uint32_t    toU(const std::string& s) { return (uint32_t)std::strtoul(s.c_str(), nullptr, 10); }
@@ -74,16 +77,27 @@ std::string Cluster::nonce() {
     return n;
 }
 
-std::string Cluster::sign(const std::string& d) { return d + " ~" + hex(bbs::hmacSha256Raw(key_, "datagram " + d).substr(0, kTagBytes)); }
+#if AXIS_NATIVE
+Cluster::HostHooks Cluster::defaultHost;
+Cluster*           Cluster::instance_ = nullptr;
+#endif
 
-bool Cluster::unsign(std::string& d) {
+std::string sealDatagram(const std::string& key, const std::string& d) {
+    return d + " ~" + hex(bbs::hmacSha256Raw(key, "datagram " + d).substr(0, kTagBytes));
+}
+
+bool openDatagram(const std::string& key, std::string& d) {
     size_t at = d.rfind(" ~");
     if (at == std::string::npos) return false;
     std::string body = d.substr(0, at);
-    if (!sameBytes(unhex(d.substr(at + 2)), bbs::hmacSha256Raw(key_, "datagram " + body).substr(0, kTagBytes))) return false;
+    if (!sameBytes(unhex(d.substr(at + 2)), bbs::hmacSha256Raw(key, "datagram " + body).substr(0, kTagBytes))) return false;
     d = body;
     return true;
 }
+
+std::string Cluster::sign(const std::string& d) { return sealDatagram(key_, d); }
+
+bool Cluster::unsign(std::string& d) { return openDatagram(key_, d); }
 
 bool Cluster::put(Link& l, Frame t, const std::vector<std::string>& f) {
     if (l.auth != 2 || l.dead) return false;
@@ -166,7 +180,7 @@ bool Cluster::take(Link& l, Frame& t, std::string& body) {
 }
 
 void Cluster::sendHello(Link& l) {
-    put(l, Frame::Hello, {id_, num((uint32_t)(wantNumber_ ? wantNumber_ : number_)), "1", hasFiles_ ? "1" : "0", num(net_.myIp()),
+    put(l, Frame::Hello, {id_, num((uint32_t)(wantNumber_ ? wantNumber_ : number_)), "1", std::string(1, kindChar(kind_)), num(net_.myIp()),
                           num((uint32_t)slots_), num64(freeBytes_)});
 }
 
@@ -190,6 +204,13 @@ void Cluster::start(uint32_t now, int previousNumber) {
         event("no cluster key: this board runs alone (set the same @CLUSTERKEY on every board to cluster them)");
         return;
     }
+#if AXIS_NATIVE
+    if (host_.claimMain) {  // the host takes main at once (a card mirror that was told to take over)
+        becomeMain(now, host_.claimEpoch, previousNumber ? previousNumber : 1);
+        event("node " + num((uint32_t)number_) + " is main (claimed)");
+        return;
+    }
+#endif
     discover(now);
 }
 
@@ -232,7 +253,7 @@ void Cluster::becomeMain(uint32_t now, uint32_t epoch, int number) {
     status_.resize(numbers_.size());
     for (size_t i = 0; i < numbers_.size(); i++)
         nodes_.push_back({numbers_[i], id_, status_[i].first, status_[i].second, net_.myIp()});
-    lastBeat_ = lastAnnounce_ = now;
+    lastBeat_ = lastAnnounce_ = mainSince_ = now;
     announce();
     if (onNumber) onNumber(number_);
 }
@@ -255,7 +276,7 @@ void Cluster::setStatus(int slot, const std::string& handle, const std::string& 
 void Cluster::setFreeBytes(uint64_t bytes) {
     if (bytes == freeBytes_) return;
     freeBytes_ = bytes;
-    if (role_ == Role::Follower && !links_.empty() && hasFiles_)
+    if (role_ == Role::Follower && !links_.empty() && kind_ == CardKind::Card)
         put(links_[0], Frame::CardInfo, {"1", num64(freeBytes_)});
 }
 
@@ -328,9 +349,9 @@ void Cluster::serveUserSync() {
     }
 }
 
-void Cluster::announce() {  // "AXIS! ip epoch node sd": where the main is, and whether it holds the SD card
+void Cluster::announce() {  // "AXIS! ip epoch node kind version": where the main is, what it holds (0 nothing, 1 the SD card, m a card mirror)
     if (alone_) return;
-    shout("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_) + (hasFiles_ ? " 1" : " 0"));
+    shout("AXIS! " + num(net_.myIp()) + " " + num(epoch_) + " " + num(number_) + " " + kindChar(kind_) + " " + num(kProtocolVersion));
 }
 
 void Cluster::tidyNumbers(uint32_t now) {
@@ -401,17 +422,30 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
     uint32_t ip = toU(p[0]), epoch = toU(p[1]);
     int      number = (int)toU(p[2]);
     if (ip == net_.myIp()) return;
-    bool theirSd = p.size() >= 4 && p[3] == "1";
-    if (role_ == Role::Main) {  // two mains: the SD card's board wins; then the higher epoch, the lower node, the lower address
-        bool theyWin = theirSd != hasFiles_ ? theirSd
+    CardKind theirKind = p.size() >= 4 ? kindOf(p[3]) : CardKind::None;
+    [[maybe_unused]] uint32_t theirVer = p.size() >= 5 ? toU(p[4]) : 1;  // an announcement without a version is protocol 1
+    if (role_ == Role::Main) {  // two mains: the higher kind wins (mirror, card, none); then the higher epoch, the lower node, the lower address
+        bool theyWin = rank(theirKind) != rank(kind_) ? rank(theirKind) > rank(kind_)
                      : epoch != epoch_      ? epoch > epoch_
                      : number != number_    ? number < number_
                                             : ip < net_.myIp();
         // never on the announcement alone (it may be a recording): check that main holds the key first
         if (theyWin) probeMain(ip, epoch, now);
+#if AXIS_NATIVE
+        // a card main on older firmware reads this program's 'm' as no card and stays main too: the host steps down,
+        // but only once that address proves the key (the same probe, which then never steps down by itself)
+        if (!theyWin && theirKind == CardKind::Card && theirVer < kProtocolVersion && host_.onOlderCardMain &&
+            host_.onOlderCardMain(ip) && !probing_) {
+            probeMain(ip, epoch, now);
+            probeOlder_ = probing_;
+        }
+#endif
         return;
     }
-    if (role_ != Role::Discovering || (epoch < minEpoch_ && !theirSd)) return;
+    if (role_ != Role::Discovering || (epoch < minEpoch_ && theirKind == CardKind::None)) return;
+#if AXIS_NATIVE
+    if (theirVer < host_.minMainVersion) return;
+#endif
     // one join dial per tick, and after a failed one no more for kProbeAgainMs whatever the address
     // (replayed announcements from dead addresses must not keep this board inside connect())
     if (joinedThisTick_ || (joinFailed_ && now - joinFailEnd_ < kProbeAgainMs)) return;
@@ -426,7 +460,8 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
     links_.push_back({link, FrameReader(), 0});
     role_ = Role::Joining;
     mainIp_ = ip;
-    mainHasCard_ = theirSd;
+    mainKind_ = theirKind;
+    mainVersion_ = theirVer;
     since_ = now;  // the main's Challenge comes first; take() answers it, then says Hello
     (void)from;
 }
@@ -454,6 +489,9 @@ void Cluster::closeProbe(uint32_t now) {
     probe_ = Link{-1, FrameReader()};
     probing_ = stepDown_ = false;
     probeEnd_ = now;
+#if AXIS_NATIVE
+    probeOlder_ = false;
+#endif
 }
 
 void Cluster::serveProbe(uint32_t now) {
@@ -467,6 +505,14 @@ void Cluster::serveProbe(uint32_t now) {
     Frame       t;
     std::string body;
     while (take(probe_, t, body)) {}  // only the handshake comes before our Hello, which a probe never sends
+#if AXIS_NATIVE
+    if (stepDown_ && probeOlder_) {  // the older card main proved the key: the host decides, this board stays main
+        uint32_t ip = probeIp_;
+        closeProbe(now);
+        if (host_.onOlderCardProved) host_.onOlderCardProved(ip);
+        return;
+    }
+#endif
     if (stepDown_) {  // it proved the key: it is a real main that wins, so join it
         uint32_t epoch = probeEpoch_;
         closeProbe(now);
@@ -543,6 +589,8 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
                 if (&other != &l && other.board == f[0]) other.board.clear(), other.node = 0, other.syncing = false;
             l.node = give;
             l.board = f[0];
+            CardKind theirs = f.size() >= 4 ? kindOf(f[3]) : CardKind::None;
+            l.kind = theirs;
             std::vector<std::string> welcome = {num((uint32_t)give), num(epoch_)};
             for (size_t i = 1; i < mine.size(); i++) welcome.push_back(num((uint32_t)mine[i]));
             put(l, Frame::Welcome, welcome);
@@ -559,9 +607,9 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
             l.syncAfter = INT_MIN;
             l.syncSent = l.syncPauses = 0;
             // a card for the pool; only from a board that sends its free space (it answers MainReq: older ones never would)
-            if (f.size() >= 7 && f[3] == "1") cards_[f[0]] = {ip, toU64(f[6]), true};
+            if (f.size() >= 7 && theirs == CardKind::Card) cards_[f[0]] = {ip, toU64(f[6]), true};
             else cards_.erase(f[0]);
-            if (!hasFiles_ && f.size() >= 4 && f[3] == "1") {  // the file areas live on its card: it should be main
+            if (kind_ == CardKind::None && theirs == CardKind::Card) {  // the file areas live on its card: it should be main
                 event("node " + num((uint32_t)give) + " has the SD card: handing main to it");
                 put(l, Frame::Yield, {});
             }
@@ -587,7 +635,7 @@ void Cluster::handleFrame(Link& l, Frame t, const std::string& body, uint32_t no
                 c.alive = true;
                 // A main without the card keeps handing main to the card's board: the one hand-over when it joined
                 // can be missed (seen 2026-11-09: board 1 back after a power loss stayed a follower of board 2).
-                if (!hasFiles_ && (!lastYield_ || now - lastYield_ >= kYieldAgainMs)) {
+                if (kind_ == CardKind::None && (!lastYield_ || now - lastYield_ >= kYieldAgainMs)) {
                     lastYield_ = now;
                     event("node " + num((uint32_t)l.node) + " has the SD card: handing main to it");
                     put(l, Frame::Yield, {});
@@ -832,14 +880,22 @@ void Cluster::tick(uint32_t now) {
     if (probing_) serveProbe(now);
     if (yield_) {
         yield_ = false;
-        if (role_ == Role::Follower) {
+        bool take = role_ == Role::Follower;
+#if AXIS_NATIVE
+        if (take && host_.onYield) take = host_.onYield();  // the host may decline, or restart to take main
+#endif
+        if (take) {
             becomeMain(now, epoch_ + 1, number_);
             event("node " + num((uint32_t)number_) + " is main (it has the SD card)");
         }
     }
     switch (role_) {
         case Role::Discovering:
-            if (now - since_ > listenMs_) {
+            if (now - since_ > listenMs_
+#if AXIS_NATIVE
+                && !host_.neverMain
+#endif
+            ) {
                 // nobody answered: a fresh board is node 1; a cluster survivor keeps its number
                 listenMs_ = kListenMs;
                 becomeMain(now, epoch_ + 1, number_ ? number_ : (wantNumber_ ? wantNumber_ : 1));
@@ -860,13 +916,34 @@ void Cluster::tick(uint32_t now) {
                 tidyNumbers(now);
             }
             serveUserSync();
+            if (kind_ == CardKind::None) {
+                // a cardless main that has had no card board linked for kMirrorYieldMs hands main to a linked card
+                // mirror (the Linux program), again every kYieldAgainMs until it takes it
+                Link* mirror = nullptr;
+                bool  card = false;
+                for (Link& l : links_)
+                    if (l.auth == 2 && !l.board.empty() && !l.dead) {
+                        if (l.kind == CardKind::Card) card = true;
+                        else if (l.kind == CardKind::Mirror && !mirror) mirror = &l;
+                    }
+                if (card) mainSince_ = now;  // (the clock counts from the last card board linked)
+                if (mirror && !card && now - mainSince_ >= kMirrorYieldMs && (!lastYield_ || now - lastYield_ >= kYieldAgainMs)) {
+                    lastYield_ = now;
+                    if (mirror->board != mirrorYieldLogged_ || now - mirrorYieldLogAt_ >= kMirrorYieldLogMs) {  // (the log is on flash)
+                        mirrorYieldLogged_ = mirror->board;
+                        mirrorYieldLogAt_ = now;
+                        event("node " + num((uint32_t)mirror->node) + " holds a card mirror: handing main to it");
+                    }
+                    put(*mirror, Frame::Yield, {});
+                }
+            }
             if (now - lastAnnounce_ >= kAnnounceMs) {
                 lastAnnounce_ = now;
                 announce();
             }
             break;
         case Role::Follower:
-            if (hasFiles_ && !links_.empty() && now - lastCard_ >= kCardMs) {
+            if (kind_ == CardKind::Card && !links_.empty() && now - lastCard_ >= kCardMs) {
                 lastCard_ = now;
                 put(links_[0], Frame::CardInfo, {"1", num64(freeBytes_)});
             }
@@ -874,6 +951,16 @@ void Cluster::tick(uint32_t now) {
                 int lowest = 0;  // the lowest node on a surviving board (the lost main's sessions don't count)
                 for (const NodeInfo& n : nodes_)
                     if (n.ip != mainIp_ && n.number != lastMain_ && (!lowest || n.number < lowest)) lowest = n.number;
+#if AXIS_NATIVE
+                if (host_.neverMain) {  // never main by itself: look for the next main
+                    event("MAIN NODE LOST (" + std::string(links_.empty() ? "link closed" : "no heartbeat " + num((now - lastBeat_) / 1000) + "s") +
+                          "), looking for a main");
+                    minEpoch_ = epoch_;  // not +1: the lost main may still be up, and a None main at this epoch must be accepted again
+                    wantNumber_ = number_;
+                    discover(now);
+                    break;
+                }
+#endif
                 event("MAIN NODE LOST (" + std::string(links_.empty() ? "link closed" : "no heartbeat " + num((now - lastBeat_) / 1000) + "s") +
                       "), NODE " + num((uint32_t)lowest) + " IS NOW MAIN");
                 if (lowest && std::find(numbers_.begin(), numbers_.end(), lowest) != numbers_.end()) {

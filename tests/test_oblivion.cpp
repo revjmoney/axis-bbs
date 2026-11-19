@@ -202,9 +202,10 @@ TEST_CASE("Oblivion L lists callers, S draws the stats screen, and the prompt sh
     CHECK(plain(n.takeOutput()).find("(nobody yet)") != std::string::npos);
     n.input((const uint8_t*)"s", 1, 1000);
     std::string stats = plain(n.takeOutput());
-    CHECK(stats.find("192.168.1.77") != std::string::npos);
+    CHECK(stats.find("192.168.1.77") == std::string::npos);  // nothing private on a caller's screen
+    CHECK(stats.find("axis.local") == std::string::npos);
+    CHECK(stats.find("SD card 7580 MB") == std::string::npos);
     CHECK(stats.find("1h 2m") != std::string::npos);
-    CHECK(stats.find("SD card 7580 MB") != std::string::npos);
     CHECK(stats.find("RevJMoney") != std::string::npos);
     CHECK(stats.find("STATS") != std::string::npos);
     theme::use(theme::Look::Axis);

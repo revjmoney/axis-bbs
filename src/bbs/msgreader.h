@@ -41,6 +41,12 @@ private:
     enum class St { Areas, List, ReadNum, Reading, To, Subject, Body };
     void showAreas();
     void openArea(size_t i);
+    // the message list's look (MSGS.LST), loaded when an area opens (lightbars only)
+    const ListTemplate* tpl() const { return hasTpl_ ? &tpl_ : nullptr; }
+    // headers a window: today 15 on a 14 row bar (the bar scrolls one), so a template's window is its rows plus that one
+    int         perPage() const { return hasTpl_ ? tpl_.rows + (kPerPage - kListRows) : kPerPage; }
+    std::string msgField(size_t i, const std::string& k) const;  // MSGS.LST's values for heads_[i]
+    std::string statusLine(size_t i, const std::string& builtin) const;  // `builtin`, or the template's status line
     void showList();
     void listPrompt();
     void show(int num);
@@ -70,6 +76,9 @@ private:
     std::vector<Message>         heads_;
     size_t                       listFrom_ = 0;  // first header in the lightbar window (newest page to start)
     ScrollList                   list_{3, kListRow, 74, kListRows, 111, 15};  // white on the theme orange
+    ListTemplate                 tpl_;
+    bool                         hasTpl_ = false;
+    int                          last_ = 0;  // the open area's last read number when the list was built (the new marker)
     bool                         bars_ = true;
     bool                         usingList_ = false;
     Message                      current_, draft_;

@@ -57,6 +57,7 @@
 #include "bbs/loginguard.h"
 #include <base64.h>
 #include <mbedtls/base64.h>
+#include "cluster/cardtree.h"
 #include "cluster/mirrorjob.h"
 #include "cluster/pooledlib.h"
 #include "cluster/relay.h"
@@ -77,6 +78,13 @@
 #include "bbs/memlog.h"
 #include "bbs/setup_wizard.h"
 #include "platform/cyd/ansi_screen.h"
+#include "platform/cyd/boardhost.h"
+#include "app/boarddata.h"
+#include "app/stats.h"
+#include "app/themeprovider.h"
+#include "app/session.h"
+#include "app/services.h"
+#include "app/commands.h"
 #include "platform/cyd/board.h"
 #include "platform/cyd/clusternet.h"
 #include "platform/cyd/config_store.h"
@@ -166,7 +174,6 @@ static void heapTraceLow(uint32_t freeB, uint32_t largest) {
     esp_rom_printf("@HT end\n");
 }
 #endif
-static size_t                artMax = 0;  // largest art string read from the SD (theme or menu file)
 
 static void noteDoor(axis::bbs::DoorDiag how, uint32_t peakKb) {
     boardDiag_.door = how;
@@ -199,7 +206,6 @@ static uint32_t             panelStatMs = 0;
 static bool                 panelWall = false;  // WALL ON: every node's output goes to the panel
 static int                  panelConNode = 0;   // the node the panel's console types into (0 = none)
 static bool                 panelConJoined = false;  // broke in on a caller (else its own session)
-static std::unique_ptr<WifiStream>              line;  // the caller, when one is online
 static axis::bbs::EventLog                      events;  // newest board events, for its Logs screen
 static axis::bbs::RotatingLog                   eventFile("/littlefs/events.log", "/littlefs/events.old", 8192);  // 16 KB at most
 static bool                                     eventFileReady = false;  // after LittleFS is mounted
@@ -214,7 +220,6 @@ static std::unique_ptr<axis::cluster::Cluster>  cluster;
 #else  // built without the cluster: the board runs alone, and every "if (cluster)" folds away
 static constexpr axis::cluster::Cluster*        cluster = nullptr;
 #endif
-static std::string                              lastStatus;
 static String                                   pageText;   // the last page for the sysop ("handle: text")
 static uint32_t                                 pageAtMs = 0;
 static bool                                     ledReport = false;  // @LED: print the status light (bench)
@@ -265,219 +270,16 @@ static bool servedRequest = false;  // the main answered a follower this loop tu
 static uint32_t shotDoneMs = 0;      // the last @SHOT (it stalls the loop ~13 s on purpose)
 #endif
 
-// The oneliner wall: the newest 20, in internal flash on the main; followers read and post over the link.
-static std::vector<std::string> oneLiners;
-static void linersLoad() {
-    std::string text = flashRead("/oneliners.txt");
-    oneLiners.clear();
-    size_t pos = 0;
-    while (pos < text.size()) {
-        size_t e = text.find('\n', pos);
-        if (e == std::string::npos) e = text.size();
-        if (e > pos) oneLiners.push_back(text.substr(pos, e - pos));
-        pos = e + 1;
-    }
-}
-static void linersAddLocal(const std::string& line) {
-    oneLiners.push_back(line.substr(0, 100));
-    while (oneLiners.size() > 20) oneLiners.erase(oneLiners.begin());
-    std::string text;
-    for (auto& l : oneLiners) text += l + "\n";
-    flashWrite("/oneliners.txt", text);
-}
-// The last callers: the newest 20 logins ("handle|node|time|location"), kept like the oneliners.
-static std::vector<std::string> lastCallers;
-static void callersLoad() {
-    std::string text = flashRead("/callers.txt");
-    lastCallers.clear();
-    for (size_t pos = 0; pos < text.size();) {
-        size_t e = text.find('\n', pos);
-        if (e == std::string::npos) e = text.size();
-        if (e > pos) lastCallers.push_back(text.substr(pos, e - pos));
-        pos = e + 1;
-    }
-}
-static void callersAddLocal(const std::string& line) {
-    lastCallers.push_back(line.substr(0, 120));
-    while (lastCallers.size() > 20) lastCallers.erase(lastCallers.begin());
-    std::string text;
-    for (auto& l : lastCallers) text += l + "\n";
-    flashWrite("/callers.txt", text);
-}
+// The board's shared data (app/boarddata.h): the oneliner wall, the last callers and the lists, in internal flash on
+// the main; followers read and post over the link.
+static void                 logEvent(const String& what);
+static BoardHost            boardHost([](const std::string& line) { logEvent(line.c_str()); });
+static axis::app::BoardData boardData(boardHost);
 static bool asFollower();
 static bool writeWarrior(const std::string& handle);
 // A node's warrior hook: none when LORD is left out of the build, so registration says nothing about a warrior.
 static bool (*const warriorHook)(const std::string&) = AXIS_LORD ? writeWarrior : nullptr;
 
-// The board's small shared lists (rumors, the BBS list): 50 lines each in internal flash on the main.
-static bool listName(const std::string& n) {
-    return n == "rumors" || n == "bbslist" || n == "votes" || n == "ballots" || n == "axisnet" || n == "netnotes";
-}
-// How many lines a plain list keeps (0: axisnet and netnotes, which keep their own merge and size rules).
-static size_t listCap(const std::string& n) {
-    return n == "ballots" ? 500u : n == "rumors" ? 300u : n == "bbslist" || n == "votes" ? 50u : 0u;
-}
-// Lines counted per list the first time it is touched, then kept in step by listAppendLocal. listStore forgets it.
-static int32_t listCount[4] = {-1, -1, -1, -1};  // rumors, bbslist, votes, ballots; -1 = not counted yet
-static int     listIdx(const std::string& n) { return n == "rumors" ? 0 : n == "bbslist" ? 1 : n == "votes" ? 2 : n == "ballots" ? 3 : -1; }
-static std::string                   listPath(const std::string& n) { return "/list_" + n + ".txt"; }
-static size_t                        listCountOf(const std::string& n) {
-    int i = listIdx(n);
-    if (i < 0) return 0;
-    if (listCount[i] >= 0) return (size_t)listCount[i];
-    size_t c = 0;
-    File   f = LittleFS.open(listPath(n).c_str(), "r");
-    while (f && f.available()) {
-        String l = f.readStringUntil('\n');
-        if (l.length()) c++;
-    }
-    if (f) f.close();
-    listCount[i] = (int32_t)c;
-    return c;
-}
-// A plain list is trimmed lazily (listAppendLocal), so the file can hold up to cap + cap/4 lines: readers see the newest cap.
-static size_t listSkip(const std::string& n) {
-    size_t cap = listCap(n);
-    if (!cap) return 0;
-    return axis::bbs::listReadSkip(listCountOf(n), cap);
-}
-// One random line of a list, read a line at a time (the main menu's rumor: the whole list is more than the main can spare then)
-static std::vector<std::string> listOne(const std::string& n) {
-    std::vector<std::string> v;
-    if (!listName(n)) return v;
-    size_t   skip = listSkip(n);
-    File     f = LittleFS.open(listPath(n).c_str(), "r");
-    uint32_t seen = 0;
-    while (f && f.available()) {
-        String l = f.readStringUntil('\n');
-        if (!l.length()) continue;
-        if (skip) {
-            skip--;
-            continue;
-        }
-        if (esp_random() % ++seen == 0) v.assign(1, l.c_str());
-    }
-    if (f) f.close();
-    return v;
-}
-static std::vector<std::string> listLoad(const std::string& n) {
-    std::vector<std::string> v;
-    if (n == "rumor") return listOne("rumors");  // the main menu's one rumor
-    if (!listName(n)) return v;
-    size_t skip = listSkip(n);
-    File   f = LittleFS.open(listPath(n).c_str(), "r");  // a line at a time: one 8 KB block is more than the main can spare
-    while (f && f.available()) {
-        String l = f.readStringUntil('\n');
-        if (!l.length()) continue;
-        if (skip) {
-            skip--;
-            continue;
-        }
-        v.push_back(l.c_str());
-    }
-    if (f) f.close();
-    return v;
-}
-static void listStore(const std::string& n, const std::vector<std::string>& v) {
-    if (!listName(n)) return;
-    if (listIdx(n) >= 0) listCount[listIdx(n)] = -1;  // the file is rewritten: count it again when next needed
-    size_t      cap = n == "axisnet" || n == "netnotes" ? 180u : 120u;
-    std::string text;
-    for (auto& l : v) {
-        text += l.substr(0, cap);
-        text += '\n';
-    }
-    flashWrite(listPath(n).c_str(), text);
-}
-// A plain list gets its line appended to the file; once it is cap/4 over, the newest cap lines are streamed to a
-// temp file that replaces it (a failure leaves the original). No copy of the list is held in RAM.
-static bool listAppendLocal(const std::string& n, const std::string& line, size_t cap) {
-    if (!listName(n) || !cap) return false;
-    std::string out = line.substr(0, 120) + '\n';
-    size_t      add = 0;  // non-empty segments written (a follower's text may hold newlines)
-    for (size_t p = 0; p < out.size();) {
-        size_t e = out.find('\n', p);
-        if (e > p) add++;
-        p = e + 1;
-    }
-    if (!add) return false;  // an empty line is never shown: write nothing
-    size_t had = listCountOf(n);  // before the append, so a first count does not include the new line
-    File   f = LittleFS.open(listPath(n).c_str(), "a");
-    if (!f) return false;
-    bool        ok = f.write((const uint8_t*)out.data(), out.size()) == out.size();
-    f.close();
-    if (!ok) {
-        listCount[listIdx(n)] = -1;  // maybe half a line landed: recount
-        return false;
-    }
-    size_t now = had + add;
-    listCount[listIdx(n)] = (int32_t)now;
-    const size_t skipOld = axis::bbs::listTrimSkip(now, cap);  // (the newest cap stay once it is cap/4 over)
-    if (!skipOld) return true;
-    std::string tmp = "/list_" + n + ".tmp";
-    File        in = LittleFS.open(listPath(n).c_str(), "r");
-    File        t = LittleFS.open(tmp.c_str(), "w");
-    if (!in || !t) {
-        if (in) in.close();
-        if (t) {
-            t.close();
-            LittleFS.remove(tmp.c_str());
-        }
-        return true;  // the line is in; the trim waits for the next one
-    }
-    size_t skip = skipOld, kept = 0;
-    bool   wrote = true;
-    while (wrote && in.available()) {
-        String l = in.readStringUntil('\n');
-        if (!l.length()) continue;
-        if (skip) {
-            skip--;
-            continue;
-        }
-        String w = l.length() > 120 ? l.substring(0, 120) : l;
-        w += '\n';
-        wrote = t.write((const uint8_t*)w.c_str(), w.length()) == w.length();
-        kept++;
-    }
-    in.close();
-    t.close();
-    if (!wrote || (!LittleFS.rename(tmp.c_str(), listPath(n).c_str()) && !(LittleFS.remove(listPath(n).c_str()) && LittleFS.rename(tmp.c_str(), listPath(n).c_str())))) {
-        LittleFS.remove(tmp.c_str());
-        return true;
-    }
-    listCount[listIdx(n)] = (int32_t)kept;
-    return true;
-}
-static void listAddLocal(const std::string& n, const std::string& line) {
-    if (!listName(n)) return;
-    if (n == "axisnet") {
-        axis::bbs::AxisCard c;
-        if (!axis::bbs::axisParse(line, c) || c.host.empty()) return;
-        std::vector<std::string> v = listLoad(n);
-        axis::bbs::axisMerge(v, c, 24);
-        listStore(n, v);
-        return;
-    }
-    if (n == "netnotes") {
-        auto tail = [](const std::string& s) {
-            size_t p = s.find('|');
-            return p == std::string::npos ? s : s.substr(p + 1);
-        };
-        std::vector<std::string> v = listLoad(n);
-        for (auto& e : v)
-            if (tail(e) == tail(line)) return;
-        v.push_back(line.substr(0, 180));
-        while (v.size() > 40) v.erase(v.begin());
-        listStore(n, v);
-        return;
-    }
-    listAppendLocal(n, line, listCap(n));
-}
-
-// The sysop's own screens for the theme (MATRIX.ANS, MAIN.ANS): from the card on the main.
-// The Downloads screensets run 6 to 11 KB, so the main keeps 12 KB and cuts at the SAUCE record.
-// A board without the card asks the main once. The cluster frame is 8 KB, so a follower can
-// lose the bottom of a screen that is bigger than that. The settings arriving forget the cache.
 // Scene news for Discord. TLS needs about 45 KB of heap, more than a busy CYD main has, so the
 // posting is done by whichever board holds the webhook (set it on a headless node): a follower
 // hands its news to the main, the main sends it to every board, and the board with the webhook posts.
@@ -490,371 +292,33 @@ static void announceOut(const std::string& line) {
 }
 #endif
 
-// The follower's theme art, at most kArtCacheCap bytes in all (bbs/artfetch.h).
-constexpr size_t kArtCacheCap = 16384;
-static axis::bbs::ArtCache artCache(kArtCacheCap);
-constexpr size_t kThemeArtCap = 12288;
-constexpr size_t kPosterCap = 49152;  // SAYLOR.ANS is 37 KB, SAYLORLG.ANS is 45 KB. Not cached.
-constexpr size_t kPosterChunk = 7000;  // a cluster frame is 8 KB, so a follower pulls the poster in pieces
-static bool posterName(const std::string& name) { return name == "SAYLOR.ANS" || name == "SAYLORLG.ANS"; }
-// (readFileAppend: one piece of a file, cut at the first 0x1a: bbs/artfetch.h)
-static bool readThemeFileAppend(const char* folder, const std::string& name, size_t cap, size_t offset, std::string& out) {
-    if (!folder || !folder[0]) return false;
-    std::string path = std::string("/sd/themes/") + folder + "/" + name;
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return false;
-    const size_t old = out.size();
-    axis::bbs::readFileAppend(f, cap, offset, out);
-    fclose(f);
-    if (out.size() - old > artMax) artMax = out.size() - old;
-    return true;
-}
-static std::string readThemeFile(const char* folder, const std::string& name, size_t cap, size_t offset, bool* opened) {
-    std::string s;
-    bool        ok = readThemeFileAppend(folder, name, cap, offset, s);
-    if (opened) *opened = ok;
-    return s;
-}
-static std::string readThemeFile(const char* folder, const std::string& name) {
-    return readThemeFile(folder, name, kThemeArtCap, 0, nullptr);
-}
-// One piece of the Saylor poster, from the theme's folder (`want` bytes at most, never more than a cluster frame takes).
-// It is never read whole: Node streams it a piece at a time (Node::setPoster). A short read at a later offset means
-// the end of the file, not "try the other folder".
-static bool posterPieceLocalAppend(const std::string& name, size_t offset, size_t want, std::string& out) {
-    if (!storageHasSd() || !posterName(name) || offset >= kPosterCap) return false;
-    if (want > kPosterChunk) want = kPosterChunk;
-    if (want > kPosterCap - offset) want = kPosterCap - offset;
-    if (readThemeFileAppend(boardCfg->theme.c_str(), name, want, offset, out)) return true;
-    if (readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(boardCfg->theme), name, want, offset, out)) return true;
-    return readThemeFileAppend("axis", name, want, offset, out);  // a look without its own poster shows the axis one
-}
-static std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened) {
-    std::string s;
-    *opened = posterPieceLocalAppend(name, offset, want, s);
-    return s;
-}
-// A follower asks the main for the same piece ("T name offset want"); *exists false when the main has none (or did not answer).
+// The screens a caller sees (app/themeprovider.h): the theme's art, the menu files and the scripts, from this board's
+// storage, or on a follower from the main over the link. The functions below hand them to each Node.
+static axis::app::ThemeProvider themeProvider(boardHost);
+static std::string themeArt(const std::string& name) { return themeProvider.themeArt(name); }
+static std::string themeArtTop(const std::string& name, int rows) { return themeProvider.themeArtTop(name, rows); }
+static std::shared_ptr<const std::string> wfcArtShared() { return themeProvider.wfcArtShared(); }
 static std::string posterPiece(const std::string& name, size_t offset, size_t want, bool* exists) {
-    *exists = false;
-    if (!asFollower()) return posterPieceLocal(name, offset, want, exists);
-    std::string reply;
-    if (!cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(offset) + "\x1f" + std::to_string(want), reply, 3000) ||
-        reply.empty() || reply[0] != '1')
-        return "";
-    *exists = true;
-    reply.erase(0, 1);  // (in place: no second copy)
-    if (reply.size() > want) reply.resize(want);
-    return reply;
+    return themeProvider.posterPiece(name, offset, want, exists);
 }
-static bool wfcScreen(const std::string& name) {  // a waiting screen (or its lite one): from the WFC skin's folder
-    return name == "WFC.ANS" || name == "WFCCYD.ANS" || name == "WFC.LITE.ANS" || name == "WFCCYD.LITE.ANS";
+static std::string menuFile(const std::string& name) { return themeProvider.menuFile(name); }
+static bool        menuExists(const std::string& name) { return themeProvider.menuExists(name); }
+static bool        menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) { return themeProvider.menuArtPieces(name, piece); }
+static std::string menuArtPiece(const std::string& name, size_t offset, size_t want, bool* exists) {
+    return themeProvider.menuArtPiece(name, offset, want, exists);
 }
-static std::string themeArtLocal(const std::string& name) {
-    if (!storageHasSd() || name.find('/') != std::string::npos) return "";
-    std::string look, file;
-    if (axis::bbs::theme::splitLookFile(name, look, file)) {  // "crt:MAIN.ANS": that look's screen (the sysop's preview)
-        std::string s = readThemeFile(look.c_str(), file);
-        if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(look), file);
-        return s;
-    }
-    if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never read whole
-    // The waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme.
-    const std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(*boardCfg) : boardCfg->theme;
-    std::string s = readThemeFile(folder.c_str(), name);
-    if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name);
-    return s;
-}
-// The main's answer to "T name offset": one piece of a theme file, at most kPosterChunk bytes, so the reply stays under the
-// cluster's 8 KB frame (a bigger one drops the link). The piece is appended to out (the reply being built: no second copy).
-// Returns whether the file is there.
-static bool themeArtPieceAppend(const std::string& name, size_t off, size_t want, std::string& out) {
-    if (!storageHasSd() || name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
-    if (posterName(name)) return posterPieceLocalAppend(name, off, want, out);
-    size_t cap = kThemeArtCap;
-    if (off >= cap) return false;
-    if (!want || want > kPosterChunk) want = kPosterChunk;
-    if (want > cap - off) want = cap - off;
-    // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
-    // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
-    std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(*boardCfg) : boardCfg->theme, file = name, look;
-    if (axis::bbs::theme::splitLookFile(name, look, file)) folder = look;
-    if (readThemeFileAppend(folder.c_str(), file, want, off, out)) return true;
-    return readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, out);
-}
-// A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
-static std::string themeArtRemote(const std::string& name, bool* answered) {
-    constexpr size_t kFollowerWant = 4096;  // a follower asks for 4 KB pieces: the main's reply (and this reply) stay small
-    return axis::bbs::assembleArt(posterName(name) ? kPosterCap : kThemeArtCap, kFollowerWant, !posterName(name),
-                                  [&name](size_t off, std::string& reply) {
-                                      return cluster->request(std::string("T\x1f") + name + "\x1f" + std::to_string(off) + "\x1f" +
-                                                                  std::to_string(kFollowerWant),
-                                                              reply, 3000);
-                                  },
-                                  answered);
-}
-static std::string themeArt(const std::string& name) {
-    if (!asFollower()) return themeArtLocal(name);
-    if (posterName(name)) return "";  // the poster streams in pieces (posterPiece), never fetched whole
-    bool poster = posterName(name) || name.find(':') != std::string::npos;  // (a preview is seen once: never cached either)
-    if (!poster) {
-        if (const std::string* hit = artCache.find(name)) return *hit;
-    }
-    bool        answered = false;
-    std::string art = themeArtRemote(name, &answered);
-    if (!poster && answered) artCache.put(name, art);  // (the poster is one login screen, then it can go; a failed ask is asked again)
-    return art;
-}
-// A theme file's first `rows` lines, read from the card and stopped there (the list screens keep only a header's top rows:
-// MSGS.ANS read whole for them was 8 KB held, the slow call's lowest heap on board 1). Elsewhere the whole-file reader.
-static std::string readThemeTop(const char* folder, const std::string& name, int rows) {
-    if (!folder || !folder[0]) return "";
-    FILE* f = fopen((std::string("/sd/themes/") + folder + "/" + name).c_str(), "rb");
-    if (!f) return "";
-    std::string s;
-    axis::bbs::readTopRowsAppend(f, rows, kThemeArtCap, s);
-    fclose(f);
-    if (s.size() > artMax) artMax = s.size();
-    return s;
-}
-static std::string themeArtTop(const std::string& name, int rows) {
-    // a follower's art comes whole from the main (and its cache); previews, the poster and the waiting screens keep their own reader
-    if (asFollower() || name.find(':') != std::string::npos || posterName(name) || wfcScreen(name)) return themeArt(name);
-    if (!storageHasSd() || name.find('/') != std::string::npos) return "";
-    std::string s = readThemeTop(boardCfg->theme.c_str(), name, rows);
-    if (s.empty()) s = readThemeTop(axis::bbs::theme::legacyThemeFolder(boardCfg->theme), name, rows);
-    return s;
-}
-// The cleaned WFC.ANS every WFC screen (telnet, serial, local) draws: read once, shared, and read again only when something may have
-// changed. wfcAnsKey says what it was read from: the WFC folder plus (here on a board with the card) the file's size and time in the
-// folder and its legacy folder, so a new WFC.ANS from any writer (the sysop's @PUT, the web, a theme install) is seen on the next draw,
-// as when it was read every time. On a follower the key is the folder and the settings arrival clears it (with artCache). A follower
-// that got no art does not keep the key, so it asks again as before. Null (no art): the built-in screen.
-static std::shared_ptr<const std::string> wfcAnsShared;
-static std::string                        wfcAnsKey;
-static std::shared_ptr<const std::string> wfcArtShared() {
-    const std::string folder = axis::bbs::wfcFolder(*boardCfg);
-    std::string       key = folder;
-    if (!asFollower()) {
-        const char* dirs[2] = {folder.c_str(), axis::bbs::theme::legacyThemeFolder(folder)};
-        for (const char* d : dirs) {
-            struct stat st;
-            key += '|';
-            if (d && d[0] && storageHasSd() && stat((std::string("/sd/themes/") + d + "/WFC.ANS").c_str(), &st) == 0)
-                key += std::to_string((unsigned long)st.st_size) + "." + std::to_string((unsigned long)st.st_mtime);
-        }
-    } else {
-        key += "|F";
-    }
-    if (key == wfcAnsKey) return wfcAnsShared;
-    std::string art = axis::bbs::cleanWfcArt(themeArt("WFC.ANS"));
-    wfcAnsShared = art.empty() ? nullptr : std::make_shared<const std::string>(std::move(art));
-    if (wfcAnsShared || !asFollower()) wfcAnsKey = key;
-    else wfcAnsKey.clear();
-    return wfcAnsShared;
-}
-// ViSiON/3-style menu files (MAIN.MNU, MAIN.ANS...): this board's own /menus first (its SD card or flash),
-// then the main's over the cluster. Only the small .MNU files are cached; art is fetched each time it shows.
-static std::map<std::string, std::string> menuCache;
-// A menu screen the theme draws (MAIN.ANS, PDMATRIX.ANS as MATRIX.ANS ...): the theme's file, so switching the theme
-// switches the menus too. Null when the theme has none (or the name is a menu file): the menu set's own then.
-static FILE* openThemeScreen(const std::string& name) {
-    const char* file = axis::bbs::theme::menuScreenFile(name);
-    if (!file || !storageHasSd() || boardCfg->theme.empty()) return nullptr;
-    FILE* f = fopen((std::string("/sd/themes/") + boardCfg->theme + "/" + file).c_str(), "rb");
-    if (!f)
-        if (const char* old = axis::bbs::theme::legacyThemeFolder(boardCfg->theme)) f = fopen((std::string("/sd/themes/") + old + "/" + file).c_str(), "rb");
-    return f;
-}
-// theme: a menu screen the theme draws comes from the theme (off for the main's "U" answer to a follower: theme
-// screens run past the 8 KB cluster frame, so a follower pulls those through "T" in pieces instead)
-static std::string menuFileLocal(const std::string& name, bool theme = true) {
-    std::string s;
-    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return s;
-    size_t cap = 8192;
-    FILE*  f = theme ? openThemeScreen(name) : nullptr;
-    if (f) cap = kThemeArtCap;  // (theme screens run to 11 KB)
-    else f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
-    if (f) {
-        axis::bbs::readFileAppend(f, cap, 0, s);
-        fclose(f);
-    }
-    if (s.size() > artMax) artMax = s.size();
-    return s;
-}
-static std::string menuFile(const std::string& name) {
-    if (asFollower() && cluster)
-        if (const char* screen = axis::bbs::theme::menuScreenFile(name)) {  // the theme's screen from the main, in pieces (not cached)
-            bool        answered = false;
-            std::string art = themeArtRemote(screen, &answered);
-            if (!art.empty()) return art;
-        }
-    std::string s = menuFileLocal(name);
-    if (!s.empty() || !asFollower()) return s;
-    bool mnu = name.size() > 4 && name.compare(name.size() - 4, 4, ".MNU") == 0;
-    if (mnu)
-        if (auto it = menuCache.find(name); it != menuCache.end()) return it->second;
-    std::string reply;
-    if (cluster->request(std::string("U\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1') {
-        reply.erase(0, 1);  // (in place: art is several KB, no second copy)
-        s = std::move(reply);
-    }
-    if (mnu) menuCache[name] = s;
-    return s;
-}
-
-// Does a menu screen exist and have a body? The same lookup as menuFileLocal (theme screen first, then /menus/name) but only
-// fopen + the file's size, no read: showPrelogon probes up to ten names and must not load 16 to 24 KB for each.
-static bool menuExistsLocal(const std::string& name, bool theme = true) {
-    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
-    FILE* f = theme ? openThemeScreen(name) : nullptr;
-    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
-    if (!f) return false;
-    bool has = fseek(f, 0, SEEK_END) == 0 && ftell(f) > 0;
-    fclose(f);
-    return has;
-}
-// The follower's answers from the main ("E"), kept until the theme may change (cleared with artCache).
-static std::map<std::string, bool> existsCache;
-static uint32_t                    lastEMissMs = 0;  // millis() of the last unanswered "E" (0: none)
-static bool                        mainKnowsExists = false;  // the main has answered "E" with a "1" once: its "0" can be trusted
-static bool menuExists(const std::string& name) {
-    if (menuExistsLocal(name)) return true;
-    if (!asFollower() || !cluster) return false;
-    if (auto it = existsCache.find(name); it != existsCache.end()) return it->second;
-    if (lastEMissMs && millis() - lastEMissMs < 10000) return !menuFile(name).empty();  // the main was silent a moment ago: no second wait
-    std::string reply;
-    bool        asked = cluster->request(std::string("E\x1f") + name, reply, 3000);
-    if (!asked) lastEMissMs = millis() | 1;
-    if (asked && reply == "1") {
-        mainKnowsExists = true;
-        return existsCache[name] = true;
-    }
-    if (asked && reply == "0" && mainKnowsExists) return existsCache[name] = false;
-    // No answer, or a "0" from a main that may be older (it answers every letter it doesn't know with "0"): read it as before
-    bool has = !menuFile(name).empty();
-    if (asked) existsCache[name] = has;  // (an unanswered ask is asked again)
-    return has;
-}
-
 #if AXIS_SCRIPTS
-// /scripts/NAME.axs. 8000 bytes so a follower can carry the file in one 8 KB cluster frame.
-static std::string scriptRead(const std::string& path) {
-    std::string s;
-    if (FILE* f = fopen(path.c_str(), "rb")) {
-        char b[512];
-        for (size_t n; s.size() < 8000 && (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
-        fclose(f);
-    }
-    return s;
-}
-static std::vector<std::string> scriptNamesLocal() {
-    std::vector<std::string> v;
-    if (!storageHasSd()) return v;
-    std::string dirp = std::string(storageRoot()) + "/scripts";
-    if (DIR* d = opendir(dirp.c_str())) {
-        while (dirent* e = readdir(d)) {
-            std::string n = e->d_name;
-            if (n.size() <= 4) continue;
-            std::string ext = n.substr(n.size() - 4);
-            for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-            if (ext != ".axs") continue;
-            std::string base = n.substr(0, n.size() - 4);
-            if (axis::bbs::scriptNameOk(base)) v.push_back(base);
-        }
-        closedir(d);
-    }
-    std::sort(v.begin(), v.end());
-    if (v.size() > 35) v.resize(35);
-    return v;
-}
-static std::string scriptFile(const std::string& name) {
-    if (!axis::bbs::scriptNameOk(name)) return {};
-    if (storageHasSd()) return scriptRead(std::string(storageRoot()) + "/scripts/" + name + ".axs");
-    if (!asFollower() || !cluster) return {};
-    std::string reply;
-    if (cluster->request(std::string("J\x1f") + name, reply, 3000) && !reply.empty() && reply[0] == '1') reply.erase(0, 1);
-    else reply.clear();
-    return reply;
-}
-static std::vector<std::string> scriptNames() {
-    if (storageHasSd() || !asFollower() || !cluster) return scriptNamesLocal();
-    std::vector<std::string> v;
-    std::string reply;
-    if (cluster->request(std::string("J\x1f"), reply, 3000) && !reply.empty() && reply[0] == '1') {
-        for (size_t pos = 1; pos < reply.size();) {
-            size_t e = reply.find('\n', pos);
-            if (e == std::string::npos) e = reply.size();
-            std::string n = reply.substr(pos, e - pos);
-            if (!n.empty() && n.back() == '\r') n.pop_back();
-            if (axis::bbs::scriptNameOk(n)) v.push_back(n);
-            pos = e + 1;
-        }
-    }
-    return v;
-}
 static void wireScripts(axis::bbs::Node* n) {
     if (!n) return;
-    n->setScripts([](const std::string& name) { return scriptFile(name); }, [] { return scriptNames(); });
+    n->setScripts([](const std::string& name) { return themeProvider.scriptFile(name); }, [] { return themeProvider.scriptNames(); });
 }
 #else
 static void wireScripts(axis::bbs::Node*) {}  // scripts are left out of this build: no loader, nothing runs
 #endif
 
-// a menu's art from this board's own storage a piece at a time (false when it isn't here: the whole-file path)
-static bool menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) {
-    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
-    if (asFollower() && axis::bbs::theme::menuScreenFile(name)) return false;  // a follower: the theme's screen comes from the main (menuFile)
-    FILE* f = openThemeScreen(name);  // the theme's screen first
-    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
-    if (!f) return false;
-    char b[512];
-    for (size_t n, total = 0; total < 16384 && (n = fread(b, 1, sizeof b, f)) > 0; total += n) {
-        const void* sauce = memchr(b, 0x1a, n);  // the SAUCE record: not part of the picture
-        piece(b, sauce ? (size_t)((const char*)sauce - b) : n);
-        if (sauce) break;
-    }
-    fclose(f);
-    return true;
-}
-
-// One piece of a menu screen for the art drawer (Node::setMenuArt): the same file menuArtPieces reads, `want` bytes from
-// `offset`, so a screen is never in RAM whole. *exists false: not here (a follower's theme screen comes whole from the main).
-static std::string menuArtPiece(const std::string& name, size_t offset, size_t want, bool* exists) {
-    *exists = false;
-    std::string s;
-    if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos || offset >= 16384) return s;
-    if (asFollower() && axis::bbs::theme::menuScreenFile(name)) return s;
-    FILE* f = openThemeScreen(name);  // the theme's screen first
-    if (!f) f = fopen((std::string(storageRoot()) + "/menus/" + name).c_str(), "rb");
-    if (!f) return s;
-    *exists = true;
-    axis::bbs::readFileAppend(f, want < 16384 - offset ? want : 16384 - offset, offset, s);
-    fclose(f);
-    return s;
-}
-
 // The shared lists for the local console (callers use the same over their own node setup).
-static std::vector<std::string> sharedList(const std::string& n) {
-    if (!asFollower()) return n == "callers" ? lastCallers : listLoad(n);
-    std::vector<std::string> v;
-    std::string              reply;
-    if (cluster->request(n == "callers" ? std::string("K") : std::string("Y\x1f") + n, reply, 3000) && !reply.empty() && reply[0] == '1')
-        for (size_t pos = 1; pos < reply.size();) {
-            size_t e = reply.find('\n', pos);
-            if (e == std::string::npos) e = reply.size();
-            if (e > pos) v.push_back(reply.substr(pos, e - pos));
-            pos = e + 1;
-        }
-    return v;
-}
-static void sharedListAdd(const std::string& n, const std::string& line) {
-    if (!asFollower()) listAddLocal(n, line);
-    else {
-        std::string reply;
-        cluster->request(std::string("Z\x1f") + n + "\x1f" + line, reply, 3000);
-    }
-}
+static std::vector<std::string> sharedList(const std::string& n) { return boardData.sharedList(n); }
+static void sharedListAdd(const std::string& n, const std::string& line) { boardData.sharedListAdd(n, line); }
 static uint32_t lastServedMs = 0;  // main: a follower's door files
 #if AXIS_SD_POOL && !AXIS_FILES
 #error "AXIS_SD_POOL needs the file areas (AXIS_FILES)"
@@ -873,6 +337,10 @@ static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string
 static std::map<std::string, std::unique_ptr<axis::cluster::RemoteFileLibrary>> cardFiles;  // main: one per card board
 static std::unique_ptr<axis::cluster::FileServer> cardServer;  // follower with a card: the main's requests
 #endif
+static axis::cluster::CardTreeServer& cardTreeServer() {  // the card mirror's tree service (cluster/cardtree.h), made on first use
+    static axis::cluster::CardTreeServer server(storageRoot());
+    return server;
+}
 static std::string cardLabel(const std::string& id) {  // "node 2" (its lowest node), or its id when it is gone
     int low = 0;
     if (cluster)
@@ -913,27 +381,15 @@ static size_t                                   pendingSeen = 0;
 static std::unique_ptr<axis::door::HostFs>      doorFs;     // the door's folder: here, or the main's over the link
 static std::unique_ptr<axis::door::LockTable>   doorRemoteLocks;  // a follower's door locks the main's records
 static axis::door::LockTable                    doorLocks;
-static std::unique_ptr<axis::bbs::AnsiViewer>   viewer;  // this session's movie or pack door
-static std::unique_ptr<axis::door::HostFs>      lordFs;
-static std::unique_ptr<axis::lord::NativeLord>  nativeLord;  // this session's LORD, parked with the session
-static std::unique_ptr<axis::door::LockTable>   lordLocks;
-static std::unique_ptr<axis::bbs::TransferJob>  job;     // this session's download or upload
-static uint32_t                                 jobStartMs = 0, jobDrawnMs = 0;
-static uint32_t                                 doorStartMs = 0;
-
-static std::unique_ptr<axis::bbs::Node>         node;
-static std::unique_ptr<axis::bbs::SetupGate>    gate;
-static std::unique_ptr<axis::bbs::SetupWizard>  wizard;
-static uint32_t callStartMs = 0;
-// Calls, posts and uploads today and the lifetime call total, in internal flash (/stats.txt) so a reboot keeps them.
-// The day counters roll at local midnight; until the clock is set they just keep counting.
-static axis::bbs::DayStats dayStats;
+// Calls, posts and uploads today and the lifetime call total, in internal flash (/stats.txt) so a reboot keeps them
+// (app/stats.h). The day counters roll at local midnight; until the clock is set they just keep counting.
 // In a cluster the main owns them. A follower (or a board still finding the main) adds its calls and uploads to
 // statsShare and sends them up (statsSync); it shows the main's numbers from the heartbeat plus what it has not had
 // acknowledged, and never rolls, counts into, saves or overwrites its own dayStats and /stats.txt (the card board can be
 // a follower for a moment, before a cardless main hands main back: its own numbers must survive that). A follower that
 // stands in as main counts on its own file. Posts need no sending: a follower's caller posts straight into the main's
 // message base (CountingMsgs), which counts them there.
+static axis::app::Stats      stats(boardHost);
 static axis::bbs::StatsShare statsShare;
 static axis::bbs::StatsInbox statsInbox;  // main: the follower batches already applied
 static bool statsOwner() {
@@ -941,136 +397,66 @@ static bool statsOwner() {
     auto r = cluster->role();
     return r == axis::cluster::Role::Main || r == axis::cluster::Role::Off;
 }
-static void statsSave() {
-    if (!flashWrite("/stats.txt", dayStats.format())) Serial.println("axis: stats save failed");
-}
-static void rollDayCounters() {
-    if (!statsOwner()) return;  // only the main's midnight counts
-    time_t now = time(nullptr);
-    if (now < 1700000000) return;
-    struct tm* t = localtime(&now);
-    if (dayStats.roll((t->tm_year + 1900) * 400 + t->tm_yday)) statsSave();
-}
-// At boot, after the users: the saved counters, or (no file yet) a total seeded from every account's call count.
-static void statsLoad() {
-    if (!LittleFS.exists("/stats.txt")) {
-        for (auto& u : users.all()) dayStats.total += u.calls;
-        statsSave();
-    } else if (!dayStats.parse(flashRead("/stats.txt"))) {
-        Serial.println("axis: /stats.txt unreadable, stats start from zero");
-    }
-}
 // What the screens and @STATS show: this board's own numbers on the main, the main's last ones on a follower (none
 // before it has heard them), plus anything still waiting to be sent up.
 static axis::bbs::DayStats statsShown() {
-    if (statsOwner()) return statsShare.shown(dayStats);
+    if (statsOwner()) return statsShare.shown(stats.dayStats);
     return statsShare.shown();
 }
 static bool statsSendNow = false;  // a follower counted something: send it at the top of the next loop turn
-static void countCall() {
-    if (statsOwner()) {
-        rollDayCounters();
-        dayStats.call();
-        statsSave();
-    } else statsShare.call(), statsSendNow = true;
+// The shared services' ties to this board: its settings, its place in the cluster and the follower's link to the main.
+static bool wireSharedServices() {
+    auto askMain = [](const std::string& req, std::string& reply) { return cluster && cluster->request(req, reply, 3000); };
+    boardData.follower = asFollower;
+    boardData.remote = askMain;
+    themeProvider.config = []() -> const axis::bbs::BbsConfig& { return *boardCfg; };
+    themeProvider.follower = asFollower;
+    themeProvider.remote = askMain;
+    stats.owner = statsOwner;
+    stats.share = [](axis::app::Stats::Count c) {
+        if (c == axis::app::Stats::Count::Call) statsShare.call();
+        else if (c == axis::app::Stats::Count::Upload) statsShare.upload();
+        else statsShare.post();
+        statsSendNow = true;
+    };
+    stats.console = [](const char* line) { Serial.println(line); };
+    return true;
 }
-__attribute__((noinline)) static void countUpload() {
-    if (statsOwner()) {
-        rollDayCounters();
-        dayStats.upload();
-        statsSave();
-    } else statsShare.upload(), statsSendNow = true;
-}
-static void countPost() {
-    if (statsOwner()) {
-        rollDayCounters();
-        dayStats.post();
-        statsSave();
-    } else statsShare.post(), statsSendNow = true;
-}
+static const bool sharedServicesWired = wireSharedServices();
 
-// Several callers per board. Each loop turn serves one session at a time: its line, node, game,
-// movie, and transfer are moved into the globals above, then moved back.
-struct Session {
-    std::unique_ptr<WifiStream>             line;
-    std::unique_ptr<axis::bbs::Node>        node;
-    uint32_t                                startMs = 0;
-    std::string                             lastStatus;
-    std::unique_ptr<axis::door::HostFs>     lordFs;
-    std::unique_ptr<axis::door::LockTable>  lordLocks;  // (before lord: members die in reverse, and a LORD still in a script closes its file)
-    std::unique_ptr<axis::lord::NativeLord> lord;
-    std::unique_ptr<axis::bbs::AnsiViewer>  viewer;
-    std::unique_ptr<axis::bbs::TransferJob> job;
-    uint32_t                                doorStartMs = 0;
-    uint32_t                                jobStartMs = 0, jobDrawnMs = 0;
+// Several callers per board, each an axis::app::Session (app/session.h): null while its slot is free. A Session is dropped
+// at the end of the loop turn in which it hung up (slotStatus keeps the slot's last status line for the cluster).
+static std::vector<std::unique_ptr<axis::app::Session>> sessions(1);
+static std::vector<std::string>                         slotStatus;  // a free slot's last status line, as the Session had it
+// The session whose turn it is (answer, its loop turn), for the board code that asks for "this caller" (the transfer window,
+// the setup screen, a follower's upload description). Null between turns, as the old per-turn globals were.
+static axis::app::Session* turn = nullptr;
+struct TurnOf {  // `turn` for one scope, put back on the way out (an exception included)
+    axis::app::Session* was;
+    explicit TurnOf(axis::app::Session* s) : was(turn) { turn = s; }
+    ~TurnOf() { turn = was; }
 };
-static std::vector<Session> sessions(1);
-static int                  curSession = -1;  // whose line and node the globals hold, -1 = none
-static void bindSession(int i) {
-    curSession = i;
-    line = std::move(sessions[(size_t)i].line);
-    node = std::move(sessions[(size_t)i].node);
-    nativeLord = std::move(sessions[(size_t)i].lord);
-    lordFs = std::move(sessions[(size_t)i].lordFs);
-    lordLocks = std::move(sessions[(size_t)i].lordLocks);
-    viewer = std::move(sessions[(size_t)i].viewer);
-    job = std::move(sessions[(size_t)i].job);
-    callStartMs = sessions[(size_t)i].startMs;
-    doorStartMs = sessions[(size_t)i].doorStartMs;
-    jobStartMs = sessions[(size_t)i].jobStartMs;
-    jobDrawnMs = sessions[(size_t)i].jobDrawnMs;
-}
-static void unbindSession() {
-    if (curSession < 0) return;
-    sessions[(size_t)curSession].line = std::move(line);
-    sessions[(size_t)curSession].node = std::move(node);
-    sessions[(size_t)curSession].lord = std::move(nativeLord);
-    sessions[(size_t)curSession].lordFs = std::move(lordFs);
-    sessions[(size_t)curSession].lordLocks = std::move(lordLocks);
-    sessions[(size_t)curSession].viewer = std::move(viewer);
-    sessions[(size_t)curSession].job = std::move(job);
-    sessions[(size_t)curSession].startMs = callStartMs;
-    sessions[(size_t)curSession].doorStartMs = doorStartMs;
-    sessions[(size_t)curSession].jobStartMs = jobStartMs;
-    sessions[(size_t)curSession].jobDrawnMs = jobDrawnMs;
-    doorStartMs = jobStartMs = jobDrawnMs = 0;
-    curSession = -1;
-}
 static bool boardHasLord() {
-    if (nativeLord) return true;
     for (auto& s : sessions)
-        if (s.lord) return true;
+        if (s && s->lord) return true;
     return false;
 }
 static bool boardHasViewer() {
-    if (viewer) return true;
     for (auto& s : sessions)
-        if (s.viewer) return true;
+        if (s && s->viewer) return true;
     return false;
 }
 static bool boardHasJob() {
-    if (job) return true;
     for (auto& s : sessions)
-        if (s.job) return true;
+        if (s && s->job) return true;
     return false;
 }
 static bool inflateHeld() { return axis::bbs::inflate::busy(); }  // a deflated piece is playing, or a ZIP upload is being checked
 static void noteZipHeap() { web::setDoorRunning(inflateHeld()); }
-static void dropLord() {
-    nativeLord.reset();
-    lordLocks.reset();
-    lordFs.reset();
-}
-struct LordMail {
-    std::string          me;
-    axis::door::HostFs*  fs = nullptr;
-    int                  seen[48] = {};
-    int                  nseen = 0;
-    bool                 loaded = false;
-};
-static LordMail lordMailBoxes[4];
-static WifiStream* sessionLine(size_t i) { return (int)i == curSession ? line.get() : sessions[i].line.get(); }
-static axis::bbs::Node* sessionNode(size_t i) { return (int)i == curSession ? node.get() : sessions[i].node.get(); }
+// Every line on the board is a WifiStream (or the panel's PanelStream): main.cpp made them all (answerIn).
+static WifiStream* wifiLine(axis::app::Session& s) { return static_cast<WifiStream*>(s.line.get()); }
+static WifiStream* sessionLine(size_t i) { return sessions[i] ? static_cast<WifiStream*>(sessions[i]->line.get()) : nullptr; }
+static axis::bbs::Node* sessionNode(size_t i) { return sessions[i] ? sessions[i]->node.get() : nullptr; }
 static int callersOnline() {
     int n = 0;
     for (size_t i = 0; i < sessions.size(); i++) n += sessionLine(i) != nullptr;
@@ -1137,8 +523,12 @@ static axis::bbs::SysInfo sysInfo() {
     s.freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);  // byte-addressable (getFreeHeap counts IRAM too)
     s.timeText = timeText().c_str();
     s.storage = storageSummary();
+#if AXIS_NATIVE
+    s.hardware = "PC";  // the native Linux build (About: what the board runs on)
+#else
     s.hardware = "ESP32 CYD " + std::to_string(ESP.getCpuFreqMHz()) + " MHz " +
                  std::to_string(ESP.getFlashChipSize() >> 20) + " MB flash";
+#endif
     s.callsToday = statsShown().calls;
     s.nodesTotal = (int)sessions.size();
     s.nodes.clear();
@@ -1237,9 +627,9 @@ struct CountingMsgs : axis::bbs::FileMessageStore {  // counts a public post for
         int n = axis::bbs::FileMessageStore::post(area, m);
 #if AXIS_NETS
         // net posts and Net Files listings are not this board's
-        if (n && area != "email" && !axis::net::isNetAreaId(area) && area != axis::net::kNetFilesArea) countPost();
+        if (n && area != "email" && !axis::net::isNetAreaId(area) && area != axis::net::kNetFilesArea) stats.countPost();
 #else
-        if (n && area != "email") countPost();
+        if (n && area != "email") stats.countPost();
 #endif
         return n;
     }
@@ -1434,9 +824,8 @@ static void pushBoardToCallers(const std::shared_ptr<const axis::bbs::BbsConfig>
     auto one = [&](axis::bbs::Node* n) {
         if (n) n->applyBoard(next, prev, only);
     };
-    one(node.get());
     one(localNode.get());
-    for (size_t i = 0; i < sessions.size(); i++) one(sessions[i].node.get());
+    for (size_t i = 0; i < sessions.size(); i++) one(sessionNode(i));
 #if AXIS_MODEMLINK
     for (size_t i = 0; i < sessions.size(); i++)  // modem_link off: calls already on stop taking link reports
         if (WifiStream* l = sessionLine(i)) l->acceptLink(boardCfg->modemLink);
@@ -1684,7 +1073,7 @@ static void drawNodeDetail(int i) {
     if (!n || !l) {
         row(3, "caller", "nobody: waiting for a call");
     } else {
-        uint32_t since = i == curSession ? callStartMs : sessions[(size_t)i].startMs;
+        uint32_t since = sessions[(size_t)i]->startMs;
         uint32_t secs = (millis() - since) / 1000;
         row(2, "caller", n->handle().empty() ? String("(new caller)") : String(n->handle().c_str()));
         row(3, "doing", n->activityText().c_str());
@@ -1836,11 +1225,11 @@ static void drawShell() {
 }
 
 // The sysop panel while a caller downloads or uploads: a drippy window with a live progress bar.
-__attribute__((noinline)) static void drawTransfer() {
+__attribute__((noinline)) static void drawTransfer(axis::app::Session& s) {
     wfcOnPanel = false;  // (called from the sessions too: the panel no longer shows the WFC, so @SHOT must not dump it)
     static BigText t;
-    const auto&    r = job->request();
-    uint32_t       done = job->bytes(), size = job->size(), secs = (millis() - jobStartMs) / 1000;
+    const auto&    r = s.job->request();
+    uint32_t       done = s.job->bytes(), size = s.job->size(), secs = (millis() - s.jobStartMs) / 1000;
     char           b[48];
     t.clear(0x07);
     const uint8_t O = 0x06, G = 0x08, W = 0x0F, L = 0x07;  // orange, dark grey, white, light grey
@@ -1855,11 +1244,11 @@ __attribute__((noinline)) static void drawTransfer() {
         if (drips[c] == '#') t.text(3, c, (c * 7 % 3) ? "\xdb" : "\xdf", c % 7 == 3 ? G : O);
     for (int c = 0; c < 39; c++)
         if (drips[c] == '#' && c % 3 == 0) t.text(4, c, "\xdf", O);
-    std::string name = (r.upload ? job->savedName() : r.name);
+    std::string name = (r.upload ? s.job->savedName() : r.name);
     t.text(6, 1, "file", L);
     t.text(6, 10, (name.empty() ? std::string("(waiting)") : name).substr(0, 29).c_str(), W);
     t.text(7, 1, "caller", L);
-    axis::bbs::Node* who = node.get();
+    axis::bbs::Node* who = s.node.get();
     t.text(7, 10, who ? who->handle().substr(0, 29).c_str() : "", W);
     snprintf(b, sizeof b, "%lu of %lu bytes", (unsigned long)done, (unsigned long)size);
     t.text(8, 1, "moved", L);
@@ -1922,7 +1311,7 @@ static void drawScreen() {
         return;
     }
     static bool fullAsked = false;  // this stay away from the WFC asked for the full copy (no room: straight to the panel until the WFC)
-    if (mode != Mode::Normal || job || localNode || boardShell || detailSession >= 0) {  // the WFC is drawn afresh when it is back
+    if (mode != Mode::Normal || (turn && turn->job) || localNode || boardShell || detailSession >= 0) {  // the WFC is drawn afresh when it is back
         wfcStale = true;
         wfcOnPanel = false;
         if (wfcArtLoaded) std::string().swap(wfcArt), wfcArtLoaded = false;  // and its art read again then (the skin may change meanwhile)
@@ -1938,8 +1327,8 @@ static void drawScreen() {
         screenDirty = false;
         return;
     }
-    if (job) {
-        drawTransfer();
+    if (turn && turn->job) {
+        drawTransfer(*turn);
         screenDirty = false;
         return;
     }
@@ -1967,9 +1356,11 @@ static void drawScreen() {
         g.setTextColor(pc(pal::YELLOW), pc(pal::BLACK));
         g.drawString(setupPin.c_str(), 8, 144);
         g.setTextSize(1);
-        g.setTextColor(wizard ? pc(pal::LIGHTGREEN) : pc(pal::DARKGREY), pc(pal::BLACK));
-        g.drawString(wizard ? "setup in progress over telnet..."
-                              : gate ? "caller connected, waiting for the PIN" : "waiting for the sysop to call",
+        axis::app::Session* s0 = sessions.empty() ? nullptr : sessions[0].get();  // (setup takes one caller, in slot 0)
+        bool setupWiz = s0 && s0->wizard, setupGate = s0 && s0->gate;
+        g.setTextColor(setupWiz ? pc(pal::LIGHTGREEN) : pc(pal::DARKGREY), pc(pal::BLACK));
+        g.drawString(setupWiz ? "setup in progress over telnet..."
+                              : setupGate ? "caller connected, waiting for the PIN" : "waiting for the sysop to call",
                        8, 200);
     } else if (mode == Mode::SetupTouch) {
         title("first-boot setup");
@@ -2025,14 +1416,6 @@ static void applyNetworkDue() {  // each loop turn, after modemSearchPoll()
     if (!networkPending || (modemSearchRunning() && millis() - networkPendingMs < 3500u)) return;
     networkPending = false;
     applyNetworkNow();  // (a search still running after 3.5 s is left to MDNS.end(), which frees it)
-}
-static void sendApp(const std::string& s) {
-    if (!line) return;
-    if (s.size() > 4096)  // a turn's output not drawn a piece at a time: which screen (it sits in RAM whole for a slow caller)
-        logEvent("big output " + String((unsigned)s.size()) + " B, state " + String(node ? (int)node->state() : -1) + ", held " +
-                 String((unsigned)line->backlog()));
-    if (!s.empty()) line->write((const uint8_t*)s.data(), s.size());
-    line->flush();  // (even when empty: a screen that left in 2 KB pieces through setDirect still has its tail held here)
 }
 
 // The LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM: the newest link report on this board (the WFC's |R? codes),
@@ -2104,11 +1487,11 @@ static void modemSearchPoll() {}
 // Lines hung up with bytes still waiting (a slow caller's goodbye): drained a little each loop turn, closed once empty, after
 // 10 s with no progress (TelnetStream's rule) or after 60 s in all. At most 4; the oldest is closed for a fifth.
 struct ParkedLine {
-    std::unique_ptr<WifiStream> line;
+    std::unique_ptr<axis::net::TelnetStream> line;
     uint32_t                    sinceMs = 0;
 };
 static std::vector<ParkedLine> parkedLines;
-static void parkLine(std::unique_ptr<WifiStream> l) {
+static void parkLine(std::unique_ptr<axis::net::TelnetStream> l) {
     if (parkedLines.size() >= 4) parkedLines.erase(parkedLines.begin());
     parkedLines.push_back({std::move(l), millis()});
 }
@@ -2123,44 +1506,31 @@ static void drainParkedLines() {
 #if AXIS_NETS && AXIS_TRANSFERS
 static void netFetchRelease(const void* owner);  // the Net Files fetch slot, if this caller holds it
 #endif
-__attribute__((noinline)) static void hangUp() {
-    HeapScope scope("hangUp");
-    noteDoing("idle");
-    viewer.reset();
-    job.reset();  // a viewer or job gives the board's inflate window back as it goes
-#if AXIS_NETS && AXIS_TRANSFERS
-    netFetchRelease(node.get());  // a Net Files fetch still connecting for this caller
-#endif
-    noteZipHeap();
-    dropLord();
-    if (line && node && node->failedLogin()) {  // wrong passwords: count it against the caller's address
+// The board's part of a hang up (Session::hangUp calls it while the line and node are still there): wrong passwords count
+// against the caller's address, and a radio call goes into the Modem page's last 10.
+static void lineEnding(axis::app::Session& s) {
+    WifiStream* line = wifiLine(s);
+    axis::bbs::Node* node = s.node.get();
+    if (node->failedLogin()) {  // wrong passwords: count it against the caller's address
         uint32_t ip = (uint32_t)line->remoteIP();
         loginGuard.failed(ip, millis());
         if (!loginGuard.allowed(ip, millis()))
             logEvent("login: " + line->remoteIP().toString() + " locked out for " + String(loginGuard.secondsLeft(ip, millis()) / 60) + " min");
     }
 #if AXIS_MODEMLINK
-    if (line && node && node->viaModem()) {  // a radio call: into the Modem page's last 10
+    if (node->viaModem()) {  // a radio call: into the Modem page's last 10
         std::string who = node->handle();
         for (char& c : who)
             if (c == '|') c = ' ';
-        radioCalls.insert(radioCalls.begin(), {who, node->linkTiers(), (millis() - callStartMs) / 1000, line->bytesIn() + line->bytesOut(),
+        radioCalls.insert(radioCalls.begin(), {who, node->linkTiers(), (millis() - s.startMs) / 1000, line->bytesIn() + line->bytesOut(),
                                                node->link().retrains});
         if (radioCalls.size() > 10) radioCalls.resize(10);
     }
 #endif
-    if (line && line->backlog() && line->carrier()) parkLine(std::move(line));  // the goodbye still going out to a slow caller
-    line.reset();  // closes the connection
-    logEvent("hang up" + heapText() + " " + String(node && !node->handle().empty() ? node->handle().c_str() : "") + " after " +
-             String((millis() - callStartMs) / 1000) + "s");
-    if (node && !node->handle().empty()) {
-        lastCaller = node->handle().c_str();
-        if (!statsOwner()) statsShare.caller(node->handle()), statsSendNow = true;  // the main's LC is the cluster's
-    }
-    node.reset();
-    gate.reset();
-    wizard.reset();
-    screenDirty = true;
+}
+static void callerGone(const std::string& handle) {
+    lastCaller = handle.c_str();
+    if (!statsOwner()) statsShare.caller(handle), statsSendNow = true;  // the main's LC is the cluster's
 }
 
 // A caller passed through to another node (the main's own node was busy).
@@ -2194,6 +1564,9 @@ struct Passing {
 static std::vector<std::unique_ptr<Passing>> passing;     // callers on other nodes through this main
 static std::vector<std::pair<uint32_t, uint32_t>> reservedNodes;  // node ip, when it was given a caller
 
+#if AXIS_NATIVE
+uint16_t hostnetPassPort(uint16_t port);  // (platform/linux/hostnet.h)
+#endif
 // The main's node is busy: hand the caller to a free node, if the cluster has one.
 static bool passCaller(WiFiClient& incoming) {
     if (!cluster || cluster->role() != axis::cluster::Role::Main || passing.size() >= 4) return false;
@@ -2204,7 +1577,11 @@ static bool passCaller(WiFiClient& incoming) {
     uint32_t ip = axis::cluster::pickFreeNode(cluster->nodes(), cluster->nodeNumber(), reserved);
     if (!ip) return false;
     WiFiClient out;
+#if AXIS_NATIVE
+    if (!out.connect(IPAddress(ip), hostnetPassPort((uint16_t)boardCfg->telnetPort), 1500)) return false;  // (23, not lan_port)
+#else
     if (!out.connect(IPAddress(ip), (uint16_t)boardCfg->telnetPort, 1500)) return false;
+#endif
     out.setNoDelay(true);
     incoming.setNoDelay(true);
     std::unique_ptr<Passing> p(new Passing);
@@ -2286,8 +1663,10 @@ static bool axisSame(const std::string& a, const std::string& b) {
 static axis::bbs::AxisCard axisSelfCard() {
     axis::bbs::AxisCard me;
     me.name = boardCfg->bbsName;
-    me.host = boardCfg->publicHost.empty() ? std::string(WiFi.localIP().toString().c_str()) : boardCfg->publicHost;
-    me.port = boardCfg->telnetPort > 0 ? boardCfg->telnetPort : 23;
+    // The public address only: no publicHost means no advertised host (never the LAN IP, which peer boards would
+    // then show to their own callers). The board stays reachable on its own LAN by mDNS, just not advertised.
+    me.host = boardCfg->publicHost;
+    me.port = boardCfg->advertisedPort();
     me.location = boardCfg->location;
     me.sysop = boardCfg->sysopHandle;
     me.blurb = std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion;
@@ -2300,7 +1679,7 @@ static axis::bbs::AxisCard axisSelfCard() {
 
 static std::vector<std::string> axisNotesFor(const axis::bbs::AxisCard& peer) {
     std::vector<std::string> out;
-    for (const std::string& n : listLoad("netnotes")) {
+    for (const std::string& n : boardData.listLoad("netnotes")) {
         size_t bar = n.find('|');
         if (bar == std::string::npos) continue;
         std::string rest = n.substr(bar + 1);
@@ -2315,17 +1694,17 @@ static std::vector<std::string> axisNotesFor(const axis::bbs::AxisCard& peer) {
 
 static void axisApply(const std::string& reply) {
     if (asFollower()) return;
-    std::vector<std::string> lines = listLoad("axisnet"), before = lines;
+    std::vector<std::string> lines = boardData.listLoad("axisnet"), before = lines;
     axis::bbs::AxisHeard     heard = axis::bbs::axisTake(reply, lines, axisSelfCard().host);
     if (!heard.ok) return;
     if (lines != before) {
-        listStore("axisnet", lines);
+        boardData.listSave("axisnet", lines);
         axisDirty = true;
         logEvent("axis net: directory updated");
     }
     uint32_t now = unixNow();
     for (const std::string& n : heard.notes) {
-        listAddLocal("netnotes", std::to_string(now) + "|" + n);
+        boardData.listAdd("netnotes", std::to_string(now) + "|" + n);
         axisDirty = true;
     }
 }
@@ -5642,7 +5021,7 @@ static bool axisServe(WiFiClient& c, std::string& giveBack) {
         size_t e = all.find('\n', hello);
         axis::bbs::axisParse(all.substr(hello + 6, e == std::string::npos ? std::string::npos : e - (hello + 6)), them);
     }
-    std::string greet = axis::bbs::axisGreet(axisSelfCard(), listLoad("axisnet"), axisNotesFor(them));
+    std::string greet = axis::bbs::axisGreet(axisSelfCard(), boardData.listLoad("axisnet"), axisNotesFor(them));
     c.print(greet.c_str());
     c.flush();
     delay(20);
@@ -5653,7 +5032,7 @@ static bool axisServe(WiFiClient& c, std::string& giveBack) {
 
 static void axisProbeOne() {
     if (asFollower() || axisBridge.on) return;
-    std::vector<std::string> lines = listLoad("axisnet");
+    std::vector<std::string> lines = boardData.listLoad("axisnet");
     if (lines.empty()) return;
     if (axisProbeIx >= lines.size()) axisProbeIx = 0;
     axis::bbs::AxisCard peer;
@@ -5664,7 +5043,7 @@ static void axisProbeOne() {
         return;
     }
     out.setNoDelay(true);
-    out.print(axis::bbs::axisGreet(axisSelfCard(), listLoad("axisnet"), axisNotesFor(peer)).c_str());
+    out.print(axis::bbs::axisGreet(axisSelfCard(), boardData.listLoad("axisnet"), axisNotesFor(peer)).c_str());
     out.flush();
     std::string reply = axisRead(out, 1200);
     out.stop();
@@ -5682,8 +5061,10 @@ static bool axisEscape(std::string& held, char c, std::string& forward) {
 }
 
 // One slice of a call to another board. True: still on that call, the BBS should not take keys.
-__attribute__((noinline)) static bool axisPump(int i) {
-    if (!axisBridge.on || axisBridge.session != i || !line || !node) return false;
+__attribute__((noinline)) static bool axisPump(axis::app::Session& s) {
+    axis::net::TelnetStream* line = s.line.get();
+    axis::bbs::Node* node = s.node.get();
+    if (!axisBridge.on || axisBridge.session != s.slot || !s.line || !s.node) return false;
     bool        timed = millis() - axisBridge.start > 600000;
     bool        gone = !line->carrier() || !axisBridge.remote.connected() || timed;
     if (gone) {
@@ -5723,7 +5104,8 @@ __attribute__((noinline)) static bool axisPump(int i) {
     return true;
 }
 
-__attribute__((noinline)) static void axisStart(int i) {
+__attribute__((noinline)) static void axisStart(axis::app::Session& s) {
+    axis::bbs::Node* node = s.node.get();
     if (!node) return;
     if (axisBridge.on) {
         node->axisCallDone(false, "This board is already on a call.");
@@ -5744,14 +5126,14 @@ __attribute__((noinline)) static void axisStart(int i) {
     out.setNoDelay(true);
     axisBridge.remote = out;
     axisBridge.telnet = axis::net::TelnetFilter();
-    axisBridge.session = i;
+    axisBridge.session = s.slot;
     axisBridge.held.clear();
     axisBridge.start = millis();
     axisBridge.on = true;
     logEvent(String("axis net: calling ") + host.c_str());
 }
 
-static void answerIn(WiFiClient incoming, const std::string& giveBack = {});
+static void answerIn(int slot, WiFiClient incoming, const std::string& giveBack = {});
 
 static void answer(WiFiClient incoming) {
     std::string giveBack;
@@ -5768,9 +5150,7 @@ static void answer(WiFiClient incoming) {
         if (!sessionLine(i) && (i == 0 || (boardCfg->setupDone && mode == Mode::Normal))) free = (int)i;
     if (free >= 0) {
         viewCacheDrop();  // a caller gets a session here: the pass steps aside first (not for board probes or net peers above)
-        bindSession(free);
-        answerIn(incoming, giveBack);
-        unbindSession();
+        answerIn(free, incoming, giveBack);
         return;
     }
     if (passCaller(incoming)) return;  // every session here is busy: another node takes the call
@@ -5800,12 +5180,13 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     if (t.size() >= 16) w.date = t.substr(0, 10), w.time = t.substr(11, 5);
     w.page = pageText.c_str();
     if (cluster && cluster->nodes().size() > 1) {
-        for (auto& n : cluster->nodes()) w.nodes.push_back({n.number, n.handle, n.activity});
+        for (auto& n : cluster->nodes()) w.nodes.push_back({n.number, n.handle, n.activity, "", axis::bbs::nodePlatform(n.id)});
         std::sort(w.nodes.begin(), w.nodes.end(), [](const axis::bbs::WfcNode& a, const axis::bbs::WfcNode& b) { return a.number < b.number; });
     } else {
         for (size_t i = 0; i < sessions.size(); i++) {
             axis::bbs::Node* n = sessionNode(i);
-            w.nodes.push_back({sessionNumber((int)i), n ? n->handle() : std::string(), n ? "Online" : "", n ? n->linkShown() : ""});
+            w.nodes.push_back({sessionNumber((int)i), n ? n->handle() : std::string(), n ? "Online" : "", n ? n->linkShown() : "",
+                               axis::bbs::nodePlatform(WiFi.macAddress().c_str())});
         }
     }  // (in a cluster the label rides in each board's activity: serviceSession)
 #if AXIS_MODEMLINK
@@ -5813,7 +5194,7 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
 #endif
     const auto& ev = events.lines();
     for (auto it = ev.rbegin(); it != ev.rend() && w.events.size() < 8; ++it) w.events.push_back(*it);
-    rollDayCounters();
+    stats.rollDayCounters();
     axis::bbs::DayStats st = statsShown();
     w.callsToday = st.calls;
     w.postsToday = st.posts;
@@ -5861,295 +5242,23 @@ static void deliverChat(const axis::cluster::ChatLine& l) {
 }
 
 static bool panelConsoleNew = false;  // answerIn: the next session is the panel's own sysop console
-static void answerIn(WiFiClient incoming, const std::string& giveBack) {
-    if (panelConsoleNew) line.reset(new PanelStream());
-    else line.reset(new WifiStream(incoming));
-    line->tapNode = sessionNumber(curSession);
-#if AXIS_MODEMLINK
-    line->acceptLink(boardCfg->modemLink);  // the LFD3K-SM modem's link reports (LFD3K-LINK, telnet option 90)
-#endif
-    line->setHold(true);  // a slow caller's screens wait in its own line, never in the board's loop (serviceSession drains it)
-    callStartMs = millis();
-    logEvent((panelConsoleNew ? String("sysop console from the panel") : "call from " + line->remoteIP().toString()) + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
+static axis::app::Services& services();
+// A call into session `slot`: the board's line (or the panel's own console), then the Session's first screen.
+static void answerIn(int slot, WiFiClient incoming, const std::string& giveBack) {
+    WifiStream* l = panelConsoleNew ? new PanelStream() : new WifiStream(incoming);
+    l->tapNode = sessionNumber(slot);
+    logEvent((panelConsoleNew ? String("sysop console from the panel") : "call from " + l->remoteIP().toString()) + " (heap " + String(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024) +
              " KB, largest " + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024) + " KB)");
-    line->start();
-    if (!giveBack.empty()) line->inject(giveBack);
-    if (boardCfg->setupDone && mode == Mode::Normal) {
-        countCall();
-        node.reset(new axis::bbs::Node(sessionNumber(curSession), sysInfo, nodeCfg(), callerLib()));
-        int slot = curSession;
-        node->setAccounts(&users, saveUsers, hwRandom, unixNow);
-        node->setWarrior(warriorHook);
-        node->onEvent = [](const std::string& e) { logEvent(String(e.c_str())); };
-        node->setSysopRun(sysopRun);
-        node->setWfcSnapshot(wfcSnapshot);
-        node->setChat(
-            [slot](const std::string& text, bool page) {  // through the main to every node (or just this board)
-                if (!node) return;
-#if !AXIS_CLUSTER
-                deliverChat({sessionNumber(slot), node->handle(), text, page});
-                return;
-#endif
-                if (cluster) page ? cluster->page(node->handle(), text, slot) : cluster->chat(node->handle(), text, slot);
-                else
-                    for (size_t i = 0; i < sessions.size(); i++)
-                        if (sessionNode(i)) sessionNode(i)->chatIn(sessionNumber(slot), node->handle(), text, page);
-            },
-            [] {
-                std::vector<axis::bbs::Node::WhoLine> v;
-                if (cluster && cluster->nodes().size() > 1) {
-                    for (auto& n : cluster->nodes()) v.push_back({n.number, n.handle, n.activity});
-                    std::sort(v.begin(), v.end(), [](const axis::bbs::Node::WhoLine& a, const axis::bbs::Node::WhoLine& b) {
-                        return a.node < b.node;
-                    });
-                } else {
-                    for (size_t i = 0; i < sessions.size(); i++) {
-                        axis::bbs::Node* n = sessionNode(i);
-                        v.push_back({sessionNumber((int)i), n ? n->handle() : "", n ? "Online" : "", n ? n->linkShown() : ""});
-                    }
-                }
-                return v;
-            });
-        node->setNodeLink([slot](int kind, int to, const std::string& text) {  // notes, broadcasts, split chat keys
-            if (!node) return;
-#if !AXIS_CLUSTER
-            deliverChat({sessionNumber(slot), node->handle(), text, kind == 1, kind, to});
-            return;
-#endif
-            if (cluster) {
-                cluster->send(node->handle(), kind, to, text, slot);
-                return;
-            }
-            for (size_t i = 0; i < sessions.size(); i++)
-                if ((int)i != slot && sessionNode(i) && (to == 0 || sessionNumber((int)i) == to))
-                    sessionNode(i)->nodeIn(kind, sessionNumber(slot), node->handle(), text);
-        });
-        node->setMessages(&callerMessages());
-        node->setArt([](const std::string& name) { return themeArt(name); });
-        node->setWfcArt(wfcArtShared);
-        node->setPoster(posterPiece);
-        node->setMenus([](const std::string& name) { return menuFile(name); }, menuArtPieces);
-        node->setMenuArt(menuArtPiece);
-        node->setExists(menuExists);
-        wireScripts(node.get());
-        axis::bbs::theme::setArt([](const std::string& name) { return themeArt(name); });  // section header screens
-        axis::bbs::theme::setArtTop(themeArtTop);  // (a list screen's header: its top rows only)
-        node->setOneLiners(
-            [] {  // the wall: here on the main, over the link on a follower
-                if (!asFollower()) return oneLiners;
-                std::vector<std::string> v;
-                std::string              reply;
-                if (cluster->request("O", reply, 3000) && !reply.empty() && reply[0] == '1') {
-                    size_t pos = 1;
-                    while (pos < reply.size()) {
-                        size_t e = reply.find('\n', pos);
-                        if (e == std::string::npos) e = reply.size();
-                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
-                        pos = e + 1;
-                    }
-                }
-                return v;
-            },
-            [](const std::string& line) {
-                logEvent(("oneliner: " + line).c_str());
-                if (!asFollower()) linersAddLocal(line);
-                else {
-                    std::string reply;
-                    cluster->request(std::string("P\x1f") + line, reply, 3000);
-                }
-            });
-        node->setLists(
-            [](const std::string& n) {
-                if (!asFollower()) return listLoad(n);
-                std::vector<std::string> v;
-                std::string              reply;
-                if (cluster->request(std::string("Y\x1f") + n, reply, 3000) && !reply.empty() && reply[0] == '1')
-                    for (size_t pos = 1; pos < reply.size();) {
-                        size_t e = reply.find('\n', pos);
-                        if (e == std::string::npos) e = reply.size();
-                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
-                        pos = e + 1;
-                    }
-                return v;
-            },
-            [](const std::string& n, const std::string& line) {
-                if (n == "rumors") logEvent(("rumor: " + line).c_str());
-                if (!asFollower()) listAddLocal(n, line);
-                else {
-                    std::string reply;
-                    cluster->request(std::string("Z\x1f") + n + "\x1f" + line, reply, 3000);
-                }
-            });
-        node->setLastCallers(
-            [] {
-                if (!asFollower()) return lastCallers;
-                std::vector<std::string> v;
-                std::string              reply;
-                if (cluster->request("K", reply, 3000) && !reply.empty() && reply[0] == '1')
-                    for (size_t pos = 1; pos < reply.size();) {
-                        size_t e = reply.find('\n', pos);
-                        if (e == std::string::npos) e = reply.size();
-                        if (e > pos) v.push_back(reply.substr(pos, e - pos));
-                        pos = e + 1;
-                    }
-                return v;
-            },
-            [](const std::string& line) {
-                if (!asFollower()) callersAddLocal(line);
-                else {
-                    std::string reply;
-                    cluster->request(std::string("Q\x1f") + line, reply, 3000);
-                }
-            });
-        // The login art from flash, and any screen as it is drawn (2 KB at a time), straight to this session's own line:
-        // looked up by slot each time (the line moves between `line` and sessions[slot], and hangUp drops it first).
-        node->setDirect([slot](const char* p, size_t n) {
-            WifiStream* l = (size_t)slot < sessions.size() ? sessionLine((size_t)slot) : nullptr;
-            if (l) l->write((const uint8_t*)p, n);
-        });
-        node->setBackedUp([slot]() {
-            WifiStream* l = (size_t)slot < sessions.size() ? sessionLine((size_t)slot) : nullptr;
-            return l && l->backlog() >= axis::net::TelnetStream::kHoldLow;
-        });
-#if AXIS_NETS && AXIS_FILES && AXIS_TRANSFERS
-        if (!asFollower() || netMainFiles) {  // Net Files: this board's fetch, or on a follower the main's (an older main never says so)
-            const axis::bbs::Node*  n = node.get();
-            axis::bbs::NetFilesView v;
-            v.page = netViewPage;
-            v.unreachable = netFetchUnreachable;  // (a follower: "", the main says it when the fetch begins)
-            v.callerRadioBps = [n] { return netCallerBps(n->link()); };  // (this board's own caller link)
-            v.begin = [n](const std::string& id, std::string& area, std::string& name) { return netViewBegin(n, id, area, name); };
-            v.poll = [n](uint32_t& size, const char*& word) { return netViewPoll(n, size, word); };
-            v.release = [n] { netFetchRelease(n); };
-            node->setNetFiles(std::move(v));
-        }
-#endif
-        if (panelConsoleNew) {  // the sysop, from the panel: no password asked, and the WFC is the first screen
-            node->beginLocal(millis());
-            node->openWfc(millis());
-        }
-        else node->begin(millis());
-        sendApp(node->takeOutput());
-    } else {
-        gate.reset(new axis::bbs::SetupGate(setupPin.c_str()));
-        gate->begin();
-        sendApp(gate->takeOutput());
-    }
-    screenDirty = true;
+    std::unique_ptr<axis::net::TelnetStream> owned(l);
+    sessions[(size_t)slot].reset(new axis::app::Session(slot, std::move(owned), services()));
+    axis::app::Session& s = *sessions[(size_t)slot];
+    if ((size_t)slot < slotStatus.size()) s.lastStatus = slotStatus[(size_t)slot];  // the slot's last status line, as before
+    if (!giveBack.empty()) l->inject(giveBack);
+    TurnOf on(&s);
+    s.open(panelConsoleNew);
 }
-
 // ------------------------------------------------------------------ doors
-// Give back this session's door. Safe to call twice, and it does not allocate.
-static void releaseDoorSlot() {
-    doorFs.reset();
-    if (curSession >= 0) (doorRemoteLocks ? *doorRemoteLocks : doorLocks).releaseOwner(sessionNumber(curSession));
-    doorRemoteLocks.reset();
-    viewer.reset();
-    noteZipHeap();
-    nativeLord.reset();
-    screenDirty = true;
-}
-
-static void abortDoor(axis::bbs::Node::DoorEnd how) {
-    using E = axis::bbs::Node::DoorEnd;
-    noteDoor(how == E::OutOfMemory ? axis::bbs::DoorDiag::OutOfMemory
-             : how == E::TimeLimit  ? axis::bbs::DoorDiag::TimeLimit
-             : how == E::LoadError  ? axis::bbs::DoorDiag::LoadError
-             : how == E::CarrierLost ? axis::bbs::DoorDiag::Hangup
-                                    : axis::bbs::DoorDiag::Quit,
-             0);
-    releaseDoorSlot();
-    if (!node) return;
-    try {
-        node->resumeAfterDoor(how, millis());
-        sendApp(node->takeOutput());
-    } catch (...) {
-        esp_rom_printf("axis: door menu recover failed\n");
-    }
-}
-
-static std::string areaName(const std::string& id) {
-    for (auto& a : boardCfg->areas)
-        if (a.id == id) return a.name;
-    return id;
-}
-
-static bool lordSame(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); i++)
-        if ((a[i] | 0x20) != (b[i] | 0x20)) return false;
-    return true;
-}
-static bool lordCoded(const std::string& body) {
-    size_t i = 0;
-    while (i < body.size()) {
-        if (body[i] == '`') return true;
-        size_t n = body.find('\n', i);
-        if (n == std::string::npos) break;
-        i = n + 1;
-    }
-    return false;
-}
-static void lordLoadSeen(LordMail* box) {
-    box->loaded = true;
-    box->nseen = 0;
-    if (!box->fs) return;
-    int h = box->fs->open("MAILGOT", 0, false, false);
-    if (h < 0) return;
-    int32_t nums[48];
-    int n = box->fs->read(h, nums, (int)sizeof nums);
-    box->fs->close(h);
-    if (n < 4) return;
-    int count = n / 4;
-    if (count > 48) count = 48;
-    box->nseen = count;
-    for (int i = 0; i < count; i++) box->seen[i] = (int)nums[i];
-}
-static void lordSaveSeen(LordMail* box) {
-    if (!box->fs) return;
-    int32_t nums[48];
-    for (int i = 0; i < box->nseen; i++) nums[i] = box->seen[i];
-    int h = box->fs->open("MAILGOT", 2, true, true);
-    if (h < 0) return;
-    if (box->nseen > 0) box->fs->write(h, nums, box->nseen * 4);
-    box->fs->close(h);
-}
-static int lordPull(void* ctx, char* body, int bodyN, char* from, int fromN) {
-    auto* box = (LordMail*)ctx;
-    if (!box || bodyN < 2 || fromN < 2) return 0;
-    if (!box->loaded) lordLoadSeen(box);
-    body[0] = from[0] = 0;
-    for (const auto& h : callerMessages().headers("email")) {
-        if (!lordSame(h.to, box->me)) continue;
-        bool saw = false;
-        for (int i = 0; i < box->nseen; i++)
-            if (box->seen[i] == h.num) saw = true;
-        if (saw) continue;
-        axis::bbs::Message m;
-        if (!callerMessages().read("email", h.num, m) || !lordCoded(m.body)) continue;
-        if (box->nseen == 48) {
-            std::memmove(box->seen, box->seen + 1, sizeof(int) * 47);
-            box->nseen = 47;
-        }
-        box->seen[box->nseen++] = h.num;
-        lordSaveSeen(box);
-        std::snprintf(from, (size_t)fromN, "%s", m.from.c_str());
-        std::snprintf(body, (size_t)bodyN, "%s", m.body.c_str());
-        return h.num;
-    }
-    return 0;
-}
-static void lordPost(void* ctx, const char* from, const char* to, const char* body) {
-    (void)ctx;
-    axis::bbs::Message m;
-    m.from = from ? from : "";
-    m.to = to ? to : "";
-    m.subject = "LORD";
-    m.date = std::string(timeText().c_str());
-    m.body = body ? body : "";
-    callerMessages().post("email", m);
-}
-
+// (A caller's door, LORD's mail and the transfer are the Session's: app/session.cpp. The board's door folders are here.)
 static std::string lordFolderId() {
     for (auto& d : boardCfg->doors)
         if (d.exe == "*LORD" && !d.id.empty()) return d.id;
@@ -6160,7 +5269,7 @@ static std::string lordFolderId() {
 static bool writeWarrior(const std::string& handle) {
     if (!AXIS_LORD) return true;  // no LORD in this build: no warrior to write
     std::string id = lordFolderId();
-    bool remote = !storageHasSd() && asFollower();
+    bool remote = asFollower() && (!storageHasSd() || cluster->mainKind() == axis::cluster::CardKind::Mirror);  // (a mirror main: its copy is the game)
     std::unique_ptr<axis::door::HostFs> fs;
     std::unique_ptr<axis::door::LockTable> remoteLocks;
     axis::door::LockTable* locks = &doorLocks;
@@ -6177,196 +5286,6 @@ static bool writeWarrior(const std::string& handle) {
     if (r < 0) logEvent(String("warrior: could not write ") + handle.c_str());
     else if (r == 1) logEvent(String("warrior: new ") + handle.c_str());
     return r >= 0;
-}
-
-static void startDoorInner() {
-    const axis::bbs::DoorEntry d = node->door();  // (a copy: new settings may arrive while it starts)
-    sendApp(node->takeOutput());
-    if (AXIS_LORD && d.exe == "*LORD") {  // one game per caller. The EXE slot stays free.
-        logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
-        doorStartMs = millis();
-        dropLord();
-        std::string dir = std::string(storageRoot()) + "/doors/" + d.id;
-        int me = sessionNumber(curSession);
-        bool remote = !storageHasSd() && cluster && cluster->role() == axis::cluster::Role::Follower;
-        axis::door::LockTable* locks = &doorLocks;
-        if (remote) {
-            auto ask = [](const std::string& req, std::string& reply) { return cluster && cluster->request(req, reply, 8000); };
-            auto* rfs = new axis::cluster::RemoteHostFs(ask, d.id);
-            lordFs.reset(rfs);
-            lordLocks.reset(new axis::cluster::RemoteLockTable(ask, rfs));
-            locks = lordLocks.get();
-        } else {
-            lordFs.reset(new axis::PosixHostFs(dir));
-        }
-        int idx = curSession;
-        if (idx < 0) idx = 0;
-        if (idx > 3) idx = 3;
-        LordMail& box = lordMailBoxes[idx];
-        if (box.me != node->handle()) {
-            box.me = node->handle();
-            box.nseen = 0;
-            box.loaded = false;
-        }
-        box.fs = lordFs.get();
-        nativeLord.reset(new axis::lord::NativeLord(*lordFs, *line, node->handle(), locks, me));
-        nativeLord->setRng(hwRandom);
-        nativeLord->setMailbox(&box, lordPull, lordPost);
-        nativeLord->begin();
-        if (line) line->flush();
-        return;
-    }
-    if (axis::bbs::doorLeftOut(d.exe)) {  // a firmware door this build leaves out (never offered: a stale request)
-        logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str() + " (not in this firmware)");
-        abortDoor(axis::bbs::Node::DoorEnd::LoadError);
-        return;
-    }
-    if (d.exe == "*DOSSHELL" || d.exe == "*SCRIPT") {
-        // *SCRIPT runs inside the session. *DOSSHELL is not in this firmware.
-        logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str() + " (not a slot door)");
-        abortDoor(axis::bbs::Node::DoorEnd::LoadError);
-        return;
-    }
-    doorStartMs = millis();
-#if AXIS_ANSIVIEW
-    if (!d.exe.empty() && d.exe[0] == '*') {  // one viewer per caller. It borrows the board's inflate window only while a deflated piece plays.
-        logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str());
-        std::vector<std::pair<std::string, std::string>> va;  // "ansi,scene-acid,...": several areas, a picker first
-        for (size_t from = 0; from <= d.args.size();) {
-            size_t comma = d.args.find(',', from);
-            std::string id = d.args.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
-            if (!id.empty()) va.push_back({id, areaName(id)});
-            if (comma == std::string::npos) break;
-            from = comma + 1;
-        }
-        viewer.reset(new axis::bbs::AnsiViewer(callerFiles(), va.empty() ? d.args : va[0].first, va.empty() ? areaName(d.args) : va[0].second,
-                                               nullptr, 0, *line));
-        viewer->setAreas(va);
-        if (!node->lite()) viewer->setClock([] { return (uint32_t)millis(); });  // ANSI movies play at modem speed (a lite caller: unpaced)
-        // The viewer limit (Rev, 2026-11-12): with its 44 KB window taken the board keeps the floors the viewer asks for (the
-        // busy test's 60 KB and 32 KB while a piece plays from the window; a little less for a moment's unpack into the SD
-        // view cache), or the piece is refused or stopped with a note. No cushion above them (Rev: "loosen the margin").
-        viewer->setRoom([](uint32_t minFree, uint32_t minLargest) {
-            return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
-        });
-        viewer->setCache(storageHasSd() || asFollower());  // the cache is on the main's card (a follower reaches it over the link)
-        viewer->begin();
-        line->flush();
-        return;
-    }
-#endif
-    // An .EXE needs the 8086 runtime. That runtime is dosemu/ in the repo, and it is not linked here.
-    logEvent(String(node->handle().c_str()) + " opened " + d.name.c_str() + " (no DOS runtime)");
-    abortDoor(axis::bbs::Node::DoorEnd::LoadError);
-}
-
-__attribute__((noinline)) static void startDoor() {
-    bool lord = node && node->door().exe == "*LORD";
-    if (node) noteDoing(String("door ") + node->door().name.c_str() + " by " + node->handle().c_str());
-    noteDoor(axis::bbs::DoorDiag::Running, 0);
-    try {
-        startDoorInner();
-    } catch (const std::bad_alloc&) {
-        esp_rom_printf("axis: ALLOC FAILED during door start (uncaught)\n");
-        if (lord) {
-            dropLord();
-            if (node) node->resumeAfterDoor(axis::bbs::Node::DoorEnd::OutOfMemory, millis());
-        } else abortDoor(axis::bbs::Node::DoorEnd::OutOfMemory);
-    } catch (...) {
-        esp_rom_printf("axis: door start failed\n");
-        if (lord) {
-            dropLord();
-            if (node) node->resumeAfterDoor(axis::bbs::Node::DoorEnd::LoadError, millis());
-        } else abortDoor(axis::bbs::Node::DoorEnd::LoadError);
-    }
-    noteZipHeap();
-}
-
-__attribute__((noinline)) static void finishLord() {
-    bool drop = !line || !line->carrier();
-    noteDoor(drop ? axis::bbs::DoorDiag::Hangup : axis::bbs::DoorDiag::Quit, 0);
-    dropLord();
-    logEvent(String("door lord ended after ") + String((millis() - doorStartMs) / 1000) + "s");
-    if (drop) {
-        hangUp();
-        return;
-    }
-    if (!node) return;
-    node->resumeAfterDoor(axis::bbs::Node::DoorEnd::Normal, millis());
-    sendApp(node->takeOutput());
-}
-
-__attribute__((noinline)) static void finishViewer() {
-    noteDoor(line && line->carrier() ? axis::bbs::DoorDiag::Quit : axis::bbs::DoorDiag::Hangup, 0);
-    releaseDoorSlot();
-    logEvent(String("door ") + node->door().id.c_str() + " ended after " + String((millis() - doorStartMs) / 1000) + "s");
-    if (!line || !line->carrier()) {
-        hangUp();
-        return;
-    }
-    node->resumeAfterDoor(axis::bbs::Node::DoorEnd::Normal, millis());
-    sendApp(node->takeOutput());
-}
-
-// The name a "heap low in ..." line gives the node: a key or a poll, the node's state number and what its line holds.
-static const char* nodeScopeName(const char* what) {
-    static char name[40];
-    std::snprintf(name, sizeof name, "node %s s%d held %u", what, node ? (int)node->state() : -1, line ? (unsigned)line->backlog() : 0u);
-    return name;
-}
-
-// keystrokes from the caller, already through the telnet filter
-__attribute__((noinline)) static void callerInput(const std::string& app) {
-    const uint8_t* p = (const uint8_t*)app.data();
-    if (node) {
-        std::string before = node->handle();
-        {
-            HeapScope scope(nodeScopeName("key"));
-            node->input(p, app.size(), millis());
-        }
-        if (node->handle() != before) screenDirty = true;
-        return;
-    }
-    if (wizard) {
-        wizard->input(p, app.size());
-        sendApp(wizard->takeOutput());
-        if (wizard->finished()) {
-            cfgSet(wizard->result());
-            bool ok = configSave(*boardCfg);
-#if AXIS_WEB  // (built without the web jobs the wizard does not ask for No-IP)
-            if (!wizard->noip().host.empty())  // the No-IP login stays in this board's own storage
-                web::setNoip(String(wizard->noip().host.c_str()) + "|" + wizard->noip().user.c_str() + "|" + wizard->noip().pass.c_str());
-#endif
-            logEvent(String("setup ") + (ok ? "saved" : "SAVE FAILED") + " over telnet");
-            char b[220];
-            snprintf(b, sizeof b,
-                     "\r\n   \x1b[1;32mSettings saved.\x1b[0;37m Your BBS is open: call %s port %d.\r\n"
-                     "   Log in as %s for the sysop menu (coming soon).\x1b[0m\r\n",
-                     dialName().c_str(), boardCfg->telnetPort, boardCfg->sysopHandle.c_str());
-            sendApp(b);
-            hangUp();
-            mode = Mode::Normal;
-            applyNetwork();
-        } else if (wizard->cancelled()) {
-            sendApp("\r\n   Nothing was saved. Call again to start over.\x1b[0m\r\n");
-            hangUp();
-        }
-        return;
-    }
-    if (gate) {
-        gate->input(p, app.size());
-        sendApp(gate->takeOutput());
-        if (gate->passed()) {
-            mode = Mode::SetupTelnet;  // the right PIN means the sysop chose telnet
-            gate.reset();
-            wizard.reset(new axis::bbs::SetupWizard(*boardCfg, hwRandom));
-            wizard->begin();
-            sendApp(wizard->takeOutput());
-            screenDirty = true;
-        } else if (gate->rejected()) {
-            hangUp();
-        }
-    }
 }
 
 // ------------------------------------------------------------------ taps and serial commands
@@ -6461,10 +5380,7 @@ static void startCluster() {
             netAreasGen++;
         }
 #endif
-        artCache.clear();  // the theme may have changed
-        wfcAnsKey.clear();  // (and so may the waiting screen)
-        existsCache.clear();
-        mainKnowsExists = false;  // (this may be another main: an older one answers every unknown letter "0")
+        themeProvider.forgetRemote();  // the theme may have changed (and so may the waiting screen and the menu screens)
         if (storageHasSd()) {  // the SD board keeps the BBS's settings: a stand-in main's older copy must not replace them
             Serial.println("axis: settings from a main without the card: kept our own");
             return;
@@ -6502,7 +5418,7 @@ static void startCluster() {
     };
     cluster->heapLargest = [] { return (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT); };
     cluster->beatExtra = [] {  // the main's WFC stats ride every heartbeat (about 60 bytes)
-        return axis::bbs::encodeStatsSnapshot(dayStats, lastCaller.c_str());
+        return axis::bbs::encodeStatsSnapshot(stats.dayStats, lastCaller.c_str());
     };
     cluster->onBeatExtra = [](const std::string& x) { statsHeard(statsShare.heard(x)); };
     cluster->onUser = [](const std::string& rec) {
@@ -6531,7 +5447,7 @@ static void startCluster() {
         }
         if (req == "O") {  // the oneliner wall
             std::string out = "1";
-            for (auto& l : oneLiners) out += l + "\n";
+            for (auto& l : boardData.oneLiners()) out += l + "\n";
             return out;
         }
         if (req.rfind("T\x1f", 0) == 0) {  // a theme screen, "T name offset": every file in pieces, so the frame stays under 8 KB
@@ -6547,35 +5463,36 @@ static void startCluster() {
                         to = &want;
                         continue;
                     }
-                    if (ch < '0' || ch > '9' || *to > kPosterCap) break;
+                    if (ch < '0' || ch > '9' || *to > axis::app::ThemeProvider::kPosterCap) break;
                     *to = *to * 10 + (size_t)(ch - '0');
                 }
             }
-            if (off > (posterName(name) ? kPosterCap : kThemeArtCap)) return std::string("0");
+            if (off > (axis::app::ThemeProvider::posterName(name) ? axis::app::ThemeProvider::kPosterCap : axis::app::ThemeProvider::kThemeArtCap))
+                return std::string("0");
             // built once, in place: '1' then the piece (reserved up front, with room for the cluster to put its frame header and tag round it)
-            size_t w = want ? want : kPosterChunk;
-            if (w > kPosterChunk) w = kPosterChunk;
+            size_t w = want ? want : axis::app::ThemeProvider::kPosterChunk;
+            if (w > axis::app::ThemeProvider::kPosterChunk) w = axis::app::ThemeProvider::kPosterChunk;
             std::string r;
             r.reserve(1 + w + 64);
             r = '1';
-            bool opened = themeArtPieceAppend(name, off, w, r);
-            if (!opened && posterName(name)) return std::string("0");
+            bool opened = themeProvider.themeArtPieceAppend(name, off, w, r);
+            if (!opened && axis::app::ThemeProvider::posterName(name)) return std::string("0");
             return r;
         }
         if (req.rfind("U\x1f", 0) == 0) {
             HeapScope scope("U");
-            return "1" + menuFileLocal(req.substr(2), false);
+            return "1" + themeProvider.menuFileLocal(req.substr(2), false);
         }  // a menu file or its art (/menus only: under 8 KB)
-        if (req.rfind("E\x1f", 0) == 0) return std::string(menuExistsLocal(req.substr(2)) ? "1" : "0");  // does a menu screen exist: no read
+        if (req.rfind("E\x1f", 0) == 0) return std::string(themeProvider.menuExistsLocal(req.substr(2)) ? "1" : "0");  // does a menu screen exist: no read
 #if AXIS_SCRIPTS
         if (req.rfind("J\x1f", 0) == 0) {  // a script program, or the folder when the name is empty
             std::string name = req.substr(2);
             if (name.empty()) {
                 std::string out = "1";
-                for (const std::string& n : scriptNamesLocal()) out += n + "\n";
+                for (const std::string& n : themeProvider.scriptNamesLocal()) out += n + "\n";
                 return out;
             }
-            return std::string("1") + scriptFile(name);
+            return std::string("1") + themeProvider.scriptFile(name);
         }
 #endif
         if (req.rfind("V\x1f", 0) == 0) return "1" + axis::bbs::followerCommand(req.substr(2), sysopRun);  // a follower's @ command (never a board-only one)
@@ -6585,35 +5502,35 @@ static void startCluster() {
         }
         if (req.rfind("Y\x1f", 0) == 0) {  // a shared list
             std::string out = "1";
-            for (auto& l : listLoad(req.substr(2))) out += l + "\n";
+            for (auto& l : boardData.listLoad(req.substr(2))) out += l + "\n";
             return out;
         }
         if (req.rfind("Z\x1f", 0) == 0) {
             size_t sep = req.find('\x1f', 2);
-            if (sep != std::string::npos) listAddLocal(req.substr(2, sep - 2), req.substr(sep + 1));
+            if (sep != std::string::npos) boardData.listAdd(req.substr(2, sep - 2), req.substr(sep + 1));
             return std::string("1");
         }
         if (req.rfind("B\x1f", 0) == 0) {  // a follower's calls and uploads for the WFC stats: applied once, answered with ours
-            rollDayCounters();
+            stats.rollDayCounters();
             std::string last = lastCaller.c_str();
-            if (statsInbox.apply(req, dayStats, last) == axis::bbs::StatsInbox::Result::Applied) {
-                statsSave();
+            if (statsInbox.apply(req, stats.dayStats, last) == axis::bbs::StatsInbox::Result::Applied) {
+                stats.statsSave();
                 lastCaller = last.c_str();
                 screenDirty = true;
             }
-            return "1" + axis::bbs::encodeStatsSnapshot(dayStats, lastCaller.c_str());
+            return "1" + axis::bbs::encodeStatsSnapshot(stats.dayStats, lastCaller.c_str());
         }
         if (req == "K") {  // the last callers
             std::string out = "1";
-            for (auto& l : lastCallers) out += l + "\n";
+            for (auto& l : boardData.lastCallers()) out += l + "\n";
             return out;
         }
         if (req.rfind("Q\x1f", 0) == 0) {
-            callersAddLocal(req.substr(2));
+            boardData.noteCaller(req.substr(2));
             return std::string("1");
         }
         if (req.rfind("P\x1f", 0) == 0) {
-            linersAddLocal(req.substr(2));
+            boardData.addOneLiner(req.substr(2));
             return std::string("1");
         }
         if (!req.empty() && req[0] == 'H') {  // a follower's door, on this board's door folders
@@ -6626,6 +5543,7 @@ static void startCluster() {
                     doorLocks));
             return ds->handle(req);
         }
+        if (req.size() > 1 && req[0] == 'I' && req[1] == '\x1f') return storageHasSd() ? cardTreeServer().handleRead(req) : std::string("0");  // a card mirror reads the tree
 #if AXIS_FILES
         auto& srv = fileServers[nodeNum];
 #if AXIS_NETS
@@ -6644,6 +5562,7 @@ static void startCluster() {
     };
     cluster->onMainRequest = [](const std::string& req) {  // a follower with a card: the main asks for its files
         servedRequest = true;
+        if (req.size() > 1 && req[0] == 'I' && req[1] == '\x1f') return storageHasSd() && cluster->mainKind() == axis::cluster::CardKind::Mirror ? cardTreeServer().handleWrite(req) : std::string("0");  // a hand-back
 #if AXIS_FILES
         if (!storageHasSd()) return std::string("0");
         if (!cardServer) cardServer.reset(new axis::cluster::FileServer(sdFiles));
@@ -6655,11 +5574,11 @@ static void startCluster() {
 #endif
     };
 #if AXIS_FILES
-    cluster->onMainGone = [] { cardServer.reset(); };  // its half-done uploads and mirror copies are thrown away
+    cluster->onMainGone = [] { cardServer.reset(); cardTreeServer().drop(); };  // its half-done uploads and mirror copies are thrown away
 #endif
 #if AXIS_NETS && AXIS_FILES
     axis::cluster::FileServer::uploaded = netFilesUploaded;  // a follower's upload into a shared area is listed
-    remoteFiles.who = [] { return node ? node->handle() : std::string(); };  // (a follower: the caller describing an upload)
+    remoteFiles.who = [] { return turn && turn->node ? turn->node->handle() : std::string(); };  // (a follower: the caller describing an upload)
 #if AXIS_TRANSFERS
     axis::cluster::FileServer::netOp = netFollowerOp;
 #endif
@@ -6897,6 +5816,9 @@ static void handleTap(int x, int y) {
 // Every @ command, for the serial console and the sysop control panel alike (one code path, so
 // the same command always does the same thing). Replies go to `out`.
 static void runCommand(const String& cmd, Print& out);
+#if AXIS_NATIVE
+bool nativeCommand(const String& cmd, Print& out);  // the host's own @ commands (native/)
+#endif
 
 // The in-BBS sysop menu's commands: run on the main (so a change is shared like @SET); a follower asks it,
 // except for a board-only command (its cluster key, a restart, its card, its relays), which runs right here.
@@ -6905,7 +5827,7 @@ static std::string sysopRun(const std::string& cmd) {
         std::string reply;
         return cluster->request("V\x1f" + cmd, reply, 8000) && !reply.empty() ? reply.substr(1) : std::string("axis: the main didn't answer\n");
     }
-    // one reply stays under 6 KB (the link's queue dies at 8 KB); the long lists come a page at a time (runCommand)
+    // one reply stays under 6 KB (the link's queue dies at 8 KB); the long lists come a page at a time (app/commands.cpp)
     static constexpr size_t kCap = 6 * 1024;
     std::string out;
     struct Sink : Print {
@@ -6946,7 +5868,7 @@ static int slotOfNode(int num) {
 }
 
 static void panelSay(int slot, const std::string& text) {  // a line to a caller, from the BBS
-    WifiStream* l = (int)slot == curSession ? line.get() : sessions[(size_t)slot].line.get();
+    WifiStream* l = sessionLine((size_t)slot);
     if (l) l->write((const uint8_t*)text.data(), text.size()), l->flush();
 }
 
@@ -6960,7 +5882,7 @@ static std::string panelExtra(const std::string& in) {
         int slot = slotOfNode(panelConNode);
         if (slot >= 0 && panelConJoined) panelSay(slot, "\r\n\x1b[1;33m*** The sysop has left. ***\x1b[0m\r\n");
         else if (slot >= 0) {  // its own session: hang it up
-            WifiStream* l = slot == curSession ? line.get() : sessions[(size_t)slot].line.get();
+            WifiStream* l = sessionLine((size_t)slot);
             if (l) l->hangUp();
         }
         if (panelConNode) logEvent(String("panel console off node ") + panelConNode);
@@ -6980,19 +5902,16 @@ static std::string panelExtra(const std::string& in) {
         for (size_t i = 0; i < sessions.size() && free < 0; i++)
             if (!sessionLine(i) && boardCfg->setupDone && mode == Mode::Normal) free = (int)i;
         if (free < 0) return "CON NO every node on this board is busy\n";
-        if (curSession >= 0) unbindSession();
         panelConNode = sessionNumber(free), panelConJoined = false;  // (before its first screen goes out)
         panelConsoleNew = true;
-        bindSession(free);
-        answerIn(WiFiClient());
+        answerIn(free, WiFiClient(), {});
         panelConsoleNew = false;
-        unbindSession();
         panelConNode = sessionNumber(free), panelConJoined = false;
         return "CON " + std::to_string(panelConNode) + "\n";
     }
     if (in.rfind("KEY ", 0) == 0 && panelConNode) {
         int slot = slotOfNode(panelConNode);
-        WifiStream* l = slot < 0 ? nullptr : slot == curSession ? line.get() : sessions[(size_t)slot].line.get();
+        WifiStream* l = slot < 0 ? nullptr : sessionLine((size_t)slot);
         if (!l) return "CON 0\n";
         String  b64 = String(in.c_str() + 4);
         size_t  len = 0;
@@ -7079,58 +5998,20 @@ static void pumpPanel() {
     }
 }
 
-static bool pagedRun = false;  // runCommand under the pager: @POSTS sends the newest first
+// The @ commands that need no board hardware (app/commands.cpp), their replies through `out`.
+static bool portableCommand(const String& cmd, Print& out) {
+    struct PrintOut : axis::app::Out {
+        Print& p;
+        explicit PrintOut(Print& o) : p(o) {}
+        void write(const char* s, size_t n) override { p.write((const uint8_t*)s, n); }
+    } o(out);
+    std::vector<axis::app::Session*> v;  // every slot, null for a free one
+    v.reserve(sessions.size());
+    for (auto& s : sessions) v.push_back(s.get());
+    return axis::app::runPortableCommand(std::string(cmd.c_str(), cmd.length()), services(), v, o);
+}
 
 static void runCommand(const String& cmd, Print& out) {
-    // "@USERS 40", "@SETTINGS 40", "@FILES area|40", "@POSTS area|40": the list from line 40, about 4 KB of it,
-    // then "more <next>" while lines remain. Without the number: the whole list, as always.
-    // A page is whole lines, and with its marker it stays under sysopRun's 6 KB cap (one line too long is cut).
-    if (!pagedRun && (cmd.startsWith("@USERS ") || cmd.startsWith("@SETTINGS ") || cmd.startsWith("@FILES ") || cmd.startsWith("@POSTS "))) {
-        int    at = std::max(cmd.lastIndexOf(' '), cmd.lastIndexOf('|'));
-        String base = cmd.substring(0, at), num = cmd.substring(at + 1);
-        if (String(num.toInt()) == num && (base == "@USERS" || base == "@SETTINGS" || (cmd[at] == '|' && base.length() > 7 && (cmd[1] == 'F' || cmd[1] == 'P')))) {
-            struct Page : Print {
-                const size_t kRoom = 6 * 1024 - 64;
-                Print&       to;
-                size_t       skip, line = 0, sent = 0, next = 0;  // next: where the next page starts (0: none)
-                bool         drop = false;                       // the rest of a cut line
-                std::string  held;                               // the line so far: sent whole, or left for the next page
-                Page(Print& o, size_t s) : to(o), skip(s) {}
-                size_t write(uint8_t b) override {
-                    if (next) return 1;
-                    if (line < skip || drop) {
-                        if (b == '\n') line++, drop = false;
-                        return 1;
-                    }
-                    if (held.empty() && sent >= 4096) {
-                        next = line;
-                        return 1;
-                    }
-                    held += (char)b;
-                    bool end = b == '\n';
-                    if (!end && held.size() < kRoom) return 1;
-                    if (sent && sent + held.size() > kRoom) {  // it starts the next page
-                        next = line;
-                        return 1;
-                    }
-                    if (!end) held += '\n', drop = true;  // longer than a page: cut
-                    to.write((const uint8_t*)held.data(), held.size());
-                    sent += held.size();
-                    held.clear();
-                    if (end) line++;
-                    return 1;
-                }
-            } page(out, (size_t)num.toInt());
-            struct Flag {
-                Flag() { pagedRun = true; }
-                ~Flag() { pagedRun = false; }
-            } flag;
-            runCommand(base, page);
-            if (!page.next && !page.held.empty()) out.write((const uint8_t*)page.held.data(), page.held.size());
-            if (page.next) out.printf("more %u\n", (unsigned)page.next);
-            return;
-        }
-    }
     if (cmd == "@DOORSTATE") {  // the last door's memory (noteDoor), and the heap now
         if (boardDiag_.door == axis::bbs::DoorDiag::None) out.println("axis: no door has run since boot");
         else
@@ -7210,13 +6091,6 @@ static void runCommand(const String& cmd, Print& out) {
                               IPAddress(c.ip).toString().c_str(), (unsigned)(c.freeBytes >> 20), c.alive ? "up" : "DOWN");
         else if (cluster)
             out.println("axis: only the main pools the cards (@CARDS there)");
-#if !AXIS_FILES
-    } else if (cmd == "@AREAS" || cmd.startsWith("@FILES ") || cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") ||
-               cmd.startsWith("@FDEL ") || cmd.startsWith("@FMV ") ||
-               ((cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) &&
-                !cmd.substring(cmd.indexOf(' ') + 1).startsWith("msgs|"))) {
-        out.println("axis: the file areas are not in this firmware");
-#endif
 #if AXIS_SD_POOL  // the pool and its mirror (platformio.ini): without them @MIRROR is an unknown command
     } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
         std::string areas;
@@ -7226,111 +6100,6 @@ static void runCommand(const String& cmd, Print& out) {
         if (!cluster || cluster->role() != axis::cluster::Role::Main) out.println("axis: only the main runs the mirror");
         else out.printf("axis: mirror %s\n", mirrorJob.state().c_str());
 #endif
-    } else if (cmd.startsWith("@KICK ") || cmd.startsWith("@ADDTIME ") || cmd.startsWith("@FORCETC ") || cmd.startsWith("@NOTE ")) {
-        // a node on this board ("@KICK 3", "@ADDTIME 3 15", "@FORCETC 3", "@NOTE 3 text"); the panel sends
-        // each to the board holding that node
-        String rest = cmd.substring(cmd.indexOf(' ') + 1);
-        int    sp = rest.indexOf(' '), num = rest.toInt(), slot = -1;
-        String arg = sp < 0 ? String() : rest.substring(sp + 1);
-        for (size_t i = 0; i < sessions.size(); i++)
-            if (sessionNumber((int)i) == num) slot = (int)i;
-        axis::bbs::Node* n = slot >= 0 ? sessionNode((size_t)slot) : nullptr;
-        if (!n || !sessionLine((size_t)slot)) out.printf("axis: nobody on node %d here\n", num);
-        else if (cmd.startsWith("@KICK ")) {
-            logEvent(String("sysop: kicked ") + n->handle().c_str());
-            sessionLine((size_t)slot)->hangUp();
-            out.printf("axis: kicked node %d\n", num);
-        } else if (cmd.startsWith("@ADDTIME ")) {
-            n->addMinutes(arg.toInt());
-            logEvent(String("sysop: ") + arg + " more minutes for " + n->handle().c_str());
-            out.printf("axis: node %d gets %d more minutes\n", num, (int)arg.toInt());
-        } else if (cmd.startsWith("@FORCETC ")) {
-            n->nodeIn(axis::bbs::Node::kNodeForce, 0, boardCfg->sysopHandle, "");
-            out.printf("axis: node %d sent to the teleconference\n", num);
-        } else {
-            n->nodeIn(axis::bbs::Node::kNodeNote, 0, boardCfg->sysopHandle, arg.c_str());
-            out.printf("axis: note sent to node %d\n", num);
-        }
-    } else if (cmd.startsWith("@BCAST ")) {  // "@BCAST text": a broadcast to every caller on this board
-        for (size_t i = 0; i < sessions.size(); i++)
-            if (sessionNode(i) && sessionLine(i)) sessionNode(i)->nodeIn(axis::bbs::Node::kNodeBroadcast, 0, boardCfg->sysopHandle, cmd.substring(7).c_str());
-        out.println("axis: broadcast sent");
-    } else if (cmd == "@USERS") {  // one line per user: id|handle|status|security|calls|flags
-        for (auto& u : users.all())
-            out.printf("user %d|%s|%s|%d|%u|%s%s%s%s%s\n", u.id, u.handle.c_str(),
-                       u.status == axis::bbs::User::Status::Pending ? "pending" : u.status == axis::bbs::User::Status::Denied ? "denied" : "valid",
-                       u.security, (unsigned)u.calls, u.permFiles ? "F" : "-", u.permMessages ? "M" : "-", u.permDoors ? "D" : "-",
-                       u.freeDownloads ? "$" : "-", u.twit ? "T" : "-");
-    } else if (cmd.startsWith("@USER ")) {  // a user's details and application answers
-        axis::bbs::User* u = users.find(cmd.substring(6).c_str());
-        if (!u) out.println("axis: no user by that handle");
-        else {
-            out.printf("handle %s\nreal %s\nfrom %s\nemail %s\ntagline %s\nsecurity %d\ncalls %u\nup %u\ndown %u\n", u->handle.c_str(),
-                       u->realName.c_str(), u->location.c_str(), u->email.c_str(), u->tagline.c_str(), u->security, (unsigned)u->calls,
-                       (unsigned)u->uploads, (unsigned)u->downloads);
-            for (auto& a : u->answers) out.printf("answer %s|%s\n", a.first.c_str(), a.second.c_str());
-        }
-    } else if (cmd.startsWith("@VALIDATE ") || cmd.startsWith("@DENY ") || cmd.startsWith("@SEC ") || cmd.startsWith("@PERM ") ||
-               cmd.startsWith("@TWIT ")) {
-        // "@VALIDATE h", "@DENY h", "@SEC h 30", "@PERM h files|msgs|doors|freedl|nets on|off", "@TWIT h on|off"
-        String rest = cmd.substring(cmd.indexOf(' ') + 1), handle = rest, a1, a2;
-        int    sp = rest.indexOf(' ');
-        if (sp > 0 && !cmd.startsWith("@VALIDATE ") && !cmd.startsWith("@DENY ")) {
-            int last = rest.lastIndexOf(' ');
-            if (cmd.startsWith("@PERM ")) {
-                int mid = rest.lastIndexOf(' ', last - 1);
-                handle = rest.substring(0, mid), a1 = rest.substring(mid + 1, last), a2 = rest.substring(last + 1);
-            } else {
-                handle = rest.substring(0, last), a1 = rest.substring(last + 1);
-            }
-        }
-        axis::bbs::User* u = users.find(handle.c_str());
-        if (!u) out.println("axis: no user by that handle");
-        else {
-            bool on = a2 == "on" || a1 == "on";
-            if (cmd.startsWith("@VALIDATE ")) {
-                u->status = axis::bbs::User::Status::Validated;
-                writeWarrior(u->handle.c_str());
-            }
-            else if (cmd.startsWith("@DENY ")) u->status = axis::bbs::User::Status::Denied;
-            else if (cmd.startsWith("@SEC ")) u->security = constrain((int)a1.toInt(), 1, 255);
-            else if (cmd.startsWith("@TWIT ")) u->twit = on;
-            else if (a1 == "files") u->permFiles = on;
-            else if (a1 == "msgs") u->permMessages = on;
-            else if (a1 == "doors") u->permDoors = on;
-            else if (a1 == "freedl") u->freeDownloads = on;
-            else if (a1 == "nets") u->permNets = on;
-            saveUsers();
-            logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + u->handle.c_str());
-            out.printf("axis: %s updated\n", u->handle.c_str());
-        }
-    } else if (cmd == "@SETTINGS") {  // axis.ini without any salt or hash line
-        std::string t = axis::bbs::formatConfig(*boardCfg), line;
-        for (char ch : t) {
-            if (ch != '\n') {
-                line += ch;
-                continue;
-            }
-            if (line.find("_salt=") == std::string::npos && line.find("_hash=") == std::string::npos) out.println(line.c_str());
-            line.clear();
-        }
-    } else if (cmd.startsWith("@VOTEDEL ")) {  // "@VOTEDEL n": booth question n (1-based, as listed) and its ballots
-        if (asFollower()) {
-            out.println("@VOTEDEL the booth lives on the main: run it there");
-        } else {
-            std::vector<std::string> v = listLoad("votes"), b = listLoad("ballots");
-            int                      q = cmd.substring(9).toInt();
-            bool                     ok = axis::bbs::voteDelete(v, b, q);
-            if (ok) {
-                listStore("votes", v);
-                listStore("ballots", b);
-                logEvent("voting booth: question " + String(q) + " taken out");
-            }
-            out.println(ok ? "@VOTEDEL OK" : "@VOTEDEL no such question");
-        }
-    } else if (cmd == "@RUMORS" || cmd == "@BBSLIST" || cmd == "@VOTES" || cmd == "@LINERS") {
-        std::vector<std::string> v = cmd == "@LINERS" ? oneLiners : sharedList(cmd == "@RUMORS" ? "rumors" : cmd == "@BBSLIST" ? "bbslist" : "votes");
-        for (auto& l : v) out.println(l.c_str());
     } else if ((cmd == "@STATS" || cmd.startsWith("@STATS ")) && !statsOwner()) {
         // a follower: the main owns the counters; this is the main's last word plus what is still to be sent up
         if (cmd.length() > 7) {
@@ -7351,8 +6120,8 @@ static void runCommand(const String& cmd, Print& out) {
             out.println("@STATS use @STATS or @STATS total=<n> (n from 0 to 4294967295)");
         } else {
             if (cmd.length() > 7) {
-                dayStats.total = n;
-                statsSave();
+                stats.dayStats.total = n;
+                stats.statsSave();
                 screenDirty = true;
                 logEvent("sysop: lifetime calls set to " + String(n));
             }
@@ -7385,7 +6154,7 @@ static void runCommand(const String& cmd, Print& out) {
         sample.stkTimer = stk("esp_timer");
         sample.outMax = (uint32_t)axis::bbs::Node::outMax();
         sample.holdMax = (uint32_t)axis::net::TelnetStream::holdPeak();
-        sample.artMax = (uint32_t)artMax;
+        sample.artMax = (uint32_t)themeProvider.artMax();
         char line[384];
         std::snprintf(line, sizeof line, "id=%s role=%s nodes=%d on=%d heap=%u largest=%u up=%lu rssi=%d sd_mb=%u ip=%s",
                       WiFi.macAddress().c_str(),
@@ -7396,91 +6165,14 @@ static void runCommand(const String& cmd, Print& out) {
         out.print(axis::bbs::diagFields(sample).c_str());
         if (sdNotice()) out.print(" sd=missing");  // the SD card notice (bbs/sdnotice.h)
         out.print('\n');
-    } else if (cmd.startsWith("@UEDIT ")) {  // "@UEDIT handle|field|value": realname location email tagline security handle
-        String a = cmd.substring(7);
-        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
-        axis::bbs::User* u = b2 > 0 ? users.find(a.substring(0, b1).c_str()) : nullptr;
-        String f = b2 > 0 ? a.substring(b1 + 1, b2) : String(), v = b2 > 0 ? a.substring(b2 + 1) : String();
-        if (!u) out.println("axis: @UEDIT handle|field|value");
-        else {
-            if (f == "realname") u->realName = v.c_str();
-            else if (f == "location") u->location = v.c_str();
-            else if (f == "email") u->email = v.c_str();
-            else if (f == "tagline") u->tagline = v.c_str();
-            else if (f == "security") u->security = constrain((int)v.toInt(), 1, 255);
-            else if (f == "handle" && v.length() && !users.find(v.c_str())) u->handle = v.c_str();
-            else {
-                out.println("axis: fields: realname location email tagline security handle");
-                return;
-            }
-            saveUsers();
-            logEvent(String("sysop: edited ") + f + " of " + u->handle.c_str());
-            out.printf("axis: %s updated\n", u->handle.c_str());
-        }
-    } else if (cmd.startsWith("@UDEL ")) {  // "@UDEL handle": delete a caller's account
-        axis::bbs::User* u = users.find(cmd.substring(6).c_str());
-        if (!u) out.println("axis: no user by that handle");
-        else {
-            std::string h = u->handle;
-            auto& all = users.all();
-            for (size_t i = 0; i < all.size(); i++)
-                if (&all[i] == u) {
-                    all.erase(all.begin() + (long)i);
-                    break;
-                }
-            saveUsers();
-            logEvent(String("sysop: deleted user ") + h.c_str());
-            out.printf("axis: %s deleted\n", h.c_str());
-        }
-    } else if (cmd == "@AREAS" || cmd == "@MSGAREAS") {  // "N|id|name|level|m" per area
-        auto& v = cmd == "@AREAS" ? boardCfg->areas : boardCfg->msgAreas;
-        for (size_t i = 0; i < v.size(); i++)
-            out.printf("%u|%s|%s|%d|%s\n", (unsigned)i + 1, v[i].id.c_str(), v[i].name.c_str(), v[i].minSecurity, v[i].mirror ? "m" : "");
-    } else if (cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) {
-        // "@AREASET files|N|id|name|level" (N past the end adds), "@AREADEL msgs|N", "@AREAUP files|N" (moves it up one)
-        String a = cmd.substring(cmd.indexOf(' ') + 1);
-        std::vector<String> f;
-        for (int from = 0;;) {
-            int bar = a.indexOf('|', from);
-            f.push_back(bar < 0 ? a.substring(from) : a.substring(from, bar));
-            if (bar < 0) break;
-            from = bar + 1;
-        }
-        axis::bbs::BbsConfig& e = cfgEdit();
-        auto& v = f[0] == "msgs" ? e.msgAreas : e.areas;
-        int   n = f.size() > 1 ? (int)f[1].toInt() : 0;
-        bool  ok = n >= 1;
-        if (ok && cmd.startsWith("@AREASET ") && f.size() >= 4) {
-            axis::bbs::FileArea ar{f[2].c_str(), f[3].c_str(), f.size() > 4 ? (int)f[4].toInt() : 0};
-            if (n <= (int)v.size()) ar.mirror = v[(size_t)n - 1].mirror, v[(size_t)n - 1] = ar;
-            else v.push_back(ar);
-        } else if (ok && cmd.startsWith("@AREADEL ") && n <= (int)v.size()) {
-            v.erase(v.begin() + n - 1);
-        } else if (ok && cmd.startsWith("@AREAUP ") && n >= 2 && n <= (int)v.size()) {
-            std::swap(v[(size_t)n - 1], v[(size_t)n - 2]);
-        } else ok = false;
-        if (!ok) out.println("axis: @AREASET files|N|id|name|level, @AREADEL msgs|N, @AREAUP files|N");
-        else {
-            configSave(*boardCfg);
-            if (cluster) cluster->shareSettings();
-            makeAreaFolders();
-            logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a);
-            out.println("axis: areas saved");
-        }
 #if AXIS_FILES
-    } else if (cmd.startsWith("@FILES ")) {  // "@FILES area": name|size|description per file
-        for (auto& e : callerFiles().list(cmd.substring(7).c_str())) out.printf("%s|%u|%s\n", e.name.c_str(), (unsigned)e.size, e.desc.c_str());
-    } else if (cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") || cmd.startsWith("@FDEL ") || cmd.startsWith("@FMV ")) {
-        // "@FDESC area|name|text", "@FREN area|old|new", "@FDEL area|name", "@FMV area|name|toarea"
+    } else if (cmd.startsWith("@FMV ")) {  // "@FMV area|name|toarea": a move on this board's card (@FDESC @FREN @FDEL: app/commands.cpp)
         String a = cmd.substring(cmd.indexOf(' ') + 1);
         int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
         std::string area = b1 > 0 ? a.substring(0, b1).c_str() : "", name = b1 > 0 ? (b2 > 0 ? a.substring(b1 + 1, b2) : a.substring(b1 + 1)).c_str() : "",
                     third = b2 > 0 ? a.substring(b2 + 1).c_str() : "";
         bool ok = false;
-        if (cmd.startsWith("@FDESC ")) ok = callerFiles().describe(area, name, third);
-        else if (cmd.startsWith("@FREN ")) ok = !third.empty() && callerFiles().rename(area, name, third);
-        else if (cmd.startsWith("@FDEL ")) ok = callerFiles().remove(area, name);
-        else if (storageHasSd() && axis::bbs::safeFileName(area) && axis::bbs::safeFileName(name) && axis::bbs::safeFileName(third)) {  // a move: same card, another folder
+        if (storageHasSd() && axis::bbs::safeFileName(area) && axis::bbs::safeFileName(name) && axis::bbs::safeFileName(third)) {  // a move: same card, another folder
             ok = ::rename(("/sd/files/" + area + "/" + name).c_str(), ("/sd/files/" + third + "/" + name).c_str()) == 0;
             if (ok) {  // carry its description over: scan the old FILES.BBS a line at a time (a big area's list costs the main too much RAM)
                 File   fb = SD.open(("/files/" + area + "/FILES.BBS").c_str());
@@ -7500,108 +6192,6 @@ static void runCommand(const String& cmd, Print& out) {
         logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + area.c_str() + " " + name.c_str() + (ok ? "" : " (failed)"));
         out.println(ok ? "axis: done" : "axis: that didn't work");
 #endif
-    } else if (cmd.startsWith("@POSTS ")) {  // "@POSTS area": num|from|subject|date per post (the newest 200; paged: newest first)
-        auto v = callerMessages().headers(cmd.substring(7).c_str());
-        if (pagedRun) std::reverse(v.begin(), v.end());
-        for (auto& m : v) out.printf("%d|%s|%s|%s\n", m.num, m.from.c_str(), m.subject.c_str(), m.date.c_str());
-    } else if (cmd.startsWith("@POSTDEL ") || cmd.startsWith("@POSTMV ") || cmd.startsWith("@PURGE ")) {
-        // "@POSTDEL area|num", "@POSTMV area|num|toarea", "@PURGE area|days" (posts older than that)
-        String a = cmd.substring(cmd.indexOf(' ') + 1);
-        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
-        std::string area = b1 > 0 ? a.substring(0, b1).c_str() : "";
-        int         n = b1 > 0 ? (int)(b2 > 0 ? a.substring(b1 + 1, b2) : a.substring(b1 + 1)).toInt() : 0;
-        std::string to = b2 > 0 ? a.substring(b2 + 1).c_str() : "";
-        int         gone = 0;
-        if (cmd.startsWith("@POSTMV ")) {
-            axis::bbs::Message m;
-            if (!to.empty() && callerMessages().read(area, n, m) && callerMessages().post(to, m))
-                gone = callerMessages().drop(area, [n](const axis::bbs::Message& x) { return x.num == n; });
-        } else if (cmd.startsWith("@POSTDEL ")) {
-            gone = callerMessages().drop(area, [n](const axis::bbs::Message& x) { return x.num == n; });
-        } else {
-            time_t cut = time(nullptr) - (time_t)n * 86400;
-            char   stamp[16];
-            strftime(stamp, sizeof stamp, "%Y-%m-%d", localtime(&cut));
-            std::string before = stamp;
-            if (time(nullptr) > 1700000000 && n > 0)
-                gone = callerMessages().drop(area, [&](const axis::bbs::Message& x) { return x.date.substr(0, 10) < before; });
-        }
-        logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a + " (" + gone + ")");
-        out.printf("axis: %d post%s\n", gone, gone == 1 ? "" : "s");
-    } else if (cmd == "@MENU") {  // the main menu's items: N|key|name|command (empty: the built-in menu)
-        for (size_t i = 0; i < boardCfg->mainMenu.size(); i++)
-            out.printf("%u|%s|%s|%s\n", (unsigned)i + 1, boardCfg->mainMenu[i].key.c_str(), boardCfg->mainMenu[i].name.c_str(), boardCfg->mainMenu[i].cmd.c_str());
-    } else if (cmd == "@MENUCMDS") {  // what a menu item can run
-        for (auto& c : axis::bbs::menuCommands()) out.printf("%s|%c\n", c.first.c_str(), c.second);
-    } else if (cmd.startsWith("@MENUSET ") || cmd.startsWith("@MENUDEL ") || cmd.startsWith("@MENUUP ") || cmd == "@MENURESET" || cmd == "@MENUSTART") {
-        // "@MENUSET N|key|name|command" (N past the end adds), "@MENUDEL N", "@MENUUP N", "@MENURESET" (built-in again),
-        // "@MENUSTART" (an editable copy of the built-in menu)
-        auto&  v = cfgEdit().mainMenu;
-        String a = cmd.indexOf(' ') > 0 ? cmd.substring(cmd.indexOf(' ') + 1) : String();
-        int    n = (int)a.toInt();
-        bool   ok = true;
-        if (cmd == "@MENURESET") v.clear();
-        else if (cmd == "@MENUSTART") {
-            static const char* const names[] = {"Message Bases", "File Areas", "Doors", "Teleconference", "Who's Online", "Page Sysop",
-                                                "Your Account", "Oneliners", "MultiNode", "Last Callers", "Private Email", "Scan New Msgs",
-                                                "Rumors", "BBS List", "Top Ten", "Voting Booth", "System Info", "Credits", "Goodbye", "Sysop Menu"};
-            v.clear();
-            size_t i = 0;
-            for (auto& c : axis::bbs::menuCommands()) v.push_back({std::string(1, c.second), names[i++ % 20], c.first});
-        } else if (cmd.startsWith("@MENUSET ")) {
-            int b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1), b3 = b2 < 0 ? -1 : a.indexOf('|', b2 + 1);
-            ok = n >= 1 && b3 > 0 && axis::bbs::menuCommandKey(a.substring(b3 + 1).c_str());
-            if (ok) {
-                axis::bbs::MenuItem m{a.substring(b1 + 1, b2).substring(0, 1).c_str(), a.substring(b2 + 1, b3).c_str(), a.substring(b3 + 1).c_str()};
-                if (n <= (int)v.size()) v[(size_t)n - 1] = m;
-                else v.push_back(m);
-            }
-        } else if (cmd.startsWith("@MENUDEL ")) {
-            ok = n >= 1 && n <= (int)v.size();
-            if (ok) v.erase(v.begin() + n - 1);
-        } else {
-            ok = n >= 2 && n <= (int)v.size();
-            if (ok) std::swap(v[(size_t)n - 1], v[(size_t)n - 2]);
-        }
-        if (!ok) out.println("axis: @MENUSET N|key|name|command, @MENUDEL N, @MENUUP N, @MENURESET, @MENUSTART");
-        else {
-            configSave(*boardCfg);
-            if (cluster) cluster->shareSettings();
-            logEvent(String("sysop: ") + cmd.substring(1));
-            out.println("axis: menu saved");
-        }
-    } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
-        axis::bbs::User* u = users.find(cmd.substring(7).c_str());
-        if (!u) out.println("axis: no user by that handle");
-        else {
-            u->security = axis::bbs::kSysopSecurity;
-            u->status = axis::bbs::User::Status::Validated;
-            logEvent(String("sysop: ") + u->handle.c_str() + " is now a sysop (serial)");
-            saveUsers();
-            out.printf("axis: %s is now a sysop\n", u->handle.c_str());
-        }
-    } else if (cmd.startsWith("@ADDUSER ")) {  // "@ADDUSER handle|location|password": a validated caller (security 20)
-        String a = cmd.substring(9);
-        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
-        if (b1 <= 0 || b2 < 0 || a.length() - b2 - 1 < 6) {
-            out.println("axis: @ADDUSER handle|location|password (6+ characters)");
-        } else if (users.find(a.substring(0, b1).c_str())) {
-            out.println("axis: that handle is taken");
-        } else {
-            axis::bbs::User u;
-            u.handle = a.substring(0, b1).c_str();
-            u.location = a.substring(b1 + 1, b2).c_str();
-            u.salt = axis::bbs::makeSalt(hwRandom);
-            u.hash = axis::bbs::hashPassword(u.salt, a.substring(b2 + 1).c_str());
-            u.status = axis::bbs::User::Status::Validated;
-            u.security = 20;
-            u.created = unixNow();
-            users.add(u);
-            logEvent(String("sysop: added ") + u.handle.c_str() + " (serial)");
-            saveUsers();  // and on to every board
-            writeWarrior(u.handle);
-            out.printf("axis: added %s\n", u.handle.c_str());
-        }
 #if AXIS_WEB
     } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
         out.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
@@ -7724,33 +6314,6 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@BEEP") {
         axis::bbs::station::beep(880, 80);
         out.println("axis: beep");
-    } else if (cmd.startsWith("@DOORLS ")) {  // list a door's folder the way the door sees it
-        std::string           dir = std::string(storageRoot()) + "/doors/" + cmd.substring(8).c_str();
-        axis::PosixHostFs     fs(dir);
-        axis::door::FindState st;
-        fs.find("*.*", 0x10, st);
-        out.printf("axis: %s: %u entries\n", dir.c_str(), (unsigned)st.matches.size());
-        for (auto& f : st.matches)
-            out.printf("axis:   %-12s %8u%s\n", f.name83.c_str(), (unsigned)f.size, f.attr & 0x10 ? " <DIR>" : "");
-    } else if (cmd.startsWith("@DOORCHECK ")) {  // the flash cache belonged to the 8086 runtime, which is not linked
-        out.println("axis: no 8086 in this firmware");
-    } else if (cmd.startsWith("@SET ") && cmd.indexOf('=') > 5) {  // "@SET location=Myrtle Beach, SC"
-        String kv = cmd.substring(5);
-        std::shared_ptr<const axis::bbs::BbsConfig> prev = boardCfg;
-        cfgSet(axis::bbs::parseConfig(axis::bbs::formatConfig(*boardCfg) + kv.c_str() + "\n"));  // the later line wins
-        pushBoardToCallers(prev);
-        bool ok = configSave(*boardCfg);
-        logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
-        if (cluster) cluster->shareSettings();
-        screenDirty = true;
-    } else if (cmd.startsWith("@NUP")) {  // "@NUP secret": the new user password asked before Apply; alone, anyone can apply
-        String pw = cmd.length() > 5 ? cmd.substring(5) : String();
-        axis::bbs::BbsConfig& e = cfgEdit();
-        e.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
-        e.nupHash = pw.length() ? axis::bbs::hashPassword(e.nupSalt, pw.c_str()) : std::string();
-        bool ok = configSave(*boardCfg);
-        if (cluster) cluster->shareSettings();  // every board asks the same one
-        logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
     } else if (cmd == "@HEADLESS" || cmd == "@HEADLESS on" || cmd == "@HEADLESS off") {
         // "@HEADLESS on": this board is a bare ESP32 (no screen, one LED on GPIO 2); "off": a CYD.
         // Per board, in NVS, so it survives every reflash; the board restarts to take it up.
@@ -7822,35 +6385,6 @@ static void runCommand(const String& cmd, Print& out) {
             for (const std::string& l : sharedList("axisnet")) out.println(l.c_str());
             if (sharedList("axisnet").empty()) out.println("axis: axis net is empty");
         }
-    } else if (cmd.startsWith("@RUMOR ")) {  // "@RUMOR text": add a rumor to the board's list (the main keeps them)
-        sharedListAdd("rumors", cmd.substring(7).c_str());
-        out.println("axis: rumor added");
-    } else if (cmd.startsWith("@USERPASS ")) {  // "@USERPASS handle secret": the sysop sets a caller's password (4+ characters)
-        String rest = cmd.substring(10);
-        int    sp = rest.lastIndexOf(' ');
-        axis::bbs::User* u = sp > 0 ? users.find(rest.substring(0, sp).c_str()) : nullptr;
-        String pw = sp > 0 ? rest.substring(sp + 1) : String();
-        if (!u) out.println("axis: @USERPASS handle password");
-        else if (pw.length() < 4) out.println("axis: a password needs 4 or more characters");
-        else {
-            u->salt = axis::bbs::makeSalt(hwRandom);
-            u->hash = axis::bbs::hashPassword(u->salt, pw.c_str());
-            saveUsers();
-            logEvent(String("sysop: password changed for ") + u->handle.c_str());
-            out.printf("axis: password set for %s\n", u->handle.c_str());
-        }
-    } else if (cmd.startsWith("@SYSOPPASS ")) {  // "@SYSOPPASS secret" sets the sysop account's password (4+ characters, as the wizard)
-        String pw = cmd.substring(11);
-        if (pw.length() < 4) {
-            out.println("axis: @SYSOPPASS needs 4 or more characters");
-        } else {
-            axis::bbs::BbsConfig& e = cfgEdit();
-            e.sysopSalt = axis::bbs::makeSalt(hwRandom);
-            e.sysopHash = axis::bbs::hashPassword(e.sysopSalt, pw.c_str());
-            bool ok = configSave(*boardCfg);
-            if (cluster) cluster->shareSettings();  // every board takes the same sysop login
-            logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
-        }
     } else if (cmd == "@RESTART" && callersBesideSysop()) {
         out.println("axis: restart refused, a caller is online (serial: @RESTART force)");
     } else if (cmd == "@RESTART" || (cmd == "@RESTART force" && &out == &Serial)) {  // restart this board (the sysop menu's System layer)
@@ -7864,7 +6398,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@WIFIPICK") {  // the touch WiFi picker on demand (bench)
         startPicker(mode == Mode::WifiPick ? afterPick : mode);
     } else if (&out == &Serial && serialFiles(cmd)) {
-        for (int32_t& c : listCount) c = -1;  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py) (a list file may have changed)
+        boardData.forgetCounts();  // @PUT @LS @TYPE @RM @MKDIR @BAUD (tools/sdput.py) (a list file may have changed)
     } else if (cmd == "@RERUNSETUP" && boardIsHeadless()) {  // the wizard is on a screen this board hasn't got
         out.println("axis: setup refused: this board is headless (no screen to run setup on)");
     } else if (cmd == "@RERUNSETUP" && callersBesideSysop()) {
@@ -7884,7 +6418,20 @@ static void runCommand(const String& cmd, Print& out) {
         delay(100);
         ESP.restart();
     }
+    else if (portableCommand(cmd, out)) {}  // users, posts, files, lists, settings, menus, the callers here (app/commands.cpp)
+#if AXIS_NATIVE
+    else if (nativeCommand(cmd, out)) {}
+#endif
 }
+#if AXIS_NATIVE
+void nativeRun(const char* cmd) {  // one @ command, its output thrown away (the host's drain, @BCAST)
+    struct Null : Print {
+        size_t write(uint8_t) override { return 1; }
+        size_t write(const uint8_t*, size_t n) override { return n; }
+    } sink;
+    runCommand(String(cmd), sink);
+}
+#endif
 
 // "WFC" on the serial port: a terminal on the waiting-for-caller screen, until Q; then the @ commands are back.
 static void serialWfcClose() {
@@ -8005,13 +6552,12 @@ void setup() {
         for (auto& d : cfgEdit().doors) lordArgs = axis::bbs::migrateLordArgs(d) || lordArgs;
     if (lordArgs) configSave(*boardCfg);
     users.parse(flashRead("/users.dat"));
-    linersLoad();
-    callersLoad();
-    if (!lastCallers.empty()) {  // the WFC's last caller: the newest saved login ("handle|node|time|location")
-        std::string h = lastCallers.back().substr(0, lastCallers.back().find('|'));
+    boardData.load();  // the oneliners and the last callers
+    if (!boardData.lastCallers().empty()) {  // the WFC's last caller: the newest saved login ("handle|node|time|location")
+        std::string h = boardData.lastCallers().back().substr(0, boardData.lastCallers().back().find('|'));
         if (!h.empty()) lastCaller = h.c_str();
     }
-    statsLoad();
+    stats.statsLoad(users);
     userSync.changed(users);  // what we have counts as sent: only new changes go over the link
     for (auto& l : eventFile.tail(40)) events.add(l);  // the Logs screen picks up where it left off
     eventFileReady = true;
@@ -8033,6 +6579,7 @@ void setup() {
             cfgEdit().boardName = ("axis-" + mac.substring(8)).c_str();
             cfgEdit().sessions = 3;  // no screen to draw: room for a third caller
             newSetupPin();     // (only used if a caller arrives before the settings do)
+            Serial.printf("axis: setup PIN %s (no screen to show it: type it when a caller is asked for it)\n", setupPin.c_str());
         } else {
             mode = Mode::SetupChoice;
             newSetupPin();
@@ -8098,207 +6645,183 @@ static void ledUpdate() {
     ledcWrite(0, bare);
 }
 
-// The LFD3K-SM modem's newest link report for this caller, into its node (before any door, movie or transfer takes the
-// turn, so a retrain during one still counts).
+// The LFD3K-SM modem's newest link report for a caller (Session::takeLinkReport): the WFC's |R? codes follow this caller's
+// link when it is the one shown, a new call, a new tier, or the shown one is a minute old (two radio callers do not take
+// turns at every report). The first report of a call is an event line.
 #if AXIS_MODEMLINK
 static uint32_t lastRadioMs = 0;
-__attribute__((noinline)) static void takeLinkReport() {
-    axis::net::LinkInfo li;
-    if (line && node && boardCfg->modemLink && line->takeLink(li)) {  // (at most one a second per line: TelnetStream::takeLink)
-        bool first = !node->viaModem();
-        node->setLink(li);
-        // the WFC's |R? codes: this caller's link when it is the one shown, a new call, a new tier, or the shown one is a minute old
-        // (two radio callers do not take turns at every report)
-        if (first || node->handle() == lastRadioWho || li.tier != lastRadio.tier || millis() - lastRadioMs > 60000u) {
-            lastRadio = li;
-            lastRadioWho = node->handle();
-            lastRadioMs = millis();
-        }
-        if (first)
-            logEvent(String("radio caller on node ") + String(sessionNumber(curSession)) + ": " + axis::net::linkLabel(li).c_str() +
-                     (li.modem.empty() ? "" : (String(" via ") + li.modem.c_str()).c_str()));
+static void radioReport(axis::app::Session& s, const axis::net::LinkInfo& li, bool first) {
+    if (first || s.node->handle() == lastRadioWho || li.tier != lastRadio.tier || millis() - lastRadioMs > 60000u) {
+        lastRadio = li;
+        lastRadioWho = s.node->handle();
+        lastRadioMs = millis();
     }
-    if (node && node->linkRedrawDue(millis())) screenDirty = true;  // the tier changed (at most every 5 s), not every report
+    if (first)
+        logEvent(String("radio caller on node ") + String(sessionNumber(s.slot)) + ": " + axis::net::linkLabel(li).c_str() +
+                 (li.modem.empty() ? "" : (String(" via ") + li.modem.c_str()).c_str()));
 }
-#else
-__attribute__((noinline)) static void takeLinkReport() {}  // built without the modem link: a radio caller is a plain telnet caller
 #endif
 
-// The caller's line in the cluster's node list (handle and what they are doing). Its own frame: serviceSession is on the
-// stack under every key a caller types (and the screen code below it), so it stays small (2026-11-16: 1.9 KB a turn
-// with these inlined, and a slow call took the loop stack to 284 bytes free).
-__attribute__((noinline)) static void postStatus(int i) {
-    std::string handle = node ? node->handle() : "", activity;
-    if (node) {
-        using S = axis::bbs::Node::State;
-        S st = node->state();
-        activity = (nativeLord || viewer || st == S::Script) ? "Doors" : job ? "Transfer" : st == S::Files ? "Files"
-                 : st == S::Applying ? "Applying" : st == S::Chat ? "Chat" : st == S::Messages ? "Messages" : st == S::Menu ? "Menu"
-                 : st == S::Splash || st == S::Login || st == S::Password ? "Logging in" : st == S::Split ? "Split chat"
-                 : st == S::AxisNet ? "Axis Net" : st == S::AxisCall ? "Remote board" : "Online";
-        if (!node->available()) activity += " (DND)";
-        if (!node->linkShown().empty()) activity += "  " + node->linkShown();  // (tier only, at most every 5 s: not a status per report)
-    }
-    Session& me = sessions[(size_t)i];
-    if (handle + "|" + activity != me.lastStatus) {
-        me.lastStatus = handle + "|" + activity;
-        cluster->setStatus(i, handle, activity);
-    }
-}
-// This caller's download or upload, one step (its own frame, as above).
-__attribute__((noinline)) static void serviceJob() {
-    if (job->needsWorkspace()) {  // a ZIP upload: the board's inflate window (lent to a viewer: wait up to 60 s)
-        bool busy = axis::bbs::inflate::busy();
-        if (busy && (!line || !line->carrier())) {  // hung up while waiting
-            hangUp();
-            return;
-        }
-        if (busy && !job->waiting) {
-            job->waiting = true;
-            job->waitSince = millis();
-            sendApp("\r\n  Checking your upload, waiting for the ZIP checker...\r\n");
-        }
-        bool late = busy && millis() - job->waitSince >= 60000u;
-        if (!busy || late) {
-            uint8_t *w = nullptr, *st = nullptr;  // late: today's short-memory path (no window)
-            drawTransfer();
-            if (late) logEvent("upload: ZIP window busy");
-            else if (!axis::bbs::inflate::take(job.get(), w, st)) logEvent("upload: short on memory to check the ZIP");
-            job->beginProcessing(w, w ? axis::bbs::inflate::kWindow : 0, st);
-            noteZipHeap();
-        }
-    }
-    bool running = job->step(millis());
-    if (line) line->flush();
-    if (millis() - jobDrawnMs > 500) {
-        jobDrawnMs = millis();
-        drawTransfer();
-    }
-    if (!running) {
-        const auto& r = job->request();
-        std::string note = job->note();
-#if AXIS_NETS && AXIS_TRANSFERS
-        netFetchJobNote(job.get(), note);  // a Net Files download whose fetch stopped
+// What each caller's Session uses from this board (app/services.h): the shared stores, the cluster-aware chat and the
+// board-only seams (the screen, the door note, the login lockouts, the radio report, the Axis Net bridge, the Net Files
+// fetch, the setup over telnet).
+static axis::app::Services& services() {
+    static axis::app::Services s(boardHost, boardData, themeProvider, stats, users, boardCfg);
+    static bool wired = false;
+    if (wired) return s;
+    wired = true;
+    s.saveUsers = saveUsers;
+    s.sysopRun = sysopRun;
+    s.chat = [](int slot, const std::string& handle, const std::string& text, bool page) {  // through the main to every node
+#if !AXIS_CLUSTER
+        deliverChat({sessionNumber(slot), handle, text, page});
+        return;
 #endif
-        if (r.upload && job->ok()) {
-            countUpload();
-#if AXIS_NETS && AXIS_FILES
-            netFilesUploaded(r.area, job->savedName(), r.desc, node->handle());  // listed when the area is shared on User Net
-#endif
-        }
-        logEvent(String(node->handle().c_str()) + (r.upload ? " uploaded " : " downloaded ") +
-                 (r.upload ? job->savedName() : r.name).c_str() + (job->ok() ? "" : String(" (failed: ") + note.c_str() + ")"));
-        noteDoing("idle");
-        if (line && line->carrier()) {
-            node->transferDone(job->ok(), job->bytes(), millis() - jobStartMs, note, millis());
-            job.reset();  // gives the inflate window back
-#if AXIS_NETS && AXIS_TRANSFERS
-            netFetchRelease(node.get());  // (a follower: the main's fetch ends now; here the job's file already let it go)
-#endif
-            noteZipHeap();
-            sendApp(node->takeOutput());
+        if (cluster) page ? cluster->page(handle, text, slot) : cluster->chat(handle, text, slot);
+        else
+            for (size_t i = 0; i < sessions.size(); i++)
+                if (sessionNode(i)) sessionNode(i)->chatIn(sessionNumber(slot), handle, text, page);
+    };
+    s.who = [] {
+        std::vector<axis::bbs::Node::WhoLine> v;
+        if (cluster && cluster->nodes().size() > 1) {
+            for (auto& n : cluster->nodes()) v.push_back({n.number, n.handle, n.activity});
+            std::sort(v.begin(), v.end(), [](const axis::bbs::Node::WhoLine& a, const axis::bbs::Node::WhoLine& b) { return a.node < b.node; });
         } else {
-            hangUp();
+            for (size_t i = 0; i < sessions.size(); i++) {
+                axis::bbs::Node* n = sessionNode(i);
+                v.push_back({sessionNumber((int)i), n ? n->handle() : "", n ? "Online" : "", n ? n->linkShown() : ""});
+            }
         }
-        screenDirty = true;
-    }
-}
-
-// One session's turn: its caller, and its own movie or transfer when it has one.
-static void serviceSession(int i) {
-    takeLinkReport();
-    if (cluster) postStatus(i);
-    if (line) {  // a slow caller (a LoRa radio call): what its line still holds goes out first, and the next screen piece,
-                 // movie frame or LORD step waits for room, so the board's loop never waits on one caller's socket
-        line->setHold(!job);  // (a transfer's protocol needs each block out before it waits for the answer)
-        if (line->backlog() && !line->drain()) {
-            hangUp();
+        return v;
+    };
+    s.messages = []() -> axis::bbs::MessageStore& { return callerMessages(); };
+#if AXIS_FILES
+    s.files = []() -> axis::bbs::FileLibrary& { return callerFiles(); };
+#endif
+    s.rng = hwRandom;
+    s.unixNow = unixNow;
+    s.nodeCfg = nodeCfg;
+    s.sysInfo = sysInfo;
+    s.wfcSnapshot = wfcSnapshot;
+    s.dayStats = statsShown;  // (a cluster follower shows the main's counts)
+    s.warrior = warriorHook;
+    s.nodeLink = [](int slot, int kind, int to, const std::string& handle, const std::string& text) {
+#if !AXIS_CLUSTER
+        deliverChat({sessionNumber(slot), handle, text, kind == 1, kind, to});
+        return;
+#endif
+        if (cluster) {
+            cluster->send(handle, kind, to, text, slot);
             return;
         }
-        if (!job && line->backlog() >= axis::net::TelnetStream::kHoldLow) return;
-    }
-    if (job) {  // this caller's download or upload
-        serviceJob();
-        return;
-    }
-    if (nativeLord) {  // this caller is in LORD
-        bool running;
-        {
-            HeapScope scope("door");
-            running = nativeLord->step();
+        for (size_t i = 0; i < sessions.size(); i++)
+            if ((int)i != slot && sessionNode(i) && (to == 0 || sessionNumber((int)i) == to))
+                sessionNode(i)->nodeIn(kind, sessionNumber(slot), handle, text);
+    };
+    s.nodeNumber = sessionNumber;
+#if AXIS_NETS && AXIS_FILES && AXIS_TRANSFERS
+    s.netFiles = [](axis::app::Session& ses) {
+        if (!asFollower() || netMainFiles) {  // Net Files: this board's fetch, or on a follower the main's (an older main never says so)
+            const axis::bbs::Node*  n = ses.node.get();
+            axis::bbs::NetFilesView v;
+            v.page = netViewPage;
+            v.unreachable = netFetchUnreachable;  // (a follower: "", the main says it when the fetch begins)
+            v.callerRadioBps = [n] { return netCallerBps(n->link()); };  // (this board's own caller link)
+            v.begin = [n](const std::string& id, std::string& area, std::string& name) { return netViewBegin(n, id, area, name); };
+            v.poll = [n](uint32_t& size, const char*& word) { return netViewPoll(n, size, word); };
+            v.release = [n] { netFetchRelease(n); };
+            ses.node->setNetFiles(std::move(v));
         }
-        if (line) line->flush();
-        if (!running) finishLord();
-        delay(5);
-        return;
-    }
-    if (viewer) {  // this caller's movie or pack
-        bool running = viewer->step();
-        noteZipHeap();
-        if (line) line->flush();
-        if (!running) finishViewer();
-        delay(5);
-        return;
-    }
-    if (line && axisPump(i)) return;  // a call to another Axis board owns the keys
-    if (line) {
-        if (axisDirty && node && node->state() == axis::bbs::Node::State::AxisNet) node->axisRedraw();
-        std::string app = line->takeInput();
-        if (!app.empty()) callerInput(app);
-        if (line && node && node->axisTakeProbe()) {
-            if (asFollower() && cluster) {
-                std::string reply;
-                cluster->request("AN", reply, 1500);
-            } else axisProbeSoon = true;
+    };
+#endif
+    s.follower = asFollower;
+    s.cfgEdit = []() -> axis::bbs::BbsConfig& { return cfgEdit(); };
+    s.cfgReplace = [](axis::bbs::BbsConfig c) {
+        std::shared_ptr<const axis::bbs::BbsConfig> prev = boardCfg;
+        cfgSet(std::move(c));
+        pushBoardToCallers(prev);
+    };
+    s.cfgSave = [] { return configSave(*boardCfg); };
+    s.shareSettings = [] {
+        if (cluster) cluster->shareSettings();
+    };
+    s.areasChanged = makeAreaFolders;
+    s.ready = [] { return boardCfg->setupDone && mode == Mode::Normal; };
+    s.setupPin = [] { return std::string(setupPin.c_str()); };
+    s.setupChosen = [] { mode = Mode::SetupTelnet; };
+    s.setupSave = [](axis::bbs::SetupWizard& w) {
+        cfgSet(w.result());
+        bool ok = configSave(*boardCfg);
+#if AXIS_WEB  // (built without the web jobs the wizard does not ask for No-IP)
+        if (!w.noip().host.empty())  // the No-IP login stays in this board's own storage
+            web::setNoip(String(w.noip().host.c_str()) + "|" + w.noip().user.c_str() + "|" + w.noip().pass.c_str());
+#endif
+        logEvent(String("setup ") + (ok ? "saved" : "SAVE FAILED") + " over telnet");
+    };
+    s.setupFinished = [] {
+        mode = Mode::Normal;
+        applyNetwork();
+    };
+    s.dialName = [] { return std::string(dialName().c_str()); };
+    s.doorFiles = [](const std::string& id, std::unique_ptr<axis::door::HostFs>& fs,
+                     std::unique_ptr<axis::door::LockTable>& own) -> axis::door::LockTable* {
+        bool remote = asFollower() && (!storageHasSd() || cluster->mainKind() == axis::cluster::CardKind::Mirror);  // (a mirror main: its copy is the game)
+        if (remote) {
+            auto ask = [](const std::string& req, std::string& reply) { return cluster && cluster->request(req, reply, 8000); };
+            auto* rfs = new axis::cluster::RemoteHostFs(ask, id);
+            fs.reset(rfs);
+            own.reset(new axis::cluster::RemoteLockTable(ask, rfs));
+            return own.get();
         }
-        if (line && node && node->state() == axis::bbs::Node::State::AxisCall && !axisBridge.on) {
-            sendApp(node->takeOutput());  // "Calling ..." before the connect, which can take a second
-            axisStart(i);
-            sendApp(node->takeOutput());  // the list again when the call did not open
-            return;
-        }
-        if (line && node) {
-            {
-                HeapScope scope(nodeScopeName("poll"));
-                node->poll(millis());
-            }
-            if (node->state() == axis::bbs::Node::State::InDoor) {
-                startDoor();
-                return;
-            }
-#if AXIS_TRANSFERS
-            if (node->state() == axis::bbs::Node::State::Transfer && !job) {
-                sendApp(node->takeOutput());  // the transfer window, before the protocol starts
-                jobStartMs = jobDrawnMs = millis();
-                axis::bbs::UploadInfo info{boardCfg->bbsName, dialName().c_str(), boardCfg->location,
-                                           std::string(axis::bbs::kAxisSoftware) + " " + axis::bbs::kAxisVersion};
-                noteDoing(String(node->transfer().upload ? "upload " : "download ") + node->transfer().name.c_str() + " by " +
-                          node->handle().c_str());
-#if AXIS_NETS
-                if (node->transfer().net) {  // a Net Files download: over the fetch slot its connect left ready
+        fs.reset(new axis::PosixHostFs(std::string(storageRoot()) + "/doors/" + id));
+        return &doorLocks;
+    };
+    s.releaseDoor = [](int num) {
+        doorFs.reset();
+        (doorRemoteLocks ? *doorRemoteLocks : doorLocks).releaseOwner(num);
+        doorRemoteLocks.reset();
+    };
+    s.doorNote = [](axis::bbs::DoorDiag d) { noteDoor(d, 0); };
+    s.zipHeap = noteZipHeap;
+    s.drawTransfer = drawTransfer;
+#if AXIS_NETS && AXIS_TRANSFERS
+    s.netJob = [](axis::app::Session& ses) -> axis::bbs::TransferJob* {
 #if AXIS_FILES && AXIS_CLUSTER
-                    if (asFollower()) job.reset(netRemoteJob(node.get(), node->transfer(), *line));  // (the main's fetch)
-                    else
+        if (asFollower()) return netRemoteJob(ses.node.get(), ses.node->transfer(), *ses.line);  // (the main's fetch)
 #endif
-                        job.reset(netFetchJob(node.get(), callerFiles(), node->transfer(), *line));
-                    if (!job) {  // (no memory for the job right after ready: the fetch stopped)
-                        netFetchRelease(node.get());
-                        node->transferDone(false, 0, 0, "stopped", millis());
-                        noteDoing("idle");
-                        sendApp(node->takeOutput());
-                    }
-                    return;
-                }
+        return netFetchJob(ses.node.get(), callerFiles(), ses.node->transfer(), *ses.line);
+    };
+    s.netRelease = netFetchRelease;
+    s.netJobNote = netFetchJobNote;
 #endif
-                job.reset(new axis::bbs::TransferJob(callerFiles(), node->transfer(), *line, info));
-                return;
-            }
+#if AXIS_NETS && AXIS_FILES
+    s.netUploaded = netFilesUploaded;
 #endif
-            sendApp(node->takeOutput());
-            if (node->wantsHangup()) hangUp();
-        }
-        if (line && !line->carrier()) hangUp();
-    }
+    s.lineEnding = lineEnding;
+    s.park = parkLine;
+    s.callerGone = callerGone;
+#if AXIS_MODEMLINK
+    s.radio = radioReport;
+#endif
+    s.clustered = [] { return cluster != nullptr; };
+    s.status = [](int slot, const std::string& handle, const std::string& activity) { cluster->setStatus(slot, handle, activity); };
+    s.dirty = [] { screenDirty = true; };
+    s.doing = [](const std::string& what) { noteDoing(String(what.c_str())); };
+    s.heapText = [] { return std::string(heapText().c_str()); };
+    s.romLog = [](const char* line) { esp_rom_printf("%s", line); };
+    s.nap = [](uint32_t ms) { delay(ms); };
+    s.axisPump = axisPump;
+    s.axisCall = axisStart;
+    s.axisBusy = [] { return axisBridge.on; };
+    s.axisDirty = [] { return axisDirty; };
+    s.axisProbe = [] {
+        if (asFollower() && cluster) {
+            std::string reply;
+            cluster->request("AN", reply, 1500);
+        } else axisProbeSoon = true;
+    };
+    return s;
 }
 
 // The SD view cache filled ahead of callers: on the main with a card, only while nobody is online on any board (one small step a
@@ -8376,6 +6899,21 @@ static void viewCacheTick() {
 #endif
 }
 
+// A card mirror ended its hand-back (I E): restart like @RESTART, from here so the reply has left first.
+static void cardTreeRestartTick() {
+    static uint32_t at = 0;
+    if (!cardTreeServer().finished()) return;
+    if (!at) {
+        at = millis() | 1;
+        logEvent("cluster: the card was handed back, restarting");
+    }
+    if (millis() - at < 500) return;
+#if AXIS_NETS
+    netSaveNow();
+#endif
+    ESP.restart();
+}
+
 void loop() {
     static uint32_t lastLoop = millis();
 #if AXIS_BENCH
@@ -8447,6 +6985,8 @@ void loop() {
         return;
     }
     if (cluster) cluster->tick(millis());
+    if (cluster) { bool mf = cluster->role() == axis::cluster::Role::Main && cluster->hasMirrorFollower(); axis::cluster::cardFeed().setOn(mf, hwRandom()); if (!mf) cardTreeServer().dropRead(); }
+    cardTreeRestartTick();
     statsSync();
     if (localNode) {  // the sysop at the board's own screen
         localNode->poll(millis());
@@ -8482,15 +7022,29 @@ void loop() {
     }
     pumpPanel();
     for (size_t i = 0; i < sessions.size(); i++) {
-        bindSession((int)i);
-        uint32_t turnMs = millis();
-        serviceSession((int)i);
-        turnMs = millis() - turnMs;
-        if (turnMs > 1000)  // one caller held the loop: say what it was doing (node state number, bytes its line still holds)
-            logEvent("slow turn: node " + String(sessionNumber((int)i)) + " " + String(turnMs) + " ms, state " +
-                     String(node ? (int)node->state() : -1) + ", held " + String(line ? (unsigned)line->backlog() : 0u) + " " +
-                     String(sessions[i].lastStatus.c_str()));
-        unbindSession();
+        axis::app::Session* s = sessions[i].get();
+        if (slotStatus.size() <= i) slotStatus.resize(i + 1);
+        if (!s) {  // nobody on: the slot's status line goes empty once (the cluster's node list), as a turn with nobody on did
+            if (cluster && slotStatus[i] != "|") {
+                slotStatus[i] = "|";
+                cluster->setStatus((int)i, "", "");
+            }
+            continue;
+        }
+        {
+            TurnOf on(s);
+            uint32_t turnMs = millis();
+            s->service(turnMs);
+            turnMs = millis() - turnMs;
+            if (turnMs > 1000)  // one caller held the loop: say what it was doing (node state number, bytes its line still holds)
+                logEvent("slow turn: node " + String(sessionNumber((int)i)) + " " + String(turnMs) + " ms, state " +
+                         String(s->node ? (int)s->node->state() : -1) + ", held " + String(s->line ? (unsigned)s->line->backlog() : 0u) + " " +
+                         String(s->lastStatus.c_str()));
+        }
+        if (s->done()) {  // hung up this turn: the slot is free, its last status line kept for the next turn
+            slotStatus[i] = s->lastStatus;
+            sessions[i].reset();
+        }
     }
     drainParkedLines();
     axisDirty = false;
@@ -8510,7 +7064,7 @@ void loop() {
     static uint32_t lastRoll = 0;  // the day counters roll at midnight on every board, screen or not (the WFC used to be the only one)
     if (millis() - lastRoll > 5000u) {
         lastRoll = millis();
-        rollDayCounters();
+        stats.rollDayCounters();
     }
     static uint32_t lastTick = 0;  // keep the clock and the time-online count moving
     if (millis() - lastTick > 300u) {  // the status lights blink, long lines scroll, the times tick
