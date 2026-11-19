@@ -126,7 +126,7 @@ TEST_CASE("shipped menus: the login screens each hold for a key: poster, news, l
     r.type(" ");
     CHECK(r.has("hello from a oneliner"));  // the oneliners ask y/N: that is its own hold
     r.type(" ");
-    CHECK(r.has("KB free"));  // the stats
+    CHECK(r.has("time left"));  // your stats
     CHECK(r.has("press a key"));
     CHECK(r.n.state() == Node::State::SeqPause);
     r.type(" ");
@@ -251,7 +251,7 @@ TEST_CASE("an older card LOGIN.SEQ (no pauses after last callers and stats) stil
     r.type(" ");
     CHECK(r.has("hello from a oneliner"));
     r.type(" ");
-    CHECK(r.has("KB free"));  // the stats, held though MAIN clears
+    CHECK(r.has("time left"));  // your stats, held though MAIN clears
     CHECK(r.n.state() == Node::State::SeqPause);
     r.type(" ");
     CHECK(r.has("Messages Menu"));
