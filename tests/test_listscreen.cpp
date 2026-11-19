@@ -332,6 +332,34 @@ TEST_CASE("the shipped MSGS.LST draws the message rows the built-in list does") 
     CHECK(has(a.front(), "*"));  // the new-to-this-caller marker (messages above 3)
 }
 
+TEST_CASE("the shipped MSGS.LST shows a five digit message number whole") {
+    MemStore st;
+    for (int n : {12344, 12345}) {
+        Message x;
+        x.num = n;
+        x.from = "Spindle Kid";
+        x.to = "All";
+        x.subject = "big number";
+        x.body = "body";
+        st.m["general"].push_back(x);
+    }
+    std::string without, with;
+    {
+        Templates none;
+        without = msgScreen(st);
+    }
+    {
+        std::string tplText = shipped("MSGS.LST");
+        REQUIRE_FALSE(tplText.empty());
+        Templates look("MSGS.LST", tplText);
+        with = msgScreen(st);
+    }
+    std::vector<std::string> a = linesWith(without, "big number"), b = linesWith(with, "big number");
+    REQUIRE(a.size() == 2);
+    CHECK(a == b);
+    CHECK(has(b[1], "12345"));
+}
+
 #if AXIS_ACCOUNTS || !defined(AXIS_ACCOUNTS)
 namespace {
 uint32_t rng() { return 0x5A5A5A5Au; }

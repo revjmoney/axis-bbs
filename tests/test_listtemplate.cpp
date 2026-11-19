@@ -32,7 +32,7 @@ TEST_CASE("a field token clips and pads to its width") {
     ListTemplate r;
     REQUIRE(parseListTemplate("row=[@SZ>5@]\n", r));
     CHECK(renderRow(r, who, fields()) == "[  123]");
-    CHECK(renderRow(r, who, [](const std::string&) { return std::string("1234567"); }) == "[12345]");
+    CHECK(renderRow(r, who, [](const std::string&) { return std::string("1234567"); }) == "[1234567]");  // (a right-aligned value widens, never cut)
 }
 
 TEST_CASE("a row is clipped by visible width, not by escape bytes, and never breaks the line") {
@@ -139,4 +139,35 @@ TEST_CASE("a zero width field is empty and an unclosed token stays literal") {
     CHECK(renderRow(t, who, fields()) == "[]");
     REQUIRE(parseListTemplate("row=x@FN8\n", t));
     CHECK(renderRow(t, who, fields()) == "x@FN8");
+}
+
+TEST_CASE("a right-aligned number wider than its field keeps every digit") {
+    ListTemplate t;
+    REQUIRE(parseListTemplate("geom=3,6,20,14
+row=#@NM>4@|@SU4@|
+", t));
+    AcsUser who;
+    auto    f = [](const std::string& k) { return std::string(k == "NM" ? "12345" : "abcdefg"); };
+    CHECK(renderRow(t, who, f) == "#12345|abcd|");
+    // a hidden {{ACS}} group blanks to the width the field really has
+    ListTemplate h;
+    REQUIRE(parseListTemplate("geom=3,6,20,14
+row={{ACS:99}}@NM>4@{{/ACS}}!
+", h));
+    CHECK(renderRow(h, who, f).find("12345") == std::string::npos);
+    // the visible clip still takes the whole line
+    ListTemplate c;
+    REQUIRE(parseListTemplate("geom=3,6,3,14
+row=@NM>4@
+", c));
+    CHECK(renderRow(c, who, f) == "123");
+}
+
+TEST_CASE("an empty row is a malformed template") {
+    ListTemplate t;
+    CHECK_FALSE(parseListTemplate("geom=3,6,74,14
+row=
+", t));
+    CHECK_FALSE(parseListTemplate("row=
+", t));
 }

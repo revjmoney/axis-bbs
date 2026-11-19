@@ -37,7 +37,7 @@ int clampInt(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 // it shows. Values carry no control byte (listPlain), so no value can make or break a marker.
 constexpr char kMark = '\x01', kFill = '\x02';
 
-// @XXnn@ / @XX>nn@ -> the field, cut and padded to nn columns (kept in `sized`, a marker in the line); the rest is left for expandArt
+// @XXnn@ -> the field cut and padded to nn columns; @XX>nn@ -> padded on the left to nn, never cut (kept in `sized`, a marker in the line); the rest is left for expandArt
 std::string sizeFields(const std::string& in, const ArtValue& field, std::vector<std::string>& sized) {
     std::string out;
     for (size_t i = 0; i < in.size();) {
@@ -50,17 +50,18 @@ std::string sizeFields(const std::string& in, const ArtValue& field, std::vector
             while (j < in.size() && in[j] >= '0' && in[j] <= '9' && j - d < 3) n = n * 10 + (in[j++] - '0');
             if (j > d && j < in.size() && in[j] == '@') {
                 std::string v = field(in.substr(i + 1, 2));  // (already filtered by renderLine)
-                if ((int)v.size() > n) v.resize(n);
-                std::string pad(n - v.size(), ' ');
+                if (!right && (int)v.size() > n) v.resize(n);  // (a right-aligned value too long for its field widens, like %4d)
+                std::string pad((int)v.size() < n ? n - v.size() : 0, ' ');
+                std::string shown = right ? pad + v : v + pad;
                 if (sized.size() < 127) {
-                    sized.push_back(right ? pad + v : v + pad);
+                    sized.push_back(shown);
                     out += "\x1b[";
                     out += kMark;
                     out += (char)(0x80 + sized.size() - 1);
                     out += 'z';
-                    out.append((size_t)n, kFill);
+                    out.append(shown.size(), kFill);  // (as wide as what is spliced in)
                 } else {
-                    out.append((size_t)n, ' ');  // (more than 127 sized fields on one line: the width, not the value)
+                    out.append(shown.size(), ' ');  // (more than 127 sized fields on one line: the width, not the value)
                 }
                 i = j + 1;
                 continue;
@@ -102,7 +103,7 @@ bool parseListTemplate(const std::string& text, ListTemplate& out) {
         } else if (k == "head") out.head = v;
         else if (k == "caption") out.caption = v;
         else if (k == "rule") out.rule = v != "0";
-        else if (k == "row") out.row = v, haveRow = true;
+        else if (k == "row") out.row = v, haveRow = !v.empty();
         else if (k == "status") out.status = v;
         else if (k == "keys") out.keys = v;
     }
