@@ -117,7 +117,8 @@ int main(int argc, char** argv) {
         if (!bbs.start(modem, why)) {
             std::printf("axis: %s\n", why.c_str());
             axis::pcapp::Console::restore();
-            axis::pcapp::Console::tell("axis: " + why);
+            // The reason can hold the data folder's path (from $HOME), so the terminal gets a pointer to the log, which has it.
+            axis::pcapp::Console::tell("axis: axispc could not start; the reason is in log/axispc.log in the data folder");
             return 1;
         }
         std::unique_ptr<axis::pcapp::Console> console;
