@@ -71,6 +71,12 @@ bool parseNum(const std::string& s, uint64_t& v) {
     return true;
 }
 
+// rel is the folder top (in any case) or anything under it
+bool underNoCase(const std::string& rel, const char* top) {
+    size_t n = std::strlen(top);
+    return rel.size() >= n && equalNoCase(rel.substr(0, n), top) && (rel.size() == n || rel[n] == '/');
+}
+
 std::string no() { return "0"; }
 
 std::string num(uint64_t v) { return std::to_string(v); }
