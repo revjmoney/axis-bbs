@@ -54,7 +54,7 @@ bool parseManifest(const std::string& text, Manifest& out) {
         pos = nl == std::string::npos ? text.size() : nl + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        if (line[0] == '#') {
+        if (line[0] == '#' && line.find(kSep) == std::string::npos) {  // (a card file may start with '#': it has fields)
             size_t eq = line.find('=');
             if (eq == std::string::npos) return false;
             std::string k = line.substr(1, eq - 1), v = line.substr(eq + 1);

@@ -104,8 +104,9 @@ std::vector<CardEntry>     listing;
 std::deque<std::string>    passQ;
 std::map<std::string, int> tries;           // this pass's tries per path
 unsigned                   copied = 0, removed = 0, matched = 0, failed = 0;
-uint32_t                   firstAgainAt = 0;
-bool                       firstWaiting = false;
+uint32_t                   passAgainAt = 0;   // a pass that could not finish: the next one waits until then
+bool                       passWaiting = false;
+bool                       walkFailed = false;  // the main could not list a folder: nothing of the walk is applied
 
 bool     stopped = false;  // disk full
 uint32_t stoppedAt = 0;
@@ -182,6 +183,8 @@ void ensureLoaded() {
                     "at the main's size are kept)\n");
         return;
     }
+    feedGen = man.gen;  // (the feed is asked from where the manifest left it)
+    feedSeq = man.seq;
     std::printf("axis: mirror: %zu files in the manifest, first copy %s\n", man.files.size(),
                 man.complete ? "finished" : "not finished");
 }
@@ -294,14 +297,21 @@ std::string today(int& minutes) {
 }
 
 void endPass(uint32_t now) {
-    if (pass == Pass::First) {
+    if (walkFailed) {
+        passWaiting = true;
+        passAgainAt = now + kFirstAgainMs;
+        if (pass == Pass::Check && !noonPass) checkWanted = true;  // (noon is still due, so it comes back by itself)
+        std::printf("axis: mirror: the main could not list a folder of its card: %s stopped, trying again in a "
+                    "minute\n",
+                    pass == Pass::First ? "the first copy" : "the check");
+    } else if (pass == Pass::First) {
         if (!failed && !stopped) {
             man.complete = true;
             std::printf("axis: mirror: first copy finished: %zu files (copied %u, kept %u)\n", man.files.size(), copied,
                         matched);
         } else {
-            firstWaiting = true;
-            firstAgainAt = now + kFirstAgainMs;
+            passWaiting = true;
+            passAgainAt = now + kFirstAgainMs;
             std::printf("axis: mirror: first copy not finished: %u files changed while copied or could not be "
                         "copied, trying again in a minute\n",
                         failed);
@@ -318,6 +328,7 @@ void endPass(uint32_t now) {
         }
     }
     noonPass = false;
+    walkFailed = false;
     pass = Pass::None;
     walking = false;
     walkStack.clear();
@@ -368,6 +379,12 @@ void diskFull(uint32_t now) {
         endPass(now);
         stopped = true;  // (endPass keeps it; a new pass clears it)
     }
+}
+
+// the file in hand goes back to the front of its queue (the link went, or the takeover stops the copy)
+void putBack() {
+    if (cur.active) (cur.live ? liveQ : passQ).push_front(cur.path);
+    dropTemp();
 }
 
 // a file is copied: the pass counts it
@@ -509,11 +526,8 @@ void walkStep(uint32_t now) {
     std::string reply;
     if (!ask(req('D', {w.dir, std::to_string(w.skip)}), reply, now)) return;  // (retried after the back-off)
     walkStack.pop_back();
-    if (reply.empty() || reply[0] != '1') {
-        if (!w.dir.empty()) return;  // (a folder that went away while walked)
-        std::printf("axis: mirror: the main cannot list its card, %s stopped\n",
-                    pass == Pass::First ? "the first copy" : "the check");
-        failed++;
+    if (reply.empty() || reply[0] != '1') {  // (a folder that went away while walked, or the card failed): try later
+        walkFailed = true;
         endPass(now);
         return;
     }
@@ -546,10 +560,18 @@ void feedStep(uint32_t now) {
     feedAt = now;
     std::string reply;
     if (!ask(req('C', {std::to_string(feedGen), std::to_string(feedSeq)}), reply, now)) return;
-    if (reply.empty() || reply[0] != '1') return;
+    if (reply.empty() || reply[0] != '1') {  // (not asked again every turn)
+        waiting = true;
+        waitUntil = now + kFailBackoffMs;
+        return;
+    }
     auto   lines = split(reply.substr(1), '\n');
     auto   head = split(lines[0], kSep);
-    if (head.size() != 3) return;
+    if (head.size() != 3) {
+        waiting = true;
+        waitUntil = now + kFailBackoffMs;
+        return;
+    }
     uint32_t gen = (uint32_t)std::strtoul(head[0].c_str(), nullptr, 10);
     uint32_t seq = (uint32_t)std::strtoul(head[1].c_str(), nullptr, 10);
     bool     lost = head[2] == "1";
@@ -598,7 +620,7 @@ void mirrorCheckSoon() {
 bool mirrorSaveForTakeover() {
     ensureLoaded();
     if (manPath.empty()) return false;
-    dropTemp();  // (a half-copied file is not the card's)
+    putBack();  // (a half-copied file is not the card's; it is copied again if the takeover is called off)
     uint32_t now = monoMs();
     if (!saveManifest(now)) return false;
     if (!writeWhole(takePath, formatManifest(man))) {
@@ -620,13 +642,13 @@ void mirrorPoll(uint32_t now) {
 
     Cluster* c = Cluster::instance();
     if (!c || c->role() != Role::Follower || c->mainVersion() < axis::cluster::kProtocolVersion) {
-        if (ready) dropTemp();
+        if (ready) putBack();
         ready = false;
         return;
     }
     if (ready && (c->epoch() != readyEpoch || c->mainIp() != readyIp)) {  // another main (or the same, again)
         ready = false;
-        dropTemp();
+        putBack();
     }
 
     // the feed's position is written once nothing from it is waiting
@@ -693,13 +715,11 @@ void mirrorPoll(uint32_t now) {
         copyStep(now);
         return;
     }
-    if (pass == Pass::None && !stopped) {  // a pass to start? (it starts with its first request)
+    if (passWaiting && (int32_t)(now - passAgainAt) >= 0) passWaiting = false;
+    if (pass == Pass::None && !stopped && !passWaiting) {  // a pass to start? (it starts with its first request)
         if (!man.complete) {
-            if (!firstWaiting || (int32_t)(now - firstAgainAt) >= 0) {
-                firstWaiting = false;
-                checkWanted = false;
-                startPass(Pass::First, "", now);
-            }
+            checkWanted = false;
+            startPass(Pass::First, "", now);
         } else if (checkWanted) {
             checkWanted = false;
             startPass(Pass::Check, checkWhy, now);
