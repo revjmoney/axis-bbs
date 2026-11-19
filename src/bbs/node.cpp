@@ -1948,6 +1948,7 @@ void Node::key(char c) {
             }
             handle_ = h;
             if (!users_) {  // no accounts: in by handle
+                everIn_ = true;
                 state_ = State::Menu;
                 out_ += "\r\n\r\n";
                 out_ += DIM;
