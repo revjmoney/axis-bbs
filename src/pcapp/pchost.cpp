@@ -215,7 +215,10 @@ bbs::BbsConfig& PcBbs::cfgEdit() {
     return const_cast<bbs::BbsConfig&>(*cfg_);  // (every copy is made here or in cfgSet: not const underneath)
 }
 
-void PcBbs::cfgSet(bbs::BbsConfig c) { cfg_ = std::make_shared<bbs::BbsConfig>(std::move(c)); }
+void PcBbs::cfgSet(bbs::BbsConfig c) {
+    c.publicPort = (int)hostConfInt("public_port", 0, 0, 65535);  // keep the advertised external port across every live config swap
+    cfg_ = std::make_shared<bbs::BbsConfig>(std::move(c));
+}
 
 // <data>/flash/axis.ini, as the board's configLoad. The board's telnet port 23 is lan_port here (as the Linux axis
 // shows it): a stored 23 loads as lan_port and lan_port saves as 23, so the same file works for both programs.

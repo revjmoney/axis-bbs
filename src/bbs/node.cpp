@@ -3990,7 +3990,7 @@ void Node::showAxisNet() {
             SysInfo  s = info_();
             me.name = cfg_->bbsName;
             me.host = cfg_->publicHost;  // the public address only; never the LAN address or hostname (empty: the card advertises none)
-            me.port = cfg_->telnetPort > 0 ? cfg_->telnetPort : 23;
+            me.port = cfg_->advertisedPort();
             me.location = cfg_->location;
             me.sysop = cfg_->sysopHandle;
             me.blurb = std::string(kAxisSoftware) + " " + kAxisVersion;
