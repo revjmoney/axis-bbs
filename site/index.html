@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Axis Micro BBS Firmware: a real telnet BBS on an ESP32 touchscreen</title>
-<meta name="description" content="Axis Micro BBS Firmware is a real old-school telnet BBS written from scratch in C++ for the ESP32 Cheap Yellow Display: ANSI menus, file areas with ZMODEM, messages, multinode chat, a native Legend of the Red Dragon, and a touch sysop console. Made by Rev. J. Money, the maker of RotatoCAM.">
+<title>AXIS BBS: a real telnet BBS for Linux and the ESP32 touchscreen</title>
+<meta name="description" content="AXIS BBS is a real old-school telnet BBS written from scratch in C++, native on Linux (Windows coming soon) and on the ESP32 Cheap Yellow Display: ANSI menus, file areas with ZMODEM, messages, multinode chat, a native Legend of the Red Dragon, and a touch sysop console. Made by Rev. J. Money, the maker of RotatoCAM.">
 <meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
 <meta property="og:title" content="Axis Micro BBS Firmware">
@@ -75,7 +75,7 @@
         <h2 class="box-title" id="the-board">THE BOARD</h2>
         <dl>
           <dt>BBS</dt><dd>Axis Micro BBS Firmware</dd>
-          <dt>what</dt><dd>A real telnet BBS on a 2.8 inch ESP32 touchscreen. No PC behind it.</dd>
+          <dt>what</dt><dd>A real telnet BBS, native on Linux, and on a 2.8 inch ESP32 touchscreen with no PC behind it.</dd>
           <dt>sysop</dt><dd>Rev. J. Money, the maker of <a href="https://rotatocam.com">RotatoCAM</a></dd>
           <dt>price</dt><dd><span class="c-yellow">$79.00</span> + $9.00 shipping (US), <a href="#buy">ready to plug in</a></dd>
         </dl>
@@ -85,7 +85,7 @@
         <dl>
           <dt>software</dt><dd>Axis Micro BBS Firmware 0.53</dd>
           <dt>license</dt><dd>GPL-3.0+ by Rev. J. Money</dd>
-          <dt>hardware</dt><dd>ESP32-2432S028R, 240 MHz, 4 MB flash</dd>
+          <dt>runs on</dt><dd>Linux (x86_64, ARM64, 32-bit ARM); Windows coming soon; the ESP32-2432S028R board</dd>
           <dt>doors</dt><dd>Native LORD, in C++, over telnet</dd>
         </dl>
       </section>
@@ -125,6 +125,11 @@
     <div class="box callers">
       <h2 class="box-title" id="updates-title">LAST UPDATES</h2>
       <ul class="callers-list">
+        <li><span class="cl-date">2026-11-19</span><span class="cl-what">Looks restyle the file and message lists with list templates (.LST); ViSiON/3 and Renegade art codes on the way</span></li>
+        <li><span class="cl-date">2026-11-19</span><span class="cl-what">AXIS PC: axispc runs the BBS natively on Linux, many callers in one program, with .deb and AppImage packages. Windows coming soon.</span></li>
+        <li><span class="cl-date">2026-11-19</span><span class="cl-what">Clusters: a Linux box joins the ESP32 boards as nodes, with a card mirror and takeover</span></li>
+        <li><span class="cl-date">2026-11-17</span><span class="cl-what">AXIS Native: the board's own firmware runs on Linux as a service, with a desktop window and the LFD3K-SM radio modem</span></li>
+        <li><span class="cl-date">2026-11-15</span><span class="cl-what">Version 0.53 released, with the web installer for the board</span></li>
         <li><span class="cl-date">2026-11-08</span><span class="cl-what">Version 0.51: a Renegade-style waiting-for-caller screen in every look, one sysop menu, and a shared cluster key for linked boards</span></li>
         <li><span class="cl-date">2026-11-07</span><span class="cl-what">LORD on the board is the native C++ door. The DOS emulator is a separate PC build.</span></li>
         <li><span class="cl-date">2026-11-04</span><span class="cl-what">Local console opens on all 80 columns drawn crisp; ZOOM gives 40 big columns</span></li>
@@ -137,6 +142,59 @@
         <li><span class="cl-date">2026-11-03</span><span class="cl-what">LORD 4.07 plays on the CYD over telnet</span></li>
       </ul>
       <p class="more-line"><a href="https://github.com/revjmoney/axis-bbs/blob/HEAD/docs/FEATURES.md"><span class="c-grey">&#9472;&#9472;</span> more <span class="c-grey">&#9472;&#9472;</span></a> <span class="c-grey">the full log in FEATURES.md</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- AXIS on Linux -->
+<section class="section tight" id="linux" aria-labelledby="linux-title">
+  <div class="wrap">
+    <div class="eyebrow">The new direction</div>
+    <h2 id="linux-title">AXIS on Linux, Windows coming soon</h2>
+    <p class="lede">AXIS is growing from ESP32 firmware into a full native BBS. <code>axispc</code> runs many callers in one program on Linux, with the waiting-for-caller screen in your terminal or as a service; <code>axis</code> runs the board's own firmware in a desktop window. Packages: .deb and AppImage for x86_64 and ARM64, and a .deb for 32-bit ARM, built by GitHub Actions and published on <a href="https://github.com/revjmoney/axis-bbs/releases">GitHub Releases</a>. A native Windows build is coming soon. The ESP32 boards stay in the family as the small, compatible build and as cluster nodes.</p>
+    <div class="fgrid">
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-wfc.png"><img src="media/linux/linux-wfc.png" alt="axispc on Linux: The waiting-for-caller screen in your terminal: nodes, today, events, sysop keys." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>axispc on Linux</h3>
+          <p class="fcard-line">The waiting-for-caller screen in your terminal: nodes, today, events, sysop keys.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-window.png"><img src="media/linux/linux-window.png" alt="The axis window: The board's own firmware in a Linux desktop window." loading="lazy" width="960" height="720"></a>
+        <div class="fcard-body">
+          <h3>The axis window</h3>
+          <p class="fcard-line">The board's own firmware in a Linux desktop window.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-main-menu.png"><img src="media/linux/linux-main-menu.png" alt="Main menu: What a caller sees on the Linux build." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>Main menu</h3>
+          <p class="fcard-line">What a caller sees on the Linux build.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-message-areas.png"><img src="media/linux/linux-message-areas.png" alt="Message areas: The message list, drawn from the look's list template." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>Message areas</h3>
+          <p class="fcard-line">The message list, drawn from the look's list template.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-file-areas.png"><img src="media/linux/linux-file-areas.png" alt="File areas: The file vaults on a Linux data folder." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>File areas</h3>
+          <p class="fcard-line">The file vaults on a Linux data folder.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-system-stats.png"><img src="media/linux/linux-system-stats.png" alt="System stats: Nodes, calls, members and the top callers." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>System stats</h3>
+          <p class="fcard-line">Nodes, calls, members and the top callers.</p>
+        </div>
+      </article>
     </div>
   </div>
 </section>

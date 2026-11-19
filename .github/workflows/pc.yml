@@ -1,13 +1,15 @@
 # axispc: build the native PC BBS and its packages for x86_64, ARM64 and 32-bit ARM.
-# Runs on pushes to the pc/app branch and on pc-v* tags. Each native runner builds axispc, runs the
+# Runs on pushes to main and pc/app, on pull requests to main, and on pc-v* tags. Each native runner builds axispc, runs the
 # host tests, and makes a .deb (CPack) and an AppImage (linuxdeploy). The 32-bit ARM job cross
 # compiles axispc and makes the .deb only. A pc-v* tag attaches every artifact to a GitHub release.
 # Uses only the built in GITHUB_TOKEN. linuxdeploy is fetched by a pinned download step below.
 name: PC app
 on:
   push:
-    branches: [pc/app]
+    branches: [main, pc/app]
     tags: ["pc-v*"]
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
 concurrency:
