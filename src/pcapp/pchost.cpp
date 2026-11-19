@@ -24,6 +24,7 @@
 
 #include "bbs/features.h"
 #include "bbs/setup_wizard.h"
+#include "bbs/theme.h"
 #include "bbs/version.h"
 #include "bbs/viewcache.h"
 #include "lord/game.h"
@@ -211,12 +212,14 @@ PcBbs::PcBbs(const std::string& dataDir)
 PcBbs::~PcBbs() = default;
 
 bbs::BbsConfig& PcBbs::cfgEdit() {
+    bbs::theme::forgetArtStyle();  // (the look may be what is about to change)
     if (cfg_.use_count() > 1) cfg_ = std::make_shared<bbs::BbsConfig>(*cfg_);
     return const_cast<bbs::BbsConfig&>(*cfg_);  // (every copy is made here or in cfgSet: not const underneath)
 }
 
 void PcBbs::cfgSet(bbs::BbsConfig c) {
     c.publicPort = (int)hostConfInt("public_port", 0, 0, 65535);  // keep the advertised external port across every live config swap
+    bbs::theme::forgetArtStyle();  // (a new look may have come with it)
     cfg_ = std::make_shared<bbs::BbsConfig>(std::move(c));
 }
 

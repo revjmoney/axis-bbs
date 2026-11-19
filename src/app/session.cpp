@@ -111,6 +111,8 @@ void Session::wireNode() {
     bbs::theme::setArtTop([t](const std::string& name, int rows) { return t->themeArtTop(name, rows); });  // (a list screen's header)
     bbs::theme::setListTemplate([t](const std::string& name) { return t->listTemplateText(name); },  // a look's list templates
                                 [h](const std::string& name) { h->event("look: " + name + " is not a valid list template, using the built-in list"); });
+    bbs::theme::setThemeCfg([t](std::string& text) { return t->themeCfgText(text); },  // the look's art dialect and colours
+                            [t, h](const std::string& why) { h->event("THEME.CFG for " + t->lookId() + ": " + why + ", drawing it as axis"); });
     node->setOneLiners([d] { return d->sharedOneLiners(); },  // the wall: here on the main, over the link on a follower
                        [d, h](const std::string& line) {
                            h->event("oneliner: " + line);

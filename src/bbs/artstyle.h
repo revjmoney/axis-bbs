@@ -21,6 +21,7 @@ const char* dialectName(Dialect d);                              // "axis", "vis
 bool        dialectFrom(const std::string& name, Dialect& out);  // case-insensitive; false when unknown
 std::string attrSgr(uint8_t attr);                               // a packed DOS attribute as one SGR sequence
 // key=value lines (dialect=, c1..c7=, r0..r9=; ';' starts a comment; other keys are ignored). Any bad line: false, `out` = ArtStyle{}.
-bool parseThemeCfg(const std::string& text, ArtStyle& out);
+// `why` (optional) hears what was wrong, in a few words.
+bool parseThemeCfg(const std::string& text, ArtStyle& out, std::string* why = nullptr);
 
 }  // namespace axis::bbs

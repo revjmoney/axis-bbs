@@ -22,8 +22,9 @@ std::string trim(const std::string& s) {
     return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
 }
 
-bool fail(ArtStyle& out) {
+bool fail(ArtStyle& out, std::string* why, const char* what) {
     out = ArtStyle{};
+    if (why) *why = what;
     return false;
 }
 }  // namespace
@@ -43,7 +44,7 @@ std::string attrSgr(uint8_t attr) {
            kDosToAnsi[(attr >> 4) & 7] + "m";
 }
 
-bool parseThemeCfg(const std::string& text, ArtStyle& out) {
+bool parseThemeCfg(const std::string& text, ArtStyle& out, std::string* why) {
     ArtStyle s;
     size_t   at = text.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;  // (a UTF-8 BOM from a Windows editor)
     while (at < text.size()) {
@@ -55,22 +56,22 @@ bool parseThemeCfg(const std::string& text, ArtStyle& out) {
         line = trim(line);
         if (line.empty()) continue;
         size_t eq = line.find('=');
-        if (eq == std::string::npos) return fail(out);
+        if (eq == std::string::npos) return fail(out, why, "a line without an =");
         std::string key = lower(trim(line.substr(0, eq))), val = trim(line.substr(eq + 1));
         if (key == "dialect") {
-            if (!dialectFrom(val, s.dialect)) return fail(out);
+            if (!dialectFrom(val, s.dialect)) return fail(out, why, "an unknown dialect");
             continue;
         }
         bool isC = key.size() == 2 && key[0] == 'c' && key[1] >= '1' && key[1] <= '7';
         bool isR = key.size() == 2 && key[0] == 'r' && key[1] >= '0' && key[1] <= '9';
         if (!isC && !isR) continue;  // (the look's other keys: not this parser's)
-        if (val.empty() || val.size() > 3) return fail(out);
+        if (val.empty() || val.size() > 3) return fail(out, why, "a colour that is not 0 to 255");
         int n = 0;
         for (char ch : val) {
-            if (ch < '0' || ch > '9') return fail(out);
+            if (ch < '0' || ch > '9') return fail(out, why, "a colour that is not 0 to 255");
             n = n * 10 + (ch - '0');
         }
-        if (n > 255) return fail(out);
+        if (n > 255) return fail(out, why, "a colour that is not 0 to 255");
         (isC ? s.c[key[1] - '1'] : s.r[key[1] - '0']) = (uint8_t)n;
     }
     out = s;

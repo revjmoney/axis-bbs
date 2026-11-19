@@ -328,6 +328,33 @@ std::string ThemeProvider::listTemplateText(const std::string& name) {
     return s;
 }
 
+bool ThemeProvider::themeCfgText(std::string& out) {
+    constexpr size_t kCfgMax = 1024;  // a longer THEME.CFG counts as none
+    std::string      s;
+    out.clear();
+    if (!isFollower()) {
+        if (!host_.hasSd() || cfg().theme.empty()) return true;
+        s = readThemeFile(cfg().theme.c_str(), "THEME.CFG", kCfgMax + 1, 0, nullptr);
+        if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(cfg().theme), "THEME.CFG", kCfgMax + 1, 0, nullptr);
+        if (s.size() > kCfgMax) s.clear();
+        out = std::move(s);
+        return true;
+    }
+    if (cfgCached_) {
+        out = cfgCache_;
+        return true;
+    }
+    bool answered = false;
+    s = themeArtRemote("THEME.CFG", &answered);  // the main's theme folder, through the same "T" requests the art uses
+    if (s.size() > kCfgMax) s.clear();
+    if (answered) {  // (a failed ask is asked again)
+        cfgCache_ = s;
+        cfgCached_ = true;
+    }
+    out = std::move(s);
+    return answered;
+}
+
 // a menu's art from this board's own storage a piece at a time (false when it isn't here: the whole-file path)
 bool ThemeProvider::menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) {
     if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
@@ -366,6 +393,10 @@ void ThemeProvider::forgetRemote() {
     wfcAnsKey_.clear();  // (and so may the waiting screen)
     existsCache_.clear();
     listCache_.clear();
+    cfgCache_.clear();
+    cfgCache_.shrink_to_fit();
+    cfgCached_ = false;
+    axis::bbs::theme::forgetArtStyle();  // (the look may have changed with it)
     mainKnowsExists_ = false;  // (this may be another main: an older one answers every unknown letter "0")
 }
 

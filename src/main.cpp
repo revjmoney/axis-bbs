@@ -188,10 +188,14 @@ enum class Mode { Normal, SetupChoice, SetupTelnet, SetupTouch, WifiPick };
 // hands them the switches. Read with boardCfg->, change with cfgEdit() or cfgSet().
 static std::shared_ptr<const axis::bbs::BbsConfig> boardCfg = std::make_shared<axis::bbs::BbsConfig>();
 static axis::bbs::BbsConfig& cfgEdit() {
+    axis::bbs::theme::forgetArtStyle();  // (the look may be what is about to change)
     if (boardCfg.use_count() > 1) boardCfg = std::make_shared<axis::bbs::BbsConfig>(*boardCfg);
     return const_cast<axis::bbs::BbsConfig&>(*boardCfg);  // (every copy is made here or in cfgSet: not const underneath)
 }
-static void cfgSet(axis::bbs::BbsConfig c) { boardCfg = std::make_shared<axis::bbs::BbsConfig>(std::move(c)); }
+static void cfgSet(axis::bbs::BbsConfig c) {
+    axis::bbs::theme::forgetArtStyle();  // (a new look may have come with it)
+    boardCfg = std::make_shared<axis::bbs::BbsConfig>(std::move(c));
+}
 static Mode                 mode = Mode::Normal;
 static String               setupPin;
 static WiFiServer           server;
