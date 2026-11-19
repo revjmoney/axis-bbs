@@ -26,7 +26,7 @@ public:
     int       beginPacket(IPAddress ip, uint16_t port);
     size_t    write(const uint8_t* buf, size_t n);
     size_t    write(uint8_t c) { return write(&c, 1); }
-    int       endPacket();  // 1 when sent
+    int       endPacket();  // 1 when sent; 0 (nothing sent) when the packet outgrew one datagram
     int       parsePacket();  // the next datagram's size, 0 when none waits
     int       available() { return (int)(rx_.size() - rxPos_); }
     int       read(uint8_t* buf, size_t n);
@@ -43,4 +43,5 @@ private:
     uint32_t    rxIp_ = 0, txIp_ = 0;
     uint16_t    rxPort_ = 0, txPort_ = 0;
     bool        txOpen_ = false;
+    bool        txOver_ = false;  // write() went past one datagram: endPacket sends nothing
 };

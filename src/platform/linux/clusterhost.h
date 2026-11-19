@@ -9,13 +9,15 @@
 
 #include "platform/linux/paths.h"
 
-// What this program last was in the cluster. <data>/cluster/state holds three lines:
-// state=follower|main|handedback, epoch=<the main's epoch>, since=<seconds since 1970>.
+// What this program last was in the cluster. <data>/cluster/state holds four lines:
+// state=follower|main|handedback, epoch=<the main's epoch>, since=<seconds since 1970>, and
+// solo_until=<seconds since 1970>: after the follower's watchdog gave up on a main, solo until then (0: no back-off).
 enum class Standing { Follower, Main, HandedBack };
 struct ClusterState {
     Standing state = Standing::Follower;
     uint32_t epoch = 0;
     long     since = 0;
+    long     soloUntil = 0;
 };
 bool clusterStateLoad(ClusterState& s);        // false: no state file (or it cannot be read); `s` keeps the defaults
 bool clusterStateSave(const ClusterState& s);  // a temp file, then a rename
@@ -25,7 +27,8 @@ std::string clusterKeyRead();
 bool        clusterKeyWrite(const std::string& key);  // mode 0600, a temp file, then a rename
 bool        clusterKeyRemove();                        // true when a key file was there and is gone
 
-// Before setup(): state main (and a key) is MirrorMain; state handedback is Follower; else listen on UDP 2325 up to
+// Before setup(): state main (and a key) is MirrorMain; state handedback is Follower; a solo_until still ahead is
+// Solo at once (the back-off after a failed join, logged); else listen on UDP 2325 up to
 // listenMs for an announcement that opens with the key: version 2 is Follower, older logs the "older firmware"
 // line; nothing heard (or no key to open one with) is Solo.
 Profile decideProfile(uint32_t listenMs = 5000);

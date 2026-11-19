@@ -567,6 +567,7 @@ void WiFiUDP::stop() {
 
 int WiFiUDP::beginPacket(IPAddress ip, uint16_t port) {
     tx_.clear();
+    txOver_ = false;
     txIp_ = (uint32_t)ip;
     txPort_ = port;
     txOpen_ = fd_ >= 0;
@@ -575,7 +576,10 @@ int WiFiUDP::beginPacket(IPAddress ip, uint16_t port) {
 
 size_t WiFiUDP::write(const uint8_t* buf, size_t n) {
     if (!txOpen_ || !buf) return 0;
-    if (tx_.size() + n > 1472) n = tx_.size() < 1472 ? 1472 - tx_.size() : 0;  // one Ethernet frame's datagram
+    if (txOver_ || tx_.size() + n > 1472) {  // past one Ethernet frame's datagram: the whole packet is dropped
+        txOver_ = true;
+        return 0;
+    }
     tx_.append((const char*)buf, n);
     return n;
 }
@@ -583,6 +587,11 @@ size_t WiFiUDP::write(const uint8_t* buf, size_t n) {
 int WiFiUDP::endPacket() {
     if (!txOpen_) return 0;
     txOpen_ = false;
+    if (txOver_) {  // too big for one datagram: nothing sent rather than a cut one
+        tx_.clear();
+        txOver_ = false;
+        return 0;
+    }
     if (silent()) {  // Solo: nothing goes out on the cluster's port
         tx_.clear();
         return 1;
@@ -605,11 +614,11 @@ int WiFiUDP::parsePacket() {
     for (int k = 0; k < 64; k++) {
         sockaddr_in from{};
         socklen_t   len = sizeof from;
-        ssize_t     n = ::recvfrom(fd_, buf, sizeof buf, MSG_DONTWAIT, (sockaddr*)&from, &len);
+        ssize_t     n = ::recvfrom(fd_, buf, sizeof buf, MSG_DONTWAIT | MSG_TRUNC, (sockaddr*)&from, &len);
         if (n < 0 && errno == EINTR) continue;
         if (n < 0) return 0;  // nothing waits (or an error the next call meets again)
         uint32_t ip = from.sin_family == AF_INET ? from.sin_addr.s_addr : 0;
-        if (n == 0 || !NetGate::isLan(ip)) continue;
+        if (n == 0 || (size_t)n > sizeof buf || !NetGate::isLan(ip)) continue;  // (bigger than the buffer: not ours)
         if (silent()) {
             soloWatchHeard(std::string(buf, (size_t)n), ip);
             continue;

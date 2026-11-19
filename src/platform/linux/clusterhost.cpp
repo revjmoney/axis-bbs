@@ -54,6 +54,7 @@ constexpr uint32_t kKeyCheckMs = 5000;      // Solo reads the key file again thi
 constexpr uint32_t kBroadcastMs = 60000;    // the drain tells the callers how long is left this often
 constexpr uint32_t kSetupCheckMs = 2000;    // a board not set up yet: configLoad() looked at this often
 constexpr uint32_t kYieldLogMs = 60000;     // takeoverWanted's line, at most this often
+constexpr long     kSoloBackoffS = 600;     // after the watchdog's restart to solo: solo this long, mains ignored
 
 Profile      started = Profile::Solo;  // clusterHostStart's profile
 ClusterState saved;                    // the state file as it was at the start (state handedback changes once)
@@ -176,6 +177,7 @@ bool clusterStateLoad(ClusterState& s) {
         if (k == "state") got.state = v == "main" ? Standing::Main : v == "handedback" ? Standing::HandedBack : Standing::Follower;
         else if (k == "epoch") got.epoch = (uint32_t)std::strtoul(v.c_str(), nullptr, 10);
         else if (k == "since") got.since = std::strtol(v.c_str(), nullptr, 10);
+        else if (k == "solo_until") got.soloUntil = std::strtol(v.c_str(), nullptr, 10);
     }
     s = got;
     return true;
@@ -183,7 +185,7 @@ bool clusterStateLoad(ClusterState& s) {
 
 bool clusterStateSave(const ClusterState& s) {
     std::string text = std::string("state=") + standingName(s.state) + "\nepoch=" + std::to_string(s.epoch) +
-                       "\nsince=" + std::to_string(s.since) + "\n";
+                       "\nsince=" + std::to_string(s.since) + "\nsolo_until=" + std::to_string(s.soloUntil) + "\n";
     return writeFile(stateFile(), text);
 }
 
@@ -210,6 +212,10 @@ Profile decideProfile(uint32_t listenMs) {
         std::printf("axis: cluster: the saved state is main but there is no cluster key, so not taking main\n");
     }
     if (haveState && st.state == Standing::HandedBack) return Profile::Follower;
+    if (haveState && st.soloUntil > (long)time(nullptr)) {  // the watchdog gave up on a main a moment ago
+        std::printf("axis: cluster: staying solo for %ld minutes after a failed join\n", kSoloBackoffS / 60);
+        return Profile::Solo;
+    }
     if (key.empty()) {
         std::printf("axis: cluster: no cluster key, so not looking for a main\n");
         return Profile::Solo;
@@ -296,6 +302,7 @@ void soloWatchHeard(const std::string& d, uint32_t fromIp) {
     uint32_t version = 0;
     if (started != Profile::Solo || !announcement(soloKey, d, version)) return;
     if (version >= axis::cluster::kProtocolVersion) {
+        if (saved.soloUntil > (long)time(nullptr)) return;  // the back-off after a failed join: no drain yet
         heardMain = true;
         heardAt = millis();
     } else {
@@ -307,11 +314,11 @@ void clusterHostWaitSetup() { waitSetup = true; }
 
 namespace {
 
-void broadcastLeft(uint32_t now) {  // "@BCAST This BBS joins its cluster in N minutes. Please finish up."
+void broadcastLeft(uint32_t now) {  // "@BCAST This BBS joins its cluster in N minutes. Please finish up." ("1 minute")
     uint32_t spent = now - drainStart;
     uint32_t left = spent >= drainMs ? 1 : (drainMs - spent + 59999) / 60000;
     std::string cmd = "@BCAST This BBS joins its cluster in " + std::to_string(left) +
-                      " minutes. Please finish up.";
+                      (left == 1 ? " minute" : " minutes") + ". Please finish up.";
     nativeRun(cmd.c_str());
 }
 
@@ -368,6 +375,9 @@ void noMain() {
         if (clusterStateSave(st)) hostRestart("no main on the LAN: taking main");
         std::printf("axis: cluster: cannot save the cluster state, so not taking main\n");
     }
+    ClusterState st = saved;  // the back-off: decideProfile and the solo watch leave mains alone for a while
+    st.soloUntil = (long)time(nullptr) + kSoloBackoffS;
+    if (!clusterStateSave(st)) std::printf("axis: cluster: cannot save the cluster state\n");
     hostRestart("no main on the LAN: solo");
 }
 
