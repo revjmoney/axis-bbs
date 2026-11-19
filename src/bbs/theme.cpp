@@ -3,9 +3,11 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/theme.h"
 
+#include <algorithm>
 #include <cctype>
 
 #include "bbs/artfetch.h"
+#include "bbs/listtemplate.h"
 
 namespace axis::bbs::theme {
 
@@ -157,6 +159,25 @@ std::string artFor(const std::string& title, int rows) {
     return a;
 }
 
+static std::function<std::string(const std::string&)> listRead_;
+static std::function<void(const std::string&)>        listBad_;
+static std::vector<std::string>                       listBadSeen_;
+void setListTemplate(std::function<std::string(const std::string&)> read, std::function<void(const std::string&)> bad) {
+    listRead_ = std::move(read);
+    listBad_ = std::move(bad);
+}
+bool listTemplate(const std::string& name, ListTemplate& out) {
+    if (!listRead_) return false;
+    std::string text = listRead_(name);
+    if (text.empty()) return false;
+    if (parseListTemplate(text, out)) return true;
+    if (std::find(listBadSeen_.begin(), listBadSeen_.end(), name) == listBadSeen_.end()) {  // one log line per name
+        listBadSeen_.push_back(name);
+        if (listBad_) listBad_(name);
+    }
+    return false;
+}
+
 Look look() { return look_; }
 
 struct LookRow {
@@ -214,6 +235,7 @@ const char* menuScreenFile(const std::string& name) {
         {"NEWUSER.ANS", "NEWUSER.ANS"}, {"PDMATRIX.ANS", "MATRIX.ANS"},   {"FILEM.ANS", "FILES.ANS"},
         {"DOORSM.ANS", "DOORS.ANS"},    {"MSGMENU.ANS", "MSGS.ANS"},      {"PRELOGON1.ANS", "PRELOGON.ANS"},
         {"PRELOGON2.ANS", "SHOP.ANS"},  {"PRELOGON3.ANS", "MILL.ANS"},
+        {"FILES.LST", "FILES.LST"},     {"MSGS.LST", "MSGS.LST"},         {"USERS.LST", "USERS.LST"},
     };
     for (const auto& m : kMap)
         if (name == m[0]) return m[1];

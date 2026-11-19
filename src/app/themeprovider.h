@@ -56,6 +56,9 @@ public:
     std::string              scriptFile(const std::string& name);
     std::vector<std::string> scriptNames();
 #endif
+    // A look's list template text (FILES.LST ...): its theme folder, the legacy folder, then the menu set's /menus (menuFile's order).
+    // A follower asks the main (the same "T" and "U" requests) and keeps the answer until the settings arrive.
+    std::string listTemplateText(const std::string& name);
     bool        menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece);
     std::string menuArtPiece(const std::string& name, size_t offset, size_t want, bool* exists);
 
@@ -83,6 +86,7 @@ private:
     std::map<std::string, std::string> menuCache_;
     // The follower's answers from the main ("E"), kept until the theme may change (cleared with artCache).
     std::map<std::string, bool> existsCache_;
+    std::map<std::string, std::string> listCache_;  // a follower's list templates (small), cleared with the rest
     uint32_t                    lastEMissMs_ = 0;         // nowMs() of the last unanswered "E" (0: none)
     bool                        mainKnowsExists_ = false;  // the main has answered "E" with a "1" once: its "0" can be trusted
 };

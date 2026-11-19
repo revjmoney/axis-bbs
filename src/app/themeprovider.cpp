@@ -313,6 +313,16 @@ std::vector<std::string> ThemeProvider::scriptNames() {
 }
 #endif
 
+std::string ThemeProvider::listTemplateText(const std::string& name) {
+    if (!axis::bbs::theme::menuScreenFile(name)) return "";  // only the names the resolver knows (plain names, no folders)
+    if (!isFollower()) return menuFileLocal(name);
+    if (auto it = listCache_.find(name); it != listCache_.end()) return it->second;
+    if (!menuExists(name)) return "";  // (menuExists remembers the main's answer, so a look without one costs no second ask)
+    std::string s = menuFile(name);
+    if (!s.empty()) listCache_[name] = s;  // (a failed ask is asked again)
+    return s;
+}
+
 // a menu's art from this board's own storage a piece at a time (false when it isn't here: the whole-file path)
 bool ThemeProvider::menuArtPieces(const std::string& name, const axis::bbs::ArtEmit& piece) {
     if (name.empty() || name.find('/') != std::string::npos || name.find("..") != std::string::npos) return false;
@@ -350,6 +360,7 @@ void ThemeProvider::forgetRemote() {
     artCache_.clear();  // the theme may have changed
     wfcAnsKey_.clear();  // (and so may the waiting screen)
     existsCache_.clear();
+    listCache_.clear();
     mainKnowsExists_ = false;  // (this may be another main: an older one answers every unknown letter "0")
 }
 

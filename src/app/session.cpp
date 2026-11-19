@@ -109,6 +109,8 @@ void Session::wireNode() {
 #endif
     bbs::theme::setArt([t](const std::string& name) { return t->themeArt(name); });  // section header screens
     bbs::theme::setArtTop([t](const std::string& name, int rows) { return t->themeArtTop(name, rows); });  // (a list screen's header)
+    bbs::theme::setListTemplate([t](const std::string& name) { return t->listTemplateText(name); },  // a look's list templates
+                                [h](const std::string& name) { h->event("look: " + name + " is not a valid list template, using the built-in list"); });
     node->setOneLiners([d] { return d->sharedOneLiners(); },  // the wall: here on the main, over the link on a follower
                        [d, h](const std::string& line) {
                            h->event("oneliner: " + line);
