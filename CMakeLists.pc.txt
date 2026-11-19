@@ -56,6 +56,7 @@ set(AXISCORE_SOURCES
     src/bbs/menufile.cpp
     src/bbs/lightbar.cpp
     src/bbs/listscreen.cpp
+    src/bbs/listtemplate.cpp
     src/bbs/menurunner.cpp
     src/bbs/loginseq.cpp
     src/bbs/newuser.cpp
@@ -142,6 +143,7 @@ add_executable(axis_tests
     tests/test_acs.cpp
     tests/test_pipecodes.cpp
     tests/test_menufile.cpp
+    tests/test_listtemplate.cpp
     tests/test_lightbar.cpp
     tests/test_menurunner.cpp
     tests/test_node_menus.cpp
