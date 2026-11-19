@@ -182,8 +182,9 @@ void Node::loggedIn() {
     else menuOrLiners();
 }
 
+constexpr char kCtrlZ = '\x1a';  // the end-of-file mark (Ctrl-Z)
 static std::string cutCtrlZ(std::string a) {  // theme art ends at the first Ctrl-Z (a SAUCE record after it is not the picture)
-    if (size_t z = a.find(''); z != std::string::npos) a.resize(z);
+    if (size_t z = a.find(kCtrlZ); z != std::string::npos) a.resize(z);
     return a;
 }
 
