@@ -166,6 +166,7 @@ static std::vector<std::string>                       listBadSeen_;
 void setListTemplate(std::function<std::string(const std::string&)> read, std::function<void(const std::string&)> bad) {
     listRead_ = std::move(read);
     listBad_ = std::move(bad);
+    listBadSeen_.clear();  // a new reader reports its bad files afresh
 }
 bool listTemplate(const std::string& name, ListTemplate& out) {
     if (!listRead_) return false;
