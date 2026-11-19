@@ -196,7 +196,7 @@ TEST_CASE("login sequence: user stats and who's online are the existing screens"
     r.fs["LOGIN.SEQ"] = "step=USERSTATS|0|0|0|\nstep=WHOISONLINE|0|0|0|\nstep=DISPLAYFILE|0|0|0|AFTER\n";
     r.fs["AFTER.ANS"] = "AFTER ART";
     std::string out = loginAll(r);
-    CHECK(out.find("KB free") != std::string::npos);
+    CHECK(out.find("time left") != std::string::npos);  // your stats
     CHECK(out.find("WHO'S ONLINE") == std::string::npos);  // the stats stay up: who's online clears the screen
     std::string next = r.type(" ");
     CHECK(next.find("WHO'S ONLINE") != std::string::npos);

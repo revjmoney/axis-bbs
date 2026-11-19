@@ -5,8 +5,11 @@
 #include "doctest.h"
 #include "bbs/features.h"
 #include "bbs/login_art.h"
+#include "bbs/axisnet.h"
 #include "bbs/node.h"
+#include "bbs/password.h"
 #include "bbs/theme.h"
+#include "bbs/users.h"
 
 using axis::bbs::Node;
 using axis::bbs::SysInfo;
@@ -90,14 +93,183 @@ TEST_CASE("credits name Rev J Money, rotatocam.com and jmscnc.com") {
     CHECK(out.find("Axis Micro BBS Firmware") != std::string::npos);
 }
 
-TEST_CASE("info shows the node's address and uptime") {
+TEST_CASE("info shows the board's uptime, not its address") {
     Node n = loggedIn();
     type(n, "I");
     std::string out = plain(n.takeOutput());
-    CHECK(out.find("192.168.1.77") != std::string::npos);
-    CHECK(out.find("axis.local") != std::string::npos);
     CHECK(out.find("1h 2m") != std::string::npos);
-    CHECK(out.find("SD card 7580 MB") != std::string::npos);
+    CHECK(out.find("192.168.1.77") == std::string::npos);
+    CHECK(out.find("axis.local") == std::string::npos);
+    CHECK(out.find("SD card 7580 MB") == std::string::npos);
+    CHECK(out.find("TestNet") == std::string::npos);
+}
+
+namespace {
+uint32_t statsRng() { return 0x5A5A5A5Au; }
+SysInfo  privateInfo() {
+    SysInfo s;
+    s.ip = "10.0.0.9";
+    s.host = "secret-host";
+    s.wifi = "HomeNet";
+    s.rssi = -50;
+    s.storage = "/data/sd";
+    s.uptimeSec = 3725;
+    s.freeHeap = 150000;
+    s.hardware = "PC";
+    s.nodesTotal = 2;
+    s.nodes = {"Spindle Kid", ""};
+    return s;
+}
+axis::bbs::User statsUser(const char* handle, uint32_t calls, uint32_t up, uint32_t down) {
+    axis::bbs::User u;
+    u.handle = handle;
+    u.salt = axis::bbs::makeSalt(statsRng);
+    u.hash = axis::bbs::hashPassword(u.salt, "secret99");
+    u.status = axis::bbs::User::Status::Validated;
+    u.calls = calls;
+    u.uploads = up;
+    u.downloads = down;
+    return u;
+}
+// a board with three callers on the books (one a twit), Spindle Kid logged in
+struct StatsRig {
+    axis::bbs::UserStore users;
+    Node                 n;
+    explicit StatsRig(axis::bbs::BbsConfig c) : n(1, privateInfo, std::move(c)) {
+        axis::bbs::User me = statsUser("Spindle Kid", 41, 2 * 1024 * 1024, 48 * 1024);
+        me.created = 1700000000;   // 2023-11-14
+        me.lastCall = 1750000000;  // 2025-06-15
+        me.location = "Myrtle Beach";
+        users.add(me);
+        users.add(statsUser("Top Dog", 900, 0, 5 * 1024));
+        axis::bbs::User twit = statsUser("TwitCaller", 5000, 0, 0);
+        twit.twit = true;
+        users.add(twit);
+        n.setAccounts(&users, [] {}, statsRng, [] { return 1800000000u; });
+        n.setDayStats([] {
+            axis::bbs::DayStats d;
+            d.calls = 7, d.posts = 3, d.uploads = 2, d.total = 1234;
+            return d;
+        });
+        n.begin(0);
+        type(n, "Spindle Kid\rsecret99\r");
+        n.takeOutput();
+    }
+    std::string key(const char* k) {
+        type(n, k);
+        return plain(n.takeOutput());
+    }
+};
+axis::bbs::BbsConfig statsCfg() {
+    axis::bbs::BbsConfig c;
+    c.bbsName = "Chip Pile BBS";
+    c.location = "Myrtle Beach";
+    c.sysopHandle = "Rev";
+    return c;
+}
+void checkPrivate(const std::string& out) {
+    for (const char* p : {"10.0.0.9", "secret-host", "HomeNet", "/data/sd", "dBm", "KB free"}) CHECK(out.find(p) == std::string::npos);
+}
+}  // namespace
+
+TEST_CASE("system stats show the board's numbers and no private details") {
+    StatsRig r(statsCfg());
+    std::string out = r.key("i");
+    checkPrivate(out);
+    CHECK(out.find("Chip Pile BBS") != std::string::npos);
+    CHECK(out.find("Rev") != std::string::npos);
+    CHECK(out.find("1 on now of 2") != std::string::npos);
+    CHECK(out.find("7 calls, 3 posts, 2 uploads") != std::string::npos);
+    CHECK(out.find("1234 calls") != std::string::npos);
+    CHECK(out.find("members   2") != std::string::npos);  // the twit is not counted for a caller
+    CHECK(out.find("Top Dog") != std::string::npos);      // the top caller
+    CHECK(out.find("900") != std::string::npos);
+    CHECK(out.find("2.0M") != std::string::npos);         // the top uploader's bytes
+    CHECK(out.find("TwitCaller") == std::string::npos);
+    size_t top = out.find("callers ");
+    REQUIRE(top != std::string::npos);
+    CHECK(out.find("Top Dog", top) < out.find("Spindle Kid", top));  // first in the callers column
+}
+
+TEST_CASE("your stats show the caller's own numbers") {
+    StatsRig r(statsCfg());
+    std::string out = r.key("z");
+    checkPrivate(out);
+    CHECK(out.find("Spindle Kid") != std::string::npos);
+    CHECK(out.find("calls     42") != std::string::npos);  // this call counted
+    CHECK(out.find("since 2023-11-14") != std::string::npos);
+    CHECK(out.find("2025-06-15") != std::string::npos);    // the call before this one
+    CHECK(out.find("2.0M / 48K") != std::string::npos);
+    CHECK(out.find("Myrtle Beach") != std::string::npos);
+    CHECK(out.find("time left") != std::string::npos);
+    CHECK(out.find("Top Dog") == std::string::npos);
+}
+
+TEST_CASE("about shows the public address only when set") {
+    StatsRig plainBoard(statsCfg());
+    std::string out = plainBoard.key("c");
+    checkPrivate(out);
+    CHECK(out.find("telnet") == std::string::npos);
+    CHECK(out.find("Rev. J. Money, rotatocam.com, jmscnc.com") != std::string::npos);
+    CHECK(out.find("GPLv3") != std::string::npos);
+    CHECK(out.find(axis::bbs::kAxisVersion) != std::string::npos);
+    CHECK(out.find("PC") != std::string::npos);
+    axis::bbs::BbsConfig c = statsCfg();
+    c.publicHost = "bbs.example.org";
+    c.telnetPort = 2323;
+    StatsRig pub(c);
+    out = pub.key("c");
+    checkPrivate(out);
+    CHECK(out.find("bbs.example.org port 2323") != std::string::npos);
+    CHECK(out.find("Rev. J. Money, rotatocam.com, jmscnc.com") != std::string::npos);
+}
+
+TEST_CASE("the matrix front door shows no private address before login") {
+    axis::bbs::BbsConfig cfg;
+    cfg.theme = "oblivion";  // the matrix front door (the o2 look opens on it)
+    cfg.bbsName = "Chip Pile BBS";
+    Node n(1, privateInfo, cfg);
+    n.begin(0);
+    std::string out = plain(n.takeOutput());
+    CHECK(n.state() == Node::State::Matrix);
+    for (const char* p : {"10.0.0.9", "secret-host", "/data/sd"}) CHECK(out.find(p) == std::string::npos);
+    CHECK(out.find("bbs.example.org") == std::string::npos);  // no dial line without a public address
+    CHECK(out.find("C H I P") != std::string::npos);  // the board name, letter-spaced in the title bar
+
+    cfg.publicHost = "bbs.example.org";
+    Node n2(1, privateInfo, cfg);
+    n2.begin(0);
+    std::string out2 = plain(n2.takeOutput());
+    CHECK(out2.find("bbs.example.org") != std::string::npos);  // the public address, when the sysop set one
+    for (const char* p : {"10.0.0.9", "secret-host"}) CHECK(out2.find(p) == std::string::npos);
+    axis::bbs::theme::use(axis::bbs::theme::Look::Axis);
+}
+
+TEST_CASE("the AxisNet card advertises the public address only, never the LAN one") {
+    axis::bbs::BbsConfig cfg;
+    cfg.bbsName = "Chip Pile BBS";
+    Node n(1, privateInfo, cfg);
+    n.begin(0);
+    n.takeOutput();
+    type(n, "Rev\r");  // logged in by handle
+    n.takeOutput();
+    type(n, "j");
+    std::string out = plain(n.takeOutput());
+    CHECK(out.find("AXIS NET") != std::string::npos);
+    CHECK(out.find("no public address") != std::string::npos);  // empty publicHost: the card advertises none
+    for (const char* p : {"10.0.0.9", "secret-host"}) CHECK(out.find(p) == std::string::npos);
+
+    cfg.publicHost = "bbs.example.org";
+    cfg.telnetPort = 2323;
+    Node n2(1, privateInfo, cfg);
+    n2.begin(0);
+    n2.takeOutput();
+    type(n2, "Rev\r");
+    n2.takeOutput();
+    type(n2, "j");
+    std::string out2 = plain(n2.takeOutput());
+    CHECK(out2.find("bbs.example.org:2323") != std::string::npos);
+    for (const char* p : {"10.0.0.9", "secret-host"}) CHECK(out2.find(p) == std::string::npos);
 }
 
 TEST_CASE("goodbye logs off and asks to hang up") {
@@ -230,10 +402,33 @@ TEST_CASE("login screen shows the drippy logo and the board's details") {
     std::string raw = n.takeOutput(), out = plain(raw);
     CHECK(raw.find(kLoginArt) != std::string::npos);  // the drippy logo from art/login.ans, as is
     CHECK(out.find("The Workshop") != std::string::npos);
-    CHECK(out.find("axis.local") != std::string::npos);
     CHECK(out.find("ESP32 CYD") != std::string::npos);
     CHECK(out.find("calls today 7") != std::string::npos);
     CHECK(out.find(axis::bbs::kAxisVersion) != std::string::npos);
+    CHECK(out.find("axis.local") == std::string::npos);  // nothing private before login
+}
+
+TEST_CASE("the pre-login welcome banner shows no private details") {
+    SysInfo priv = info();  // ip 192.168.1.77, host axis.local, storage "SD card 7580 MB"
+    priv.ip = "10.0.0.9";
+    priv.host = "secret-host";
+    priv.storage = "/data/sd";
+    axis::bbs::BbsConfig cfg;  // no publicHost
+    Node                 n(1, [priv] { return priv; }, cfg);
+    n.begin(0);
+    std::string out = plain(n.takeOutput());
+    for (const char* p : {"10.0.0.9", "secret-host", "/data/sd"}) CHECK(out.find(p) == std::string::npos);
+    CHECK(out.find("bbs.example.org") == std::string::npos);  // no address line at all with publicHost empty
+    CHECK(out.find(cfg.bbsName) != std::string::npos);        // the box still has its non-private rows
+
+    cfg.publicHost = "bbs.example.org";
+    cfg.telnetPort = 2323;
+    Node n2(1, [priv] { return priv; }, cfg);
+    n2.begin(0);
+    std::string out2 = plain(n2.takeOutput());
+    CHECK(out2.find("bbs.example.org") != std::string::npos);  // the public address, when the sysop set one
+    CHECK(out2.find("2323") != std::string::npos);
+    for (const char* p : {"10.0.0.9", "secret-host", "/data/sd"}) CHECK(out2.find(p) == std::string::npos);
 }
 
 TEST_CASE("login screen lists the active nodes") {
@@ -574,4 +769,22 @@ TEST_CASE("an Oblivion doors key says the section is off") {
     CHECK(plain(n.takeOutput()).find("Doors are off.") != std::string::npos);
     CHECK(n.state() == Node::State::Menu);
     axis::bbs::theme::use(axis::bbs::theme::Look::Axis);
+}
+
+TEST_CASE("an AXIS net card with no public host advertises no address to peers") {
+    axis::bbs::AxisCard me;  // what axisSelfCard builds when cfg.publicHost is empty
+    me.name = "Chip Pile BBS";
+    me.host = "";            // the public address only: never the LAN IP
+    me.port = 2323;
+    me.location = "Myrtle Beach";
+    std::string line = axis::bbs::axisLine(me);
+    CHECK(line.find("10.0.0.9") == std::string::npos);
+    CHECK(line.find("Chip Pile BBS||") != std::string::npos);  // the host field is empty between the bars
+
+    // a peer board hears our HELLO: it must not store an empty-host card, so it has no address of ours to show
+    std::vector<std::string> peerDir;
+    std::string hello = std::string("AXISNET 1\nHELLO ") + line + "\nEND\n";
+    axis::bbs::AxisHeard     heard = axis::bbs::axisTake(hello, peerDir, "peer.example.org");
+    CHECK(heard.ok);
+    CHECK(peerDir.empty());
 }

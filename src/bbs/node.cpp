@@ -94,12 +94,14 @@ static std::string welcomeBoxes(int node, const SysInfo& s, const BbsConfig& cfg
     std::string who = std::to_string(s.nodesTotal ? s.nodes.size() : 1) + " of " + std::to_string(s.nodesTotal) + "  ";
     for (size_t i = 0; i < s.nodes.size(); i++)
         who += "[" + std::to_string(i + 1) + "] " + ((int)i + 1 == node ? "you" : s.nodes[i].empty() ? "waiting" : s.nodes[i]) + " ";
-    std::string dial = s.host + "  " + s.ip;
+    // No private details before login: the public address only when the sysop set one (never the LAN address, hostname
+    // or storage path, which stay on the WFC and the sysop @STATUS). No publicHost: the board name again, tidy.
+    std::string dial = cfg.publicHost.empty() ? std::string() : cfg.publicHost + "  :" + std::to_string(cfg.telnetPort);
     w += boxEdge(true);
     w += boxLine("BBS", cfg.bbsName, "software", std::string(kAxisSoftware) + " " + kAxisVersion);
     w += boxLine("sysop", cfg.sysopHandle.empty() ? "the sysop" : cfg.sysopHandle, "license", "GPL-3.0+ by Rev. J. Money");
     w += boxLine("from", cfg.location.empty() ? "the underground" : cfg.location, "hardware", s.hardware);
-    w += boxLine("dial", dial, "storage", s.storage);
+    w += boxLine(dial.empty() ? "board" : "dial", dial.empty() ? cfg.bbsName : dial, "credit", "rotatocam.com  jmscnc.com");
     w += boxLine("nodes", who, "up", uptime(s.uptimeSec) + "  calls today " + std::to_string(s.callsToday));
     w += boxEdge(false);
     w += "  \x1b[1;37mjmscnc.com\x1b[0;37m the JMSCNC store  \x1b[0;33m\xfa  \x1b[1;37mrotatocam.com\x1b[0;37m RotatoCAM  ";
@@ -344,7 +346,8 @@ char v3Command(const std::string& f) {
         {"LISTFILES", 'f'}, {"SELECTFILEAREA", 'f'}, {"DOWNLOADFILE", 'f'}, {"UPLOADFILE", 'f'}, {"SEARCH_FILES", 'f'},
         {"FILE_NEWSCAN", 'f'}, {"CHAT", 'p'}, {"ONELINER", 'o'}, {"LISTUSERS", 'h'}, {"LASTCALLERS", 'l'},
         {"WHOISONLINE", 'w'}, {"RUMORSLIST", 'r'}, {"RUMORSADD", 'r'}, {"BBSLIST", 'b'}, {"BBSLISTADD", 'b'}, {"AXISNET", 'j'}, {"VOTE", 'v'}, {"NUV", 'a'}, {"NEWUSERVOTE", 'a'}, {"CHECKNUV", 'a'},
-        {"SHOWSTATS", 'i'}, {"SYSTEMSTATS", 'i'}, {"USERCONFIG", 'u'}, {"CFG_AUTOSIG", 'u'}, {"CFG_PASSWORD", 'u'},  // (the account screen: the tagline is the autosig)
+        {"SYSTEMSTATS", 'i'}, {"SHOWSTATS", 'z'}, {"USERSTATS", 'z'}, {"ABOUT", 'c'}, {"SHOWVERSION", 'c'},  // (SHOWSTATS is ViSiON/3's user stats: MAIN's Y)
+        {"USERCONFIG", 'u'}, {"CFG_AUTOSIG", 'u'}, {"CFG_PASSWORD", 'u'},  // (the account screen: the tagline is the autosig)
         {"SENDPRIVMAIL", 'e'}, {"READPRIVMAIL", 'e'},
         {"MAINLOGOFF", 'g'}};
     for (const auto& t : table)
@@ -649,7 +652,7 @@ void Node::nextStep() {
         if (seqWait()) return;  // a slow caller: the screen before this one is still going out
         const LoginStep&   next = seq_[seqAt_];
         const std::string& nc = next.cmd;  // these clear the screen themselves, whatever the step's CLEAR says
-        bool clears = next.clear || nc == "USERSTATS" || nc == "SHOWSTATS" || nc == "SYSTEMSTATS" || nc == "WHOISONLINE" || nc == "ONELINERS" ||
+        bool clears = next.clear || nc == "USERSTATS" || nc == "SHOWSTATS" || nc == "SYSTEMSTATS" || nc == "ABOUT" || nc == "WHOISONLINE" || nc == "ONELINERS" ||
                       nc == "FASTLOGIN";
         if (seqUnheld_ && clears && next.level <= menuWho().level) {  // a screen still up with no pause of its own: a key first
             seqUnheld_ = false;
@@ -700,11 +703,13 @@ void Node::nextStep() {
             seqUnheld_ = !s.pause;
             showWhoOnline();
             return;
-        } else if (c == "USERSTATS" || c == "SHOWSTATS" || c == "SYSTEMSTATS") {
+        } else if (c == "USERSTATS" || c == "SHOWSTATS" || c == "SYSTEMSTATS" || c == "ABOUT") {
             if (s.clear) out_ += theme::CLS;
             seqPauseNext_ = s.pause;
             seqUnheld_ = !s.pause;
-            showSystemInfo();
+            if (c == "SYSTEMSTATS") showSystemInfo();
+            else if (c == "ABOUT") showAbout();
+            else showYourStats();
             return;
         } else if (c == "SCRIPT" || c == "script") {
             if (s.clear) out_ += theme::CLS;
@@ -941,9 +946,12 @@ void Node::showMatrix() {
     } else {
         out_ += theme::titleBar(cfg_->bbsName.empty() ? "AXIS" : cfg_->bbsName);
         SysInfo s = info_();
+        // No private details before login: the public address only when the sysop set one (never s.host or s.ip).
+        std::string dial = cfg_->publicHost.empty()
+                               ? std::string()
+                               : std::string(theme::DGREY) + "dial " + theme::HOT + cfg_->publicHost + theme::DGREY + "  \xfa  ";
         out_ += std::string("\r\n    ") + theme::DGREY + "node " + theme::WHITE + std::to_string(node_) + theme::DGREY + "  \xfa  " + theme::TEXT +
-                kAxisSoftware + theme::DGREY + "  \xfa  " + theme::TEXT + cfg_->location + "\r\n    " + theme::DGREY + "dial " + theme::HOT +
-                (cfg_->publicHost.empty() ? s.host : cfg_->publicHost) + theme::DGREY + "  \xfa  " + theme::TEXT + s.timeText + "\r\n";
+                kAxisSoftware + theme::DGREY + "  \xfa  " + theme::TEXT + cfg_->location + "\r\n    " + dial + theme::TEXT + s.timeText + "\r\n";
     }
     for (int i = 0; i < kMatrixItems; i++) drawBarItem(i, i == bar_);
     char b[64];
@@ -1329,7 +1337,7 @@ void Node::showMainMenu() {
             }
             static const O2Item all[] = {{'M', "Message Bases"}, {'F', "File Vaults"},    {'D', "Doors"},         {'T', "Teleconference"},
                                           {'W', "Who's Online"},  {'O', "Oneliners"},      {'U', "User Settings"}, {'Y', "Yell for SysOp"},
-                                          {'I', "System Info"},   {'C', "Credits"},        {'G', "Goodbye"},       {'N', "MultiNode"}};  // (R rumors, B BBS list, K top ten, E email, S scan work too)
+                                          {'I', "System Stats"},  {'C', "About"},          {'G', "Goodbye"},       {'N', "MultiNode"}};  // (R rumors, B BBS list, K top ten, E email, S scan work too)
             O2Item items[12];
             int    nItems = 0;
             for (const O2Item& it : all) {
@@ -1386,7 +1394,7 @@ void Node::showMainMenu() {
     rows.push_back({"[R] [B] [K] [V]", "rumors, BBS list, top ten, voting booth"});
     if (cfg_->nuvYes > 0) rows.push_back({"[A]", "applicants: new user voting"});
     rows.push_back({"[J]", "axis net: other Axis Micro boards"});
-    rows.push_back({"[I] [C]", "system info, credits"});
+    rows.push_back({"[I][Z][C]", "system stats, your stats, about"});
     rows.push_back({"[G]", "goodbye"});
     out_ += theme::window("COMMANDS", rows);
     rumorLine();
@@ -1414,7 +1422,7 @@ void Node::showMenu() {
     out_ += "   ";
     if (filesOffered(*cfg_)) out_ += theme::key("F", "iles   ");
     if (cfg_->doorsOn) out_ += theme::key("D", "oors   ");
-    out_ += theme::key("I", "nfo   ") + theme::key("C", "redits   ") + theme::key("G", "oodbye");
+    out_ += theme::key("I", " stats   ") + theme::key("C", " about   ") + theme::key("G", "oodbye");
     out_ += "\r\n   ";
     if (cfg_->messagesOn) out_ += theme::key("M", "essages   ");
     out_ += theme::key("T", "eleconference   ") + theme::key("W", "ho's online   ") + theme::key("P", "age sysop");
@@ -2599,19 +2607,11 @@ void Node::key(char c) {
         case 'i':
             showSystemInfo();
             break;
-        case 'c':
-            out_ += "\r\n\r\n   ";
-            out_ += RED;
-            out_ += kAxisSoftware;
-            out_ += DIM;
-            out_ += " by ";
-            out_ += HI;
-            out_ += "Rev. J. Money";
-            out_ += DIM;
-            out_ += "\r\n   rotatocam.com   jmscnc.com\r\n\r\n";
-            out_ += "   Copyright (C) 2026 Rev. J. Money. Free software under the GNU GPL v3\r\n";
-            out_ += "   or later, with an added term: keep this credit (see the README).\r\n";
-            showMenu();
+        case 'z':  // (no letter of its own on the O/2 menus: Y is yell there)
+            showYourStats();
+            break;
+        case 'c':  // the About page carries the credit
+            showAbout();
             break;
         case 'g':
             out_ += "\r\n\r\n   ";
@@ -2834,31 +2834,95 @@ void Node::showWhoOnline() {
     showMenu();
 }
 
+namespace {
+// "2026-11-19" for a unix time (UTC, from the day count: no time zone tables), "-" when the clock was not set
+std::string dayText(uint32_t t) {
+    if (t == 0) return "-";
+    int64_t z = (int64_t)(t / 86400) + 719468, era = z / 146097;
+    unsigned doe = (unsigned)(z - era * 146097), yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    unsigned d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+    char b[16];
+    std::snprintf(b, sizeof b, "%04u-%02u-%02u", (unsigned)(yoe + era * 400 + (m <= 2)), m, d);
+    return b;
+}
+}  // namespace
+
+// System Stats: the board as a whole, for every caller. Nothing private (no LAN address, host name, Wi-Fi, memory or
+// storage path): those stay on the WFC and the sysop's @STATUS.
 void Node::showSystemInfo() {
     SysInfo s = info_();
+    int     on = 0;
+    for (const std::string& h : s.nodes) on += !h.empty();
+    if (s.nodes.empty()) on = 1;  // (this caller)
+    std::vector<std::pair<std::string, std::string>> rows = {{"board", cfg_->bbsName}};
+    if (!cfg_->location.empty()) rows.push_back({"where", cfg_->location});
+    if (!cfg_->sysopHandle.empty()) rows.push_back({"sysop", cfg_->sysopHandle});
+    rows.push_back({"nodes", std::to_string(on) + " on now of " + std::to_string(s.nodesTotal) + ", up " + uptime(s.uptimeSec)});
+    if (dayStats_) {
+        DayStats d = dayStats_();
+        rows.push_back({"today", std::to_string(d.calls) + " calls, " + std::to_string(d.posts) + " posts, " + std::to_string(d.uploads) + " uploads"});
+        rows.push_back({"all time", std::to_string(d.total) + " calls"});
+    } else rows.push_back({"today", std::to_string(s.callsToday) + " calls"});
+    // the members, as the user list shows them (validated; a twit only to the sysop)
+    std::vector<const User*> show;
+    if (users_)
+        for (const User& u : users_->all())
+            if (u.status == User::Status::Validated && (!u.twit || sysop_)) show.push_back(&u);
+    if (users_) {
+        const User* newest = nullptr;
+        for (const User* u : show)
+            if (!newest || u->created >= newest->created) newest = u;
+        rows.push_back({"members", std::to_string(show.size()) + (newest ? ", newest " + newest->handle : std::string())});
+    }
+    if (std::vector<std::string> calls = callersGet_ ? callersGet_() : std::vector<std::string>{}; !calls.empty())
+        rows.push_back({"last call", calls.back().substr(0, calls.back().find('|'))});
+    // the top five callers, uploaders and downloaders, side by side
+    if (!show.empty()) {
+        std::string col[3][5];
+        for (int which = 0; which < 3; which++) {
+            auto val = [which](const User* u) { return which == 0 ? u->calls : which == 1 ? u->uploads : u->downloads; };
+            std::vector<const User*> v;
+            for (const User* u : show)
+                if (val(u)) v.push_back(u);
+            std::stable_sort(v.begin(), v.end(), [&val](const User* a, const User* b) { return val(a) > val(b); });
+            for (size_t i = 0; i < v.size() && i < 5; i++) {
+                char b[40];
+                std::snprintf(b, sizeof b, "%-10.10s %7s", v[i]->handle.c_str(),
+                              (which == 0 ? std::to_string(v[i]->calls) : fileSizeText(val(v[i]))).c_str());
+                col[which][i] = b;  // 10 + space + up to 7 = 18 columns; a big count keeps all its digits, never clipped
+            }
+        }
+        rows.push_back({"top 5", fit("callers", 18) + "  " + fit("uploads", 18) + "  downloads"});
+        for (int i = 0; i < 5 && !(col[0][i].empty() && col[1][i].empty() && col[2][i].empty()); i++) {
+            col[0][i].resize(col[0][i].size() < 18 ? 18 : col[0][i].size(), ' ');
+            col[1][i].resize(col[1][i].size() < 18 ? 18 : col[1][i].size(), ' ');
+            rows.push_back({std::string(), col[0][i] + "  " + col[1][i] + "  " + col[2][i]});
+        }
+    }
+    out_ += theme::CLS;
+    std::string art = theme::artFor("STATS");
+    out_ += art.empty() ? theme::banner("STATS") : art;
+    out_ += theme::window("SYSTEM STATS", rows, 74);
+    showMenu();
+}
+
+// Your Stats: the caller's own account.
+void Node::showYourStats() {
     const User* u = users_ ? users_->byId(userId_) : nullptr;
-    int left = minutesLeft(lastInput_);
-    char ram[32], wifi[64], nodeLine[32], xfer[48];
-    std::snprintf(ram, sizeof ram, "%u KB free", (unsigned)(s.freeHeap / 1024));
-    std::snprintf(wifi, sizeof wifi, "%s  %d dBm", s.wifi.c_str(), s.rssi);
-    std::snprintf(nodeLine, sizeof nodeLine, "%d / %d", node_, s.nodesTotal);
-    if (u) std::snprintf(xfer, sizeof xfer, "%u / %u KB", (unsigned)(u->uploads / 1024), (unsigned)(u->downloads / 1024));
+    int         left = minutesLeft(lastInput_);
     std::vector<std::pair<std::string, std::string>> rows = {
-        {"board", cfg_->bbsName},
-        {"node", nodeLine},
-        {"address", s.ip + "  " + s.host},
-        {"wifi", wifi},
-        {"uptime", uptime(s.uptimeSec)},
-        {"today", std::to_string(s.callsToday) + " calls"},
-        {"memory", ram},
-        {"storage", s.storage},
         {"you", handle_.empty() ? "guest" : handle_},
         {"security", sysop_ ? "sysop" : u ? std::to_string(u->security) : "guest"},
-        {"calls", u ? std::to_string(u->calls) : "-"},
-        {"up / down", u ? xfer : "-"},
-        {"time left", left < 0 ? "open" : std::to_string(left) + " min"},
     };
-    if (u && !u->location.empty()) rows.insert(rows.end() - 1, {"from", u->location});
+    if (u) {
+        if (!u->location.empty()) rows.push_back({"from", u->location});
+        rows.push_back({"member", "since " + dayText(u->created)});
+        rows.push_back({"last call", prevCall_ ? dayText(prevCall_) : u->calls <= 1 ? "this is your first" : "-"});
+        rows.push_back({"calls", std::to_string(u->calls)});
+        rows.push_back({"up / down", fileSizeText(u->uploads) + " / " + fileSizeText(u->downloads)});
+    }
+    rows.push_back({"time left", left < 0 ? "open" : std::to_string(left) + " min"});
     if (u && !u->tagline.empty()) rows.push_back({"tagline", u->tagline});
     if (viaModem()) {  // on the LFD3K-SM modem: its link as it last reported
         std::string l = net::linkLabel(link_);
@@ -2866,9 +2930,30 @@ void Node::showSystemInfo() {
         rows.push_back({"link", l});
     }
     out_ += theme::CLS;
-    std::string art = theme::artFor("STATS");
-    out_ += art.empty() ? theme::banner("STATS") : art;
-    out_ += theme::window("STATS", rows, 74);
+    std::string art = theme::artFor("YOURSTATS");
+    out_ += art.empty() ? theme::banner("YOUR STATS") : art;
+    out_ += theme::window("YOUR STATS", rows, 74);
+    showMenu();
+}
+
+// About: the software, what it runs on, how to reach the board (only the public address the sysop set), and the credit
+// the license asks every copy to keep.
+void Node::showAbout() {
+    SysInfo s = info_();
+    std::vector<std::pair<std::string, std::string>> rows = {
+        {"software", std::string(kAxisSoftware) + " " + kAxisVersion},
+        {"runs on", s.hardware},
+        {"board", cfg_->bbsName},
+    };
+    if (!cfg_->publicHost.empty()) rows.push_back({"telnet", cfg_->publicHost + " port " + std::to_string(cfg_->telnetPort)});
+    if (!cfg_->sysopHandle.empty()) rows.push_back({"sysop", cfg_->sysopHandle});
+    if (!cfg_->location.empty()) rows.push_back({"where", cfg_->location});
+    rows.push_back({"credit", "Rev. J. Money, rotatocam.com, jmscnc.com"});
+    rows.push_back({"license", "GPLv3 or later; keep this credit (see the README)"});
+    out_ += theme::CLS;
+    std::string art = theme::artFor("ABOUT");
+    out_ += art.empty() ? theme::banner("ABOUT") : art;
+    out_ += theme::window("ABOUT", rows, 74);
     showMenu();
 }
 
@@ -3904,7 +3989,7 @@ void Node::showAxisNet() {
             AxisCard me;
             SysInfo  s = info_();
             me.name = cfg_->bbsName;
-            me.host = cfg_->publicHost.empty() ? (s.host.empty() ? s.ip : s.host) : cfg_->publicHost;
+            me.host = cfg_->publicHost;  // the public address only; never the LAN address or hostname (empty: the card advertises none)
             me.port = cfg_->telnetPort > 0 ? cfg_->telnetPort : 23;
             me.location = cfg_->location;
             me.sysop = cfg_->sysopHandle;

@@ -84,6 +84,8 @@ void Session::wireNode() {
     node->onEvent = [h](const std::string& e) { h->event(e); };
     node->setSysopRun(s_.sysopRun);
     node->setWfcSnapshot(s_.wfcSnapshot);
+    if (s_.dayStats) node->setDayStats(s_.dayStats);
+    else node->setDayStats([st = &s_.stats] { return st->dayStats; });
     node->setChat(
         [this](const std::string& text, bool page) {  // through the main to every node (or just this board)
             if (!node) return;

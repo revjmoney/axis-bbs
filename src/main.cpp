@@ -527,8 +527,12 @@ static axis::bbs::SysInfo sysInfo() {
     s.freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);  // byte-addressable (getFreeHeap counts IRAM too)
     s.timeText = timeText().c_str();
     s.storage = storageSummary();
+#if AXIS_NATIVE
+    s.hardware = "PC";  // the native Linux build (About: what the board runs on)
+#else
     s.hardware = "ESP32 CYD " + std::to_string(ESP.getCpuFreqMHz()) + " MHz " +
                  std::to_string(ESP.getFlashChipSize() >> 20) + " MB flash";
+#endif
     s.callsToday = statsShown().calls;
     s.nodesTotal = (int)sessions.size();
     s.nodes.clear();
@@ -1663,7 +1667,9 @@ static bool axisSame(const std::string& a, const std::string& b) {
 static axis::bbs::AxisCard axisSelfCard() {
     axis::bbs::AxisCard me;
     me.name = boardCfg->bbsName;
-    me.host = boardCfg->publicHost.empty() ? std::string(WiFi.localIP().toString().c_str()) : boardCfg->publicHost;
+    // The public address only: no publicHost means no advertised host (never the LAN IP, which peer boards would
+    // then show to their own callers). The board stays reachable on its own LAN by mDNS, just not advertised.
+    me.host = boardCfg->publicHost;
     me.port = boardCfg->telnetPort > 0 ? boardCfg->telnetPort : 23;
     me.location = boardCfg->location;
     me.sysop = boardCfg->sysopHandle;
@@ -6702,6 +6708,7 @@ static axis::app::Services& services() {
     s.nodeCfg = nodeCfg;
     s.sysInfo = sysInfo;
     s.wfcSnapshot = wfcSnapshot;
+    s.dayStats = statsShown;  // (a cluster follower shows the main's counts)
     s.warrior = warriorHook;
     s.nodeLink = [](int slot, int kind, int to, const std::string& handle, const std::string& text) {
 #if !AXIS_CLUSTER

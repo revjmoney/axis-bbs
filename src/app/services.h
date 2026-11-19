@@ -62,6 +62,7 @@ struct Services {
     std::function<std::shared_ptr<const bbs::BbsConfig>()> nodeCfg;      // the settings a new Node gets (empty: cfg)
     std::function<bbs::SysInfo()> sysInfo;                                // required: the Node reads it on many screens
     std::function<bbs::WfcSnapshot()> wfcSnapshot;
+    std::function<bbs::DayStats()> dayStats;                              // System Stats' day counters (empty: stats.dayStats)
     std::function<bool(const std::string&)> warrior;                      // registration's LORD warrior (empty: none)
     // Notes, broadcasts and split chat keys from the session in `slot`: kind, target node (0: all), its handle, the text.
     std::function<void(int slot, int kind, int to, const std::string& handle, const std::string& text)> nodeLink;

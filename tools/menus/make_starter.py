@@ -34,7 +34,7 @@ BARS = {
     'MAIN': ('AXIS', [[('M', 'Messages Menu'), ('T', 'Transfer Menu'), ('D', 'Doors Menu'), ('E', 'Private Email'),
                        ('C', 'SysOp Chat'), ('O', 'One-Liners'), ('R', 'Rumors'), ('B', 'BBS Listings')],
                       [('V', 'Voting Booth'), ('L', 'User List'), ('W', 'Last Callers'), ('S', 'System Stats'),
-                       ('Y', 'Your Stats'), ('K', 'Your Konfig'), ('G', 'Logoff')]], None),
+                       ('Y', 'Your Stats'), ('K', 'Your Konfig'), ('G', 'Logoff'), ('A', 'About')]], None),
     'MSGMENU': ('MSGS', [[('R', 'Read Messages'), ('P', 'Post a Message'), ('N', 'New Scan'), ('*', 'List Areas'),
                           ('E', 'Private Email'), ('Q', 'Main Menu')]], 'Messages'),
     'FILEM': ('FILES', [[('F', 'List Files'), ('D', 'Download'), ('U', 'Upload'), ('S', 'Search Files'), ('N', 'New Files'),
@@ -48,7 +48,8 @@ BARS = {
 # Only commands that run on AXIS get a bar (the rest still answer "coming soon" when typed). A bar key with no
 # cmd= line would do nothing, so main() checks every bar has one. MSGMENU's E had none in ViSiON/3's set.
 EXTRA = {'MSGMENU': ['cmd=E|GOTO:EMAILM|*|0|Email Menu'],
-         'MAIN': ['cmd=~~|RUN:RANDOMRUMOR|*|0|']}  # ~~ every time MAIN draws: one rumor just above the prompt
+         'MAIN': ['cmd=A|RUN:ABOUT|*|0|Viewing About',  # the board's About page (no private details)
+                  'cmd=~~|RUN:RANDOMRUMOR|*|0|']}  # ~~ every time MAIN draws: one rumor just above the prompt
 # the front door keeps ViSiON/3's words and keys, moved into the window
 FRONT_X, FRONT_Y, FRONT_W = 12, 12, 24
 MAIN_PROMPT = '|08[|07|TIME|08] |10|UH |08-|15> |07'
