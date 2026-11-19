@@ -3,6 +3,7 @@
 // The list screens drawn from a look's list template (FILES.LST, MSGS.LST, USERS.LST): the built-in frame is still what a
 // look without a template gets, a template restyles it, and the rules around the rows (paging, twits, lite callers) hold.
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -25,13 +26,15 @@
 using namespace axis::bbs;
 
 namespace {
-// the shipped default templates, read from the repository's art folder (the test runs from the build tree, so try the usual ways up)
+// the shipped default templates, read from the repository art folder
 std::string shipped(const char* name) {
-    for (const char* base : {"art/menus/", "../art/menus/", "../../art/menus/", "../../../art/menus/", "../../../../art/menus/"}) {
-        std::ifstream f(std::string(base) + name, std::ios::binary);
-        if (f) return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    std::string s;
+    if (FILE* f = std::fopen((std::string(AXIS_TEST_DATA) + "/../../art/menus/" + name).c_str(), "rb")) {
+        char b[1024];
+        for (size_t n; (n = std::fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
+        std::fclose(f);
     }
-    return "";
+    return s;
 }
 
 // A look's list templates for the length of a test, cleared (like the session teardown does) when it ends.
