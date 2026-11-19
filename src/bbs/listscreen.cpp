@@ -61,7 +61,7 @@ std::string listScreenTop(const std::string& title, const std::string& columns, 
 std::string listScreenStatus(const std::string& line, const ListTemplate* tpl) {
     if (tpl)
         return "\x1b[" + std::to_string(rowAt(tpl->y + tpl->rows + 1)) + ";1H\x1b[2K" + theme::TEXT +
-               std::string((size_t)(tpl->x - 1), ' ') + clipVisible(line, (size_t)tpl->width);
+               std::string((size_t)(tpl->x - 1), ' ') + clipVisible(line, (size_t)(79 - tpl->x < 1 ? 1 : 79 - tpl->x));  // (the built-in status's right edge: 76 columns from x=3)
     return "\x1b[" + std::to_string(kListStatusRow) + ";1H\x1b[2K" + theme::TEXT + "  " + clip(line, 76);
 }
 

@@ -315,10 +315,15 @@ std::vector<std::string> ThemeProvider::scriptNames() {
 
 std::string ThemeProvider::listTemplateText(const std::string& name) {
     if (!axis::bbs::theme::menuScreenFile(name)) return "";  // only the names the resolver knows (plain names, no folders)
-    if (!isFollower()) return menuFileLocal(name);
+    constexpr size_t kListMax = 2048;  // a longer .LST is malformed (the built-in frame is used)
+    if (!isFollower()) {
+        std::string t = menuFileLocal(name);
+        return t.size() > kListMax ? std::string() : t;
+    }
     if (auto it = listCache_.find(name); it != listCache_.end()) return it->second;
     if (!menuExists(name)) return "";  // (menuExists remembers the main's answer, so a look without one costs no second ask)
     std::string s = menuFile(name);
+    if (s.size() > kListMax) s.clear();
     if (!s.empty()) listCache_[name] = s;  // (a failed ask is asked again)
     return s;
 }

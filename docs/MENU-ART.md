@@ -46,8 +46,9 @@ Three list screens take their layout from a list template, a small text file in 
 `art/menus` ships `FILES.LST` and `MSGS.LST`, which reproduce the built-in lists, so the default look is unchanged and
 a look restyles a list by dropping its own file in its folder. No `USERS.LST` ships: the built-in user list is the
 default, and a look that wants its own adds one (an example is below). A missing file, or one that does not parse (no `row=`, or a `geom=`
-that is not four whole numbers), gives the built-in list; a bad file is logged once. A lite caller (see below) always
-gets the built-in list, so a template never makes a radio caller's list heavier.
+that is not four whole numbers, or an empty `row=`), gives the built-in list; a bad file is logged once per call (per
+session). A file over 2 KB is ignored the same way. A lite (radio) caller (see below) always gets the built-in list, so a
+template never makes a radio caller's list heavier.
 
 One `key=value` per line; a line starting with `;` is a comment, and keys the board does not know are skipped.
 
@@ -63,9 +64,13 @@ One `key=value` per line; a line starting with `;` is a comment, and keys the bo
 | `keys=` | the key line, two rows under the status (empty: the built-in keys, which run to the screen edge). Not used by `USERS.LST`. |
 
 The caption, row, status and keys are art: `|00` to `|15` colours, `|B0`..`|B7`, `{{ACS}}...{{/}}`, plus the screen's
-fields. Other values (`|UH`, `%BN` ...) print blank in a list line.
+fields. Other values (`|UH`, `%BN` ...) print blank in a list line, and so does a field token the screen does not
+know (as in theme art; not logged). `{{ACS}}` in a `FILES.LST` or `MSGS.LST` line is checked against a plain default
+user, not the caller; only the user list sees the caller. Control codes such as `|CL`, `|XY`, `|DE` and `|PP` are not
+for list lines. The right edge of the screen is column 79.
 A field is `|XX` (as it is), `@XXnn@` (cut or padded with spaces to exactly nn columns, left aligned) or `@XX>nn@`
-(the same, right aligned). Every field value is shown exactly as typed (`50% off`, `meet @ 5`, `|15` all show as
+(padded on the left to nn columns, right aligned; a value longer than nn is never cut, the field widens to fit it, so
+message 12345 shows all five digits in `@NM>4@`). Every field value is shown exactly as typed (`50% off`, `meet @ 5`, `|15` all show as
 they are): a value is never read as a code, and only control characters in it (ESC, tab, CR, LF ...) show as `?`, so
 a value can never move the cursor. A line is cut at `width` columns. In
 `FILES.LST` and `MSGS.LST` the rows sit on a lightbar that paints them in `colours=`, so keep colour codes out of
