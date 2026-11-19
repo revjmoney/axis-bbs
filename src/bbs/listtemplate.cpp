@@ -136,11 +136,11 @@ std::string clipVisible(const std::string& s, size_t width) {
     return out;
 }
 
-std::string renderLine(const std::string& text, int width, const AcsUser& who, const ArtValue& field) {
+std::string renderLine(const std::string& text, int width, const AcsUser& who, const ArtValue& field, const ArtStyle& style) {
     ArtValue                 safe = [&field](const std::string& k) { return listPlain(field(k)); };  // every value, sized or not
     std::vector<std::string> sized;
     // expandArt puts an unsized value out as it is (never read again for codes); the sized ones go in after it
-    std::string s = expandArt(sizeFields(text, safe, sized), who, safe), out;
+    std::string s = expandArt(sizeFields(text, safe, sized), who, safe, style), out;
     for (size_t i = 0; i < s.size(); i++) {
         size_t at = i + 4 < s.size() && s[i] == '\x1b' && s[i + 1] == '[' && s[i + 2] == kMark && s[i + 4] == 'z'
                         ? (unsigned char)s[i + 3] - 0x80u
@@ -155,6 +155,8 @@ std::string renderLine(const std::string& text, int width, const AcsUser& who, c
     return clipVisible(out, (size_t)width);
 }
 
-std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue& field) { return renderLine(t.row, t.width, who, field); }
+std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue& field, const ArtStyle& style) {
+    return renderLine(t.row, t.width, who, field, style);
+}
 
 }  // namespace axis::bbs

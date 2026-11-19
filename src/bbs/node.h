@@ -293,6 +293,7 @@ private:
     ArtSource   firstThen(std::string first, const std::string& file, const PosterPiece& piece);
     bool        posterStarting_ = false;  // startPoster's own first pieces: it says what comes next, not pumpArt
     std::unique_ptr<MenuRunner>                    menu_;
+    MenuRunner*                                    styled();  // the menu, told the look's art dialect (asked at each draw)
     MenuRunner::Loader                             menuLoad_;
     std::function<bool(const std::string&)>        exists_;  // setExists: a menu screen's presence, without reading it
     bool                                           frontDoor_ = false;  // ViSiON/3's front door (PDMATRIX) is running

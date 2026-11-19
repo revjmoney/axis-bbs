@@ -44,7 +44,7 @@ std::string listScreenTop(const std::string& title, const std::string& columns, 
         s += "\x1b[" + std::to_string(capRow) + ";1H\x1b[J";
         if (!tpl->caption.empty())  // a plain caller (the caption is not per caller); values only from `caption`
             s += "\x1b[" + std::to_string(capRow) + ";" + std::to_string(tpl->x) + "H" +
-                 renderLine(tpl->caption, tpl->width, AcsUser{}, caption ? caption : ArtValue([](const std::string&) { return std::string(); })) +
+                 renderLine(tpl->caption, tpl->width, AcsUser{}, caption ? caption : ArtValue([](const std::string&) { return std::string(); }), theme::artStyle()) +
                  theme::RESET;
         if (tpl->rule && ruleRow > capRow)
             s += "\x1b[" + std::to_string(ruleRow) + ";" + std::to_string(tpl->x) + "H" + theme::ORANGE +
@@ -70,7 +70,7 @@ std::string listScreenKeys(const std::string& keys, const ListTemplate* tpl) {
         return "\x1b[" + std::to_string(rowAt(tpl->y + tpl->rows + 3)) + ";1H\x1b[2K" +
                std::string((size_t)(tpl->x - 1), ' ') +
                (tpl->keys.empty() ? clipVisible(keys, (size_t)(81 - tpl->x))  // (the built-in keys run to the screen edge, as today)
-                                  : renderLine(tpl->keys, tpl->width, AcsUser{}, [](const std::string&) { return std::string(); })) +
+                                  : renderLine(tpl->keys, tpl->width, AcsUser{}, [](const std::string&) { return std::string(); }, theme::artStyle())) +
                theme::RESET;
     return "\x1b[" + std::to_string(kListKeyRow) + ";1H\x1b[2K  " + keys + theme::RESET;
 }

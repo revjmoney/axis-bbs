@@ -161,7 +161,7 @@ void MessageReader::showList() {
     last_ = last;
     for (size_t i = listFrom_; i < end; i++) {  // one window of headers, bodies stay on disk until Read
         if (t) {  // MSGS.LST's row: NW new marker, NM number, FR from, TO to, SU subject
-            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return msgField(i, k); }));
+            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return msgField(i, k); }, artStyle()));
             continue;
         }
         const Message& m = heads_[i];
@@ -206,7 +206,7 @@ std::string MessageReader::statusLine(size_t i, const std::string& builtin) cons
     const ListTemplate* t = tpl();
     if (!t) return builtin;
     if (t->status.empty()) return listPlain(builtin);
-    return renderLine(t->status, t->width, AcsUser{}, [this, i](const std::string& k) { return msgField(i, k); });
+    return renderLine(t->status, t->width, AcsUser{}, [this, i](const std::string& k) { return msgField(i, k); }, artStyle());
 }
 
 bool MessageReader::tick(uint32_t now, uint32_t lastInput) {

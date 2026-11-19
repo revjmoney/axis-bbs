@@ -107,6 +107,47 @@ rule=1
 row=|15@HN20@ |07@LO19@ |06@CA>5@  |08@TG22@|TW
 ```
 
+## Dialects
+
+A look draws its art in one of three dialects, set by an optional `THEME.CFG` in the look's folder (its legacy folder name
+is read too). It is a `key=value` file, one per line, with `;` starting a comment; keys the board does not know are
+skipped, a UTF-8 BOM is fine, and keys are not case sensitive. It is at most 1024 bytes (a longer one counts as none).
+
+| Key | Meaning |
+|---|---|
+| `dialect=` | `axis` (default), `vision3` or `renegade` |
+| `c1=` .. `c7=` | the look's seven ViSiON/3 colour slots (`vision3`) |
+| `r0=` .. `r9=` | the look's ten Renegade colour slots (`renegade`) |
+
+A slot is a packed DOS attribute byte, 0 to 255: background in the high nibble, bright foreground at bit 3, blink at bit 7.
+No `THEME.CFG`, or a bad one (an unknown dialect, a line with no `=`, a slot that is not 0 to 255), draws as `axis`; a bad
+file is logged once per session. Slot defaults when the file gives none: `c1..c7` = `7,15,7,15,8,11,31` (31 is white on
+blue), `r0..r9` = `7,11,14,15,9,13,12,10,8,3`.
+
+| Code | `axis` | `vision3` | `renegade` |
+|---|---|---|---|
+| `\|00`-`\|15` | foreground, DOS order | same | same |
+| `\|16`-`\|22` | as today | as `axis` | background 0 to 6 |
+| `\|23` | reset | reset | background 7 (light grey) |
+| `\|24`-`\|31` | as today | as `axis` | background 0 to 7 with blink (iCE bright background) |
+| `\|B0`-`\|B15` | background, DOS order | same | same |
+| `\|C1`-`\|C7` | not a code | the look's slot `c1..c7`, a full attribute | not a code |
+| `\|\|` | as today | one literal `\|` | one literal `\|` |
+| `^0`-`^9` | not a code | not a code | the look's slot `r0..r9`, a full attribute |
+| `\|CS` | not a code | not a code | clear screen (as `\|CL`) |
+| `%TL %MA %FA` | blank | blank | minutes left, the open message area, the open file area |
+| `%CF %CM %MP %PE %NL` | blank | blank | blank |
+
+Every dialect also fills `|CAN` and `|CFAN` (the message and file area open now, blank at a menu), `|UPLDS` and `|DNLDS`
+(what the caller has uploaded and downloaded, in KB), `|LCALL` (the date of their call before this one, MM/DD/YY) and
+`|POSTS` (blank: AXIS keeps no post count). The `%TL %MA %FA` row above is `renegade` only: in `axis` and `vision3`
+looks those, and `%CF %CM %MP %PE %NL`, print blank on menu art.
+
+The dialect applies to menu screens, the login screen, screens drawn by the art drawer and list templates (`.LST`).
+Bulletins and the non-menu main screen (and the front-door matrix) still use the older AXIS expander, with no dialect
+codes; their art does stop at the first Ctrl-Z. A screen's art stops at the first Ctrl-Z (0x1A), so a SAUCE record after it
+is never drawn. The waiting-for-caller screen is always AXIS's own.
+
 ## Lite art for slow radio callers
 
 A radio caller on the LORA FLOWTRON DATAMASTER 3000 SERIAL MODEM - LFD3K-SM tells the board its air speed (telnet option

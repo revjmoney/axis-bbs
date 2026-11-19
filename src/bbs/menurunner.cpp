@@ -70,12 +70,12 @@ void MenuRunner::redraw() {
     } else {
         std::string carry;  // (the same pieces the board's drawer makes: artPiece)
         bool        ended = false;  // (Ctrl-Z drawn to: this screen's own flag)
-        auto piece = [&](const char* d, size_t n) { artPiece(carry, d, n, false, who_, value_, emit_, ArtStyle{}, &ended); };
+        auto piece = [&](const char* d, size_t n) { artPiece(carry, d, n, false, who_, value_, emit_, style_, &ended); };
         if (!artPieces_ || !artPieces_(name_ + ".ANS", piece)) {
             std::string art = load_(name_ + ".ANS");
-            if (!art.empty()) artPiece(carry, art.data(), art.size(), true, who_, value_, emit_, ArtStyle{}, &ended);  // (cut at Ctrl-Z too)
+            if (!art.empty()) artPiece(carry, art.data(), art.size(), true, who_, value_, emit_, style_, &ended);  // (cut at Ctrl-Z too)
         }
-        artPiece(carry, "", 0, true, who_, value_, emit_, ArtStyle{}, &ended);
+        artPiece(carry, "", 0, true, who_, value_, emit_, style_, &ended);
     }
     if (bar_) emit(bar_->draw());
     if (beforePrompt) emit(beforePrompt());
@@ -83,7 +83,7 @@ void MenuRunner::redraw() {
 }
 
 void MenuRunner::prompt() {
-    if (def_.usePrompt && !def_.prompt1.empty()) emit("\r\n" + expandArt(def_.prompt1, who_, value_));
+    if (def_.usePrompt && !def_.prompt1.empty()) emit("\r\n" + expandArt(def_.prompt1, who_, value_, style_));
 }
 
 MenuAction MenuRunner::run(const MenuCmd& c) {

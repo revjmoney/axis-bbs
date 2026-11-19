@@ -74,6 +74,7 @@ public:
 #endif
     void begin();       // show the area list
     std::string where() const;  // "area list" or the open area's name, for the sysop's activity screen
+    std::string areaName() const { return st_ != St::Areas && area_ < areas_.size() ? areas_[area_].name : std::string(); }  // "" at the area list
     bool key(char c);   // false once the caller leaves Files
     bool tick(uint32_t now, uint32_t lastInput);  // a lone Esc backs out; false once the caller leaves Files
     // a download or upload the caller asked for: the host runs it, then calls transferDone

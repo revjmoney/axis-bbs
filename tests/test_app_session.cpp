@@ -190,6 +190,7 @@ struct Floor {
         bbs::theme::setArt({});  // wireNode set these process-wide; drop the dangling ThemeProvider for later tests
         bbs::theme::setArtTop({});
         bbs::theme::setListTemplate({});
+        bbs::theme::setThemeCfg({});
     }
 
     app::Session& add(int slot) {
