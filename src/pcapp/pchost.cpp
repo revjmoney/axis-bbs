@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -48,6 +49,30 @@ std::string readFile(const std::string& path) {
     while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
     std::fclose(f);
     return s;
+}
+
+// Like readFile, but tells a missing file apart from one that is there and will not read (permission denied, an I/O
+// error). True with the text when the file read whole or is absent; false when it exists but could not be read (`why`
+// says so). The users base must never be loaded as empty on a read error and then saved empty over the real file.
+bool readFileChecked(const std::string& path, std::string& out, std::string& why) {
+    out.clear();
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) {
+        if (errno == ENOENT) return true;  // no file yet: an empty base is right
+        why = "cannot open " + path + ": " + std::strerror(errno);
+        return false;
+    }
+    char   buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, n);
+    bool bad = std::ferror(f) != 0;
+    std::fclose(f);
+    if (bad) {
+        out.clear();
+        why = "cannot read " + path + " (I/O error)";
+        return false;
+    }
+    return true;
 }
 
 // The board's safe save: a temp file first, then renamed over the old one, so a crash never leaves half a file.
@@ -147,7 +172,7 @@ void PcHost::clearEvents() {
 
 void PcHost::event(const std::string& what) {
     time_t now = std::time(nullptr);
-    char   stamp[8] = "--:--";
+    char   stamp[8] = "??:??";  // the clock is not set yet (no double hyphen in log text)
     if (now > 1700000000) std::strftime(stamp, sizeof stamp, "%H:%M", std::localtime(&now));
     std::string line = std::string(stamp) + " " + what;
     events_.add(line);
@@ -535,7 +560,15 @@ bool PcBbs::start(const std::string& modemPath, std::string& why) {
     if (AXIS_LORD)
         for (auto& d : cfgEdit().doors) lordArgs = bbs::migrateLordArgs(d) || lordArgs;
     if (had && lordArgs) saveConfig();
-    users_.parse(readFile(host_.flashRoot() + "/users.dat"));
+    // users.dat: a file that is there but will not read (a copy from /var/lib/axis with 0600 files, say, that this
+    // program's own user cannot read) must never load as an empty base and then be saved empty over the real file at
+    // the first clean stop. Refuse to start instead; an absent file is fine (a fresh board).
+    std::string usersText;
+    if (!readFileChecked(host_.flashRoot() + "/users.dat", usersText, why)) {
+        host_.event("users: " + why + " (refusing to start so an empty base is never saved over it)");
+        return false;
+    }
+    users_.parse(usersText);
     data_.load();  // the oneliners and the last callers
     if (!data_.lastCallers().empty()) {  // the WFC's last caller: the newest saved login ("handle|node|time|location")
         std::string h = data_.lastCallers().back().substr(0, data_.lastCallers().back().find('|'));
@@ -612,6 +645,13 @@ bool PcBbs::moved() {
     return m;
 }
 
+// One event loop turn, every caller served on this one thread. Caution: a caller's turn can block the whole thread.
+// TelnetStream's blocking flush (push with wait, used while hold is off: a transfer, and on the board the protocol
+// blocks per block) spins on idle() until the socket takes the bytes or sendTimeoutMs (about 10 s) passes and the line
+// is hung up. On the board each caller has more room; here one frozen reader mid-transfer holds every other caller for
+// up to that timeout. This is shared-core behaviour (src/net/telnetstream.cpp) and a real cap would be a core change
+// beyond this task; a normal caller's turn keeps hold on, so its flush is non-blocking, and the stop path (above) keeps
+// its goodbye best effort too.
 bool PcBbs::turn() {
     uint32_t now = host_.nowMs();
     bool     changed = false;
@@ -657,11 +697,20 @@ void PcBbs::stop() {
     modemLineHangUp();  // first, so a radio caller's hang-up starts from a quiet line
     for (auto& s : sessions_) {
         if (!s) continue;
+        // setHold(true) first so the goodbye is best effort: a caller mid-transfer had hold off (service), and a
+        // blocking flush to a frozen reader would spin up to sendTimeoutMs (about 10 s) here on the one thread. With
+        // hold on the goodbye goes out only as far as the socket takes now; the rest is parked and drained below.
+        if (s->line) s->line->setHold(true);
         if (s->line && s->line->carrier()) s->sendApp("\r\n\r\n   The BBS is stopping. Please call back soon.\x1b[0m\r\n");
         s->hangUp("the BBS is stopping");
         s.reset();
     }
     sessions_.clear();
+    // The users and the stats are saved now, before the radio and parked waits: the 5 s alarm backstop (main.cpp's
+    // onHardStop) can _exit at any point in those waits, and it saves nothing. A save that comes after them could be
+    // lost to a slow radio hang-up.
+    saveUsers();
+    stats_.statsSave();
     uint32_t t0 = host_.nowMs();
     for (;;) {  // the goodbyes (1.5 s at most) and the radio line's hang-up (4.5 s at most, inside the 5 s backstop)
         uint32_t t = host_.nowMs() - t0;
@@ -673,8 +722,6 @@ void PcBbs::stop() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     modemLineFinish();
-    saveUsers();
-    stats_.statsSave();
     std::printf("axis: stopped\n");
 }
 
