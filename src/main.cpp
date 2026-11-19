@@ -57,6 +57,7 @@
 #include "bbs/loginguard.h"
 #include <base64.h>
 #include <mbedtls/base64.h>
+#include "cluster/cardtree.h"
 #include "cluster/mirrorjob.h"
 #include "cluster/pooledlib.h"
 #include "cluster/relay.h"
@@ -873,6 +874,10 @@ static axis::cluster::RemoteFileLibrary         remoteFiles([](const std::string
 static std::map<std::string, std::unique_ptr<axis::cluster::RemoteFileLibrary>> cardFiles;  // main: one per card board
 static std::unique_ptr<axis::cluster::FileServer> cardServer;  // follower with a card: the main's requests
 #endif
+static axis::cluster::CardTreeServer& cardTreeServer() {  // the card mirror's tree service (cluster/cardtree.h), made on first use
+    static axis::cluster::CardTreeServer server(storageRoot());
+    return server;
+}
 static std::string cardLabel(const std::string& id) {  // "node 2" (its lowest node), or its id when it is gone
     int low = 0;
     if (cluster)
@@ -6626,6 +6631,7 @@ static void startCluster() {
                     doorLocks));
             return ds->handle(req);
         }
+        if (req.size() > 1 && req[0] == 'I' && req[1] == '\x1f') return storageHasSd() ? cardTreeServer().handleRead(req) : std::string("0");  // a card mirror reads the tree
 #if AXIS_FILES
         auto& srv = fileServers[nodeNum];
 #if AXIS_NETS
@@ -6644,6 +6650,7 @@ static void startCluster() {
     };
     cluster->onMainRequest = [](const std::string& req) {  // a follower with a card: the main asks for its files
         servedRequest = true;
+        if (req.size() > 1 && req[0] == 'I' && req[1] == '\x1f') return storageHasSd() && cluster->mainKind() == axis::cluster::CardKind::Mirror ? cardTreeServer().handleWrite(req) : std::string("0");  // a hand-back
 #if AXIS_FILES
         if (!storageHasSd()) return std::string("0");
         if (!cardServer) cardServer.reset(new axis::cluster::FileServer(sdFiles));
@@ -6655,7 +6662,7 @@ static void startCluster() {
 #endif
     };
 #if AXIS_FILES
-    cluster->onMainGone = [] { cardServer.reset(); };  // its half-done uploads and mirror copies are thrown away
+    cluster->onMainGone = [] { cardServer.reset(); cardTreeServer().drop(); };  // its half-done uploads and mirror copies are thrown away
 #endif
 #if AXIS_NETS && AXIS_FILES
     axis::cluster::FileServer::uploaded = netFilesUploaded;  // a follower's upload into a shared area is listed
@@ -6897,6 +6904,9 @@ static void handleTap(int x, int y) {
 // Every @ command, for the serial console and the sysop control panel alike (one code path, so
 // the same command always does the same thing). Replies go to `out`.
 static void runCommand(const String& cmd, Print& out);
+#if AXIS_NATIVE
+bool nativeCommand(const String& cmd, Print& out);  // the host's own @ commands (native/)
+#endif
 
 // The in-BBS sysop menu's commands: run on the main (so a change is shared like @SET); a follower asks it,
 // except for a board-only command (its cluster key, a restart, its card, its relays), which runs right here.
@@ -7884,7 +7894,19 @@ static void runCommand(const String& cmd, Print& out) {
         delay(100);
         ESP.restart();
     }
+#if AXIS_NATIVE
+    else if (nativeCommand(cmd, out)) {}
+#endif
 }
+#if AXIS_NATIVE
+void nativeRun(const char* cmd) {  // one @ command, its output thrown away (the host's drain, @BCAST)
+    struct Null : Print {
+        size_t write(uint8_t) override { return 1; }
+        size_t write(const uint8_t*, size_t n) override { return n; }
+    } sink;
+    runCommand(String(cmd), sink);
+}
+#endif
 
 // "WFC" on the serial port: a terminal on the waiting-for-caller screen, until Q; then the @ commands are back.
 static void serialWfcClose() {
@@ -8377,6 +8399,21 @@ static void viewCacheTick() {
 #endif
 }
 
+// A card mirror ended its hand-back (I E): restart like @RESTART, from here so the reply has left first.
+static void cardTreeRestartTick() {
+    static uint32_t at = 0;
+    if (!cardTreeServer().finished()) return;
+    if (!at) {
+        at = millis() | 1;
+        logEvent("cluster: the card was handed back, restarting");
+    }
+    if (millis() - at < 500) return;
+#if AXIS_NETS
+    netSaveNow();
+#endif
+    ESP.restart();
+}
+
 void loop() {
     static uint32_t lastLoop = millis();
 #if AXIS_BENCH
@@ -8448,6 +8485,8 @@ void loop() {
         return;
     }
     if (cluster) cluster->tick(millis());
+    if (cluster) axis::cluster::cardFeed().setOn(cluster->role() == axis::cluster::Role::Main && cluster->hasMirrorFollower(), hwRandom());
+    cardTreeRestartTick();
     statsSync();
     if (localNode) {  // the sysop at the board's own screen
         localNode->poll(millis());

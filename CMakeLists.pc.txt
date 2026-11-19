@@ -62,6 +62,7 @@ set(AXISCORE_SOURCES
     src/cluster/mirrorjob.cpp
     src/cluster/relay.cpp
     src/cluster/doorfs.cpp
+    src/cluster/cardtree.cpp
     src/cluster/cluster.cpp
     src/bbs/nuv.cpp
     src/bbs/votebooth.cpp
