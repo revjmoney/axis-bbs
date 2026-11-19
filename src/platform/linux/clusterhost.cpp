@@ -85,6 +85,11 @@ uint32_t setupAt = 0;
 bool     yieldLogged = false;
 uint32_t yieldAt = 0;
 
+// the takeover: started by takeoverWanted (inside the tick), finished by clusterHostPoll
+bool     taking = false;
+uint32_t takingAt = 0;
+uint32_t takeoverWaitMs = 120000;
+
 std::string stateFile() { return axisDataDir().empty() ? "" : axisDataDir() + "/cluster/state"; }
 std::string keyFile() { return axisDataDir().empty() ? "" : axisDataDir() + "/cluster.key"; }
 
@@ -288,12 +293,25 @@ void clusterHostStart(Profile p) {
 }
 
 bool takeoverWanted() {
-    uint32_t now = millis();
-    if (!yieldLogged || now - yieldAt >= kYieldLogMs) {
-        std::printf("axis: cluster: a Yield came, not taking main yet\n");
-        yieldLogged = true;
-        yieldAt = now;
+    if (taking) return false;  // (a Yield again while the callers here finish)
+    uint32_t    now = millis();
+    const char* no = saved.state == Standing::HandedBack ? "axis: mirror: not taking main: just handed it back\n"
+                     : !mirrorComplete()                 ? "axis: mirror: not taking main: the first copy is not finished\n"
+                                                         : nullptr;
+    if (no) {
+        if (!yieldLogged || now - yieldAt >= kYieldLogMs) {
+            std::printf("%s", no);
+            yieldLogged = true;
+            yieldAt = now;
+        }
+        return false;
     }
+    taking = true;  // clusterHostPoll does the rest
+    takingAt = now;
+    modemLineHold(true);
+    hostnetHold(true);
+    std::printf("axis: mirror: the main yields to the card mirror: taking main once nobody is on here (at most %u s)\n",
+                (unsigned)(takeoverWaitMs / 1000));
     return false;
 }
 
@@ -367,7 +385,9 @@ void soloPoll(uint32_t now) {
 }
 
 void noMain() {
-    if (kNoMainAction == NoMainAction::TakeOver) {
+    if (kNoMainAction == NoMainAction::TakeOver && !mirrorComplete())
+        std::printf("axis: mirror: not taking main: the first copy is not finished\n");
+    else if (kNoMainAction == NoMainAction::TakeOver) {
         ClusterState st;
         st.state = Standing::Main;
         st.epoch = lastMainEpoch + 1;
@@ -397,7 +417,32 @@ void followerPoll(uint32_t now) {
         std::printf("axis: cluster: following the card board again: the hand-back is done\n");
         return;
     }
-    if (!following && now - lastFollowing >= noMainMs) noMain();
+    if (!following && now - lastFollowing >= noMainMs && !taking) noMain();  // (a takeover under way finishes first)
+}
+
+// the takeover takeoverWanted started: once nobody is on here (or the wait is up), state main and a restart
+void takeoverPoll(uint32_t now) {
+    if (!taking) return;
+    if ((hostnetBbsCallersOpen() || modemLineBusy()) && now - takingAt < takeoverWaitMs) return;
+    taking = false;
+    if (!mirrorSaveForTakeover()) {
+        std::printf("axis: mirror: cannot keep the card's state for the hand-back, so not taking main\n");
+        hostnetHold(false);
+        modemLineHold(false);
+        return;
+    }
+    Cluster*     c = Cluster::instance();
+    ClusterState st = saved;
+    st.state = Standing::Main;
+    st.epoch = (c ? c->epoch() : lastMainEpoch) + 1;
+    st.since = (long)time(nullptr);
+    if (!clusterStateSave(st)) {
+        std::printf("axis: cluster: cannot save the cluster state, so not taking main\n");
+        hostnetHold(false);
+        modemLineHold(false);
+        return;
+    }
+    hostRestart("taking over as main from the mirror");
 }
 
 void setupPoll(uint32_t now) {
@@ -415,11 +460,16 @@ void clusterHostPoll(uint32_t now) {
         polled = true;
         drainMs = (uint32_t)hostConfInt("drain_minutes", 10, 1, 1440) * 60000;
         noMainMs = (uint32_t)hostConfInt("no_main_seconds", 60, 10, 86400) * 1000;
+        takeoverWaitMs = (uint32_t)hostConfInt("takeover_wait_seconds", 120, 0, 3600) * 1000;
         lastFollowing = now;
         keyAt = now;
         setupAt = now;
     }
     if (started == Profile::Solo) soloPoll(now);
-    else if (started == Profile::Follower) followerPoll(now);
+    else if (started == Profile::Follower) {
+        takeoverPoll(now);
+        followerPoll(now);
+        mirrorPoll(now);
+    }
     setupPoll(now);
 }

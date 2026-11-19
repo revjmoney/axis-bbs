@@ -52,7 +52,8 @@ to it on the router, or add `AmbientCapabilities=CAP_NET_BIND_SERVICE` in a drop
 (`systemctl edit axis`).
 
 Other `axis.conf` keys: `lan_port`, `public_port`, `max_callers`, `max_per_ip`,
-`max_per_ip_lan`, `rate_per_ip`, `modem`, `drain_minutes`, `no_main_seconds`. Edit as root, then restart.
+`max_per_ip_lan`, `rate_per_ip`, `modem`, `drain_minutes`, `no_main_seconds`, `noon`, `mirror_rate`,
+`takeover_wait_seconds`. Edit as root, then restart.
 
 ## In a cluster of boards
 
@@ -69,6 +70,12 @@ With the same cluster key as the boards (`@CLUSTERKEY`, kept in `<data>/cluster.
   first, the drain is called off and axis stays solo (the public port stays closed until the next start).
 - A main on older firmware is not joined: the log says to flash it.
 - A follower with no main for `no_main_seconds` (default 60) restarts, and finds itself solo.
+- A follower keeps a full copy of the main's card in `<data>/mirror` (the card mirror): a first
+  full copy, then each change once it has been quiet 15 seconds, and a check of the whole card every
+  day at `noon` (`HH:MM`, default `12:00`). It copies at `mirror_rate` bytes a second (default 65536),
+  a quarter of that while someone is on. You can pre-load `<data>/mirror` from a copy of the card:
+  files at the main's size are kept. If a main without a card hands main to it, it waits until
+  nobody is on here (at most `takeover_wait_seconds`, default 120) and restarts as the main.
 
 ## Run it in a terminal or a window instead
 

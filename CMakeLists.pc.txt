@@ -208,8 +208,9 @@ add_executable(axis_tests
     tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
-if(UNIX AND NOT APPLE)  # the native Linux program's accept gate: plain C++ and POSIX, so the tests can link it
-  target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp)
+if(UNIX AND NOT APPLE)  # the native Linux program's accept gate and card mirror bookkeeping: plain C++ and POSIX, so the tests can link them
+  target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp
+                                    tests/test_cardmirror.cpp src/platform/linux/cardmirror.cpp)
 endif()
 if(WIN32)
   target_link_libraries(axiscore PUBLIC ws2_32)
@@ -327,6 +328,8 @@ if(UNIX AND NOT APPLE)
         src/platform/linux/startmode.cpp
         src/platform/linux/netgate.cpp
         src/platform/linux/clusterhost.cpp
+        src/platform/linux/cardmirror.cpp
+        src/platform/linux/mirrorhost.cpp
         src/platform/linux/nativecmd.cpp
         src/platform/cyd/clusternet.cpp    # the board's own: the cluster's UDP and link sockets through WiFiUDP and WiFiClient
         src/platform/cyd/config_store.cpp  # the board's own: LittleFS is the data folder's flash/ (fs.cpp)

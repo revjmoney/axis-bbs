@@ -136,8 +136,9 @@ public:
     CardKind cardKind() const { return kind_; }
     void setHasFiles(bool sd) {  // this board holds the file areas (an SD card; the Linux program's mirror under host_.mirror)
 #if AXIS_NATIVE
-        if (host_.mirror) {
-            setCardKind(sd ? CardKind::Mirror : CardKind::None);
+        if (host_.mirror) {  // always Mirror: the Follower holds the mirror but has no /sd, and its Hello must say 'm'
+            (void)sd;
+            setCardKind(CardKind::Mirror);
             return;
         }
 #endif

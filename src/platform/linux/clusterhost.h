@@ -51,6 +51,14 @@ void soloWatchHeard(const std::string& datagram, uint32_t fromIp);
 // clusterHostPoll checks every 2 s and types WFC once it is.
 void clusterHostWaitSetup();
 
-// A Yield came (Cluster::HostHooks::onYield, inside the cluster's tick): true takes main now. Not yet: it logs and
-// declines (the card mirror's takeover replaces this).
+// A Yield came (Cluster::HostHooks::onYield, inside the cluster's tick). Always false: in state handedback, or with the
+// mirror's first copy not finished, it logs and declines; otherwise it starts the takeover (the callers are held off,
+// and clusterHostPoll restarts as the mirror's main once nobody is on, at most takeover_wait_seconds later).
 bool takeoverWanted();
+
+// The card mirror (mirrorhost.cpp), Follower only. mirrorPoll runs from clusterHostPoll, never inside a request, and
+// makes at most one request a turn: the first full copy, the live follow, the noon check and the compare passes.
+void mirrorPoll(uint32_t nowMs);
+bool mirrorComplete();         // the manifest says the first full copy is finished
+void mirrorCheckSoon();        // a compare pass at the next chance
+bool mirrorSaveForTakeover();  // writes the manifest now and copies it to <data>/mirror.takeover
