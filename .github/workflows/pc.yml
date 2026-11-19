@@ -12,7 +12,8 @@ permissions:
   contents: read
 concurrency:
   group: pc-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel a superseded branch run, but never a tag run (a release must finish).
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 jobs:
   package:
     strategy:
@@ -89,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Cross tools (arm-linux-gnueabihf)
-        run: sh tools/ci/apt_install.sh cmake ninja-build file g++-arm-linux-gnueabihf
+        run: sh tools/ci/apt_install.sh cmake ninja-build file g++-arm-linux-gnueabihf libc6-dev-armhf-cross
       - name: Version from src/bbs/version.h
         run: |
           VER=$(sed -n 's/.*kAxisVersion[^"]*"\([0-9.]*\)".*/\1/p' src/bbs/version.h)
@@ -125,6 +126,8 @@ jobs:
       contents: write  # create the release and attach files
     env:
       TAG: ${{ github.ref_name }}
+      # gh needs the repo, since this job does not check out a working tree.
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
@@ -141,5 +144,6 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           else
-            gh release create "$TAG" $files --verify-tag --title "axispc $TAG" --generate-notes
+            # --latest=false so a PC package tag does not displace the firmware as the repo's Latest.
+            gh release create "$TAG" $files --verify-tag --latest=false --title "axispc $TAG" --generate-notes
           fi
