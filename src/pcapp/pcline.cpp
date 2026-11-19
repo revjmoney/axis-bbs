@@ -15,7 +15,7 @@ static void nonBlocking(intptr_t s) {
     u_long on = 1;
     ioctlsocket((sock_t)s, FIONBIO, &on);
 }
-static bool wouldBlock() { return WSAGetLastError() == WSAEWOULDBLOCK; }
+static bool wouldBlock() { return WSAGetLastError() == WSAEWOULDBLOCK || WSAGetLastError() == WSAEINTR; }
 static void shutdownSend(intptr_t s) { ::shutdown((sock_t)s, SD_SEND); }
 static constexpr int kSendFlags = 0;  // the socket is non-blocking already
 static constexpr int kPeekFlags = MSG_PEEK;
@@ -29,7 +29,7 @@ static constexpr int kPeekFlags = MSG_PEEK;
 using sock_t = int;
 static void closeSock(intptr_t s) { ::close((int)s); }
 static void nonBlocking(intptr_t s) { fcntl((int)s, F_SETFL, fcntl((int)s, F_GETFL) | O_NONBLOCK); }
-static bool wouldBlock() { return errno == EAGAIN || errno == EWOULDBLOCK; }
+static bool wouldBlock() { return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR; }  // EINTR: a signal is not a hang-up
 static void shutdownSend(intptr_t s) { ::shutdown((int)s, SHUT_WR); }
 #ifdef MSG_NOSIGNAL
 static constexpr int kSendFlags = MSG_DONTWAIT | MSG_NOSIGNAL;  // never waits, never raises SIGPIPE
@@ -51,7 +51,8 @@ PcLine::PcLine(intptr_t fd, uint32_t ip) : fd_(fd), ip_(ip) {
 }
 
 PcLine::~PcLine() {
-    hangUp();  // the goodbye and the close, while the virtuals are still ours
+    hangUp();    // the goodbye and the close, while the virtuals are still ours
+    rawClose();  // carrier() can drop the line without closing it: hangUp() then does nothing; this is idempotent
 }
 
 std::unique_ptr<PcLine> PcLine::fromFd(intptr_t fd, uint32_t ip) {
