@@ -434,6 +434,11 @@ static std::vector<std::string>                         slotStatus;  // a free s
 // The session whose turn it is (answer, its loop turn), for the board code that asks for "this caller" (the transfer window,
 // the setup screen, a follower's upload description). Null between turns, as the old per-turn globals were.
 static axis::app::Session* turn = nullptr;
+struct TurnOf {  // `turn` for one scope, put back on the way out (an exception included)
+    axis::app::Session* was;
+    explicit TurnOf(axis::app::Session* s) : was(turn) { turn = s; }
+    ~TurnOf() { turn = was; }
+};
 static bool boardHasLord() {
     for (auto& s : sessions)
         if (s && s->lord) return true;
@@ -1350,9 +1355,11 @@ static void drawScreen() {
         g.setTextColor(pc(pal::YELLOW), pc(pal::BLACK));
         g.drawString(setupPin.c_str(), 8, 144);
         g.setTextSize(1);
-        g.setTextColor(turn && turn->wizard ? pc(pal::LIGHTGREEN) : pc(pal::DARKGREY), pc(pal::BLACK));
-        g.drawString(turn && turn->wizard ? "setup in progress over telnet..."
-                              : turn && turn->gate ? "caller connected, waiting for the PIN" : "waiting for the sysop to call",
+        axis::app::Session* s0 = sessions.empty() ? nullptr : sessions[0].get();  // (setup takes one caller, in slot 0)
+        bool setupWiz = s0 && s0->wizard, setupGate = s0 && s0->gate;
+        g.setTextColor(setupWiz ? pc(pal::LIGHTGREEN) : pc(pal::DARKGREY), pc(pal::BLACK));
+        g.drawString(setupWiz ? "setup in progress over telnet..."
+                              : setupGate ? "caller connected, waiting for the PIN" : "waiting for the sysop to call",
                        8, 200);
     } else if (mode == Mode::SetupTouch) {
         title("first-boot setup");
@@ -5244,10 +5251,8 @@ static void answerIn(int slot, WiFiClient incoming, const std::string& giveBack)
     axis::app::Session& s = *sessions[(size_t)slot];
     if ((size_t)slot < slotStatus.size()) s.lastStatus = slotStatus[(size_t)slot];  // the slot's last status line, as before
     if (!giveBack.empty()) l->inject(giveBack);
-    axis::app::Session* was = turn;
-    turn = &s;
+    TurnOf on(&s);
     s.open(panelConsoleNew);
-    turn = was;
 }
 // ------------------------------------------------------------------ doors
 // (A caller's door, LORD's mail and the transfer are the Session's: app/session.cpp. The board's door folders are here.)
@@ -7395,15 +7400,16 @@ void loop() {
             }
             continue;
         }
-        turn = s;
-        uint32_t turnMs = millis();
-        s->service(turnMs);
-        turnMs = millis() - turnMs;
-        if (turnMs > 1000)  // one caller held the loop: say what it was doing (node state number, bytes its line still holds)
-            logEvent("slow turn: node " + String(sessionNumber((int)i)) + " " + String(turnMs) + " ms, state " +
-                     String(s->node ? (int)s->node->state() : -1) + ", held " + String(s->line ? (unsigned)s->line->backlog() : 0u) + " " +
-                     String(s->lastStatus.c_str()));
-        turn = nullptr;
+        {
+            TurnOf on(s);
+            uint32_t turnMs = millis();
+            s->service(turnMs);
+            turnMs = millis() - turnMs;
+            if (turnMs > 1000)  // one caller held the loop: say what it was doing (node state number, bytes its line still holds)
+                logEvent("slow turn: node " + String(sessionNumber((int)i)) + " " + String(turnMs) + " ms, state " +
+                         String(s->node ? (int)s->node->state() : -1) + ", held " + String(s->line ? (unsigned)s->line->backlog() : 0u) + " " +
+                         String(s->lastStatus.c_str()));
+        }
         if (s->done()) {  // hung up this turn: the slot is free, its last status line kept for the next turn
             slotStatus[i] = s->lastStatus;
             sessions[i].reset();

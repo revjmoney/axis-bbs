@@ -3,7 +3,9 @@
 // What a caller's Session (app/session.h) uses from the program around it: the shared stores, the settings, chat between
 // nodes, and the program's own hooks. The board (main.cpp) fills it with its cluster-aware stores and its board-only
 // callbacks (the panel, the LED, the radio link report, the Axis Net bridge, heap notes); the PC app fills the local
-// versions and may leave every board-only hook empty. An empty hook does nothing (or the default its comment names).
+// versions and may leave every board-only hook empty. Required (a Node or the setup calls them unchecked, so an empty
+// one throws or crashes): sysInfo, rng, saveUsers. Every other hook may be empty: it then does nothing, or what its
+// comment names.
 #pragma once
 #include <cstdint>
 #include <functional>
@@ -44,21 +46,21 @@ struct Services {
     ThemeProvider&        theme;
     Stats&                stats;
     bbs::UserStore&       users;
-    std::function<void()> saveUsers;
+    std::function<void()> saveUsers;  // required
     // The board's settings, always the current copy: a reference to the program's own pointer, which a change replaces.
     const std::shared_ptr<const bbs::BbsConfig>& cfg;
     std::function<std::string(const std::string&)> sysopRun;
     // A chat line or a page from the session in `slot` (its handle, the text), to every node.
     std::function<void(int slot, const std::string& handle, const std::string& text, bool page)> chat;
     std::function<std::vector<bbs::Node::WhoLine>()> who;
-    std::function<bbs::MessageStore&()> messages;
-    std::function<bbs::FileLibrary&()> files;  // empty: no file areas (a Node with no library)
+    std::function<bbs::MessageStore&()> messages;  // empty: the message base is offline (LORD mail is dropped)
+    std::function<bbs::FileLibrary&()> files;  // empty: no file areas (no library; movies and transfers end at once)
 
     // the rest of what a Node is given
-    uint32_t (*rng)() = nullptr;                                          // the random numbers (passwords, LORD, setup)
+    uint32_t (*rng)() = nullptr;                                          // required: the random numbers (passwords, setup)
     std::function<uint32_t()> unixNow;                                    // 0 when the clock is not set
     std::function<std::shared_ptr<const bbs::BbsConfig>()> nodeCfg;      // the settings a new Node gets (empty: cfg)
-    std::function<bbs::SysInfo()> sysInfo;
+    std::function<bbs::SysInfo()> sysInfo;                                // required: the Node reads it on many screens
     std::function<bbs::WfcSnapshot()> wfcSnapshot;
     std::function<bool(const std::string&)> warrior;                      // registration's LORD warrior (empty: none)
     // Notes, broadcasts and split chat keys from the session in `slot`: kind, target node (0: all), its handle, the text.
@@ -71,7 +73,7 @@ struct Services {
     std::function<bool()> ready;                                          // callers get a Node (empty: cfg->setupDone)
     std::function<std::string()> setupPin;
     std::function<void()> setupChosen;                                    // the right PIN: setup is over telnet now
-    std::function<void(bbs::SetupWizard&)> setupSave;                     // the wizard finished: keep its settings
+    std::function<void(bbs::SetupWizard&)> setupSave;                     // the wizard finished: keep its settings (empty: "Nothing was saved")
     std::function<void()> setupFinished;                                  // after the goodbye: open for callers
     std::function<std::string()> dialName;                                // "axis.local", for the goodbye and AXISBBS.NFO
 
@@ -106,7 +108,7 @@ struct Services {
 
     // the Axis Net bridge (board only)
     std::function<bool(Session&)> axisPump;                               // true: a call to another board owns the keys
-    std::function<void(Session&)> axisCall;                               // open the call the node asked for
+    std::function<void(Session&)> axisCall;                               // open the call the node asked for (empty: "Could not reach")
     std::function<bool()> axisBusy;                                       // a call is already on (this board has one line out)
     std::function<bool()> axisDirty;                                      // the Axis Net list changed this turn
     std::function<void()> axisProbe;                                      // the node asked to speak to the Axis Net

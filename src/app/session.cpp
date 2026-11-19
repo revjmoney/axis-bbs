@@ -43,7 +43,7 @@ Session::Session(int slotNo, std::unique_ptr<net::TelnetStream> l, Services& s) 
     line->start();
 }
 
-Session::~Session() = default;
+Session::~Session() { dropLord(); }  // (LORD first, while its mail box and folder are still here)
 
 int Session::nodeNumber() const { return s_.nodeNumber ? s_.nodeNumber(slot) : slot + 1; }
 
@@ -94,7 +94,7 @@ void Session::wireNode() {
         if (!node) return;
         if (s_.nodeLink) s_.nodeLink(slot, kind, to, node->handle(), text);
     });
-    node->setMessages(&s_.messages());
+    node->setMessages(s_.messages ? &s_.messages() : nullptr);  // (none: the message base is offline)
     node->setArt([t](const std::string& name) { return t->themeArt(name); });
     node->setWfcArt([t] { return t->wfcArtShared(); });
     node->setPoster([t](const std::string& name, size_t off, size_t want, bool* exists) { return t->posterPiece(name, off, want, exists); });
@@ -237,7 +237,7 @@ void Session::lordSaveSeen(LordMail* box) {
 
 int Session::lordPull(void* ctx, char* body, int bodyN, char* from, int fromN) {
     auto* box = (LordMail*)ctx;
-    if (!box || bodyN < 2 || fromN < 2) return 0;
+    if (!box || !box->s->messages || bodyN < 2 || fromN < 2) return 0;
     if (!box->loaded) lordLoadSeen(box);
     body[0] = from[0] = 0;
     bbs::MessageStore& msgs = box->s->messages();
@@ -263,7 +263,8 @@ int Session::lordPull(void* ctx, char* body, int bodyN, char* from, int fromN) {
 }
 
 void Session::lordPost(void* ctx, const char* from, const char* to, const char* body) {
-    auto*        box = (LordMail*)ctx;
+    auto* box = (LordMail*)ctx;
+    if (!box || !box->s->messages) return;  // (no message base: the mail is dropped)
     bbs::Message m;
     m.from = from ? from : "";
     m.to = to ? to : "";
@@ -293,7 +294,7 @@ void Session::startDoorInner() {
         }
         mail_.fs = lordFs.get();
         lord.reset(new axis::lord::NativeLord(*lordFs, *line, node->handle(), locks, me));
-        lord->setRng(s_.rng);
+        if (s_.rng) lord->setRng(s_.rng);  // (none: the game keeps its own)
         lord->setMailbox(&mail_, lordPull, lordPost);
         lord->begin();
         if (line) line->flush();
@@ -312,6 +313,11 @@ void Session::startDoorInner() {
     }
     doorStartMs = s_.host.nowMs();
 #if AXIS_ANSIVIEW
+    if (!d.exe.empty() && d.exe[0] == '*' && !s_.files) {  // (a program with no file areas: nothing to view)
+        s_.host.event(node->handle() + " opened " + d.name + " (no file areas)");
+        abortDoor(bbs::Node::DoorEnd::LoadError);
+        return;
+    }
     if (!d.exe.empty() && d.exe[0] == '*') {  // one viewer per caller. It borrows the inflate window only while a deflated piece plays.
         s_.host.event(node->handle() + " opened " + d.name);
         std::vector<std::pair<std::string, std::string>> va;  // "ansi,scene-acid,...": several areas, a picker first
@@ -413,7 +419,12 @@ AXIS_NOINLINE void Session::callerInput(const std::string& app) {
         wizard->input(p, app.size());
         sendApp(wizard->takeOutput());
         if (wizard->finished()) {
-            if (s_.setupSave) s_.setupSave(*wizard);  // the settings kept (and the event logged) by the program
+            if (!s_.setupSave) {  // (a program that cannot keep settings: nothing is saved, and the caller is told so)
+                sendApp("\r\n   Nothing was saved. Call again to start over.\x1b[0m\r\n");
+                hangUp();
+                return;
+            }
+            s_.setupSave(*wizard);  // the settings kept (and the event logged) by the program
             char b[220];
             std::snprintf(b, sizeof b,
                           "\r\n   \x1b[1;32mSettings saved.\x1b[0;37m Your BBS is open: call %s port %d.\r\n"
@@ -585,9 +596,10 @@ AXIS_NOINLINE void Session::service(uint32_t nowMs) {
         if (s_.axisDirty && s_.axisDirty() && node && node->state() == bbs::Node::State::AxisNet) node->axisRedraw();
         input(nowMs);
         if (line && node && node->axisTakeProbe() && s_.axisProbe) s_.axisProbe();
-        if (line && node && node->state() == bbs::Node::State::AxisCall && s_.axisCall && !(s_.axisBusy && s_.axisBusy())) {
+        if (line && node && node->state() == bbs::Node::State::AxisCall && !(s_.axisBusy && s_.axisBusy())) {
             sendApp(node->takeOutput());  // "Calling ..." before the connect, which can take a second
-            s_.axisCall(*this);
+            if (s_.axisCall) s_.axisCall(*this);
+            else node->axisCallDone(false, "Could not reach that board.");  // (a program with no bridge: the list again)
             sendApp(node->takeOutput());  // the list again when the call did not open
             return;
         }
@@ -619,6 +631,12 @@ AXIS_NOINLINE void Session::service(uint32_t nowMs) {
                     return;
                 }
 #endif
+                if (!s_.files) {  // (a program with no file areas: the transfer ends at once)
+                    node->transferDone(false, 0, 0, "the file areas are offline", s_.host.nowMs());
+                    doing("idle");
+                    sendApp(node->takeOutput());
+                    return;
+                }
                 job.reset(new bbs::TransferJob(s_.files(), node->transfer(), *line, info));
                 return;
             }
