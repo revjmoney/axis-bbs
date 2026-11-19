@@ -159,9 +159,10 @@ void MessageReader::showList() {
     std::vector<std::string> rows;
     rows.reserve(end - listFrom_);
     last_ = last;
+    const ArtStyle style = artStyle();  // (once: a follower's ask can wait)
     for (size_t i = listFrom_; i < end; i++) {  // one window of headers, bodies stay on disk until Read
         if (t) {  // MSGS.LST's row: NW new marker, NM number, FR from, TO to, SU subject
-            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return msgField(i, k); }, artStyle()));
+            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return msgField(i, k); }, style));
             continue;
         }
         const Message& m = heads_[i];

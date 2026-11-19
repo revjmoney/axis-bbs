@@ -78,7 +78,8 @@ private:
     bool        readThemeFileAppend(const char* folder, const std::string& name, size_t cap, size_t offset, std::string& out);
     bool        posterPieceLocalAppend(const std::string& name, size_t offset, size_t want, std::string& out);
     std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened);
-    std::string themeArtRemote(const std::string& name, bool* answered);
+    // cap 0: today's (the poster's, else kThemeArtCap, all of it reserved); a small file gives its own cap and reserves nothing
+    std::string themeArtRemote(const std::string& name, bool* answered, size_t cap = 0, bool reserve = true);
     std::string readThemeTop(const char* folder, const std::string& name, int rows);
     FILE*       openThemeScreen(const std::string& name);
 
@@ -92,6 +93,7 @@ private:
     std::map<std::string, bool> existsCache_;
     std::string                        cfgCache_;  // a follower's THEME.CFG (1 KB at most)
     bool                               cfgCached_ = false;
+    uint32_t                           lastCfgMissMs_ = 0;  // nowMs() of the last unanswered THEME.CFG ask (0: none): not asked again for 10 s
     std::map<std::string, std::string> listCache_;  // a follower's list templates (small), cleared with the rest
     uint32_t                    lastEMissMs_ = 0;         // nowMs() of the last unanswered "E" (0: none)
     bool                        mainKnowsExists_ = false;  // the main has answered "E" with a "1" once: its "0" can be trusted

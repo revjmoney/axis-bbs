@@ -108,9 +108,10 @@ bool ThemeProvider::themeArtPieceAppend(const std::string& name, size_t off, siz
     return readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, out);
 }
 // A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
-std::string ThemeProvider::themeArtRemote(const std::string& name, bool* answered) {
+std::string ThemeProvider::themeArtRemote(const std::string& name, bool* answered, size_t cap, bool reserve) {
     constexpr size_t kFollowerWant = 4096;  // a follower asks for 4 KB pieces: the main's reply (and this reply) stay small
-    return axis::bbs::assembleArt(posterName(name) ? kPosterCap : kThemeArtCap, kFollowerWant, !posterName(name),
+    if (!cap) cap = posterName(name) ? kPosterCap : kThemeArtCap, reserve = !posterName(name);
+    return axis::bbs::assembleArt(cap, kFollowerWant, reserve,
                                   [this, &name](size_t off, std::string& reply) {
                                       return remote && remote(std::string("T\x1f") + name + "\x1f" + std::to_string(off) + "\x1f" +
                                                                   std::to_string(kFollowerWant),
@@ -329,7 +330,8 @@ std::string ThemeProvider::listTemplateText(const std::string& name) {
 }
 
 bool ThemeProvider::themeCfgText(std::string& out) {
-    constexpr size_t kCfgMax = 1024;  // a longer THEME.CFG counts as none
+    constexpr size_t   kCfgMax = 1024;  // a longer THEME.CFG counts as none
+    constexpr uint32_t kCfgBackoffMs = 10000;
     std::string      s;
     out.clear();
     if (!isFollower()) {
@@ -344,12 +346,18 @@ bool ThemeProvider::themeCfgText(std::string& out) {
         out = cfgCache_;
         return true;
     }
+    // The main was silent a moment ago: no answer again without a second wait (artStyle() asks per art piece, list row and prompt,
+    // and each ask can wait seconds); the same back-off as menuExists.
+    if (lastCfgMissMs_ && host_.nowMs() - lastCfgMissMs_ < kCfgBackoffMs) return false;
     bool answered = false;
-    s = themeArtRemote("THEME.CFG", &answered);  // the main's theme folder, through the same "T" requests the art uses
+    s = themeArtRemote("THEME.CFG", &answered, kCfgMax + 1, false);  // the main's theme folder, through the same "T" requests the art uses (1 KB, no 12 KB block)
     if (s.size() > kCfgMax) s.clear();
-    if (answered) {  // (a failed ask is asked again)
+    if (answered) {
         cfgCache_ = s;
         cfgCached_ = true;
+        lastCfgMissMs_ = 0;
+    } else {
+        lastCfgMissMs_ = host_.nowMs() ? host_.nowMs() : 1;  // (0 means none; asked again after the back-off)
     }
     out = std::move(s);
     return answered;
@@ -396,6 +404,7 @@ void ThemeProvider::forgetRemote() {
     cfgCache_.clear();
     cfgCache_.shrink_to_fit();
     cfgCached_ = false;
+    lastCfgMissMs_ = 0;  // (the settings came over the link: it works)
     axis::bbs::theme::forgetArtStyle();  // (the look may have changed with it)
     mainKnowsExists_ = false;  // (this may be another main: an older one answers every unknown letter "0")
 }

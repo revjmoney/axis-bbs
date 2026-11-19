@@ -171,9 +171,10 @@ void FileBrowser::showPage(int at) {
     const ListTemplate*      t = tpl();
     std::vector<std::string> rows;
     rows.reserve(end - begin);
+    const ArtStyle style = theme::artStyle();  // (once: a follower's ask can wait)
     for (size_t i = begin; i < end; i++) {  // this page only, not the whole area
         if (t) {  // FILES.LST's row: FN name, SZ size, AB about
-            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return fileField(i, k); }, theme::artStyle()));
+            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return fileField(i, k); }, style));
             continue;
         }
         const FileEntry& f = files_[i];
