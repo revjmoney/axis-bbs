@@ -143,31 +143,22 @@ TEST_CASE("a zero width field is empty and an unclosed token stays literal") {
 
 TEST_CASE("a right-aligned number wider than its field keeps every digit") {
     ListTemplate t;
-    REQUIRE(parseListTemplate("geom=3,6,20,14
-row=#@NM>4@|@SU4@|
-", t));
+    REQUIRE(parseListTemplate("geom=3,6,20,14\nrow=#@NM>4@|@SU4@|\n", t));
     AcsUser who;
     auto    f = [](const std::string& k) { return std::string(k == "NM" ? "12345" : "abcdefg"); };
     CHECK(renderRow(t, who, f) == "#12345|abcd|");
     // a hidden {{ACS}} group blanks to the width the field really has
     ListTemplate h;
-    REQUIRE(parseListTemplate("geom=3,6,20,14
-row={{ACS:99}}@NM>4@{{/ACS}}!
-", h));
+    REQUIRE(parseListTemplate("geom=3,6,20,14\nrow={{ACS:99}}@NM>4@{{/ACS}}!\n", h));
     CHECK(renderRow(h, who, f).find("12345") == std::string::npos);
     // the visible clip still takes the whole line
     ListTemplate c;
-    REQUIRE(parseListTemplate("geom=3,6,3,14
-row=@NM>4@
-", c));
+    REQUIRE(parseListTemplate("geom=3,6,3,14\nrow=@NM>4@\n", c));
     CHECK(renderRow(c, who, f) == "123");
 }
 
 TEST_CASE("an empty row is a malformed template") {
     ListTemplate t;
-    CHECK_FALSE(parseListTemplate("geom=3,6,74,14
-row=
-", t));
-    CHECK_FALSE(parseListTemplate("row=
-", t));
+    CHECK_FALSE(parseListTemplate("geom=3,6,74,14\nrow=\n", t));
+    CHECK_FALSE(parseListTemplate("row=\r\n", t));
 }

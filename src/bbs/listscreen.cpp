@@ -48,7 +48,7 @@ std::string listScreenTop(const std::string& title, const std::string& columns, 
                  theme::RESET;
         if (tpl->rule && ruleRow > capRow)
             s += "\x1b[" + std::to_string(ruleRow) + ";" + std::to_string(tpl->x) + "H" + theme::ORANGE +
-                 std::string((size_t)tpl->width, 'Í') + theme::RESET;
+                 std::string((size_t)tpl->width, '\xcd') + theme::RESET;
         return s;
     }
     s += listScreenHead(key, title, 3);
