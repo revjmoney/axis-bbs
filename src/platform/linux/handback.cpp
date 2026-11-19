@@ -74,6 +74,8 @@ std::set<std::string> changes;  // every card path written since the takeover (m
 std::set<std::string> fresh;    // noted since the running pass began (only while a hand-back runs)
 bool                  collecting = false;
 bool                  appendFailLogged = false;
+size_t                refusedN = 0;  // card paths written here that the card cannot take (too long, odd names)
+std::string           refusedLast;
 
 std::string dataPath(const char* name) { return axisDataDir().empty() ? "" : axisDataDir() + "/" + name; }
 std::string mirrorDir() { return dataPath("mirror"); }
@@ -210,15 +212,33 @@ int walkOne(const char* p, const struct stat* st, int type, struct FTW*) {
 
 size_t depth(const std::string& p) { return (size_t)std::count(p.begin(), p.end(), '/'); }
 
+// No folder above rel in the mirror is a symlink (lstat and O_NOFOLLOW guard only the last name). A plain file in a
+// folder's place is fine: the path is then missing.
+bool realParents(const std::string& rel) {
+    for (size_t i = 0; i < rel.size(); i++)
+        if (rel[i] == '/') {
+            struct stat st;
+            if (::lstat(local(rel.substr(0, i)).c_str(), &st) != 0) return true;
+            if (S_ISREG(st.st_mode)) return true;
+            if (!S_ISDIR(st.st_mode)) return false;
+        }
+    return true;
+}
+
 // The work for the noted paths `base`: what to check, remove and copy. False (and why) on a mirror entry that is
 // neither a plain file nor a folder (a symlink): the hand-back never follows or copies one.
 bool makePlan(const std::set<std::string>& base, Plan& plan, std::string& why) {
     plan = Plan();
+    why.clear();
     std::set<std::string> remove, copy, dirs;
     auto goneUnder = [&](const std::string& p) {  // the card's files under p that the mirror no longer has
         for (auto it = known.files.lower_bound(p + "/"); it != known.files.end() && knownUnder(p, it->first); ++it) {
             struct stat st;
             const std::string& q = it->first;
+            if (!realParents(q)) {
+                if (why.empty()) why = "a folder above " + q + " in the mirror is a symlink";
+                continue;
+            }
             if (::lstat(local(q).c_str(), &st) == 0) continue;  // (a file there now: it is noted itself, or walked)
             remove.insert(q);
             plan.check.insert(q);
@@ -231,6 +251,10 @@ bool makePlan(const std::set<std::string>& base, Plan& plan, std::string& why) {
     };
     for (const std::string& p : base) {
         if (!cardPathMirrored(p)) continue;
+        if (!realParents(p)) {
+            why = "a folder above " + p + " in the mirror is a symlink";
+            return false;
+        }
         struct stat st;
         if (::lstat(local(p).c_str(), &st) != 0) {
             remove.insert(p);
@@ -266,6 +290,7 @@ bool makePlan(const std::set<std::string>& base, Plan& plan, std::string& why) {
             why = p + " in the mirror is not a plain file or folder";
             return false;
         }
+        if (!why.empty()) return false;  // (goneUnder found a symlinked folder)
     }
     for (const std::string& c : copy) remove.erase(c);
     plan.remove.assign(remove.begin(), remove.end());
@@ -468,7 +493,25 @@ void checkStep(uint32_t now) {
         stop(p, "the card board's answer to the check cannot be read", now);
         return;
     }
-    if (!same) job.differ.push_back(p);
+    if (!same) {
+        // The card may already have what the mirror has: a write of this hand-back's whose reply was lost, or one
+        // made just before the program stopped and mirror.takeover was saved. Then it is no change on the card; the
+        // known state takes the card's answer (and the file is still sent).
+        struct stat ls;
+        bool        have = realParents(p) && ::lstat(local(p).c_str(), &ls) == 0;
+        CardIs      is = job.cardIs[p];
+        bool        mine = (is == CardIs::Missing && !have) || (is == CardIs::Folder && have && S_ISDIR(ls.st_mode)) ||
+                    (is == CardIs::File && have && S_ISREG(ls.st_mode) && (uint64_t)ls.st_size == (uint64_t)size &&
+                     std::llabs((long long)ls.st_mtime - (long long)mtime) <= 2);  // (a FAT card keeps 2 s steps)
+        if (mine) {
+            if (is == CardIs::File) known.files[p] = CardEntry{p, (uint64_t)size, mtime};
+            else known.files.erase(p);
+            knownDirty = true;
+            std::printf("axis: handback: %s on the card is already as the mirror has it\n", p.c_str());
+        } else {
+            job.differ.push_back(p);
+        }
+    }
     job.checkAt++;
 }
 
@@ -522,6 +565,7 @@ bool workStep(uint32_t now) {
         return true;
     }
     if (!cur.opened) {
+        if (!realParents(p)) return stop(p, "a folder above it in the mirror is a symlink", now), true;
         cur.fd = ::open(local(p).c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
         struct stat st;
         if (cur.fd < 0 || ::fstat(cur.fd, &st) != 0 || !S_ISREG(st.st_mode)) {
@@ -595,14 +639,17 @@ bool workStep(uint32_t now) {
 
 // the pass's work is done: files changed since they were sent are noted for the next pass (a file opened before it
 // was sent and written later through that handle gets no new note)
-void passDone(uint32_t now) {
-    for (auto it = job.sent.begin(); it != job.sent.end();) {
+void sentChanged() {
+    for (const auto& e : job.sent) {
         struct stat st;
-        bool        same = ::lstat(local(it->first).c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
-                    (uint64_t)st.st_size == it->second.size && (int64_t)st.st_mtime == it->second.mtime;
-        if (!same) markFresh(it->first);
-        ++it;
+        bool        same = ::lstat(local(e.first).c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+                    (uint64_t)st.st_size == e.second.size && (int64_t)st.st_mtime == e.second.mtime;
+        if (!same) markFresh(e.first);
     }
+}
+
+void passDone(uint32_t now) {
+    sentChanged();
     if (knownDirty) saveKnown(now);
     std::set<std::string> next = takeFresh();
     for (const std::string& p : next) job.sent.erase(p);  // (sent again, or left)
@@ -652,6 +699,7 @@ bool keepLeft(const std::string& rel, std::string& how) {
 
 // the end: what is left is kept, 'I E', the mirror's manifest, the log cleared, state handedback, a restart
 void finish(uint32_t now) {
+    sentChanged();                              // (written through an open handle since the last pass ended)
     std::set<std::string> more = takeFresh();  // noted in the turns since the last pass ended
     if (!more.empty() && job.passNo < kPasses) {  // (the passes had caught up: one more)
         job.base = more;
@@ -662,7 +710,18 @@ void finish(uint32_t now) {
         job.base.insert(p);
         job.sent.erase(p);
     }
-    std::vector<std::string> left(job.base.begin(), job.base.end());
+    std::set<std::string> leftSet = job.base;  // a folder left behind: the files in it too
+    for (const std::string& p : job.base) {
+        struct stat st;
+        if (!realParents(p) || ::lstat(local(p).c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        std::vector<std::string> files;
+        walkOut = &files;
+        walkBad.clear();
+        ::nftw(local(p).c_str(), walkOne, 16, FTW_PHYS);
+        walkOut = nullptr;
+        for (const std::string& q : files) leftSet.insert(q);
+    }
+    std::vector<std::string> left(leftSet.begin(), leftSet.end());
     std::vector<std::string> leftLines;
     for (const std::string& p : left) {
         std::string how;
@@ -732,8 +791,18 @@ void finish(uint32_t now) {
 
 void takeoverNote(const char* boardPath) {
     if (!boardPath || std::strncmp(boardPath, "/sd/", 4) != 0) return;
-    std::string rel(boardPath + 4);
-    if (!cardPathMirrored(rel)) return;
+    std::string rel;
+    for (const char* c = boardPath + 4; *c; c++)  // "/sd/a//b/" is "a/b"
+        if (*c != '/' || (!rel.empty() && rel.back() != '/')) rel += *c;
+    while (!rel.empty() && rel.back() == '/') rel.pop_back();
+    if (!cardPathMirrored(rel)) {
+        if (rel.empty() || axis::cluster::cardPathOk(rel)) return;  // a log, a temp: never mirrored, by design
+        std::lock_guard<std::mutex> lk(mu);  // a path the card cannot hold: never handed back, so it is told
+        if (refusedN++ < 10)
+            std::printf("axis: handback: %s cannot go to the card (too long or not a card name)\n", rel.c_str());
+        refusedLast = rel;
+        return;
+    }
     std::lock_guard<std::mutex> lk(mu);
     loadLog();
     if (collecting) fresh.insert(rel);
@@ -840,6 +909,12 @@ void handbackShow(std::string& out) {
         std::string nodes;
         for (const auto& b : cards) nodes += (nodes.empty() ? "" : ", ") + std::to_string(nodeOf(b.id));
         line("target: card boards on nodes " + nodes + " (@HANDBACK GO <node> names one)");
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        if (refusedN)
+            line(many(refusedN, "write") + " to paths the card cannot hold (too long or not a card name), not handed "
+                 "back; the last: " + refusedLast);
     }
     line("callers online: " + std::to_string(callersOn()));
     if (job.running) {
