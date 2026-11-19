@@ -47,9 +47,9 @@ and systemd starts it again after 2 seconds. A clean stop stays stopped.
 - Use a direct port forward only. A local tunnel or proxy would make every internet caller
   look like 127.0.0.1 and share one limit.
 
-The service has no capabilities, so it cannot bind ports under 1024. Use a high port and forward
-to it on the router, or add `AmbientCapabilities=CAP_NET_BIND_SERVICE` in a drop-in
-(`systemctl edit axis`).
+- In a cluster (follower or mirror main) axis also answers on port 23, LAN addresses only: the
+  boards' telnet port, where a full board passes a caller to a free node. The unit allows binding
+  ports under 1024 (`CAP_NET_BIND_SERVICE`) for this and nothing else.
 
 Other `axis.conf` keys: `lan_port`, `public_port`, `max_callers`, `max_per_ip`,
 `max_per_ip_lan`, `rate_per_ip`, `modem`, `drain_minutes`, `no_main_seconds`, `noon`, `mirror_rate`,

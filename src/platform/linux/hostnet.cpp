@@ -39,6 +39,7 @@
 namespace {
 constexpr uint16_t kPanelPort = 2326;     // main.cpp's panelServer: the one server that is not the telnet one
 constexpr uint16_t kLinkPort = axis::cluster::kLinkPort;  // the cluster's link server (clusternet.cpp): LAN only, no gate
+constexpr uint16_t kClusterTelnetPort = 23;  // the boards' telnet port: where a full main passes a caller (passCaller)
 constexpr uint32_t kWriteStallMs = 3000;  // write() gives up when the socket has taken nothing for this long
 constexpr int      kAcceptBurst = 256;    // connections taken off one listener per hasClient()
 constexpr int      kMaxLookups = 8;       // DNS lookups running at once
@@ -418,6 +419,10 @@ void WiFiServer::begin(uint16_t port) {
         want[0] = port_ == 23 ? lanPort : port_;  // 23 (the board's default) is lan_port; a telnet_port set is kept
         want[1] = publicPort == want[0] ? 0 : publicPort;
         lanOnly[0] = false;  // any address may call the LAN port; the firewall decides who reaches it
+        if (!soloProfile() && want[0] != kClusterTelnetPort) {  // clustered (no public port): the port a full board
+            want[1] = kClusterTelnetPort;                         // passes its callers to, LAN only
+            lanOnly[1] = true;
+        }
     }
     if ((fd_[0] >= 0 || !want[0]) && (fd_[1] >= 0 || !want[1]) && bound_[0] == want[0] && bound_[1] == want[1])
         return;  // already listening there (applyNetwork() calls begin() again with nothing changed)
@@ -432,7 +437,10 @@ void WiFiServer::begin(uint16_t port) {
         fd_[i] = listenOn(want[i]);
         if (fd_[i] >= 0)
             std::printf("axis: net: listening on 0.0.0.0:%u (%s)\n", want[i],
-                        i == 1 ? "public port" : lanOnly[i] ? "LAN addresses only" : "LAN port");
+                        i == 1 && lanOnly[i] ? "the cluster's telnet port, LAN addresses only"
+                        : i == 1             ? "public port"
+                        : lanOnly[i]         ? "LAN addresses only"
+                                             : "LAN port");
     }
 }
 
@@ -873,6 +881,8 @@ extern "C" axis::bbs::BbsConfig __wrap__Z10configLoadv() {
     if (axisProfile() != Profile::Solo && c.sessions > 4) c.sessions = 4;
     return c;
 }
+
+uint16_t hostnetPassPort(uint16_t port) { return !soloProfile() && port == lanPort ? kClusterTelnetPort : port; }
 
 extern "C" bool __wrap__Z10configSaveRKN4axis3bbs9BbsConfigE(const axis::bbs::BbsConfig& c) {
     if (lanPort == 23 || c.telnetPort != lanPort) return __real__Z10configSaveRKN4axis3bbs9BbsConfigE(c);

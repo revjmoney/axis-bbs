@@ -41,5 +41,9 @@ void hostnetClosePublic();
 // Please call back in a few minutes." and closed. Off: callers are taken again.
 void hostnetHold(bool on);
 
+// The port to dial when this program, as main, passes a caller to another node: here the board's telnet port 23 shows
+// as lan_port (the configLoad wrap), but the boards (and this program, clustered) answer on 23.
+uint16_t hostnetPassPort(uint16_t port);
+
 // Callers of the BBS itself still open: telnet and radio, not the panel's connections (the drain waits for these).
 size_t hostnetBbsCallersOpen();

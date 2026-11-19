@@ -2199,6 +2199,9 @@ struct Passing {
 static std::vector<std::unique_ptr<Passing>> passing;     // callers on other nodes through this main
 static std::vector<std::pair<uint32_t, uint32_t>> reservedNodes;  // node ip, when it was given a caller
 
+#if AXIS_NATIVE
+uint16_t hostnetPassPort(uint16_t port);  // (platform/linux/hostnet.h)
+#endif
 // The main's node is busy: hand the caller to a free node, if the cluster has one.
 static bool passCaller(WiFiClient& incoming) {
     if (!cluster || cluster->role() != axis::cluster::Role::Main || passing.size() >= 4) return false;
@@ -2209,7 +2212,11 @@ static bool passCaller(WiFiClient& incoming) {
     uint32_t ip = axis::cluster::pickFreeNode(cluster->nodes(), cluster->nodeNumber(), reserved);
     if (!ip) return false;
     WiFiClient out;
+#if AXIS_NATIVE
+    if (!out.connect(IPAddress(ip), hostnetPassPort((uint16_t)boardCfg->telnetPort), 1500)) return false;  // (23, not lan_port)
+#else
     if (!out.connect(IPAddress(ip), (uint16_t)boardCfg->telnetPort, 1500)) return false;
+#endif
     out.setNoDelay(true);
     incoming.setNoDelay(true);
     std::unique_ptr<Passing> p(new Passing);
