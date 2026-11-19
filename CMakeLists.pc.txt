@@ -272,6 +272,22 @@ if(UNIX)
   add_library(axispc_core STATIC src/pcapp/pcline.cpp)
   target_link_libraries(axispc_core PUBLIC axiscore Threads::Threads)
 endif()
+# The PC program itself (Linux): the shared core through axispc_core, the Linux program's accept gate, axis.conf, data
+# folder and radio line (none of them needs the Arduino shim), and the board's SD file library on <data>/sd/files. No
+# main.cpp, no arduino_core.cpp, no LovyanGFX.
+if(UNIX AND NOT APPLE)
+  add_executable(axispc
+      src/pcapp/main.cpp
+      src/pcapp/pchost.cpp
+      src/pcapp/listener.cpp
+      src/pcapp/console.cpp
+      src/platform/linux/netgate.cpp
+      src/platform/linux/hostconf.cpp
+      src/platform/linux/paths.cpp
+      src/platform/linux/modemline.cpp
+      src/platform/cyd/sdfiles.cpp)
+  target_link_libraries(axispc PRIVATE axispc_core)
+endif()
 
 # The native Linux program, axis: the board's own src/main.cpp, unchanged, on a Linux host layer
 # (src/platform/linux) that provides the Arduino and ESP-IDF calls it makes. The screens are LovyanGFX's, from

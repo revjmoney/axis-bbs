@@ -6,6 +6,7 @@
 // signal ends the loop: callers are hung up through the board's own path, the radio modem hangs up, the terminal is
 // put back and the exit code is 0. hostRestart (host.h) does the same, then runs the program again in place.
 // In the window start mode the board runs on a second thread, the AXIS thread, and SDL keeps this one (window.h).
+#include <arpa/inet.h>
 #include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 
 #include <Arduino.h>
 
@@ -100,6 +102,11 @@ void stopEverything() {
 [[noreturn]] void runBoard(const volatile bool* running) {
     hostConfLoad(axisDataDir());  // <data>/axis.conf: ports and the accept gate's limits
     hostnetStart();
+    ModemLineHooks mh;  // a radio call is the telnet server's next caller, from 127.0.0.2; the line pumps from delay() too
+    mh.inject = [](int fd) { hostnetInjectClient(fd, inet_addr("127.0.0.2")); };
+    mh.nowMs = [] { return millis(); };
+    mh.delaySlot = &axis::host::delayHook;
+    modemLineSetHooks(std::move(mh));
     modemLineStart(modemPath.empty() ? hostConfStr("modem", "") : modemPath);  // --modem wins over axis.conf's modem=
     setup();
     if (axis::host::startMode == StartMode::Terminal) {

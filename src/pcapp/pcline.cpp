@@ -53,6 +53,7 @@ PcLine::PcLine(intptr_t fd, uint32_t ip) : fd_(fd), ip_(ip) {
 PcLine::~PcLine() {
     hangUp();    // the goodbye and the close, while the virtuals are still ours
     rawClose();  // carrier() can drop the line without closing it: hangUp() then does nothing; this is idempotent
+    if (closed) closed();
 }
 
 std::unique_ptr<PcLine> PcLine::fromFd(intptr_t fd, uint32_t ip) {

@@ -7,6 +7,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -28,6 +29,8 @@ public:
     static void (*tap)(PcLine* s, const uint8_t* p, size_t n);
     int         tapNode = 0;  // the node number this line answers as
     void        inject(const std::string& keys) { injected_ += keys; }
+    // Called once, when the line is gone for good (its socket closed): the accept gate's count of this caller.
+    std::function<void()> closed;
 
 protected:
     int      rawRead(uint8_t* buf, size_t n) override;
