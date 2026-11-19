@@ -281,6 +281,7 @@ private:
         ArtSource   src;
         size_t      off = 0;   // the next byte of the source
         std::string carry;     // a cut line (artPiece)
+        bool        ended = false;  // Ctrl-Z was drawn to: no more of this screen (artPiece)
         bool        poster = false;  // the poster: State::Poster until it is out, then its pause and the next step
     };
     std::vector<Drawing> drawings_;

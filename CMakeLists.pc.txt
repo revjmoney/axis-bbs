@@ -52,6 +52,7 @@ set(AXISCORE_SOURCES
     src/bbs/uploadproc.cpp
     src/bbs/users.cpp
     src/bbs/acs.cpp
+    src/bbs/artstyle.cpp
     src/bbs/pipecodes.cpp
     src/bbs/menufile.cpp
     src/bbs/lightbar.cpp

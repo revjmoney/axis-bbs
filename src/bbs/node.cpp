@@ -817,7 +817,7 @@ void Node::pumpArt(bool onePiece) {
         std::string raw = d.off < cap ? d.src(d.off, kPosterPiece, &exists) : std::string();
         bool        last = !exists || raw.size() < kPosterPiece || d.off + raw.size() >= cap;
         d.off += raw.size();
-        if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;  // (SAUCE: not the picture)
+        if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;  // (SAUCE: not the picture; this cut is what ends the drawing)
         artPiece(d.carry, raw.data(), raw.size(), last, menuWho(), [this](const std::string& k) { return menuValue(k); },
                  [this](const char* p, size_t n) {  // (512 bytes at most a call: out_ never grows by a whole piece)
             Drawing& at = drawings_.front();
@@ -825,7 +825,7 @@ void Node::pumpArt(bool onePiece) {
             else out_.insert(at.pos, p, n);  // behind what went before it, ahead of what was written since it started
             for (Drawing& o : drawings_) o.pos += n;
             spill();
-        });
+        }, ArtStyle{}, &d.ended);
         std::string().swap(raw);
         if (last) {
             bool poster = d.poster;

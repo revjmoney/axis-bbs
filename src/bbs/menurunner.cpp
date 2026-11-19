@@ -69,12 +69,13 @@ void MenuRunner::redraw() {
         drawArt(name_ + ".ANS");
     } else {
         std::string carry;  // (the same pieces the board's drawer makes: artPiece)
-        auto piece = [&](const char* d, size_t n) { artPiece(carry, d, n, false, who_, value_, emit_); };
+        bool        ended = false;  // (Ctrl-Z drawn to: this screen's own flag)
+        auto piece = [&](const char* d, size_t n) { artPiece(carry, d, n, false, who_, value_, emit_, ArtStyle{}, &ended); };
         if (!artPieces_ || !artPieces_(name_ + ".ANS", piece)) {
             std::string art = load_(name_ + ".ANS");
-            if (!art.empty()) expandArt(art, who_, value_, emit_);
+            if (!art.empty()) artPiece(carry, art.data(), art.size(), true, who_, value_, emit_, ArtStyle{}, &ended);  // (cut at Ctrl-Z too)
         }
-        artPiece(carry, "", 0, true, who_, value_, emit_);
+        artPiece(carry, "", 0, true, who_, value_, emit_, ArtStyle{}, &ended);
     }
     if (bar_) emit(bar_->draw());
     if (beforePrompt) emit(beforePrompt());
