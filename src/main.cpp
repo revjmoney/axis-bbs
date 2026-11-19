@@ -280,10 +280,6 @@ static bool writeWarrior(const std::string& handle);
 // A node's warrior hook: none when LORD is left out of the build, so registration says nothing about a warrior.
 static bool (*const warriorHook)(const std::string&) = AXIS_LORD ? writeWarrior : nullptr;
 
-// The sysop's own screens for the theme (MATRIX.ANS, MAIN.ANS): from the card on the main.
-// The Downloads screensets run 6 to 11 KB, so the main keeps 12 KB and cuts at the SAUCE record.
-// A board without the card asks the main once. The cluster frame is 8 KB, so a follower can
-// lose the bottom of a screen that is bigger than that. The settings arriving forget the cache.
 // Scene news for Discord. TLS needs about 45 KB of heap, more than a busy CYD main has, so the
 // posting is done by whichever board holds the webhook (set it on a headless node): a follower
 // hands its news to the main, the main sends it to every board, and the board with the webhook posts.
@@ -5831,7 +5827,7 @@ static std::string sysopRun(const std::string& cmd) {
         std::string reply;
         return cluster->request("V\x1f" + cmd, reply, 8000) && !reply.empty() ? reply.substr(1) : std::string("axis: the main didn't answer\n");
     }
-    // one reply stays under 6 KB (the link's queue dies at 8 KB); the long lists come a page at a time (runCommand)
+    // one reply stays under 6 KB (the link's queue dies at 8 KB); the long lists come a page at a time (app/commands.cpp)
     static constexpr size_t kCap = 6 * 1024;
     std::string out;
     struct Sink : Print {
@@ -6751,7 +6747,7 @@ static axis::app::Services& services() {
         if (cluster) cluster->shareSettings();
     };
     s.areasChanged = makeAreaFolders;
-    s.ready =[] { return boardCfg->setupDone && mode == Mode::Normal; };
+    s.ready = [] { return boardCfg->setupDone && mode == Mode::Normal; };
     s.setupPin = [] { return std::string(setupPin.c_str()); };
     s.setupChosen = [] { mode = Mode::SetupTelnet; };
     s.setupSave = [](axis::bbs::SetupWizard& w) {

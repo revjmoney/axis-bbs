@@ -268,8 +268,11 @@ std::string PcBbs::lordFolderId() const {
 
 bool PcBbs::writeWarrior(const std::string& handle) {
     if (!AXIS_LORD) return true;
+    // A LockTable owner well above any node number (max_callers can reach 4096), so registering a warrior never
+    // shares a lock with a real caller's node (slot + 1). The board uses a small fixed value, safe with its few nodes.
+    static const int kSysopWarriorOwner = 1000000;
     PosixHostFs fs(host_.sdRoot() + "/doors/" + lordFolderId());
-    int         r = lord::ensureWarrior(fs, &doorLocks_, 64, handle);
+    int         r = lord::ensureWarrior(fs, &doorLocks_, kSysopWarriorOwner, handle);
     if (r < 0) host_.event("warrior: could not write " + handle);
     else if (r == 1) host_.event("warrior: new " + handle);
     return r >= 0;
