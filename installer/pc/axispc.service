@@ -1,0 +1,33 @@
+[Unit]
+Description=AXIS BBS (axispc, the native PC program)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=axis
+Group=axis
+SupplementaryGroups=dialout
+ExecStart=/usr/bin/axispc --headless --data /var/lib/axis
+# axispc exits 0 on a clean stop and non-zero only on a failure or crash, so restart on failure.
+# It has no self-restart of its own.
+Restart=on-failure
+RestartSec=2
+# The program stops itself within 5 s of SIGTERM.
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/axis
+PrivateTmp=yes
+# Lets axispc bind a public port under 1024 if axis.conf sets one (public_port). The LAN port
+# (lan_port, default 2323) needs no capability.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LimitNOFILE=4096
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

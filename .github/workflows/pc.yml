@@ -1,0 +1,145 @@
+# axispc: build the native PC BBS and its packages for x86_64, ARM64 and 32-bit ARM.
+# Runs on pushes to the pc/app branch and on pc-v* tags. Each native runner builds axispc, runs the
+# host tests, and makes a .deb (CPack) and an AppImage (linuxdeploy). The 32-bit ARM job cross
+# compiles axispc and makes the .deb only. A pc-v* tag attaches every artifact to a GitHub release.
+# Uses only the built in GITHUB_TOKEN. linuxdeploy is fetched by a pinned download step below.
+name: PC app
+on:
+  push:
+    branches: [pc/app]
+    tags: ["pc-v*"]
+permissions:
+  contents: read
+concurrency:
+  group: pc-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Build tools
+        run: sh tools/ci/apt_install.sh g++ cmake ninja-build file desktop-file-utils curl
+      - name: Version from src/bbs/version.h
+        run: |
+          VER=$(sed -n 's/.*kAxisVersion[^"]*"\([0-9.]*\)".*/\1/p' src/bbs/version.h)
+          test -n "$VER"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          echo "axispc version $VER"
+      - name: Build axispc and the tests
+        run: |
+          set -o pipefail
+          cmake -S . -B build -G Ninja -DAXIS_WINDOW=OFF
+          cmake --build build --target axispc axis_tests -j "$(nproc)"
+      - name: Host tests
+        run: ./build/axis_tests --reporters=console
+      - name: Debian package
+        run: |
+          cd build && cpack -G DEB
+          ls -l axispc_*.deb
+      - name: AppImage (linuxdeploy)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          # linuxdeploy ships rolling builds; this is the latest dated tag at the time of writing.
+          LD_TAG: 1-alpha-20251107-1
+          LD_ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          url="https://github.com/linuxdeploy/linuxdeploy/releases/download/${LD_TAG}/linuxdeploy-${LD_ARCH}.AppImage"
+          curl -fL --retry 3 -o linuxdeploy "$url"
+          chmod +x linuxdeploy
+          rm -rf AppDir
+          ./linuxdeploy --appdir AppDir \
+            --executable build/axispc \
+            --desktop-file installer/pc/axispc.desktop \
+            --icon-file installer/pc/axispc.svg \
+            --output appimage
+          mv ./*.AppImage "axispc-${VER}-${LD_ARCH}.AppImage"
+          ls -l "axispc-${VER}-${LD_ARCH}.AppImage"
+      - name: Smoke test the AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          # axispc has no --help, so it prints its usage line and exits 2; we only check it runs.
+          out=$(./axispc-${VER}-${{ matrix.arch }}.AppImage --help 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "usage: axispc"
+      - name: Upload the package and AppImage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: axispc-${{ env.VER }}-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/axispc_*.deb
+            axispc-*.AppImage
+
+  cross-armhf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Cross tools (arm-linux-gnueabihf)
+        run: sh tools/ci/apt_install.sh cmake ninja-build file g++-arm-linux-gnueabihf
+      - name: Version from src/bbs/version.h
+        run: |
+          VER=$(sed -n 's/.*kAxisVersion[^"]*"\([0-9.]*\)".*/\1/p' src/bbs/version.h)
+          test -n "$VER"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+      - name: Cross build axispc
+        run: |
+          set -o pipefail
+          cmake -S . -B build-armhf -G Ninja -DAXIS_WINDOW=OFF \
+            -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=arm \
+            -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+            -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++
+          cmake --build build-armhf --target axispc -j "$(nproc)"
+          file build-armhf/axispc | grep -q ARM
+      - name: Debian package (armhf)
+        run: |
+          cd build-armhf && cpack -G DEB -D CPACK_DEBIAN_PACKAGE_ARCHITECTURE=armhf
+          ls -l axispc_*_armhf.deb
+      - name: Upload the package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: axispc-${{ env.VER }}-armhf
+          if-no-files-found: error
+          retention-days: 14
+          path: build-armhf/axispc_*.deb
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/pc-v')
+    needs: [package, cross-armhf]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write  # create the release and attach files
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: axispc-*
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          files=$(find dist -type f \( -name '*.deb' -o -name '*.AppImage' \))
+          echo "$files"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" $files --clobber
+          else
+            gh release create "$TAG" $files --verify-tag --title "axispc $TAG" --generate-notes
+          fi

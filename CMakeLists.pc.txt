@@ -392,3 +392,48 @@ if(UNIX AND NOT APPLE)
     target_link_options(axis PRIVATE "-Wl,--wrap=_Z10configLoadv" "-Wl,--wrap=_Z10configSaveRKN4axis3bbs9BbsConfigE")
   endif()
 endif()
+
+# Packaging for axispc (Project 1a, Task 6): install rules and a CPack Debian package. Only axispc and
+# its installer files are installed, so cpack never pulls in axis_tests, the tools or the axis program.
+# This block adds no compile step, so the board build (which never includes this file, it uses the
+# ESP-IDF branch of CMakeLists.txt) and the host tests are unaffected. axispc uses no LovyanGFX, so the
+# package builds whether or not LOVYANGFX_DIR is set.
+if(UNIX AND NOT APPLE AND TARGET axispc)
+  # The package version is kAxisVersion in src/bbs/version.h, the one place the version lives.
+  file(READ ${CMAKE_CURRENT_LIST_DIR}/src/bbs/version.h _axispc_version_h)
+  string(REGEX MATCH "kAxisVersion[ \t]*=[ \t]*\"([0-9][0-9.]*)\"" _axispc_vmatch "${_axispc_version_h}")
+  if(NOT CMAKE_MATCH_1)
+    message(WARNING "axispc packaging: no version read from src/bbs/version.h (kAxisVersion); the .deb is not configured")
+  endif()
+endif()
+# Skip packaging (not an error) if the version could not be read, so a plain host-test configure
+# never fails over it; the .deb is only configured when there is a version.
+if(UNIX AND NOT APPLE AND TARGET axispc AND CMAKE_MATCH_1)
+  set(AXISPC_VERSION "${CMAKE_MATCH_1}")
+
+  include(GNUInstallDirs)
+  # Package directories are the usual drwxr-xr-x (set before the install() rules so it takes effect).
+  set(CMAKE_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS
+      OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  install(TARGETS axispc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})  # /usr/bin/axispc
+  install(FILES installer/pc/axispc.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+  install(FILES installer/pc/axispc.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+  install(FILES installer/pc/axispc.service DESTINATION lib/systemd/system)  # /usr/lib/systemd/system
+  install(FILES installer/pc/README.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/axispc)
+
+  set(CPACK_GENERATOR "DEB")
+  set(CPACK_PACKAGE_NAME "axispc")
+  set(CPACK_PACKAGE_VERSION "${AXISPC_VERSION}")
+  set(CPACK_PACKAGE_CONTACT "Rev. J. Money <axis@jmscnc.com>")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "AXIS BBS, the native PC bulletin board program")
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Rev. J. Money <axis@jmscnc.com>")
+  set(CPACK_DEBIAN_PACKAGE_SECTION "comm")
+  # Depends only on libc6 and libstdc++6: axispc links the BBS core statically and uses pthread (in libc6).
+  # Hardcoded, so the automatic shared library scan is off (it would add versioned entries).
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libstdc++6")
+  # Names the file axispc_<version>_<debarch>.deb. The architecture is dpkg's on a native build, or
+  # cpack -D CPACK_DEBIAN_PACKAGE_ARCHITECTURE=armhf for the 32-bit ARM cross build.
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  include(CPack)
+endif()
