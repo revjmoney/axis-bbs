@@ -192,7 +192,7 @@ void Node::menuOrLiners() {
         std::string b = cutCtrlZ(art_("BULLETIN.ANS"));
         if (!b.empty()) {
             state_ = State::Bulletin;
-            out_ += theme::CLS + mci(b) + "\r\n   " + theme::DGREY + "(press a key)" + theme::RESET;
+            out_ += theme::CLS + artText(b) + "\r\n   " + theme::DGREY + "(press a key)" + theme::RESET;
             return;
         }
     }
@@ -286,7 +286,7 @@ void Node::beginLocalMenu(uint32_t nowMs) {
 
 // While this node works, the theme's header screens get its codes (one node runs at a time; cleared after)
 Node::MciScope::MciScope(Node& n) {
-    theme::setMci([&n](const std::string& s) { return n.mci(s); });
+    theme::setMci([&n](const std::string& s) { return n.artText(s); });
     theme::setLite(n.lite());  // the header screens (theme::artFor) go lite too
 }
 Node::MciScope::~MciScope() {
@@ -408,6 +408,20 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
     };
 }
 
+namespace {
+// "2026-11-19" for a unix time (UTC, from the day count: no time zone tables), "-" when the clock was not set
+std::string dayText(uint32_t t) {
+    if (t == 0) return "-";
+    int64_t z = (int64_t)(t / 86400) + 719468, era = z / 146097;
+    unsigned doe = (unsigned)(z - era * 146097), yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    unsigned d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+    char b[16];
+    std::snprintf(b, sizeof b, "%04u-%02u-%02u", (unsigned)(yoe + era * 400 + (m <= 2)), m, d);
+    return b;
+}
+}  // namespace
+
 // NOTE: showLoginScreen keys its login cell cache on a hand-kept list of this function's non-constant codes: add any new
 // non-constant value or mci code there too, or a cached LOGIN.ANS layout goes stale.
 // a placeholder's value: "%XX" are AXIS's own codes (as theme art has always used them), the rest ViSiON/3's names
@@ -439,14 +453,10 @@ std::string Node::menuValue(const std::string& k) const {
     if (k == "BN") return cfg_->bbsName;
     if (k == "CAN") return msgs_ ? msgs_->areaName() : std::string();      // the message area open now ("" at a menu)
     if (k == "CFAN") return browser_ ? browser_->areaName() : std::string();  // the file area open now
-    if (k == "UPLDS" || k == "DNLDS") return u ? num((long)((k == "UPLDS" ? u->uploads : u->downloads) / 1024)) : std::string();  // (AXIS counts bytes: shown in KB)
-    if (k == "LCALL" && prevCall_) {  // the date of the call before this one, MM/DD/YY (days since 1970 to a calendar date)
-        long z = (long)(prevCall_ / 86400) + 719468, era = z / 146097, doe = z - era * 146097;
-        long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365, doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
-        long d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9, y = yoe + era * 400 + (m <= 2);
-        char b[16];
-        std::snprintf(b, sizeof b, "%02ld/%02ld/%02ld", m, d, y % 100);
-        return b;
+    if (k == "UPLDS" || k == "DNLDS") return "";  // (AXIS keeps bytes, not the counts these codes mean: blank)
+    if (k == "LCALL" && prevCall_) {  // the date of the call before this one, MM/DD/YY (dayText's "YYYY-MM-DD" reordered)
+        std::string d = dayText(prevCall_);
+        return d.size() == 10 ? d.substr(5, 2) + "/" + d.substr(8, 2) + "/" + d.substr(2, 2) : std::string();
     }
     return "";  // |UN (a user note), |PV, POSTS (no count kept), conferences: not on AXIS yet
 }
@@ -918,6 +928,15 @@ std::string Node::mci(const std::string& s) const {
     return theme::pipes(r);
 }
 
+// The screens theme art draws through (artFor headers, STATS, YOURSTATS, ABOUT, USERS, BULLETIN.ANS, the Oblivion/2 MATRIX.ANS,
+// MAIN.ANS): the axis dialect keeps today's fill (mci: %XX codes and plain pipe colours, byte for byte); any other look's screens
+// go through the code expander with the node's values and the look's style, so |C7, |UH, ^1 and the rest are read there too.
+std::string Node::artText(const std::string& s) const {
+    const ArtStyle style = theme::artStyle();
+    if (style.dialect == Dialect::Axis) return mci(s);
+    return expandArt(cutCtrlZ(s), menuWho(), [this](const std::string& k) { return menuValue(k); }, style);
+}
+
 namespace {
 struct O2Item {
     char        key;
@@ -971,7 +990,7 @@ void Node::showMatrix() {
             for (auto& at : barAt_) at[0] = at[1] = 0;  // not all four marks: the stock layout after all
     }
     if (!art.empty()) {
-        out_ += mci(art);
+        out_ += artText(art);
     } else {
         out_ += theme::titleBar(cfg_->bbsName.empty() ? "AXIS" : cfg_->bbsName);
         SysInfo s = info_();
@@ -1352,7 +1371,7 @@ void Node::showMainMenu() {
         std::string art = art_ ? cutCtrlZ(art_("MAIN.ANS")) : "";
         o2Keys_ = !art.empty();
         if (!art.empty()) {  // one copy at a time, and the output sized once (with room for the rumor): the main has no 10 KB block
-            std::string m = mci(art);
+            std::string m = artText(art);
             std::string().swap(art);
             out_.reserve(out_.size() + m.size() + 256);
             out_ += m;
@@ -1394,7 +1413,7 @@ void Node::showMainMenu() {
         return;
     }
     if (std::string art = art_ ? cutCtrlZ(art_("MAIN.ANS")) : ""; !art.empty()) {  // the axis look's own main menu screen
-        out_ += mci(art);
+        out_ += artText(art);
         out_ += std::string("\r\n  ") + theme::key("J", " Axis Net") + theme::TEXT + "  other Axis Micro boards";
         prompt();
         return;
@@ -2863,19 +2882,6 @@ void Node::showWhoOnline() {
     showMenu();
 }
 
-namespace {
-// "2026-11-19" for a unix time (UTC, from the day count: no time zone tables), "-" when the clock was not set
-std::string dayText(uint32_t t) {
-    if (t == 0) return "-";
-    int64_t z = (int64_t)(t / 86400) + 719468, era = z / 146097;
-    unsigned doe = (unsigned)(z - era * 146097), yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
-    unsigned d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
-    char b[16];
-    std::snprintf(b, sizeof b, "%04u-%02u-%02u", (unsigned)(yoe + era * 400 + (m <= 2)), m, d);
-    return b;
-}
-}  // namespace
 
 // System Stats: the board as a whole, for every caller. Nothing private (no LAN address, host name, Wi-Fi, memory or
 // storage path): those stay on the WFC and the sysop's @STATUS.
@@ -3019,6 +3025,7 @@ void Node::showUserList() {
         }
     });
     const int cap = t ? t->rows : 16;
+    const ArtStyle style = theme::artStyle();  // (once: a follower's ask can wait)
     int       n = 0;
     for (const User* u : show) {  // (twits are already gone for everyone but the sysop)
         if (n >= cap) break;
@@ -3026,7 +3033,7 @@ void Node::showUserList() {
             out_ += line(n) + renderRow(*t, menuWho(), [this, u](const std::string& k) {
                 return k == "HN" ? u->handle : k == "LO" ? u->location : k == "CA" ? std::to_string(u->calls)
                        : k == "TG" ? u->tagline.substr(0, 22) : k == "TW" && u->twit && sysop_ ? std::string("  twit") : std::string();
-            }, theme::artStyle()) + theme::RESET;
+            }, style) + theme::RESET;
             n++;
             continue;
         }

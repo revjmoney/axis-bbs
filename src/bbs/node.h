@@ -387,6 +387,7 @@ private:
     int                       bar_ = 0, esc_ = 0;  // the matrix lightbar; an arrow key's ESC sequence so far
     bool                      o2() const;
     std::string               mci(const std::string& s) const;  // %UN %BN %SN %NN %DT %VN filled in, pipe colours to ANSI
+    std::string               artText(const std::string& s) const;  // theme art: mci for the axis dialect, the code expander for the others
     void                      showMatrix();
     void                      drawBarItem(int i, bool lit);
     void                      matrixKey(char c);

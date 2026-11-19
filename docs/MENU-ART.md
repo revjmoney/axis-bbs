@@ -126,7 +126,7 @@ blue), `r0..r9` = `7,11,14,15,9,13,12,10,8,3`.
 
 | Code | `axis` | `vision3` | `renegade` |
 |---|---|---|---|
-| `\|00`-`\|15` | foreground, DOS order | same | same |
+| `\|00`-`\|15` | foreground, DOS order | same | foreground, DOS order, the background kept (`\|17\|15` is white on blue) |
 | `\|16`-`\|22` | as today | as `axis` | background 0 to 6 |
 | `\|23` | reset | reset | background 7 (light grey) |
 | `\|24`-`\|31` | as today | as `axis` | background 0 to 7 with blink (iCE bright background) |
@@ -139,14 +139,17 @@ blue), `r0..r9` = `7,11,14,15,9,13,12,10,8,3`.
 | `%CF %CM %MP %PE %NL` | blank | blank | blank |
 
 Every dialect also fills `|CAN` and `|CFAN` (the message and file area open now, blank at a menu), `|UPLDS` and `|DNLDS`
-(what the caller has uploaded and downloaded, in KB), `|LCALL` (the date of their call before this one, MM/DD/YY) and
+(blank: AXIS keeps bytes, not the counts these mean), `|LCALL` (the date of their call before this one, MM/DD/YY) and
 `|POSTS` (blank: AXIS keeps no post count). The `%TL %MA %FA` row above is `renegade` only: in `axis` and `vision3`
 looks those, and `%CF %CM %MP %PE %NL`, print blank on menu art.
 
-The dialect applies to menu screens, the login screen, screens drawn by the art drawer and list templates (`.LST`).
-Bulletins and the non-menu main screen (and the front-door matrix) still use the older AXIS expander, with no dialect
-codes; their art does stop at the first Ctrl-Z. A screen's art stops at the first Ctrl-Z (0x1A), so a SAUCE record after it
-is never drawn. The waiting-for-caller screen is always AXIS's own.
+The dialect applies to menu screens, the login screen, screens drawn by the art drawer, list templates (`.LST`), and the
+screens a look draws as header art or whole screens: STATS, YOURSTATS (a ViSiON/3 pack's `YOURSTAT.ANS`), ABOUT, USERS,
+the FILES and MSGS list headers, the drip-font headers, `BULLETIN.ANS`, the Oblivion/2 `MATRIX.ANS` and the main menu's
+`MAIN.ANS` when it is not a menu file. In an `axis` look those screens keep exactly the older AXIS fill (`%UN %BN %SN %NN
+%DT %VN` and plain pipe colours), byte for byte. Two places never read a dialect: the waiting-for-caller screen is always
+AXIS's own, and the scripts (`.axs`) colour their text with the plain pipe colours. A screen's art stops at the first
+Ctrl-Z (0x1A), so a SAUCE record after it is never drawn.
 
 ## Lite art for slow radio callers
 
