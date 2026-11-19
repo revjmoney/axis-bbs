@@ -13,6 +13,7 @@
 #include <time.h>
 
 #include <cctype>
+#include <ctime>
 #include <string>
 #include <vector>
 
