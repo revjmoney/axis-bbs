@@ -96,10 +96,11 @@ uint32_t yieldIp = 0, yieldEpoch = 0;  // the main that sent the first one
 
 uint32_t handedBackAt = 0;  // when this run began in state handedback (clusterHostPoll's first turn)
 
-// MirrorMain: a card main on older firmware was heard (Cluster::HostHooks::onOlderCardMain, inside the tick)
-bool     olderCardMain = false;
-bool     olderCardLogged = false;
-uint32_t olderCardAt = 0;
+// MirrorMain: card mains on older firmware heard (Cluster::HostHooks::onOlderCardMain and onOlderCardProved, inside
+// the tick); clusterHostPoll steps down once the watch says so
+OlderCardWatch olderCards;
+bool           olderCardLogged = false, olderPendingLogged = false;
+uint32_t       olderCardAt = 0, olderPendingAt = 0;
 
 // the back-off after a failed join is still on (a solo_until more than kSoloBackoffS ahead is a clock that jumped)
 bool soloBackoff(const ClusterState& s) {
@@ -311,7 +312,8 @@ void clusterHostStart(Profile p) {
         h.mirror = true;
         h.claimMain = true;
         h.claimEpoch = saved.epoch;
-        h.onOlderCardMain = [] { olderCardMain = true; };  // (clusterHostPoll steps down)
+        h.onOlderCardMain = [](uint32_t ip) { return olderCards.heard(ip, millis()); };  // (clusterHostPoll steps down)
+        h.onOlderCardProved = [](uint32_t ip) { olderCards.proved(ip, millis()); };
     } else {
         soloKey = clusterKeyRead();
     }
@@ -500,10 +502,18 @@ void takeoverPoll(uint32_t now) {
 }
 
 // MirrorMain heard a card main on older firmware: it reads this program's 'm' as no card, so both would stay main.
-// This program steps down: state follower and a restart (the next start hears an older main and stays solo).
+// This program steps down: state follower and a restart (the next start hears an older main and stays solo). Never
+// on one announcement (it may be a recording): only once OlderCardWatch says it is heard over time and proved the key.
 void olderCardMainPoll(uint32_t now) {
-    if (!olderCardMain) return;
-    olderCardMain = false;
+    if (!olderCards.stepDown(now)) {
+        if (olderCards.pending(now) && (!olderPendingLogged || now - olderPendingAt >= kOlderLogMs)) {
+            olderPendingLogged = true;
+            olderPendingAt = now;
+            std::printf("axis: cluster: a card board on older firmware announces it is main: this computer stays main "
+                        "until that board is heard for 10 s and proves the cluster key\n");
+        }
+        return;
+    }
     if (olderCardLogged && now - olderCardAt < kOlderLogMs) return;
     olderCardLogged = true;
     olderCardAt = now;

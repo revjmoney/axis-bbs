@@ -4,7 +4,9 @@
 // (<data>/cluster/state), and the cluster key (<data>/cluster.key, mode 0600, the key alone, never logged). The
 // boot decision runs before setup(); clusterHostPoll runs from every turn after loop().
 #pragma once
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
 
 #include "platform/linux/paths.h"
@@ -32,6 +34,52 @@ bool        clusterKeyRemove();                        // true when a key file w
 // listenMs for an announcement that opens with the key: version 2 is Follower, older logs the "older firmware"
 // line; nothing heard (or no key to open one with) is Solo.
 Profile decideProfile(uint32_t listenMs = 5000);
+// MirrorMain: when a card main on older firmware (an announcement below protocol 2, kind card) really is main too.
+// Announcements carry no freshness, so a recording replays as well as the real thing: this program steps down only
+// when the same address was heard at least 3 times over at least 10 s (10 s of quiet starts that address over) and,
+// after the first of those, a probe of that address proved it holds the cluster key (Cluster::HostHooks).
+struct OlderCardWatch {
+    static constexpr uint32_t kQuietMs = 10000, kSpanMs = 10000;
+    static constexpr int      kTimes = 3;
+    static constexpr size_t   kMax = 16;
+    struct Seen {
+        uint32_t first = 0, last = 0;
+        int      times = 0;
+        bool     proved = false;
+    };
+    std::map<uint32_t, Seen> seen;  // by announced address, quiet ones dropped
+    // an announcement from `ip`: true while that address still has to prove the key (so the board probes it)
+    bool heard(uint32_t ip, uint32_t now) {
+        tidy(now);
+        if (!seen.count(ip) && seen.size() >= kMax) return false;  // (a flood of recordings stays bounded)
+        Seen& s = seen[ip];
+        if (s.times == 0) s.first = now;
+        s.last = now;
+        s.times++;
+        return !s.proved;
+    }
+    void proved(uint32_t ip, uint32_t now) {  // a probe of `ip` proved the key (counts only while that address is heard)
+        tidy(now);
+        auto it = seen.find(ip);
+        if (it != seen.end()) it->second.proved = true;
+    }
+    bool stepDown(uint32_t now) {
+        tidy(now);
+        for (auto& e : seen)
+            if (e.second.proved && e.second.times >= kTimes && e.second.last - e.second.first >= kSpanMs) return true;
+        return false;
+    }
+    bool pending(uint32_t now) {  // heard, but not yet enough to step down
+        tidy(now);
+        return !seen.empty() && !stepDown(now);
+    }
+    void tidy(uint32_t now) {
+        for (auto it = seen.begin(); it != seen.end();)
+            if ((int32_t)(now - it->second.last) >= (int32_t)kQuietMs) it = seen.erase(it);
+            else ++it;
+    }
+};
+
 // Before setup(): the profile's cluster rules (Cluster::defaultHost). Follower: holds a mirror, never main by itself,
 // joins only a version 2 main, and a Yield asks takeoverWanted(). MirrorMain: holds a mirror and claims main at once
 // at the saved epoch. Solo: the boards' own rules (and the link and cluster ports are silent, WiFiUdp.h).

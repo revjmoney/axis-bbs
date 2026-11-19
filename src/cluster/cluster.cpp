@@ -429,12 +429,17 @@ void Cluster::handleDatagram(const std::string& signedD, uint32_t from, uint32_t
                      : epoch != epoch_      ? epoch > epoch_
                      : number != number_    ? number < number_
                                             : ip < net_.myIp();
-#if AXIS_NATIVE
-        // a card main on older firmware reads this program's 'm' as no card and stays main too: the host steps down
-        if (theirKind == CardKind::Card && theirVer < kProtocolVersion && host_.onOlderCardMain) host_.onOlderCardMain();
-#endif
         // never on the announcement alone (it may be a recording): check that main holds the key first
         if (theyWin) probeMain(ip, epoch, now);
+#if AXIS_NATIVE
+        // a card main on older firmware reads this program's 'm' as no card and stays main too: the host steps down,
+        // but only once that address proves the key (the same probe, which then never steps down by itself)
+        if (!theyWin && theirKind == CardKind::Card && theirVer < kProtocolVersion && host_.onOlderCardMain &&
+            host_.onOlderCardMain(ip) && !probing_) {
+            probeMain(ip, epoch, now);
+            probeOlder_ = probing_;
+        }
+#endif
         return;
     }
     if (role_ != Role::Discovering || (epoch < minEpoch_ && theirKind == CardKind::None)) return;
@@ -484,6 +489,9 @@ void Cluster::closeProbe(uint32_t now) {
     probe_ = Link{-1, FrameReader()};
     probing_ = stepDown_ = false;
     probeEnd_ = now;
+#if AXIS_NATIVE
+    probeOlder_ = false;
+#endif
 }
 
 void Cluster::serveProbe(uint32_t now) {
@@ -497,6 +505,14 @@ void Cluster::serveProbe(uint32_t now) {
     Frame       t;
     std::string body;
     while (take(probe_, t, body)) {}  // only the handshake comes before our Hello, which a probe never sends
+#if AXIS_NATIVE
+    if (stepDown_ && probeOlder_) {  // the older card main proved the key: the host decides, this board stays main
+        uint32_t ip = probeIp_;
+        closeProbe(now);
+        if (host_.onOlderCardProved) host_.onOlderCardProved(ip);
+        return;
+    }
+#endif
     if (stepDown_) {  // it proved the key: it is a real main that wins, so join it
         uint32_t epoch = probeEpoch_;
         closeProbe(now);

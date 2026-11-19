@@ -88,7 +88,10 @@ public:
         bool     claimMain = false;     // start(): becomeMain at once at claimEpoch (key required, else alone as today)
         uint32_t claimEpoch = 0;
         std::function<bool()> onYield;  // a Yield arrived (checked at the end of tick, where yield_ acts): true takes main now
-        std::function<void()> onOlderCardMain;  // main: a card main announcing a protocol below kProtocolVersion was heard
+        // main: a card main announcing a protocol below kProtocolVersion was heard (its announced address); true asks
+        // the board to check that address holds the key (the two mains' probe), and onOlderCardProved says it did
+        std::function<bool(uint32_t ip)> onOlderCardMain;
+        std::function<void(uint32_t ip)> onOlderCardProved;
     };
     static HostHooks defaultHost;       // copied into each new Cluster by its constructor
     void             setHost(const HostHooks& h) { host_ = h; }  // the tests set one per board
@@ -305,6 +308,7 @@ private:
     std::string           newKey_;
 #if AXIS_NATIVE
     HostHooks             host_;
+    bool                  probeOlder_ = false;  // the probe running is the host's check of an older card main: never step down on it
     static Cluster*       instance_;
 #endif
 };

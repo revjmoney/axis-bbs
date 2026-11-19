@@ -11,6 +11,9 @@
 
 #include "doctest.h"
 #include "cluster/cluster.h"
+#if AXIS_NATIVE
+#include "platform/linux/clusterhost.h"  // OlderCardWatch (header only)
+#endif
 
 using namespace axis::cluster;
 
@@ -1554,6 +1557,52 @@ TEST_CASE("the announcement says kind and version, and an old reader sees m as n
     CHECK(ann[4] == "2");
     CHECK_FALSE(ann[3] == "1");  // a board from before card kinds asks field == "1" for a card
     CHECK(kindOf(ann[3]) == CardKind::Mirror);
+}
+
+TEST_CASE("one replayed protocol 1 card announcement does not make a mirror main step down") {
+    FakeLan            lan;
+    Board              b(lan, 102, "board-b");
+    FakeNet            silent;  // something answers the dial at 103 but never proves the key
+    silent.lan = &lan;
+    silent.ip = 103;
+    lan.nets.push_back(&silent);
+    uint32_t           now = 0;
+    OlderCardWatch     watch;  // clusterhost.cpp's rule, wired as clusterHostStart wires it
+    int                proofs = 0;
+    Cluster::HostHooks h = mirrorMainHost(3);
+    h.onOlderCardMain = [&](uint32_t ip) { return watch.heard(ip, now); };
+    h.onOlderCardProved = [&](uint32_t ip) {
+        proofs++;
+        watch.proved(ip, now);
+    };
+    b.c->setHost(h);
+    b.c->setHasFiles(true);
+    b.c->start(now);
+    REQUIRE(b.c->role() == Role::Main);
+    b.net.datagrams.emplace_back(sealDatagram(kTestKey, "AXIS! 103 9 1 1"), 103);  // a card main, no version: protocol 1
+    run({&b}, now, 200);
+    CHECK(watch.pending(now));  // heard, and checked
+    CHECK(b.net.dialed.size() == 1);
+    run({&b}, now, 15000);
+    CHECK(proofs == 0);
+    CHECK_FALSE(watch.stepDown(now));
+    CHECK_FALSE(watch.pending(now));  // quiet for 10 s: forgotten
+    CHECK(b.c->role() == Role::Main);
+    // a live card main with the key at 104, heard over 14 s: proved, and now the host would step down
+    FakeLan  other;
+    Board    old(other, 104, "board-old");
+    old.c->setHasFiles(true);
+    old.c->start(now);
+    run({&old}, now, 4000);
+    REQUIRE(old.c->role() == Role::Main);
+    lan.nets.push_back(&old.net);  // b can dial it; its own broadcasts stay on the other LAN
+    for (int i = 0; i < 8; i++) {
+        b.net.datagrams.emplace_back(sealDatagram(kTestKey, "AXIS! 104 9 1 1"), 104);
+        run({&b, &old}, now, 2000);
+    }
+    CHECK(proofs == 1);
+    CHECK(watch.stepDown(now));
+    CHECK(b.c->role() == Role::Main);  // (the host restarts; the board itself never steps down on it)
 }
 #endif  // AXIS_NATIVE
 #endif  // AXIS_CLUSTER
