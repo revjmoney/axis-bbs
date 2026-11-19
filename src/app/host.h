@@ -26,7 +26,25 @@ struct Host {
     virtual uint64_t    sdFreeBytes() = 0;
     virtual std::string flashRoot() = 0;                      // "/littlefs" on the board, <data>/flash on the PC
     virtual bool        roomFor(uint32_t /*minFree*/, uint32_t /*minLargest*/) { return true; }  // heap floors (board only)
+    // The board's "heap low in ..." notes (platform/cyd/heapscope.h): the lowest free heap so far, and a line when it went
+    // lower than `mark` inside the named code. Nothing on the PC.
+    virtual uint32_t    heapMark() { return 0; }
+    virtual void        heapNote(const char* /*where*/, uint32_t /*mark*/) {}
     virtual ~Host() = default;
+};
+
+// HeapScope for the shared code: names the code that pushed the board's heap to a new low.
+class HeapWatch {
+public:
+    HeapWatch(Host& h, const char* where) : host_(h), where_(where), mark_(h.heapMark()) {}
+    ~HeapWatch() { host_.heapNote(where_, mark_); }
+    HeapWatch(const HeapWatch&) = delete;
+    HeapWatch& operator=(const HeapWatch&) = delete;
+
+private:
+    Host&       host_;
+    const char* where_;
+    uint32_t    mark_;
 };
 
 }  // namespace axis::app

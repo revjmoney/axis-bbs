@@ -11,6 +11,7 @@
 #include <string>
 
 #include "app/host.h"
+#include "platform/cyd/heapscope.h"
 #include "platform/cyd/storage.h"
 
 class BoardHost : public axis::app::Host {
@@ -32,6 +33,8 @@ public:
     bool        roomFor(uint32_t minFree, uint32_t minLargest) override {
         return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= minFree && heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >= minLargest;
     }
+    uint32_t heapMark() override { return heapScopeMark(); }
+    void     heapNote(const char* where, uint32_t mark) override { heapScopeCheck(where, mark); }
 
 private:
     LogFn log_;

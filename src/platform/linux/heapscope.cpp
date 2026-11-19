@@ -12,3 +12,5 @@ void heapScopeFlush() {}
 
 HeapScope::HeapScope(const char* name) : name_(name), before_(0) {}
 HeapScope::~HeapScope() {}
+unsigned heapScopeMark() { return 0; }
+void     heapScopeCheck(const char*, unsigned) {}

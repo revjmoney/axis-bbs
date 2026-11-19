@@ -29,13 +29,17 @@ void heapScopeFlush() {
     hook_(line);
 }
 
-HeapScope::HeapScope(const char* name) : name_(name), before_((unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)) {}
+HeapScope::HeapScope(const char* name) : name_(name), before_(heapScopeMark()) {}
 
-HeapScope::~HeapScope() {
+HeapScope::~HeapScope() { heapScopeCheck(name_, before_); }
+
+unsigned heapScopeMark() { return (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT); }
+
+void heapScopeCheck(const char* name, unsigned before) {
     unsigned after = (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
-    if (after >= before_ || !hook_) return;
+    if (after >= before || !hook_) return;
     char line[sizeof pending_];
-    std::snprintf(line, sizeof line, "heap low in %s: min %u->%u, largest %u, web=%d", name_, before_, after,
+    std::snprintf(line, sizeof line, "heap low in %s: min %u->%u, largest %u, web=%d", name, before, after,
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), web::busy() ? 1 : 0);
     if (xPortGetCoreID() == 1) {
         hook_(line);
