@@ -519,7 +519,7 @@ bool verifyStep(uint32_t now) {
     if (!agrees) {  // it changed after the copy (or the copy was given up): copy it again
         verify.erase(path);
         tries.erase(path);
-        liveQ.push_back(path);
+        pending[path] = now;  // (copied once it has been quiet kQuietMs, as a feed path is)
         return true;
     }
     Verify& v = verify[path];
@@ -786,7 +786,7 @@ void mirrorPoll(uint32_t now) {
     }
 
     // the feed's position is written once nothing from it is waiting
-    if (feedKnown && pending.empty() && liveQ.empty() && !(cur.active && cur.live) && (man.gen != feedGen || man.seq != feedSeq)) {
+    if (feedKnown && pending.empty() && liveQ.empty() && verify.empty() && !(cur.active && cur.live) && (man.gen != feedGen || man.seq != feedSeq)) {
         man.gen = feedGen;
         man.seq = feedSeq;
         dirty = true;
