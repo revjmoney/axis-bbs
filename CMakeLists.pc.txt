@@ -341,6 +341,7 @@ if(UNIX AND NOT APPLE)
         PROPERTIES COMPILE_OPTIONS "-include;Arduino.h")
     # main.cpp is the board's file, built with -w as the board builds it (src/platform/linux keeps its warnings).
     set_source_files_properties(src/main.cpp PROPERTIES COMPILE_OPTIONS "-w")
+    set_source_files_properties(src/platform/cyd/clusternet.cpp PROPERTIES COMPILE_OPTIONS "-w")  # the board's too
     target_include_directories(axis BEFORE PRIVATE src/platform/linux/arduino)
     target_include_directories(axis PRIVATE src/platform/cyd third_party/monocypher)
     target_compile_definitions(axis PRIVATE AXIS_CLUSTER=1 AXIS_NATIVE=1 LGFX_USE_V1= AXIS_WINDOW=$<BOOL:${AXIS_WINDOW}>)

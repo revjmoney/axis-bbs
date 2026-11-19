@@ -107,7 +107,8 @@ void stopEverything() {
         // set-up board. setup() has just loaded boardCfg from this same file through this same call, and only setup
         // and @SET change setup_done (both save it), so the file says what boardCfg says.
         if (configLoad().setupDone) Serial.inject("WFC\r");
-        else Serial.print(kNotSetUp);
+        else if (axisProfile() == Profile::Solo) Serial.print(kNotSetUp);
+        else clusterHostWaitSetup();  // a cluster board is set up by its main's settings: WFC once they come
     }
     while (!hostShutdownRequested()) {
         if (running && !*running) {  // the window is gone (its close box normally starts the shutdown itself)

@@ -52,7 +52,23 @@ to it on the router, or add `AmbientCapabilities=CAP_NET_BIND_SERVICE` in a drop
 (`systemctl edit axis`).
 
 Other `axis.conf` keys: `lan_port`, `public_port`, `max_callers`, `max_per_ip`,
-`max_per_ip_lan`, `rate_per_ip`, `modem`. Edit as root, then restart.
+`max_per_ip_lan`, `rate_per_ip`, `modem`, `drain_minutes`, `no_main_seconds`. Edit as root, then restart.
+
+## In a cluster of boards
+
+With the same cluster key as the boards (`@CLUSTERKEY`, kept in `<data>/cluster.key`), axis listens
+5 seconds at each start for the cluster's main on UDP 2325 (LAN only).
+
+- Heard a main on the new firmware (protocol 2): it starts as a follower. The cluster uses UDP 2325
+  and TCP 2324, both from LAN addresses only, and the public port stays off while clustered.
+- Heard nothing: it starts as the solo BBS, as before. It sends nothing on 2325 and does not open
+  2324, but it keeps listening. When a main on the new firmware appears, the public port closes at
+  once, new callers are told to call back in a few minutes, the radio line stops answering, and the
+  callers on now get a broadcast every minute. When the last one is off, or after `drain_minutes`
+  (default 10), axis restarts and joins as a follower. If that main goes quiet for 60 seconds
+  first, the drain is called off and axis stays solo (the public port stays closed until the next start).
+- A main on older firmware is not joined: the log says to flash it.
+- A follower with no main for `no_main_seconds` (default 60) restarts, and finds itself solo.
 
 ## Run it in a terminal or a window instead
 
@@ -87,8 +103,9 @@ What it does, in this order:
    no root login), checks it with `sshd -t`, and reloads ssh. Open sessions stay up. If the
    check fails, the file is removed and the script stops.
 5. Firewall (ufw), only adding rules, each tagged `axis-harden`: SSH and Remote Desktop from
-   the LAN (and on a VPN interface if there is one), the LAN BBS port, panel 2326 and cluster
-   UDP 2325 from the LAN, and the public BBS port from anywhere only if `public_port` is set.
+   the LAN (and on a VPN interface if there is one), the LAN BBS port, panel 2326, cluster
+   UDP 2325 and the cluster link TCP 2324 from the LAN, and the public BBS port from anywhere only
+   if `public_port` is set.
    Then default deny incoming, allow outgoing, and enable. The allow rules always go in first.
    Before the first change it saves `ufw status verbose` to `/root/axis-harden-ufw-before.txt`.
 6. fail2ban `sshd` jail: 1 hour ban after 5 failures, never banning the LAN or VPN ranges.

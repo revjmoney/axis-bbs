@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The network layer on Linux: WiFiClient and WiFiServer over real sockets, the accept gate, WiFi's addresses, lwIP's
-// DNS lookup, and the mDNS calls (not used here). Everything runs on the main thread except the DNS lookups, whose
+// The network layer on Linux: WiFiClient, WiFiServer and WiFiUDP over real sockets, the accept gate, WiFi's
+// addresses, lwIP's DNS lookup, and the mDNS calls (not used here). Everything runs on the main thread except the DNS lookups, whose
 // answers wait in a queue for hostnetPoll().
 #include "platform/linux/hostnet.h"
 
 #include <Arduino.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
 #include <ifaddrs.h>
 #include <lwip/dns.h>
 #include <lwip/sockets.h>
@@ -28,21 +29,33 @@
 #include <unordered_set>
 #include <vector>
 
+#include "cluster/protocol.h"
 #include "platform/cyd/config_store.h"
+#include "platform/linux/clusterhost.h"
 #include "platform/linux/hostconf.h"
 #include "platform/linux/netgate.h"
 #include "platform/linux/paths.h"
 
 namespace {
 constexpr uint16_t kPanelPort = 2326;     // main.cpp's panelServer: the one server that is not the telnet one
-constexpr uint16_t kLinkPort = 2324;      // the cluster's link server (clusternet.cpp): not opened on this computer yet
+constexpr uint16_t kLinkPort = axis::cluster::kLinkPort;  // the cluster's link server (clusternet.cpp): LAN only, no gate
 constexpr uint32_t kWriteStallMs = 3000;  // write() gives up when the socket has taken nothing for this long
 constexpr int      kAcceptBurst = 256;    // connections taken off one listener per hasClient()
 constexpr int      kMaxLookups = 8;       // DNS lookups running at once
 constexpr uint32_t kSilentMs = 30000;     // a caller from outside the LAN that sends nothing at all this long is hung up
 
 uint16_t lanPort = 2323, publicPort = 0;
-bool     closing = false;  // the program is stopping: no new callers, and every open one is hung up
+bool     closing = false;     // the program is stopping: no new callers, and every open one is hung up
+bool     holding = false;     // hostnetHold: new callers are told the BBS is joining its cluster, and closed
+
+const char kHoldText[] = "This BBS is joining its cluster. Please call back in a few minutes.\r\n";
+
+void sayHeld(int fd) {  // the hold's one line, as much as the socket takes now (the caller is closed right after)
+    ssize_t w = ::send(fd, kHoldText, sizeof kHoldText - 1, MSG_DONTWAIT | MSG_NOSIGNAL);
+    (void)w;
+}
+
+bool soloProfile() { return axisProfile() == Profile::Solo; }
 
 void gateLog(const std::string& line) { std::printf("axis: %s\n", line.c_str()); }
 
@@ -208,6 +221,7 @@ struct HostSocket {
     uint16_t port;   // the peer's (0 for a radio call)
     bool     gated;  // let in by the accept gate, which counts it until it closes
     bool     caller = false;  // a caller (accepted, or a radio call): hostnetHangUpCallers() hangs it up
+    bool     bbs = false;     // a caller of the BBS itself (telnet or radio), not a panel connection
     bool     heard = true;    // a gated caller from outside the LAN has sent a byte (false until it does)
     uint32_t acceptMs = 0;    // when it was accepted
     HostSocket(int f, uint32_t i, uint16_t p, bool g) : fd(f), ip(i), port(p), gated(g) {}
@@ -245,6 +259,7 @@ int WiFiClient::fd() const { return s_ ? s_->fd : -1; }
 
 int WiFiClient::connect(IPAddress ip, uint16_t port, int32_t timeoutMs) {
     stop();
+    if (port == kLinkPort && soloProfile()) return 0;  // Solo stays silent: it never dials another board's link port
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) return 0;
     sockaddr_in sa{};
@@ -387,12 +402,19 @@ uint16_t WiFiClient::localPort() const {
 }
 
 // ------------------------------------------------------------------ WiFiServer
+static WiFiServer* telnetServer = nullptr;  // the board's telnet server once it has begun (hostnetClosePublic)
+
+WiFiServer::~WiFiServer() {
+    if (telnetServer == this) telnetServer = nullptr;
+    end();
+}
+
 void WiFiServer::begin(uint16_t port) {
     if (port) port_ = port;
-    if (port_ == kLinkPort) return;  // the cluster's links: it neither listens nor takes callers (nor radio calls) yet
+    if (port_ == kLinkPort && soloProfile()) return;  // Solo stays silent: the link port does not listen
     uint16_t want[2] = {port_, 0};
     bool     lanOnly[2] = {true, false};
-    if (port_ != kPanelPort) {  // the board's telnet server: the LAN port, and the public one when it is set
+    if (port_ != kPanelPort && port_ != kLinkPort) {  // the board's telnet server: the LAN port, and the public one
         want[0] = port_ == 23 ? lanPort : port_;  // 23 (the board's default) is lan_port; a telnet_port set is kept
         want[1] = publicPort == want[0] ? 0 : publicPort;
         lanOnly[0] = false;  // any address may call the LAN port; the firewall decides who reaches it
@@ -400,7 +422,9 @@ void WiFiServer::begin(uint16_t port) {
     if ((fd_[0] >= 0 || !want[0]) && (fd_[1] >= 0 || !want[1]) && bound_[0] == want[0] && bound_[1] == want[1])
         return;  // already listening there (applyNetwork() calls begin() again with nothing changed)
     end();
-    telnet_ = port_ != kPanelPort;
+    link_ = port_ == kLinkPort;
+    telnet_ = port_ != kPanelPort && !link_;
+    if (telnet_) telnetServer = this;
     for (int i = 0; i < 2; i++) {
         bound_[i] = want[i];
         lanOnly_[i] = lanOnly[i];
@@ -410,6 +434,15 @@ void WiFiServer::begin(uint16_t port) {
             std::printf("axis: net: listening on 0.0.0.0:%u (%s)\n", want[i],
                         i == 1 ? "public port" : lanOnly[i] ? "LAN addresses only" : "LAN port");
     }
+}
+
+void WiFiServer::closePublic() {
+    if (fd_[1] >= 0) {
+        ::close(fd_[1]);
+        std::printf("axis: net: public port %u closed\n", bound_[1]);
+    }
+    fd_[1] = -1;
+    bound_[1] = 0;
 }
 
 void WiFiServer::end() {
@@ -441,7 +474,7 @@ void WiFiServer::drain(int i) {
         }
         uint32_t ip = sa.sin_family == AF_INET ? sa.sin_addr.s_addr : 0;
         bool     lan = NetGate::isLan(ip);
-        if (lanOnly_[i] && !lan) {
+        if ((lanOnly_[i] || link_) && !lan) {
             if (millis() - lastLanLog > 10000) {
                 std::printf("axis: net: refused %s on port %u (LAN addresses only)\n", NetGate::ipText(ip).c_str(),
                             bound_[i]);
@@ -450,12 +483,24 @@ void WiFiServer::drain(int i) {
             ::close(c);
             continue;
         }
+        if (link_) {  // another board's link: no gate, not a caller (the cluster closes it itself)
+            tune(c);
+            waiting_.push_back(WiFiClient(std::make_shared<HostSocket>(c, ip, ntohs(sa.sin_port), false)));
+            continue;
+        }
         if (!hostGate().admit(ip, lan, millis())) {
             ::close(c);  // refused: closed before main.cpp ever sees it
             continue;
         }
+        if (telnet_ && holding) {  // joining the cluster: told so and closed (and out of the gate's count again)
+            sayHeld(c);
+            ::close(c);
+            hostGate().closed(ip);
+            continue;
+        }
         tune(c);
         auto s = newCaller(c, ip, ntohs(sa.sin_port), true);
+        s->bbs = telnet_;
         s->heard = lan;  // the LAN is spared the silent-caller timeout (hostnetPoll)
         s->acceptMs = millis();
         waiting_.push_back(WiFiClient(s));
@@ -482,6 +527,115 @@ WiFiClient WiFiServer::available() {
     return c;
 }
 
+// ------------------------------------------------------------------ WiFiUDP
+bool WiFiUDP::silent() const { return port_ == axis::cluster::kDiscoveryPort && soloProfile(); }
+
+uint8_t WiFiUDP::begin(uint16_t port) {
+    stop();
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        std::printf("axis: net: cannot make a UDP socket for port %u: %s\n", port, std::strerror(errno));
+        return 0;
+    }
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+    setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof on);
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_ANY);
+    sa.sin_port = htons(port);
+    if (bind(fd, (sockaddr*)&sa, sizeof sa) < 0) {
+        std::printf("axis: net: cannot listen on UDP port %u: %s\n", port, std::strerror(errno));
+        ::close(fd);
+        return 0;
+    }
+    fd_ = fd;
+    port_ = port;
+    if (silent()) std::printf("axis: net: UDP port %u: solo, sending nothing, watching for a main\n", port);
+    else std::printf("axis: net: UDP port %u (LAN addresses only)\n", port);
+    return 1;
+}
+
+void WiFiUDP::stop() {
+    if (fd_ >= 0) ::close(fd_);
+    fd_ = -1;
+    rx_.clear();
+    rxPos_ = 0;
+    tx_.clear();
+    txOpen_ = false;
+}
+
+int WiFiUDP::beginPacket(IPAddress ip, uint16_t port) {
+    tx_.clear();
+    txIp_ = (uint32_t)ip;
+    txPort_ = port;
+    txOpen_ = fd_ >= 0;
+    return txOpen_ ? 1 : 0;
+}
+
+size_t WiFiUDP::write(const uint8_t* buf, size_t n) {
+    if (!txOpen_ || !buf) return 0;
+    if (tx_.size() + n > 1472) n = tx_.size() < 1472 ? 1472 - tx_.size() : 0;  // one Ethernet frame's datagram
+    tx_.append((const char*)buf, n);
+    return n;
+}
+
+int WiFiUDP::endPacket() {
+    if (!txOpen_) return 0;
+    txOpen_ = false;
+    if (silent()) {  // Solo: nothing goes out on the cluster's port
+        tx_.clear();
+        return 1;
+    }
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = txIp_;
+    sa.sin_port = htons(txPort_);
+    ssize_t w = ::sendto(fd_, tx_.data(), tx_.size(), MSG_DONTWAIT | MSG_NOSIGNAL, (sockaddr*)&sa, sizeof sa);
+    tx_.clear();
+    return w >= 0 ? 1 : 0;
+}
+
+int WiFiUDP::parsePacket() {
+    rx_.clear();
+    rxPos_ = 0;
+    if (fd_ < 0) return 0;
+    char buf[2048];
+    // A bounded number per call: a flood on the port never holds the board's loop.
+    for (int k = 0; k < 64; k++) {
+        sockaddr_in from{};
+        socklen_t   len = sizeof from;
+        ssize_t     n = ::recvfrom(fd_, buf, sizeof buf, MSG_DONTWAIT, (sockaddr*)&from, &len);
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) return 0;  // nothing waits (or an error the next call meets again)
+        uint32_t ip = from.sin_family == AF_INET ? from.sin_addr.s_addr : 0;
+        if (n == 0 || !NetGate::isLan(ip)) continue;
+        if (silent()) {
+            soloWatchHeard(std::string(buf, (size_t)n), ip);
+            continue;
+        }
+        rx_.assign(buf, (size_t)n);
+        rxIp_ = ip;
+        rxPort_ = ntohs(from.sin_port);
+        return (int)n;
+    }
+    return 0;
+}
+
+int WiFiUDP::read(uint8_t* buf, size_t n) {
+    size_t left = rx_.size() - rxPos_;
+    if (!buf || !left) return left ? 0 : -1;
+    if (n > left) n = left;
+    std::memcpy(buf, rx_.data() + rxPos_, n);
+    rxPos_ += n;
+    return (int)n;
+}
+
+int WiFiUDP::read() {
+    uint8_t b;
+    return read(&b, 1) == 1 ? b : -1;
+}
+
 // ------------------------------------------------------------------ the host layer's own calls
 void hostnetInjectClient(int fd, uint32_t fakeIp) {
     if (fd < 0) return;
@@ -489,9 +643,30 @@ void hostnetInjectClient(int fd, uint32_t fakeIp) {
         ::close(fd);
         return;
     }
+    if (holding) {  // a radio call answered just before the hold: told so and hung up
+        sayHeld(fd);
+        ::close(fd);
+        return;
+    }
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
     fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
-    injected().push_back(WiFiClient(newCaller(fd, fakeIp, 0, false)));
+    auto s = newCaller(fd, fakeIp, 0, false);
+    s->bbs = true;
+    injected().push_back(WiFiClient(s));
+}
+
+void hostnetClosePublic() {
+    publicPort = 0;  // applyNetwork()'s begin() again finds nothing to open
+    if (telnetServer) telnetServer->closePublic();
+}
+
+void hostnetHold(bool on) { holding = on; }
+
+size_t hostnetBbsCallersOpen() {
+    size_t n = 0;
+    for (HostSocket* s : callerSockets())
+        if (s->bbs) n++;
+    return n;
 }
 
 void hostnetHangUpCallers() {
@@ -508,6 +683,10 @@ size_t hostnetCallersOpen() { return callerSockets().size(); }
 void hostnetStart() {
     lanPort = (uint16_t)hostConfInt("lan_port", 2323, 1, 65535);
     publicPort = (uint16_t)hostConfInt("public_port", 0, 0, 65535);
+    if (publicPort && !soloProfile()) {  // a cluster is LAN only
+        std::printf("axis: net: public port off while clustered\n");
+        publicPort = 0;
+    }
     NetGate::Limits l;
     l.max_callers = (uint32_t)hostConfInt("max_callers", 16, 1, 4096);
     l.max_per_ip = (uint32_t)hostConfInt("max_per_ip", 3, 1, 1024);

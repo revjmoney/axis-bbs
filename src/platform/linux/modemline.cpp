@@ -101,6 +101,7 @@ ModemLine         M;
 std::thread::id   mainThread;
 bool              busy = false;
 bool              stopping = false;  // the program is stopping: no call is answered, the one up is hung up
+bool              holding = false;   // modemLineHold: the BBS is joining its cluster, so a RING is not answered
 
 void say(const std::string& s) { std::printf("axis: modem: %s\n", s.c_str()); }
 
@@ -494,6 +495,10 @@ void resultLines(uint32_t now, const std::string& data) {
                 say("RING, not answered (axis is stopping)");
                 continue;
             }
+            if (holding) {
+                say("RING, not answered (this BBS is joining its cluster)");
+                continue;
+            }
             say("RING, answering");
             M.toTty += "ATA\r";
         } else if (text.compare(0, 7, "CONNECT") == 0) {
@@ -747,6 +752,8 @@ void modemLineStart(const std::string& path) {
     axis::host::delayHook = delayHook;
     modemLinePoll(millis());
 }
+
+void modemLineHold(bool on) { holding = on; }
 
 bool modemLineBusy() {  // a stranded call counts until the stop's own try at it has failed
     return M.st == St::Call || M.st == St::Drain || M.st == St::Guard1 || M.st == St::Guard2 || M.st == St::Ath ||

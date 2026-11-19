@@ -31,6 +31,9 @@ void modemLinePoll(uint32_t nowMs);
 // clamped to 1500 ms for the stop, and the stop makes one +++ try only (a stranded call gets one more).
 void modemLineHangUp();
 
+// On: a RING is not answered (the BBS is draining its callers to join its cluster). A call already up carries on.
+void modemLineHold(bool on);
+
 // A call is up or being hung up (the shutdown keeps polling until this is false, or its time runs out).
 bool modemLineBusy();
 
