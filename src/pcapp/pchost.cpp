@@ -556,6 +556,18 @@ std::unique_ptr<bbs::Node> PcBbs::makeLocalNode() {
 
 bool PcBbs::start(const std::string& modemPath, std::string& why) {
     host_.openEventFile();
+    // axis.ini present but unreadable (a 0600 settings file this program's user cannot read) must not load as
+    // defaults and then be saved over the real one. Refuse to start; an absent file is a fresh board.
+    std::string iniCheck;
+    if (!readFileChecked(host_.flashRoot() + "/axis.ini", iniCheck, why)) {
+        host_.event("settings: " + why + " (refusing to start so defaults are never saved over your axis.ini)");
+        return false;
+    }
+    std::string statsCheck;
+    if (!readFileChecked(host_.flashRoot() + "/stats.txt", statsCheck, why)) {
+        host_.event("stats: " + why + " (refusing to start so empty stats are never saved over the real file)");
+        return false;
+    }
     bool had = loadConfig();
     bool lordArgs = false;  // stock LORD tails gain NOEMS, as the board's setup does
     if (AXIS_LORD)
