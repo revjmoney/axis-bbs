@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -17,8 +18,11 @@
 #include "bbs/ansiterm.h"
 #include "bbs/artstyle.h"
 #include "bbs/config.h"
+#include "bbs/node.h"
+#include "bbs/password.h"
 #include "bbs/pipecodes.h"
 #include "bbs/theme.h"
+#include "bbs/users.h"
 
 using namespace axis;
 using namespace axis::bbs;
@@ -91,7 +95,8 @@ struct TempDir {
 struct TestHost : app::Host {
     std::string sd;
     bool        withSd = false;
-    uint32_t    nowMs() override { return 1000; }
+    uint32_t    ms = 1000;
+    uint32_t    nowMs() override { return ms; }
     uint32_t    unixNow() override { return 1780000000u; }
     uint32_t    random32() override { return 1; }
     void        event(const std::string&) override {}
@@ -300,16 +305,18 @@ TEST_CASE("a follower reads the look's style from the main") {
         return true;
     };
 
-    // no answer: false, nothing in out, and the next ask goes out again
+    // no answer: false, nothing in out, and the ask goes out again once the back-off (10 s) is over
     std::string text = "stale";
     CHECK_FALSE(tp.themeCfgText(text));
     CHECK(text.empty());
+    host.ms += 10000;
     CHECK_FALSE(tp.themeCfgText(text));
     REQUIRE(asked.size() == 2);
     CHECK(asked[0] == std::string("T\x1f") + "THEME.CFG" + "\x1f" + "0" + "\x1f" + "4096");
 
     // the main answers: its THEME.CFG text comes back, and is kept (no more asks)
     answers = true;
+    host.ms += 10000;
     CHECK(tp.themeCfgText(text));
     CHECK(text == "dialect=vision3\nc7=78\n");
     CHECK(asked.size() == 3);
@@ -326,6 +333,7 @@ TEST_CASE("a follower reads the look's style from the main") {
 
     // the main has no THEME.CFG ("0"): a real answer, empty, kept
     answers = true;
+    host.ms += 10000;
     reply = "0";
     CHECK(tp.themeCfgText(text));
     CHECK(text.empty());
@@ -349,6 +357,7 @@ TEST_CASE("a follower reads the look's style from the main") {
     } clear;
     CHECK(sameStyle(theme::artStyle(), ArtStyle{}));
     answers = true;
+    host.ms += 10000;
     ArtStyle got = theme::artStyle();
     CHECK(got.dialect == Dialect::Renegade);
     CHECK(got.r[3] == 78);
@@ -493,4 +502,189 @@ TEST_CASE("the vision3 pack screens render clean") {
         }
     }
     CHECK(withSauce >= 1);  // the test means something: some of these files do carry a SAUCE record
+}
+
+TEST_CASE("renegade |00..|15 keep the background; axis and vision3 keep today's bytes") {
+    const ArtStyle ren = styleOf(Dialect::Renegade);
+    // |17 is a blue background, |15 a bright white foreground that leaves it alone (no 0; reset in front)
+    CHECK(expand("|17|15Hello", ren) == std::string("\x1b[44m") + "\x1b[1;25;37m" + "Hello");
+    // |23 is a light grey background, |00 a black foreground on it
+    CHECK(expand("|23|00x", ren) == std::string("\x1b[47m") + "\x1b[22;25;30m" + "x");
+    CHECK(expand("|07|08|09|12", ren) == std::string("\x1b[22;25;37m") + "\x1b[1;25;30m" + "\x1b[1;25;34m" + "\x1b[1;25;31m");
+    // the other dialects are as they were: a reset in front of every foreground
+    for (Dialect d : {Dialect::Axis, Dialect::Vision3}) {
+        CHECK(expand("|17|15Hello", styleOf(d)) == std::string("\x1b[0;34m") + "\x1b[0;1;37m" + "Hello");
+        CHECK(expand("|07|08", styleOf(d)) == std::string("\x1b[0;37m") + "\x1b[0;1;30m");
+    }
+}
+
+TEST_CASE("a follower whose main is quiet does not ask for THEME.CFG again for 10 seconds") {
+    TestHost           host;
+    BbsConfig          cfg;
+    app::ThemeProvider tp(host);
+    tp.config = [&]() -> const BbsConfig& { return cfg; };
+    tp.follower = [] { return true; };
+    int         asked = 0;
+    bool        answers = false;
+    std::string reply = "1dialect=renegade\n";
+    tp.remote = [&](const std::string&, std::string& r) {
+        asked++;
+        if (!answers) return false;
+        r = reply;
+        return true;
+    };
+    std::string text;
+    CHECK_FALSE(tp.themeCfgText(text));
+    CHECK(asked == 1);
+    // however often it is wanted (per art piece, list row, prompt), a quiet main is not asked again inside the 10 s
+    for (int i = 0; i < 20; i++) CHECK_FALSE(tp.themeCfgText(text));
+    host.ms += 9999;
+    CHECK_FALSE(tp.themeCfgText(text));
+    CHECK(asked == 1);
+    CHECK(text.empty());
+    // artStyle() through it: axis for now, and no ask either
+    theme::setThemeCfg([&tp](std::string& t) { return tp.themeCfgText(t); });
+    struct Clear {
+        ~Clear() { theme::setThemeCfg({}); }
+    } clear;
+    for (int i = 0; i < 5; i++) CHECK(theme::artStyle().dialect == Dialect::Axis);
+    CHECK(asked == 1);
+    // at 10 s it asks again (and a second silence backs off from there)
+    host.ms += 1;
+    CHECK_FALSE(tp.themeCfgText(text));
+    CHECK(asked == 2);
+    CHECK_FALSE(tp.themeCfgText(text));
+    CHECK(asked == 2);
+    host.ms += 10000;
+    answers = true;
+    theme::forgetArtStyle();
+    CHECK(theme::artStyle().dialect == Dialect::Renegade);
+    CHECK(asked == 3);
+    theme::artStyle();
+    CHECK(asked == 3);  // answered and kept
+
+    // THEME.CFG is fetched with a 1 KB cap: a long file stops the pulling after its first piece
+    tp.forgetRemote();
+    asked = 0;
+    reply = "1" + std::string(4096, ';');
+    CHECK(tp.themeCfgText(text));
+    CHECK(text.empty());  // over 1 KB: none
+    CHECK(asked == 1);
+}
+
+namespace {
+uint32_t rngFixed() { return 0x5A5A5A5Au; }
+SysInfo  rigInfo() {
+    SysInfo s;
+    s.timeText = "2026-11-19 12:00";
+    return s;
+}
+std::string esc(const std::string& s) {  // printable, for a failure message
+    std::string o;
+    for (unsigned char c : s) {
+        char b[8];
+        if (c == 0x1b) o += "<ESC>";
+        else if (c < 0x20 || c > 0x7e) std::snprintf(b, sizeof b, "<%02x>", c), o += b;
+        else o += (char)c;
+    }
+    return o;
+}
+// A caller's board whose theme art is `artFiles` (by file name), under the look's THEME.CFG. login() starts the call and logs in as Spindle Kid.
+struct DialectRig {
+    CfgGuard                           cfgText;
+    UserStore                          users;
+    std::map<std::string, std::string> artFiles;
+    Node                               n;
+    std::string                        all;  // everything sent to the caller since the call began
+    DialectRig(const std::string& cfg, std::map<std::string, std::string> art) : cfgText(cfg), artFiles(std::move(art)), n(1, rigInfo, BbsConfig()) {
+        auto read = [this](const std::string& name) {
+            auto it = artFiles.find(name);
+            return it == artFiles.end() ? std::string() : it->second;
+        };
+        theme::setArt(read);
+        n.setArt(read);
+        User u;
+        u.handle = "Spindle Kid";
+        u.salt = makeSalt(rngFixed);
+        u.hash = hashPassword(u.salt, "secret99");
+        u.status = User::Status::Validated;
+        u.calls = 41;
+        u.uploads = 2 * 1024 * 1024;
+        u.downloads = 48 * 1024;
+        u.lastCall = 1750000000;  // 2025-06-15
+        u.location = "Myrtle Beach";
+        users.add(u);
+        n.setAccounts(&users, [] {}, rngFixed, [] { return 1800000000u; });
+    }
+    ~DialectRig() { theme::setArt({}); }
+    std::string send(const std::string& s) {
+        n.input((const uint8_t*)s.data(), s.size(), 1000);
+        std::string out = n.takeOutput();
+        all += out;
+        return out;
+    }
+    void login() {
+        n.begin(0);
+        all += n.takeOutput();
+        send("Spindle Kid\rsecret99\r");
+    }
+};
+}  // namespace
+
+TEST_CASE("a vision3 look's header screens (YOURSTAT.ANS) read |C7 and |UH instead of printing them") {
+    {
+        DialectRig r("dialect=vision3\n", {{"YOURSTAT.ANS", "|C7[|UH]|C1|15|LEVEL"}});
+        r.login();
+        std::string out = r.send("z");  // Your Stats
+        INFO(esc(out));
+        // |C7 is the default slot 31 (bright white on blue), |UH the handle, |C1 slot 7 (grey), |15 bright white, |LEVEL 10
+        CHECK(out.find(std::string("\x1b[0;1;37;44m") + "[Spindle Kid]" + "\x1b[0;37;40m" + "\x1b[0;1;37m" + "10") != std::string::npos);
+        CHECK(out.find("|C7") == std::string::npos);
+        CHECK(out.find("|UH") == std::string::npos);
+        CHECK(out.find("|LEVEL") == std::string::npos);
+    }
+    {
+        // an axis look (no THEME.CFG) keeps the old fill: plain pipe colours, the v3 codes left as they are
+        DialectRig r("", {{"YOURSTAT.ANS", "|C7[|UH]|15x"}});
+        r.login();
+        std::string out = r.send("z");
+        CHECK(out.find(std::string("|C7[|UH]") + "\x1b[0;1;37m" + "x") != std::string::npos);
+    }
+    {
+        // the same for the header art of the other screens (STATS here)
+        DialectRig r("dialect=vision3\n", {{"STATS.ANS", "<|UH>"}});
+        r.login();
+        CHECK(r.send("i").find("<Spindle Kid>") != std::string::npos);
+    }
+}
+
+TEST_CASE("BULLETIN.ANS and MAIN.ANS stop at Ctrl-Z, in every dialect") {
+    for (const char* cfg : {"", "dialect=vision3\n", "dialect=renegade\n"}) {
+        INFO(cfg);
+        DialectRig r(cfg, {{"BULLETIN.ANS", std::string("NEWS|UH\x1a") + "SAUCE00junk"}, {"MAIN.ANS", std::string("MAINART\x1a") + "SAUCE00more"}});
+        r.login();
+        CHECK(r.all.find("NEWS") != std::string::npos);
+        r.send(" ");  // past the bulletin
+        CHECK(r.all.find("MAINART") != std::string::npos);
+        CHECK(r.all.find("SAUCE") == std::string::npos);
+        CHECK(r.all.find("junk") == std::string::npos);
+        CHECK(r.all.find("more") == std::string::npos);
+        CHECK(r.all.find('\x1a') == std::string::npos);
+    }
+}
+
+TEST_CASE("menu codes: %TL is blank in vision3 and filled in renegade; UPLDS and DNLDS blank; LCALL formatted") {
+    const std::string art = "T[%TL]U[|UPLDS]D[|DNLDS]L[|LCALL]E";
+    {
+        DialectRig r("dialect=vision3\n", {{"BULLETIN.ANS", art}});
+        r.login();
+        // AXIS keeps bytes, not counts: the two blank. 1750000000 is 2025-06-15.
+        CHECK(r.all.find("T[]U[]D[]L[06/15/25]E") != std::string::npos);
+    }
+    {
+        DialectRig r("dialect=renegade\n", {{"BULLETIN.ANS", art}});
+        r.login();
+        INFO(esc(r.all));
+        CHECK(r.all.find("T[60]U[]D[]L[06/15/25]E") != std::string::npos);  // 60 minutes left (the default limit)
+    }
 }
