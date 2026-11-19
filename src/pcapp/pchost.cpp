@@ -202,9 +202,9 @@ PcBbs::PcBbs(const std::string& dataDir)
       theme_(host_),
       stats_(host_),
       cfg_(std::make_shared<bbs::BbsConfig>()),
-      services_(host_, data_, theme_, stats_, users_, cfg_) {
+      services_(host_, data_, theme_, stats_, users_, cfg_),
+      id_(machineId()) {
     theme_.config = [this]() -> const bbs::BbsConfig& { return *cfg_; };
-    id_ = machineId();
     wireServices();
 }
 

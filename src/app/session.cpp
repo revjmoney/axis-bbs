@@ -287,7 +287,7 @@ void Session::startDoorInner() {
         dropLord();
         int              me = nodeNumber();
         door::LockTable* locks = s_.doorFiles ? s_.doorFiles(d.id, lordFs, lordLocks) : nullptr;  // here, or the main's
-        if (!lordFs) {  // (no door folder from the program)
+        if (!lordFs || !line) {  // (no door folder from the program, or the caller is already gone)
             abortDoor(bbs::Node::DoorEnd::LoadError);
             return;
         }
@@ -301,7 +301,7 @@ void Session::startDoorInner() {
         if (s_.rng) lord->setRng(s_.rng);  // (none: the game keeps its own)
         lord->setMailbox(&mail_, lordPull, lordPost);
         lord->begin();
-        if (line) line->flush();
+        line->flush();
         return;
     }
     if (bbs::doorLeftOut(d.exe)) {  // a firmware door this build leaves out (never offered: a stale request)
