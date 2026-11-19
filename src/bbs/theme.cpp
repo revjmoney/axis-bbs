@@ -132,6 +132,7 @@ static std::function<std::string(const std::string&)> art_, mci_;
 static std::function<std::string(const std::string&, int)> artTop_;
 static bool lite_ = false;
 void        setLite(bool on) { lite_ = on; }
+bool        lite() { return lite_; }
 void setMci(std::function<std::string(const std::string&)> fill) { mci_ = std::move(fill); }
 void        setArt(std::function<std::string(const std::string&)> art) { art_ = std::move(art); }
 void        setArtTop(std::function<std::string(const std::string&, int)> top) { artTop_ = std::move(top); }

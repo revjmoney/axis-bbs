@@ -4,6 +4,7 @@
 #include "bbs/listtemplate.h"
 
 #include <cstdlib>
+#include <vector>
 
 namespace axis::bbs {
 
@@ -30,16 +31,14 @@ bool fourInts(const std::string& v, int out[4]) {
 
 int clampInt(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-// the visible text of a field: art codes in it must not be read back as codes by expandArt, and no control byte
-// (ESC, BEL, TAB, BS, CR, LF ...) gets through: each would shift columns or move the terminal
-std::string plain(const std::string& s) {
-    std::string r;
-    for (char c : s) r += (c == '|' || c == '@' || c == '%' || c == '{' || (unsigned char)c < 0x20 || c == 0x7f) ? '?' : c;
-    return r;
-}
+// A sized field's text waits in `sized` while expandArt reads the line, so a value is never read as an art code. The line
+// holds a marker in its place exactly as wide as the field: a head that counts no columns (ESC [ 0x01 0x80+index z: an
+// escape to pipecodes' width count) and then one kFill per column, so a hidden {{ACS}} group blanks to the same width
+// it shows. Values carry no control byte (listPlain), so no value can make or break a marker.
+constexpr char kMark = '\x01', kFill = '\x02';
 
-// @XXnn@ / @XX>nn@ -> the field, cut and padded to nn columns; everything else is left for expandArt
-std::string sizeFields(const std::string& in, const ArtValue& field) {
+// @XXnn@ / @XX>nn@ -> the field, cut and padded to nn columns (kept in `sized`, a marker in the line); the rest is left for expandArt
+std::string sizeFields(const std::string& in, const ArtValue& field, std::vector<std::string>& sized) {
     std::string out;
     for (size_t i = 0; i < in.size();) {
         if (in[i] == '@' && i + 4 < in.size() && in[i + 1] >= 'A' && in[i + 1] <= 'Z' && in[i + 2] >= 'A' && in[i + 2] <= 'Z') {
@@ -50,10 +49,19 @@ std::string sizeFields(const std::string& in, const ArtValue& field) {
             int    n = 0;
             while (j < in.size() && in[j] >= '0' && in[j] <= '9' && j - d < 3) n = n * 10 + (in[j++] - '0');
             if (j > d && j < in.size() && in[j] == '@') {
-                std::string v = field(in.substr(i + 1, 2));  // (already filtered by renderRow)
+                std::string v = field(in.substr(i + 1, 2));  // (already filtered by renderLine)
                 if ((int)v.size() > n) v.resize(n);
                 std::string pad(n - v.size(), ' ');
-                out += right ? pad + v : v + pad;
+                if (sized.size() < 127) {
+                    sized.push_back(right ? pad + v : v + pad);
+                    out += "\x1b[";
+                    out += kMark;
+                    out += (char)(0x80 + sized.size() - 1);
+                    out += 'z';
+                    out.append((size_t)n, kFill);
+                } else {
+                    out.append((size_t)n, ' ');  // (more than 127 sized fields on one line: the width, not the value)
+                }
                 i = j + 1;
                 continue;
             }
@@ -63,6 +71,14 @@ std::string sizeFields(const std::string& in, const ArtValue& field) {
     return out;
 }
 }  // namespace
+
+// the visible text of a field: shown as typed, but no control byte (ESC, BEL, TAB, BS, CR, LF ...) gets through: each
+// would shift columns or move the terminal. (Art codes in a value stay text: renderLine never expands a value.)
+std::string listPlain(const std::string& s) {
+    std::string r;
+    for (char c : s) r += ((unsigned char)c < 0x20 || c == 0x7f) ? '?' : c;
+    return r;
+}
 
 bool parseListTemplate(const std::string& text, ListTemplate& out) {
     out = ListTemplate();
@@ -119,10 +135,25 @@ std::string clipVisible(const std::string& s, size_t width) {
     return out;
 }
 
-std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue& field) {
-    ArtValue    safe = [&field](const std::string& k) { return plain(field(k)); };  // every value, sized or not
-    std::string s = expandArt(sizeFields(t.row, safe), who, safe);
-    return clipVisible(s, (size_t)t.width);
+std::string renderLine(const std::string& text, int width, const AcsUser& who, const ArtValue& field) {
+    ArtValue                 safe = [&field](const std::string& k) { return listPlain(field(k)); };  // every value, sized or not
+    std::vector<std::string> sized;
+    // expandArt puts an unsized value out as it is (never read again for codes); the sized ones go in after it
+    std::string s = expandArt(sizeFields(text, safe, sized), who, safe), out;
+    for (size_t i = 0; i < s.size(); i++) {
+        size_t at = i + 4 < s.size() && s[i] == '\x1b' && s[i + 1] == '[' && s[i + 2] == kMark && s[i + 4] == 'z'
+                        ? (unsigned char)s[i + 3] - 0x80u
+                        : sized.size();
+        if (at < sized.size() && s.find_first_not_of(kFill, i + 5) >= i + 5 + sized[at].size() && s.size() >= i + 5 + sized[at].size()) {
+            out += sized[at];  // the marker (head and fill) out, the field in
+            i += 4 + sized[at].size();
+        } else {
+            out += s[i];
+        }
+    }
+    return clipVisible(out, (size_t)width);
 }
+
+std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue& field) { return renderLine(t.row, t.width, who, field); }
 
 }  // namespace axis::bbs

@@ -189,6 +189,7 @@ struct Floor {
         sessions.clear();  // (the lines close while their ScriptStreams are still here)
         bbs::theme::setArt({});  // wireNode set these process-wide; drop the dangling ThemeProvider for later tests
         bbs::theme::setArtTop({});
+        bbs::theme::setListTemplate({});
     }
 
     app::Session& add(int slot) {

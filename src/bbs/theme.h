@@ -83,6 +83,7 @@ void setListTemplate(std::function<std::string(const std::string& name)> read, s
 bool listTemplate(const std::string& name, ListTemplate& out);
 // a lite caller (a slow radio tier) is being served: artFor tries NAME.LITE.ANS first (a Node sets it while it works)
 void setLite(bool on);
+bool lite();  // is a lite caller being served (setLite)
 // fills a header screen's codes (%BN, %NN, %UN...) for the caller being served; a Node sets it while it works
 void setMci(std::function<std::string(const std::string&)> fill);
 std::string titleBar(const std::string& text);  // the Oblivion look's title: a fading rule around "M E N U"

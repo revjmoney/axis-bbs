@@ -73,6 +73,7 @@ int MessageReader::countNew(const std::vector<FileArea>& areas, MessageStore& st
 void MessageReader::beginScan() {
     scanning_ = true;
     area_ = 0;
+    hasTpl_ = bars_ && listScreenTemplate("MSGS.LST", tpl_);  // the scan's L list (it opens no area)
     heads_ = headersOf(areas_.empty() ? std::string() : areas_[0].id);
     if (areas_.empty()) {
         showAreas();
@@ -111,6 +112,7 @@ void MessageReader::showAreas() {
                       fresh ? (std::string("  ") + std::to_string(fresh) + " new").c_str() : "");
         rows.emplace_back(b);
     }
+    list_ = ScrollList{3, kListRow, 74, kListRows, 111, 15};  // (a message list may have left its template's geometry)
     list_.setItems(std::move(rows));
     usingList_ = true;
     out_ += listScreenTop("MESSAGE AREAS", "Area                              Messages");
@@ -124,7 +126,8 @@ void MessageReader::showAreas() {
 void MessageReader::openArea(size_t i) {
     area_ = i;
     heads_ = headersOf(areas_[i].id);
-    listFrom_ = heads_.size() > (size_t)kPerPage ? heads_.size() - (size_t)kPerPage : 0;
+    hasTpl_ = bars_ && listScreenTemplate("MSGS.LST", tpl_);  // once per open area: every window and redraw uses this one
+    listFrom_ = heads_.size() > (size_t)perPage() ? heads_.size() - (size_t)perPage() : 0;
     showList();
 }
 
@@ -150,11 +153,17 @@ void MessageReader::showList() {
     }
     if (heads_.empty()) listFrom_ = 0;
     else if (listFrom_ >= heads_.size()) listFrom_ = heads_.size() - 1;
-    size_t end = listFrom_ + (size_t)kPerPage;
+    size_t end = listFrom_ + (size_t)perPage();
     if (end > heads_.size()) end = heads_.size();
+    const ListTemplate*      t = tpl();
     std::vector<std::string> rows;
     rows.reserve(end - listFrom_);
+    last_ = last;
     for (size_t i = listFrom_; i < end; i++) {  // one window of headers, bodies stay on disk until Read
+        if (t) {  // MSGS.LST's row: NW new marker, NM number, FR from, TO to, SU subject
+            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return msgField(i, k); }));
+            continue;
+        }
         const Message& m = heads_[i];
         char           b[80];
         std::snprintf(b, sizeof b, "%c%4d %-12.12s %-12.12s %-24.24s", m.num > last ? '*' : ' ', m.num, m.from.c_str(), m.to.c_str(),
@@ -166,17 +175,38 @@ void MessageReader::showList() {
         listPrompt();
         return;
     }
+    list_ = t ? ScrollList{t->x, t->y, t->width, t->rows, t->hi, t->reg} : ScrollList{3, kListRow, 74, kListRows, 111, 15};
     list_.setItems(std::move(rows));
     usingList_ = true;
     char cap[80];
     std::snprintf(cap, sizeof cap, "  #  From          To            Subject          %u %s", (unsigned)heads_.size(), heads_.size() == 1 ? "msg" : "msgs");
-    out_ += listScreenTop(areas_[area_].name, cap);
+    out_ += listScreenTop(areas_[area_].name, cap, t, [this](const std::string& k) {  // CT the count ("12 msgs")
+        return k == "CT" ? std::to_string(heads_.size()) + (heads_.size() == 1 ? " msg" : " msgs") : std::string();
+    });
     spill();
     out_ += list_.draw();
     spill();
-    out_ += listScreenStatus(heads_[listFrom_ + (size_t)list_.current()].subject);
+    size_t at = listFrom_ + (size_t)list_.current();
+    out_ += listScreenStatus(statusLine(at, heads_[at].subject), t);
     out_ += listScreenKeys(theme::key("R", "ead #  ") + theme::key("N", "ext new  ") + theme::key("P", "ost  ") + theme::key("Q", "uit") +
-                           "   Enter reads");
+                               "   Enter reads",
+                           t);
+}
+
+// MSGS.LST's values for heads_[i]: NW '*' when new to this caller, NM the number, FR from, TO to, SU the subject
+std::string MessageReader::msgField(size_t i, const std::string& k) const {
+    if (i >= heads_.size()) return "";
+    const Message& m = heads_[i];
+    return k == "NW" ? std::string(1, m.num > last_ ? '*' : ' ') : k == "NM" ? std::to_string(m.num) : k == "FR" ? m.from
+           : k == "TO" ? m.to : k == "SU" ? m.subject : std::string();
+}
+
+// the status line in the list's frame: the template's status= when it has one, else the built-in line made safe to draw
+std::string MessageReader::statusLine(size_t i, const std::string& builtin) const {
+    const ListTemplate* t = tpl();
+    if (!t) return builtin;
+    if (t->status.empty()) return listPlain(builtin);
+    return renderLine(t->status, t->width, AcsUser{}, [this, i](const std::string& k) { return msgField(i, k); });
 }
 
 bool MessageReader::tick(uint32_t now, uint32_t lastInput) {
@@ -296,7 +326,7 @@ void MessageReader::save() {
     out_ += std::string("\r\n   ") + (n ? std::string(TEXT) + "Saved as #" + std::to_string(n) + "." : std::string(ORANGE) + "Couldn't save it, sorry.") + "\r\n";
     if (n) lastRead_[areas_[area_].id] = n > lastRead_[areas_[area_].id] ? n : lastRead_[areas_[area_].id];
     heads_ = headersOf(areas_[area_].id);
-    listFrom_ = heads_.size() > (size_t)kPerPage ? heads_.size() - (size_t)kPerPage : 0;
+    listFrom_ = heads_.size() > (size_t)perPage() ? heads_.size() - (size_t)perPage() : 0;
     if (bars_) showList();
     else {
         s_ = St::List;
@@ -355,7 +385,7 @@ bool MessageReader::key(char c) {
                 out_ += list_.takeRedraw();
                 {
                     size_t i = listFrom_ + (size_t)list_.current();
-                    if (i < heads_.size()) out_ += listScreenStatus(heads_[i].from + "  " + heads_[i].subject);
+                    if (i < heads_.size()) out_ += listScreenStatus(statusLine(i, heads_[i].from + "  " + heads_[i].subject), tpl());
                 }
                 if (list_.escaped()) {
                     showAreas();
@@ -367,10 +397,10 @@ bool MessageReader::key(char c) {
                     return true;
                 }
                 if (list_.clamped() < 0 && before == 0 && listFrom_ > 0) {
-                    listFrom_ = listFrom_ > (size_t)kPerPage ? listFrom_ - (size_t)kPerPage : 0;
+                    listFrom_ = listFrom_ > (size_t)perPage() ? listFrom_ - (size_t)perPage() : 0;
                     showList();
                 } else if (list_.clamped() > 0 && shown > 0 && before == shown - 1 && listFrom_ + (size_t)shown < heads_.size()) {
-                    listFrom_ += (size_t)kPerPage;
+                    listFrom_ += (size_t)perPage();
                     showList();
                 }
                 return true;

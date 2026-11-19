@@ -1,0 +1,7 @@
+; The message list (an open message area). This reproduces the built-in list, so the default look is unchanged.
+; Format and fields: docs/MENU-ART.md.
+geom=3,6,74,14
+colours=111,15
+caption=|08  #  From          To            Subject          |CT
+rule=1
+row=@NW1@@NM>4@ @FR12@ @TO12@ @SU24@

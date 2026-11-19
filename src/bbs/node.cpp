@@ -2958,13 +2958,20 @@ void Node::showAbout() {
 }
 
 void Node::showUserList() {
-    out_ += theme::CLS;
-    std::string art = theme::artFor("USERS");
-    out_ += art.empty() ? theme::banner("USERS") : art;
-    out_ += std::string("   ") + theme::DGREY + "handle                  from                  calls  tagline\r\n";
-    out_ += std::string("   ") + theme::ORANGE + std::string(72, '\xcd') + theme::TEXT + "\r\n";
+    ListTemplate        tpl;  // USERS.LST: caption, rule, where the rows go and how each looks (still a static listing)
+    const ListTemplate* t = listScreenTemplate("USERS.LST", tpl) ? &tpl : nullptr;
+    // the start of list line i: today the next line down, with a template its own row from (x, y)
+    auto line = [t](int i) { return t ? "\x1b[" + std::to_string(t->y + i) + ";" + std::to_string(t->x) + "H" : std::string("   "); };
+    if (t) out_ += listScreenTop("USERS", "", t);
+    else {
+        out_ += theme::CLS;
+        std::string art = theme::artFor("USERS");
+        out_ += art.empty() ? theme::banner("USERS") : art;
+        out_ += std::string("   ") + theme::DGREY + "handle                  from                  calls  tagline\r\n";
+        out_ += std::string("   ") + theme::ORANGE + std::string(72, '\xcd') + theme::TEXT + "\r\n";
+    }
     if (!users_) {
-        out_ += std::string("   ") + theme::TEXT + "Accounts are off on this board.\r\n";
+        out_ += line(0) + theme::TEXT + "Accounts are off on this board.\r\n";
         showMenu();
         return;
     }
@@ -2982,17 +2989,29 @@ void Node::showUserList() {
             if (!ca) return false;
         }
     });
-    int n = 0;
-    for (const User* u : show) {
-        if (n >= 16) break;
+    const int cap = t ? t->rows : 16;
+    int       n = 0;
+    for (const User* u : show) {  // (twits are already gone for everyone but the sysop)
+        if (n >= cap) break;
+        if (t) {  // HN handle, LO location, CA calls, TG tagline (22 at most, as today), TW the twit marker (a sysop's view)
+            out_ += line(n) + renderRow(*t, menuWho(), [this, u](const std::string& k) {
+                return k == "HN" ? u->handle : k == "LO" ? u->location : k == "CA" ? std::to_string(u->calls)
+                       : k == "TG" ? u->tagline.substr(0, 22) : k == "TW" && u->twit && sysop_ ? std::string("  twit") : std::string();
+            }) + theme::RESET;
+            n++;
+            continue;
+        }
         char b[200];
         std::snprintf(b, sizeof b, "   %s%-20.20s %s%-22.22s %s%5u  %s%.22s%s\r\n", theme::WHITE, u->handle.c_str(), theme::TEXT,
                       u->location.c_str(), theme::ORANGE, (unsigned)u->calls, theme::DGREY, u->tagline.c_str(), u->twit ? "  twit" : "");
         out_ += b;
         n++;
     }
-    if (n == 0) out_ += std::string("   ") + theme::TEXT + "(no callers on the books yet)\r\n";
-    else if ((int)show.size() > n)
+    if (n == 0) out_ += line(0) + theme::TEXT + "(no callers on the books yet)\r\n";
+    else if (t) {  // the cursor where today's would be (under the rows), or on the status row after "and N more"
+        if ((int)show.size() > n) out_ += listScreenStatus(theme::DGREY + ("and " + std::to_string((int)show.size() - n) + " more"), t);
+        else out_ += "\x1b[" + std::to_string(t->y + n) + ";1H";
+    } else if ((int)show.size() > n)
         out_ += std::string("   ") + theme::DGREY + "and " + std::to_string((int)show.size() - n) + " more\r\n";
     showMenu();
 }

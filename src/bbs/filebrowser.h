@@ -105,6 +105,12 @@ private:
     static constexpr bool   net() { return false; }
     static constexpr size_t netRow() { return 0; }
 #endif
+    // the file list's look (FILES.LST), loaded when an area opens; never on Net Files (its own head and About column)
+    const ListTemplate* tpl() const { return hasTpl_ && !net() ? &tpl_ : nullptr; }
+    // files a page: today 15 on a 14 row bar (the bar scrolls one), so a template's page is its rows plus that one
+    int         perPage() const { return tpl() ? tpl_.rows + (kPerPage - kListRows) : kPerPage; }
+    std::string statusLine(size_t ix) const;  // status(ix), or the template's status line, for the list's frame
+    std::string fileField(size_t i, const std::string& k) const;  // FILES.LST's values for files_[i]
     void openArea(size_t i);
     void showPage(int at = 0);
     void selectFile(size_t index);  // Enter on the lightbar: view text, or start a download
@@ -129,6 +135,8 @@ private:
     size_t                       shown_ = 0;
     TransferRequest              req_;
     ScrollList                   list_{3, kListRow, 74, kListRows, 111, 15};  // white on the theme orange
+    ListTemplate                 tpl_;
+    bool                         hasTpl_ = false;
     bool                         bars_ = true;
     bool                         usingList_ = false;   // a lightbar is on screen
     bool                         typedAreas_ = false;  // after New or Search: the old "area number" line

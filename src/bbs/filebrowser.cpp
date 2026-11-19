@@ -91,6 +91,7 @@ void FileBrowser::showAreas() {
         rows.emplace_back(b);
     }
     if (netRow()) rows.emplace_back(kNetRow);
+    list_ = ScrollList{3, kListRow, 74, kListRows, 111, 15};  // (a file list may have left its template's geometry)
     list_.setItems(std::move(rows));
     usingList_ = true;
     out_ += listScreenTop("FILE AREAS", "Area                                      Files");
@@ -107,6 +108,7 @@ void FileBrowser::openArea(size_t i) {
     skip_ = 0;
 #endif
     if (!net()) files_ = lib_.list(areas_[i].id);
+    hasTpl_ = bars_ && listScreenTemplate("FILES.LST", tpl_);  // once per open area: every page and redraw uses this one
     st_ = St::List;
     showPage();
 }
@@ -114,14 +116,15 @@ void FileBrowser::openArea(size_t i) {
 std::string FileBrowser::title() const { return net() ? std::string(kNetRow) : areas_[area_].name; }
 
 void FileBrowser::showPage(int at) {
-    int pages = ((int)files_.size() + kPerPage - 1) / kPerPage;
+    const int per = perPage();
+    int       pages = ((int)files_.size() + per - 1) / per;
 #if AXIS_NET_FILES
     if (net()) {  // one page at a time from the host: page_ stays 0, and N/P (page_ +1 or -1) move the skip
-        int skip = page_ > 0 ? (next_ >= 0 ? next_ : skip_) : page_ < 0 ? std::max(0, skip_ - kPerPage) : skip_;
+        int skip = page_ > 0 ? (next_ >= 0 ? next_ : skip_) : page_ < 0 ? std::max(0, skip_ - per) : skip_;
         files_.clear();
         ids_.clear();
         homes_.clear();
-        next_ = net_.page(skip, kPerPage, files_, ids_, homes_);
+        next_ = net_.page(skip, per, files_, ids_, homes_);
         skip_ = skip;
         page_ = 0;
         pages = 1;
@@ -134,7 +137,7 @@ void FileBrowser::showPage(int at) {
     char pg[24], b[160];
     std::snprintf(pg, sizeof pg, bars_ ? "page %d/%d" : "page %d of %d", page_ + 1, pages);
 #if AXIS_NET_FILES
-    if (net()) std::snprintf(pg, sizeof pg, "page %d%s", skip_ / kPerPage + 1, next_ >= 0 ? ", more" : "");
+    if (net()) std::snprintf(pg, sizeof pg, "page %d%s", skip_ / per + 1, next_ >= 0 ? ", more" : "");
 #endif
     if (!bars_) {
         out_ += CLS;
@@ -143,8 +146,8 @@ void FileBrowser::showPage(int at) {
         out_ += MAG;
         out_ += "   \xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\xc4\r\n";
     }
-    size_t begin = (size_t)page_ * kPerPage;
-    size_t end = begin + kPerPage;
+    size_t begin = (size_t)page_ * per;
+    size_t end = begin + per;
     if (end > files_.size()) end = files_.size();
     const char* empty = "(nothing here yet)";
 #if AXIS_NET_FILES
@@ -165,9 +168,14 @@ void FileBrowser::showPage(int at) {
         listPrompt();
         return;
     }
+    const ListTemplate*      t = tpl();
     std::vector<std::string> rows;
     rows.reserve(end - begin);
     for (size_t i = begin; i < end; i++) {  // this page only, not the whole area
+        if (t) {  // FILES.LST's row: FN name, SZ size, AB about
+            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return fileField(i, k); }));
+            continue;
+        }
         const FileEntry& f = files_[i];
         std::snprintf(b, sizeof b, "%-12.12s %7s  %s", f.name.c_str(), fileSizeText(f.size).c_str(), about(i, 40).c_str());
         rows.emplace_back(b);
@@ -175,20 +183,36 @@ void FileBrowser::showPage(int at) {
     const char* head = net() ? "Name          Size   From         About" : "Name          Size   About";
     if (rows.empty()) {
         usingList_ = false;
-        out_ += listScreenTop(title(), head);
-        out_ += std::string("   ") + theme::TEXT + empty + "\r\n";
+        out_ += listScreenTop(title(), head, t);
+        if (t) out_ += "\x1b[" + std::to_string(t->y) + ";1H" + std::string((size_t)(t->x - 1), ' ') + theme::TEXT + empty + "\r\n";
+        else out_ += std::string("   ") + theme::TEXT + empty + "\r\n";
         listPrompt();
         return;
     }
     if (at < 0) at = 0;
     if (at >= (int)rows.size()) at = (int)rows.size() - 1;
+    list_ = t ? ScrollList{t->x, t->y, t->width, t->rows, t->hi, t->reg} : ScrollList{3, kListRow, 74, kListRows, 111, 15};
     list_.setItems(std::move(rows), (size_t)at);
     usingList_ = true;
     std::snprintf(b, sizeof b, "%-51s%s", head, pg);
-    out_ += listScreenTop(title(), b);
+    out_ += listScreenTop(title(), b, t, [&pg](const std::string& k) { return k == "PG" ? std::string(pg) : std::string(); });
     out_ += list_.draw();
-    out_ += listScreenStatus(status((size_t)page_ * kPerPage + (size_t)list_.current()));
-    out_ += listScreenKeys(keyText() + "   Enter selects");
+    out_ += listScreenStatus(statusLine((size_t)page_ * per + (size_t)list_.current()), t);
+    out_ += listScreenKeys(keyText() + "   Enter selects", t);
+}
+
+// FILES.LST's values for files_[i]: FN the name, SZ the size ("48K"), AB the About column (40 wide)
+std::string FileBrowser::fileField(size_t i, const std::string& k) const {
+    if (i >= files_.size()) return "";
+    return k == "FN" ? files_[i].name : k == "SZ" ? fileSizeText(files_[i].size) : k == "AB" ? about(i, 40) : std::string();
+}
+
+// the status line in the list's frame: the template's status= when it has one, else the built-in line made safe to draw
+std::string FileBrowser::statusLine(size_t ix) const {
+    const ListTemplate* t = tpl();
+    if (!t) return status(ix);
+    if (t->status.empty()) return listPlain(status(ix));
+    return renderLine(t->status, t->width, AcsUser{}, [this, ix](const std::string& k) { return fileField(ix, k); });
 }
 
 // The About column, width w: the description, or on Net Files the home board's name (12) and then the description.
@@ -716,17 +740,19 @@ bool FileBrowser::key(char c) {
                 int before = list_.current();
                 int shown = (int)list_.size();
                 int pick = list_.key(c);
+                const int per = perPage();
                 out_ += list_.takeRedraw();
-                if (size_t ix = (size_t)page_ * kPerPage + (size_t)list_.current(); ix < files_.size()) out_ += listScreenStatus(status(ix));
+                if (size_t ix = (size_t)page_ * per + (size_t)list_.current(); ix < files_.size())
+                    out_ += listScreenStatus(statusLine(ix), tpl());
                 if (list_.escaped()) {
                     showAreas();
                     return true;
                 }
                 if (pick >= 0) {
-                    selectFile((size_t)page_ * kPerPage + (size_t)pick);
+                    selectFile((size_t)page_ * per + (size_t)pick);
                     return true;
                 }
-                int  pages = ((int)files_.size() + kPerPage - 1) / kPerPage;
+                int  pages = ((int)files_.size() + per - 1) / per;
                 bool more = page_ + 1 < pages, less = page_ > 0;
 #if AXIS_NET_FILES
                 if (net()) {
@@ -739,7 +765,7 @@ bool FileBrowser::key(char c) {
                     showPage();
                 } else if (list_.clamped() < 0 && before == 0 && less) {
                     page_--;
-                    showPage(kPerPage);
+                    showPage(per);
                 }
                 return true;
             }

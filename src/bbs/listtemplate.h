@@ -31,6 +31,14 @@ bool parseListTemplate(const std::string& text, ListTemplate& out);
 // Cut to `width` visible columns: escape sequences are kept and never counted, CR/LF never emitted.
 std::string clipVisible(const std::string& s, size_t width);
 
+// A field value as renderRow shows it: as typed, but every control byte becomes '?'. For a line built from caller data
+// outside a template (a built-in status line drawn in a template's frame).
+std::string listPlain(const std::string& s);
+
+// Any template line (caption, row, status, keys): `text` expanded with `field` as the value source (every value through
+// listPlain, and never read as art codes: a value is text), then clipped to `width` visible columns.
+std::string renderLine(const std::string& text, int width, const AcsUser& who, const ArtValue& field);
+
 // One row: t.row expanded with `field` as the value source, then clipped to t.width visible columns (ANSI escapes do not
 // count, no CR/LF is ever emitted). A short result is not padded: the sized field tokens do the padding.
 std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue& field);
