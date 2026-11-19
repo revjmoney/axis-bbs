@@ -244,7 +244,7 @@ Profile decideProfile(uint32_t listenMs) {
     }
     if (haveState && st.state == Standing::HandedBack) return Profile::Follower;
     if (haveState && soloBackoff(st)) {  // the watchdog gave up on a main a moment ago
-        std::printf("axis: cluster: staying solo for %ld minutes after a failed join\n", kSoloBackoffS / 60);
+        std::printf("axis: cluster: staying solo for %ld minutes after losing the main\n", kSoloBackoffS / 60);
         return Profile::Solo;
     }
     if (key.empty()) {
