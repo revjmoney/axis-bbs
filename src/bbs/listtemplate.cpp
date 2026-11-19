@@ -98,11 +98,9 @@ bool parseListTemplate(const std::string& text, ListTemplate& out) {
     return true;
 }
 
-std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue& field) {
-    ArtValue    safe = [&field](const std::string& k) { return plain(field(k)); };  // every value, sized or not
-    std::string s = expandArt(sizeFields(t.row, safe), who, safe);
+std::string clipVisible(const std::string& s, size_t width) {
     std::string out;
-    int         vis = 0;
+    size_t      vis = 0;
     for (size_t i = 0; i < s.size();) {
         unsigned char c = s[i];
         if (c == 0x1b && i + 1 < s.size() && s[i + 1] == '[') {  // an escape sequence: kept, never counted
@@ -114,11 +112,17 @@ std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue&
         } else if (c == '\r' || c == '\n') {
             i++;
         } else {
-            if (vis < t.width) out += (char)c, vis++;
+            if (vis < width) out += (char)c, vis++;
             i++;
         }
     }
     return out;
+}
+
+std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue& field) {
+    ArtValue    safe = [&field](const std::string& k) { return plain(field(k)); };  // every value, sized or not
+    std::string s = expandArt(sizeFields(t.row, safe), who, safe);
+    return clipVisible(s, (size_t)t.width);
 }
 
 }  // namespace axis::bbs

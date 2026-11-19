@@ -28,6 +28,9 @@ struct ListTemplate {
 // false on a malformed file (no row=, or a geom= that is not four integers). Geometry out of range is clamped, not refused.
 bool parseListTemplate(const std::string& text, ListTemplate& out);
 
+// Cut to `width` visible columns: escape sequences are kept and never counted, CR/LF never emitted.
+std::string clipVisible(const std::string& s, size_t width);
+
 // One row: t.row expanded with `field` as the value source, then clipped to t.width visible columns (ANSI escapes do not
 // count, no CR/LF is ever emitted). A short result is not padded: the sized field tokens do the padding.
 std::string renderRow(const ListTemplate& t, const AcsUser& who, const ArtValue& field);
