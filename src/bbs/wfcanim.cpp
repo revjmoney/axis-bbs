@@ -131,7 +131,7 @@ WfcAnim::Kind WfcAnim::kind(int r, int c) const {
     if (r < 0 || r >= kRows || c < 0 || c >= kCols) return Blank;
     const Cell& x = cells_[r * kCols + c];
     if (x.ch >= 0xB3 && x.ch <= 0xDA) return Line;
-    if ((x.ch == ' ' || x.ch == 0 || x.ch == 0xFF) && ((x.attr >> 4) & 7) == 0) return Blank;
+    if ((x.ch == ' ' || x.ch == 0 || x.ch == 0xFF) && (x.attr >> 4) == 0) return Blank;
     return Art;
 }
 

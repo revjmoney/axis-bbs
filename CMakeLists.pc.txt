@@ -52,6 +52,7 @@ set(AXISCORE_SOURCES
     src/bbs/uploadproc.cpp
     src/bbs/users.cpp
     src/bbs/acs.cpp
+    src/bbs/artstyle.cpp
     src/bbs/pipecodes.cpp
     src/bbs/menufile.cpp
     src/bbs/lightbar.cpp
@@ -142,6 +143,7 @@ add_executable(axis_tests
     tests/test_lordcfg_register.cpp
     tests/test_acs.cpp
     tests/test_pipecodes.cpp
+    tests/test_dialect.cpp
     tests/test_menufile.cpp
     tests/test_listtemplate.cpp
     tests/test_listscreen.cpp

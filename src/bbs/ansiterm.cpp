@@ -32,7 +32,7 @@ void AnsiTerm::put(uint8_t ch) {
     }
     Cell& c = at(y_, x_++);
     c.ch = ch;
-    c.attr = (uint8_t)((bold_ ? fg_ | 8 : fg_) | bg_ << 4);
+    c.attr = (uint8_t)((bold_ ? fg_ | 8 : fg_) | ((ice_ ? bg_ | 8 : bg_) << 4));
     dirty_ = true;
 }
 
@@ -49,9 +49,11 @@ void AnsiTerm::csi(char f) {
         case 'm':
             for (size_t i = 0; i < p.size(); i++) {
                 int v = p[i] < 0 ? 0 : p[i];
-                if (v == 0) fg_ = 7, bg_ = 0, bold_ = false;
+                if (v == 0) fg_ = 7, bg_ = 0, bold_ = false, ice_ = false;
                 else if (v == 1) bold_ = true;
                 else if (v == 22) bold_ = false;
+                else if (v == 5) ice_ = true;
+                else if (v == 25) ice_ = false;
                 else if (v >= 30 && v <= 37) fg_ = kCga[v - 30];
                 else if (v >= 40 && v <= 47) bg_ = kCga[v - 40];
             }
@@ -61,6 +63,7 @@ void AnsiTerm::csi(char f) {
             y_ = arg(0, 1) - 1;
             x_ = arg(1, 1) - 1;
             break;
+        case 'G': x_ = arg(0, 1) - 1; break;
         case 'A': y_ -= arg(0, 1); break;
         case 'B': y_ += arg(0, 1); break;
         case 'C': x_ += arg(0, 1); break;
@@ -71,6 +74,12 @@ void AnsiTerm::csi(char f) {
             if (arg(0, 0) == 2) {
                 clear();
                 x_ = y_ = 0;
+            } else if (arg(0, 0) == 1) {  // from the start of the screen to the cursor, inclusive
+                for (int r = 0; r < y_ && r < rows_; r++)
+                    for (int c = 0; c < cols_; c++) at(r, c) = Cell();
+                if (y_ >= 0 && y_ < rows_)
+                    for (int c = 0; c <= x_ && c < cols_; c++) at(y_, c) = Cell();
+                dirty_ = true;
             } else {  // from the cursor to the end of the screen
                 for (int c = x_; c < cols_; c++) at(y_, c) = Cell();
                 for (int r = y_ + 1; r < rows_; r++)

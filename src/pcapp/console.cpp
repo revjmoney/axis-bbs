@@ -63,8 +63,8 @@ void putGlyph(std::string& out, uint8_t ch) {
 
 std::string sgr(uint8_t attr) {
     static const char kAnsi[8] = {0, 4, 2, 6, 1, 5, 3, 7};  // CGA colour number to ANSI colour number
-    char b[24];
-    std::snprintf(b, sizeof b, "\x1b[0;%s3%d;4%dm", (attr & 8) ? "1;" : "", kAnsi[attr & 7], kAnsi[(attr >> 4) & 7]);
+    char b[28];
+    std::snprintf(b, sizeof b, "\x1b[0;%s3%d;%dm", (attr & 8) ? "1;" : "", kAnsi[attr & 7], (attr & 0x80 ? 100 : 40) + kAnsi[(attr >> 4) & 7]);  // 100..107: the bright backgrounds
     return b;
 }
 }  // namespace

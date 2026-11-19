@@ -171,9 +171,10 @@ void FileBrowser::showPage(int at) {
     const ListTemplate*      t = tpl();
     std::vector<std::string> rows;
     rows.reserve(end - begin);
+    const ArtStyle style = theme::artStyle();  // (once: a follower's ask can wait)
     for (size_t i = begin; i < end; i++) {  // this page only, not the whole area
         if (t) {  // FILES.LST's row: FN name, SZ size, AB about
-            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return fileField(i, k); }));
+            rows.emplace_back(renderRow(*t, AcsUser{}, [this, i](const std::string& k) { return fileField(i, k); }, style));
             continue;
         }
         const FileEntry& f = files_[i];
@@ -212,7 +213,7 @@ std::string FileBrowser::statusLine(size_t ix) const {
     const ListTemplate* t = tpl();
     if (!t) return status(ix);
     if (t->status.empty()) return listPlain(status(ix));
-    return renderLine(t->status, t->width, AcsUser{}, [this, ix](const std::string& k) { return fileField(ix, k); });
+    return renderLine(t->status, t->width, AcsUser{}, [this, ix](const std::string& k) { return fileField(ix, k); }, theme::artStyle());
 }
 
 // The About column, width w: the description, or on Net Files the home board's name (12) and then the description.

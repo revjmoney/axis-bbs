@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "bbs/artstyle.h"
+
 namespace axis::bbs {
 struct ListTemplate;
 }
@@ -81,6 +83,11 @@ std::string artFor(const std::string& title, int rows = 0);  // "" when there is
 void setListTemplate(std::function<std::string(const std::string& name)> read, std::function<void(const std::string& name)> bad = nullptr);
 // true and `out` filled when the look has NAME.LST and it parses; false otherwise (the caller draws its built-in frame)
 bool listTemplate(const std::string& name, ListTemplate& out);
+// The active look's THEME.CFG text (its art dialect and colours): `read` fills it ("" when the look has none) and returns false when the ask got no answer (the style is then not cached: the next screen asks again), `bad` hears why a
+// file would not parse, once per installed reader (the log line). A new reader forgets the cached style.
+void setThemeCfg(std::function<bool(std::string& text)> read, std::function<void(const std::string& why)> bad = nullptr);
+ArtStyle artStyle();        // the active look's style; ArtStyle{} when it has no THEME.CFG or a bad one. Read once, cached.
+void     forgetArtStyle();  // drop the cached style (the look or the settings changed)
 // a lite caller (a slow radio tier) is being served: artFor tries NAME.LITE.ANS first (a Node sets it while it works)
 void setLite(bool on);
 bool lite();  // is a lite caller being served (setLite)

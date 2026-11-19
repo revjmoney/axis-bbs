@@ -44,6 +44,7 @@ public:
     void       tick(uint32_t nowMs);                                // a lone ESC becomes Esc after a pause
     void       redraw();                                            // the menu again (after a command's screen)
     void       prompt();                                            // just the prompt again
+    void       setStyle(const ArtStyle& s) { style_ = s; }          // the look's art dialect, for the art and the prompt
     const std::string& current() const { return name_; }
     const std::string& activity() const { return activity_; }
     const MenuDef&     def() const { return def_; }
@@ -56,6 +57,7 @@ private:
     ArtPieces                 artPieces_;
     ArtEmit                   emit_;
     ArtValue                  value_;
+    ArtStyle                  style_;
     MenuDef                   def_;
     AcsUser                   who_;
     std::string               name_, activity_, typed_;

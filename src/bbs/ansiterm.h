@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // An ANSI-BBS terminal in memory (80x25 by default, any size up to 80x30): what a caller's terminal would show, for the sysop's
-// local login on the CYD. Text, SGR colours (bold = bright), cursor moves (H f A B C D), save and
-// restore (s u), erase (J K), and the immediate wrap after the last column that BBS terminals do.
+// local login on the CYD. Text, SGR colours (bold = bright), iCE colour (blink = bright background), cursor moves (H f A B C D G), save and
+// restore (s u), erase (J K, J to the cursor too), and the immediate wrap after the last column that BBS terminals do.
 #pragma once
 #include <cstdint>
 #include <string>
@@ -14,7 +14,7 @@ class AnsiTerm {
 public:
     static constexpr int kMaxCols = 80, kMaxRows = 30;
     struct Cell {
-        uint8_t ch = ' ', attr = 7;  // attr: CGA foreground | background << 4
+        uint8_t ch = ' ', attr = 7;  // attr: CGA foreground | background << 4 (background 0..15: 8..15 from iCE colour)
     };
     explicit AnsiTerm(int cols = 80, int rows = 25)
         : cols_(cols < 1 ? 1 : cols > kMaxCols ? kMaxCols : cols), rows_(rows < 1 ? 1 : rows > kMaxRows ? kMaxRows : rows),
@@ -41,7 +41,7 @@ private:
     std::vector<Cell> cells_;  // rows_ * cols_, row by row (declared after cols_ and rows_: it is sized from them)
     int         x_ = 0, y_ = 0, sx_ = 0, sy_ = 0;
     uint8_t     fg_ = 7, bg_ = 0;
-    bool        bold_ = false, dirty_ = true;
+    bool        bold_ = false, ice_ = false, dirty_ = true;  // ice_: SGR 5 as iCE colour, the background's bright bit
     int         esc_ = 0;  // 0 text, 1 after ESC, 2 in CSI
     std::string params_;
 };

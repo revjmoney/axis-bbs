@@ -182,12 +182,18 @@ void Node::loggedIn() {
     else menuOrLiners();
 }
 
+constexpr char kCtrlZ = '\x1a';  // the end-of-file mark (Ctrl-Z)
+static std::string cutCtrlZ(std::string a) {  // theme art ends at the first Ctrl-Z (a SAUCE record after it is not the picture)
+    if (size_t z = a.find(kCtrlZ); z != std::string::npos) a.resize(z);
+    return a;
+}
+
 void Node::menuOrLiners() {
     if (state_ != State::Bulletin && art_) {  // the sysop's BULLETIN.ANS first, once per call
-        std::string b = art_("BULLETIN.ANS");
+        std::string b = cutCtrlZ(art_("BULLETIN.ANS"));
         if (!b.empty()) {
             state_ = State::Bulletin;
-            out_ += theme::CLS + mci(b) + "\r\n   " + theme::DGREY + "(press a key)" + theme::RESET;
+            out_ += theme::CLS + artText(b) + "\r\n   " + theme::DGREY + "(press a key)" + theme::RESET;
             return;
         }
     }
@@ -281,7 +287,7 @@ void Node::beginLocalMenu(uint32_t nowMs) {
 
 // While this node works, the theme's header screens get its codes (one node runs at a time; cleared after)
 Node::MciScope::MciScope(Node& n) {
-    theme::setMci([&n](const std::string& s) { return n.mci(s); });
+    theme::setMci([&n](const std::string& s) { return n.artText(s); });
     theme::setLite(n.lite());  // the header screens (theme::artFor) go lite too
 }
 Node::MciScope::~MciScope() {
@@ -403,6 +409,20 @@ void Node::setMenus(MenuRunner::Loader load, MenuRunner::ArtPieces pieces) {
     };
 }
 
+namespace {
+// "2026-11-19" for a unix time (UTC, from the day count: no time zone tables), "-" when the clock was not set
+std::string dayText(uint32_t t) {
+    if (t == 0) return "-";
+    int64_t z = (int64_t)(t / 86400) + 719468, era = z / 146097;
+    unsigned doe = (unsigned)(z - era * 146097), yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    unsigned d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+    char b[16];
+    std::snprintf(b, sizeof b, "%04u-%02u-%02u", (unsigned)(yoe + era * 400 + (m <= 2)), m, d);
+    return b;
+}
+}  // namespace
+
 // NOTE: showLoginScreen keys its login cell cache on a hand-kept list of this function's non-constant codes: add any new
 // non-constant value or mci code there too, or a cached LOGIN.ANS layout goes stale.
 // a placeholder's value: "%XX" are AXIS's own codes (as theme art has always used them), the rest ViSiON/3's names
@@ -432,7 +452,14 @@ std::string Node::menuValue(const std::string& k) const {
     }
     if (k == "NEWUSERS") return "YES";  // AXIS always takes applications (an optional new user password guards them)
     if (k == "BN") return cfg_->bbsName;
-    return "";  // |UN (a user note), |PV, areas and conferences: not on AXIS yet
+    if (k == "CAN") return msgs_ ? msgs_->areaName() : std::string();      // the message area open now ("" at a menu)
+    if (k == "CFAN") return browser_ ? browser_->areaName() : std::string();  // the file area open now
+    if (k == "UPLDS" || k == "DNLDS") return "";  // (AXIS keeps bytes, not the counts these codes mean: blank)
+    if (k == "LCALL" && prevCall_) {  // the date of the call before this one, MM/DD/YY (dayText's "YYYY-MM-DD" reordered)
+        std::string d = dayText(prevCall_);
+        return d.size() == 10 ? d.substr(5, 2) + "/" + d.substr(8, 2) + "/" + d.substr(2, 2) : std::string();
+    }
+    return "";  // |UN (a user note), |PV, POSTS (no count kept), conferences: not on AXIS yet
 }
 
 
@@ -440,7 +467,12 @@ std::string Node::menuValue(const std::string& k) const {
 // so it never writes over the art's left frame the way a plain "\r\n   " would
 void Node::menuNote(const char* text) {
     out_ += std::string("\r\n\x1b[4C") + AMBER + text + theme::TEXT;
-    menu_->prompt();
+    styled()->prompt();
+}
+
+MenuRunner* Node::styled() {
+    menu_->setStyle(theme::artStyle());
+    return menu_.get();
 }
 
 AcsUser Node::menuWho() const {
@@ -453,7 +485,7 @@ AcsUser Node::menuWho() const {
 bool Node::enterMenu(const std::string& name) {
     std::string fallback = menu_->def().fallback;
     for (const std::string& n : {name, fallback, std::string("MAIN")}) {
-        if (n.empty() || !menu_->enter(n, menuWho())) continue;
+        if (n.empty() || !styled()->enter(n, menuWho())) continue;
         menuName_ = n;
         for (int i = 0; i < 8 && menu_->key(0).kind != MenuAction::None; i++) {
         }  // auto-runs (sysop notices and such): not on AXIS yet
@@ -490,7 +522,7 @@ bool Node::showArt(const std::string& file) {
 }
 
 bool Node::showFrontDoor() {
-    if (!menu_ || builtin_ || !menu_->enter("PDMATRIX", AcsUser{0, ""})) return false;
+    if (!menu_ || builtin_ || !styled()->enter("PDMATRIX", AcsUser{0, ""})) return false;
     state_ = State::Matrix;
     frontDoor_ = true;
     return true;
@@ -528,11 +560,13 @@ uint32_t Node::loginScans() { return g_loginScans; }
 
 void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the handle and password go
     std::string a = menuLoad_ ? menuLoad_("LOGIN.ANS") : "";
+    if (size_t z = a.find('\x1a'); z != std::string::npos) a.resize(z);  // (Ctrl-Z: the SAUCE record is not the picture)
+    const ArtStyle style = theme::artStyle();
     loginAt_[0][0] = loginAt_[1][0] = 0;
     if (a.find("|{") != std::string::npos) {
         // the key: the raw art plus the width of every value its pipe codes can expand to before a field
-        size_t key = std::hash<std::string>{}(a);
-        for (const char* k : {"UH", "NAME", "LEVEL", "GL", "CALLS", "TL", "NODE", "MN", "TIME", "DATE", "BN", "%UN", "%BN", "%SN", "%NN", "%DT", "%VN"})
+        size_t key = std::hash<std::string>{}(a) * 3 + (size_t)style.dialect;  // (a dialect reads `||` and `^n` differently)
+        for (const char* k : {"UH", "NAME", "LEVEL", "GL", "CALLS", "TL", "NODE", "MN", "TIME", "DATE", "BN", "UPLDS", "DNLDS", "LCALL", "CAN", "CFAN", "%UN", "%BN", "%SN", "%NN", "%DT", "%VN", "%TL", "%MA", "%FA"})
             key = key * 131 + menuValue(k).size() + 1;
         LoginCells* hit = nullptr;
         for (int i = 0; i < g_loginCellsN; i++)
@@ -543,7 +577,7 @@ void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the ha
             g_loginScans++;
             std::unique_ptr<AnsiTerm> t(new AnsiTerm());
             expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); },
-                      [&t](const char* d, size_t n) { t->feed(d, n); });
+                      [&t](const char* d, size_t n) { t->feed(d, n); }, style);
             for (int r = 0; r < t->rows(); r++)
                 for (int c = 0; c + 3 < t->cols(); c++)
                     if (t->cell(r, c).ch == '|' && t->cell(r, c + 1).ch == '{' && t->cell(r, c + 3).ch == '}') {
@@ -562,7 +596,7 @@ void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the ha
     if (!a.empty()) expandArt(a, AcsUser{0, ""}, [this](const std::string& k) { return menuValue(k); }, [this](const char* d, size_t n) {
             out_.append(d, n);
             spill();
-        });
+        }, style);
     out_ += "\x1b[0m\r\n";
     state_ = State::Login;
     prompt();
@@ -724,7 +758,7 @@ void Node::nextStep() {
             return;
         } else if (c == "FASTLOGIN") {
             if (s.clear) out_ += theme::CLS;
-            if (menu_->enter("FASTLOGN", menuWho())) {
+            if (styled()->enter("FASTLOGN", menuWho())) {
                 state_ = State::Menu;
                 seqFast_ = true;
                 return;
@@ -817,7 +851,7 @@ void Node::pumpArt(bool onePiece) {
         std::string raw = d.off < cap ? d.src(d.off, kPosterPiece, &exists) : std::string();
         bool        last = !exists || raw.size() < kPosterPiece || d.off + raw.size() >= cap;
         d.off += raw.size();
-        if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;  // (SAUCE: not the picture)
+        if (size_t sauce = raw.find('\x1a'); sauce != std::string::npos) raw.resize(sauce), last = true;  // (SAUCE: not the picture; this cut is what ends the drawing)
         artPiece(d.carry, raw.data(), raw.size(), last, menuWho(), [this](const std::string& k) { return menuValue(k); },
                  [this](const char* p, size_t n) {  // (512 bytes at most a call: out_ never grows by a whole piece)
             Drawing& at = drawings_.front();
@@ -825,7 +859,7 @@ void Node::pumpArt(bool onePiece) {
             else out_.insert(at.pos, p, n);  // behind what went before it, ahead of what was written since it started
             for (Drawing& o : drawings_) o.pos += n;
             spill();
-        });
+        }, theme::artStyle(), &d.ended);
         std::string().swap(raw);
         if (last) {
             bool poster = d.poster;
@@ -877,7 +911,13 @@ std::string Node::mci(const std::string& s) const {
             else if (code == "NN") v = std::to_string(node_);
             else if (code == "DT" || code == "TM") v = info_().timeText;
             else if (code == "VN") v = kAxisVersion;
-            else known = false;
+            else if (theme::artStyle().dialect == Dialect::Renegade) {  // Renegade's own: time left, the open areas; the rest AXIS has no data for
+                known = true;
+                if (code == "TL") v = menuValue("TL");
+                else if (code == "MA") v = menuValue("CAN");
+                else if (code == "FA") v = menuValue("CFAN");
+                else known = code == "CF" || code == "CM" || code == "MP" || code == "PE" || code == "NL";  // (blank)
+            } else known = false;
             if (known) {
                 r += v;
                 i += 2;
@@ -887,6 +927,15 @@ std::string Node::mci(const std::string& s) const {
         r += s[i];
     }
     return theme::pipes(r);
+}
+
+// The screens theme art draws through (artFor headers, STATS, YOURSTATS, ABOUT, USERS, BULLETIN.ANS, the Oblivion/2 MATRIX.ANS,
+// MAIN.ANS): the axis dialect keeps today's fill (mci: %XX codes and plain pipe colours, byte for byte); any other look's screens
+// go through the code expander with the node's values and the look's style, so |C7, |UH, ^1 and the rest are read there too.
+std::string Node::artText(const std::string& s) const {
+    const ArtStyle style = theme::artStyle();
+    if (style.dialect == Dialect::Axis) return mci(s);
+    return expandArt(cutCtrlZ(s), menuWho(), [this](const std::string& k) { return menuValue(k); }, style);
 }
 
 namespace {
@@ -924,7 +973,7 @@ void Node::showMatrix() {
     state_ = State::Matrix;
     esc_ = 0;
     out_ += theme::CLS;
-    std::string art = art_ ? art_("MATRIX.ANS") : "";
+    std::string art = art_ ? cutCtrlZ(art_("MATRIX.ANS")) : "";
     for (auto& at : barAt_) at[0] = at[1] = 0;
     if (art.find("|01%01") != std::string::npos) {  // O/2 pulldown marks: find each on the drawn screen, then blank it
         std::unique_ptr<AnsiTerm> t(new AnsiTerm());
@@ -942,7 +991,7 @@ void Node::showMatrix() {
             for (auto& at : barAt_) at[0] = at[1] = 0;  // not all four marks: the stock layout after all
     }
     if (!art.empty()) {
-        out_ += mci(art);
+        out_ += artText(art);
     } else {
         out_ += theme::titleBar(cfg_->bbsName.empty() ? "AXIS" : cfg_->bbsName);
         SysInfo s = info_();
@@ -1069,7 +1118,7 @@ void Node::prompt() {
         out_ += "\r\n   " + theme::fade("Password") + theme::ORANGE + ": " + theme::WHITE;
     } else if (state_ == State::Menu && menu_ && !builtin_) {
         showNotes();
-        menu_->prompt();
+        styled()->prompt();
     } else if (state_ == State::Menu) {
         showNotes();
         if (o2()) o2Prompt("Main Menu");
@@ -1320,10 +1369,10 @@ void Node::showMainMenu() {
     }
     out_ += theme::CLS;
     if (o2()) {  // MAIN.ANS from the card, or the stock look: a title bar and a boxed two-column list
-        std::string art = art_ ? art_("MAIN.ANS") : "";
+        std::string art = art_ ? cutCtrlZ(art_("MAIN.ANS")) : "";
         o2Keys_ = !art.empty();
         if (!art.empty()) {  // one copy at a time, and the output sized once (with room for the rumor): the main has no 10 KB block
-            std::string m = mci(art);
+            std::string m = artText(art);
             std::string().swap(art);
             out_.reserve(out_.size() + m.size() + 256);
             out_ += m;
@@ -1364,8 +1413,8 @@ void Node::showMainMenu() {
         prompt();
         return;
     }
-    if (std::string art = art_ ? art_("MAIN.ANS") : ""; !art.empty()) {  // the axis look's own main menu screen
-        out_ += mci(art);
+    if (std::string art = art_ ? cutCtrlZ(art_("MAIN.ANS")) : ""; !art.empty()) {  // the axis look's own main menu screen
+        out_ += artText(art);
         out_ += std::string("\r\n  ") + theme::key("J", " Axis Net") + theme::TEXT + "  other Axis Micro boards";
         prompt();
         return;
@@ -2283,7 +2332,7 @@ void Node::key(char c) {
         }
         switch (a.kind) {
             case MenuAction::None:
-                if (c == '?') menu_->redraw();
+                if (c == '?') styled()->redraw();
                 return;
             case MenuAction::Goto:
                 if (!enterMenu(a.arg)) {
@@ -2332,7 +2381,7 @@ void Node::key(char c) {
                     if (r.compare(0, 7, "rumor: ") == 0) r.erase(0, 7);  // (some were added with the word already on them)
                     if (r.size() > 33) r = r.substr(0, 31) + "..";
                     out_ += std::string("\r\n\x1b[4C") + theme::DGREY + "rumor: " + theme::HOT + r + theme::TEXT;
-                    menu_->prompt();
+                    styled()->prompt();
                     return;
                 }
                 if (cmd == "RUMORSLIST" || cmd == "RUMORSADD" || cmd == "BBSLISTADD") {  // straight to the list, or to typing one in
@@ -2382,7 +2431,7 @@ void Node::key(char c) {
     }
     if (const char* why = sectionClosed(*cfg_, c)) {
         out_ += std::string("\r\n\r\n   ") + AMBER + why + theme::TEXT;
-        if (fromMenus && menu_) menu_->prompt();
+        if (fromMenus && menu_) styled()->prompt();
         else showMenu();
         return;
     }
@@ -2834,19 +2883,6 @@ void Node::showWhoOnline() {
     showMenu();
 }
 
-namespace {
-// "2026-11-19" for a unix time (UTC, from the day count: no time zone tables), "-" when the clock was not set
-std::string dayText(uint32_t t) {
-    if (t == 0) return "-";
-    int64_t z = (int64_t)(t / 86400) + 719468, era = z / 146097;
-    unsigned doe = (unsigned)(z - era * 146097), yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
-    unsigned d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
-    char b[16];
-    std::snprintf(b, sizeof b, "%04u-%02u-%02u", (unsigned)(yoe + era * 400 + (m <= 2)), m, d);
-    return b;
-}
-}  // namespace
 
 // System Stats: the board as a whole, for every caller. Nothing private (no LAN address, host name, Wi-Fi, memory or
 // storage path): those stay on the WFC and the sysop's @STATUS.
@@ -2990,6 +3026,7 @@ void Node::showUserList() {
         }
     });
     const int cap = t ? t->rows : 16;
+    const ArtStyle style = theme::artStyle();  // (once: a follower's ask can wait)
     int       n = 0;
     for (const User* u : show) {  // (twits are already gone for everyone but the sysop)
         if (n >= cap) break;
@@ -2997,7 +3034,7 @@ void Node::showUserList() {
             out_ += line(n) + renderRow(*t, menuWho(), [this, u](const std::string& k) {
                 return k == "HN" ? u->handle : k == "LO" ? u->location : k == "CA" ? std::to_string(u->calls)
                        : k == "TG" ? u->tagline.substr(0, 22) : k == "TW" && u->twit && sysop_ ? std::string("  twit") : std::string();
-            }) + theme::RESET;
+            }, style) + theme::RESET;
             n++;
             continue;
         }

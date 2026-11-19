@@ -36,6 +36,7 @@ public:
     bool        key(char c);  // false once the caller leaves for the main menu
     bool        tick(uint32_t now, uint32_t lastInput);  // a lone Esc backs out
     std::string where() const;
+    std::string areaName() const { return s_ != St::Areas && area_ < areas_.size() ? areas_[area_].name : std::string(); }  // "" at the area list
 
 private:
     enum class St { Areas, List, ReadNum, Reading, To, Subject, Body };

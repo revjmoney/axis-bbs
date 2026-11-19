@@ -10,7 +10,7 @@
 namespace axis::bbs {
 
 namespace {
-const char kAnsi[8] = {'0', '4', '2', '6', '1', '5', '3', '7'};  // DOS colour order to ANSI's
+const char* const kAnsi = kDosToAnsi;  // DOS colour order to ANSI's (one copy, artstyle.cpp)
 
 // ViSiON/3's placeholder names longer than two letters, longest first (two-letter ones are any |XX)
 const char* const kLongNames[] = {"NEWUSERS", "HANDLE", "ALIAS", "LEVEL", "LCALL", "CALLS", "UPLDS", "DNLDS", "POSTS",
@@ -31,7 +31,9 @@ std::string nameAt(const std::string& s, size_t at) {
         if (s.compare(at, std::char_traits<char>::length(n), n) == 0) return n;
     return upper2(s, at) ? s.substr(at, 2) : "";
 }
-bool isControl(const std::string& n) { return n == "CL" || n == "DE" || n == "CR" || n == "PP" || n == "XY"; }
+bool isControl(const std::string& n, const ArtStyle& style) {
+    return n == "CL" || n == "DE" || n == "CR" || n == "PP" || n == "XY" || (style.dialect == Dialect::Renegade && n == "CS");
+}
 
 // how many characters a stretch of ANSI text takes on screen (escape sequences take none)
 size_t visible(const std::string& s) {
@@ -47,11 +49,15 @@ size_t visible(const std::string& s) {
 }
 
 // an optional group keeps its text unless it holds placeholders and every one of them is empty
-bool keepGroup(const std::string& inner, const ArtValue& value) {
+bool keepGroup(const std::string& inner, const ArtValue& value, const ArtStyle& style) {
     bool any = false;
     for (size_t i = 0; i + 1 < inner.size(); i++) {
+        if (style.dialect != Dialect::Axis && inner[i] == '|' && inner[i + 1] == '|') {  // a literal bar, not a code
+            i++;
+            continue;
+        }
         std::string n = inner[i] == '|' ? nameAt(inner, i + 1) : "";
-        if (n.empty() || isControl(n)) continue;
+        if (n.empty() || isControl(n, style)) continue;
         any = true;
         std::string v = value(n);
         for (char c : v)
@@ -89,7 +95,7 @@ private:
     std::string    buf_;
 };
 
-void expand(const std::string& in, const AcsUser& who, const ArtValue& value, Out& out) {
+void expand(const std::string& in, const AcsUser& who, const ArtValue& value, Out& out, const ArtStyle& style) {
     for (size_t i = 0; i < in.size(); i++) {
         char c = in[i];
         if (c == '{' && in.compare(i, 2, "{{") == 0) {  // {{ACS}}text{{/}}
@@ -97,9 +103,9 @@ void expand(const std::string& in, const AcsUser& who, const ArtValue& value, Ou
             if (close != std::string::npos && end != std::string::npos) {
                 std::string acs = in.substr(i + 2, close - i - 2), inner = in.substr(close + 2, end - close - 2);
                 if (acsAllows(acs, who)) {
-                    expand(inner, who, value, out);
+                    expand(inner, who, value, out, style);
                 } else {  // the same width in spaces, so the art around it stays put
-                    for (size_t k = visible(expandArt(inner, who, value)); k; k--) out.put(' ');
+                    for (size_t k = visible(expandArt(inner, who, value, style)); k; k--) out.put(' ');
                 }
                 i = end + 4;
                 continue;
@@ -124,8 +130,18 @@ void expand(const std::string& in, const AcsUser& who, const ArtValue& value, Ou
             i += 2;
             continue;
         }
+        if (c == '^' && style.dialect == Dialect::Renegade && digits(in, i + 1, 1)) {  // ^0..^9: the look's colour slot
+            out.put(attrSgr(style.r[in[i + 1] - '0']));
+            i += 1;
+            continue;
+        }
         if (c != '|' || i + 1 >= in.size()) {
             out.put(c);
+            continue;
+        }
+        if (in[i + 1] == '|' && style.dialect != Dialect::Axis) {  // || is one literal bar
+            out.put('|');
+            i += 1;
             continue;
         }
         if (in[i + 1] == '{') {  // an optional group |{ ... |}; |{P} and |{O} are login markers: left as they are
@@ -137,14 +153,18 @@ void expand(const std::string& in, const AcsUser& who, const ArtValue& value, Ou
             size_t end = in.find("|}", i + 2);
             if (end != std::string::npos) {
                 std::string inner = in.substr(i + 2, end - i - 2);
-                if (keepGroup(inner, value)) expand(inner, who, value, out);
+                if (keepGroup(inner, value, style)) expand(inner, who, value, out, style);
                 i = end + 1;
                 continue;
             }
         }
         if (digits(in, i + 1, 2)) {
             int n = std::atoi(in.substr(i + 1, 2).c_str());
-            if (n == 23) out.put("\x1b[0m");  // reset
+            if (style.dialect == Dialect::Renegade && n >= 16 && n <= 31) {  // |16..|23 background, |24..|31 the same blinking (iCE bright)
+                out.put(std::string("\x1b[") + (n >= 24 ? "5;" : "") + "4" + kAnsi[(n - 16) & 7] + "m");
+            } else if (style.dialect == Dialect::Renegade && n < 16) {  // |00..|15 set the foreground and keep the background (|17|15 is white on blue)
+                out.put(std::string("\x1b[") + (n & 8 ? "1" : "22") + ";25;3" + kAnsi[n & 7] + "m");
+            } else if (n == 23) out.put("\x1b[0m");  // reset
             else out.put(std::string("\x1b[0;") + (n & 8 ? "1;" : "") + "3" + kAnsi[n & 7] + "m");
             i += 2;
             continue;
@@ -159,6 +179,16 @@ void expand(const std::string& in, const AcsUser& who, const ArtValue& value, Ou
         if (in.compare(i + 1, 2, "XY") == 0 && digits(in, i + 3, 2) && i + 5 < in.size() && in[i + 5] == ',' && digits(in, i + 6, 2)) {
             out.put("\x1b[" + std::to_string(std::atoi(in.substr(i + 6, 2).c_str())) + ";" + std::to_string(std::atoi(in.substr(i + 3, 2).c_str())) + "H");
             i += 7;
+            continue;
+        }
+        if (style.dialect == Dialect::Vision3 && in[i + 1] == 'C' && i + 2 < in.size() && in[i + 2] >= '1' && in[i + 2] <= '7') {
+            out.put(attrSgr(style.c[in[i + 2] - '1']));  // |C1..|C7: the look's colour slot
+            i += 2;
+            continue;
+        }
+        if (style.dialect == Dialect::Renegade && in.compare(i + 1, 2, "CS") == 0) {  // |CS clears the screen like |CL
+            out.put("\x1b[2J\x1b[H");
+            i += 2;
             continue;
         }
         static const struct { const char* code; const char* ansi; } kControls[] = {
@@ -188,28 +218,38 @@ void expand(const std::string& in, const AcsUser& who, const ArtValue& value, Ou
 }
 }  // namespace
 
-void expandArt(const std::string& in, const AcsUser& who, const ArtValue& value, const ArtEmit& emit) {
+void expandArt(const std::string& in, const AcsUser& who, const ArtValue& value, const ArtEmit& emit, const ArtStyle& style) {
     Out out(emit);
-    expand(in, who, value, out);
+    expand(in, who, value, out, style);
 }
 
-void artPiece(std::string& carry, const char* raw, size_t n, bool last, const AcsUser& who, const ArtValue& value, const ArtEmit& emit) {
+void artPiece(std::string& carry, const char* raw, size_t n, bool last, const AcsUser& who, const ArtValue& value, const ArtEmit& emit,
+              const ArtStyle& style, bool* ended) {
+    if (ended && *ended) {  // Ctrl-Z came in an earlier piece: nothing more is drawn
+        if (last) std::string().swap(carry);
+        return;
+    }
     carry.append(raw, n);
+    if (size_t z = carry.find('\x1a'); z != std::string::npos) {  // Ctrl-Z: it and all after it go (SAUCE is never drawn)
+        carry.resize(z);
+        last = true;
+        if (ended) *ended = true;
+    }
     size_t cut = carry.size();
     if (!last) {
         cut = carry.rfind('\n');
         cut = cut != std::string::npos ? cut + 1 : carry.size() > 1024 ? carry.size() - 32 : 0;
     }
     if (cut) {
-        expandArt(carry.substr(0, cut), who, value, emit);
+        expandArt(carry.substr(0, cut), who, value, emit, style);
         carry.erase(0, cut);
     }
     if (last) std::string().swap(carry);
 }
 
-std::string expandArt(const std::string& in, const AcsUser& who, const ArtValue& value) {
+std::string expandArt(const std::string& in, const AcsUser& who, const ArtValue& value, const ArtStyle& style) {
     std::string s;
-    expandArt(in, who, value, [&s](const char* d, size_t n) { s.append(d, n); });
+    expandArt(in, who, value, [&s](const char* d, size_t n) { s.append(d, n); }, style);
     return s;
 }
 

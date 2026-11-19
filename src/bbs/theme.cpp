@@ -7,6 +7,7 @@
 #include <cctype>
 
 #include "bbs/artfetch.h"
+#include "bbs/artstyle.h"
 #include "bbs/listtemplate.h"
 
 namespace axis::bbs::theme {
@@ -180,6 +181,34 @@ bool listTemplate(const std::string& name, ListTemplate& out) {
     return false;
 }
 
+static std::function<bool(std::string&)>       cfgRead_;
+static std::function<void(const std::string&)> cfgBad_;
+static bool                                    cfgBadSeen_ = false;
+static bool                                    styleKnown_ = false;
+static ArtStyle                                style_;
+void setThemeCfg(std::function<bool(std::string&)> read, std::function<void(const std::string&)> bad) {
+    cfgRead_ = std::move(read);
+    cfgBad_ = std::move(bad);
+    cfgBadSeen_ = false;  // a new reader reports its bad file afresh
+    styleKnown_ = false;
+}
+void     forgetArtStyle() { styleKnown_ = false; }
+ArtStyle artStyle() {
+    if (styleKnown_) return style_;
+    style_ = ArtStyle{};
+    std::string text;
+    if (cfgRead_ && !cfgRead_(text)) return style_;  // no answer (a follower's link): axis for now, asked again next time
+    if (!text.empty()) {
+        std::string why;
+        if (!parseThemeCfg(text, style_, &why) && !cfgBadSeen_) {
+            cfgBadSeen_ = true;
+            if (cfgBad_) cfgBad_(why.empty() ? "a bad line" : why);
+        }
+    }
+    styleKnown_ = true;
+    return style_;
+}
+
 Look look() { return look_; }
 
 struct LookRow {
@@ -237,6 +266,7 @@ const char* menuScreenFile(const std::string& name) {
         {"NEWUSER.ANS", "NEWUSER.ANS"}, {"PDMATRIX.ANS", "MATRIX.ANS"},   {"FILEM.ANS", "FILES.ANS"},
         {"DOORSM.ANS", "DOORS.ANS"},    {"MSGMENU.ANS", "MSGS.ANS"},      {"PRELOGON1.ANS", "PRELOGON.ANS"},
         {"PRELOGON2.ANS", "SHOP.ANS"},  {"PRELOGON3.ANS", "MILL.ANS"},
+        {"THEME.CFG", "THEME.CFG"},
         {"FILES.LST", "FILES.LST"},     {"MSGS.LST", "MSGS.LST"},         {"USERS.LST", "USERS.LST"},
     };
     for (const auto& m : kMap)
