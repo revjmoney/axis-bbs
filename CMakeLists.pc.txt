@@ -240,6 +240,7 @@ endif()
 
 target_compile_definitions(axiscore PUBLIC AXIS_SD_POOL=1)  # the PC build and tests cover the pool build too
 target_compile_definitions(axiscore PUBLIC AXIS_BENCH=1)  # the tests drive the bench commands' code (bbs/features.h)
+target_compile_definitions(axiscore PUBLIC AXIS_NATIVE=1)  # the cluster's host hooks (cluster.h), as the axis program has them
 
 # Switched-off core for host tests: cmake -DAXIS_OFF=lord,scripts (same names as the firmware build).
 set(AXIS_OFF "" CACHE STRING "Comma list of features to switch off (see installer/features.json)")
@@ -298,12 +299,13 @@ if(UNIX AND NOT APPLE)
     endif()
     target_link_libraries(lgfx_host PUBLIC pthread)
 
-    # The core again, built the way axis is: no cluster yet (AXIS_CLUSTER=0) and no SD pool (the pool is the
-    # cluster's), every other feature at the board's default (bbs/features.h). axiscore above keeps the test flags.
-    add_library(axiscore_solo STATIC ${AXISCORE_SOURCES})
-    target_include_directories(axiscore_solo PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
-    target_compile_definitions(axiscore_solo PUBLIC AXIS_CLUSTER=0 AXIS_BENCH=1)  # (and axis: the bench commands stay in)
-    target_compile_options(axiscore_solo PRIVATE -w)  # as the board builds it: the core's warnings are its own
+    # The core again, built the way axis is: the cluster with the host's hooks (AXIS_CLUSTER=1 AXIS_NATIVE=1, see
+    # src/cluster/cluster.h) and no SD pool (AXIS_SD_POOL stays unset, so 0), every other feature at the board's
+    # default (bbs/features.h). axiscore above keeps the test flags.
+    add_library(axiscore_native STATIC ${AXISCORE_SOURCES})
+    target_include_directories(axiscore_native PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
+    target_compile_definitions(axiscore_native PUBLIC AXIS_CLUSTER=1 AXIS_NATIVE=1 AXIS_BENCH=1)  # (and axis: the bench commands stay in)
+    target_compile_options(axiscore_native PRIVATE -w)  # as the board builds it: the core's warnings are its own
 
     add_executable(axis
         src/main.cpp
@@ -324,6 +326,9 @@ if(UNIX AND NOT APPLE)
         src/platform/linux/modemline.cpp
         src/platform/linux/startmode.cpp
         src/platform/linux/netgate.cpp
+        src/platform/linux/clusterhost.cpp
+        src/platform/linux/nativecmd.cpp
+        src/platform/cyd/clusternet.cpp    # the board's own: the cluster's UDP and link sockets through WiFiUDP and WiFiClient
         src/platform/cyd/config_store.cpp  # the board's own: LittleFS is the data folder's flash/ (fs.cpp)
         src/platform/cyd/sdfiles.cpp       # the board's own: its /sd/files paths go through fs_remap.cpp
         src/platform/cyd/screen.cpp        # the board's own: pure LovyanGFX, nothing to port
@@ -338,8 +343,8 @@ if(UNIX AND NOT APPLE)
     set_source_files_properties(src/main.cpp PROPERTIES COMPILE_OPTIONS "-w")
     target_include_directories(axis BEFORE PRIVATE src/platform/linux/arduino)
     target_include_directories(axis PRIVATE src/platform/cyd third_party/monocypher)
-    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=0 LGFX_USE_V1= AXIS_WINDOW=$<BOOL:${AXIS_WINDOW}>)
-    target_link_libraries(axis PRIVATE axiscore_solo lgfx_host)
+    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=1 AXIS_NATIVE=1 LGFX_USE_V1= AXIS_WINDOW=$<BOOL:${AXIS_WINDOW}>)
+    target_link_libraries(axis PRIVATE axiscore_native lgfx_host)
     target_link_options(axis PRIVATE -Wl,--gc-sections)
     # The board's paths (/sd, /littlefs) become the data folder's at link time: every call below, from main.cpp,
     # the core or the platform files, goes through src/platform/linux/fs_remap.cpp. Only this executable is wrapped.

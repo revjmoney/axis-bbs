@@ -31,9 +31,11 @@
 #include "platform/cyd/config_store.h"
 #include "platform/linux/hostconf.h"
 #include "platform/linux/netgate.h"
+#include "platform/linux/paths.h"
 
 namespace {
 constexpr uint16_t kPanelPort = 2326;     // main.cpp's panelServer: the one server that is not the telnet one
+constexpr uint16_t kLinkPort = 2324;      // the cluster's link server (clusternet.cpp): not opened on this computer yet
 constexpr uint32_t kWriteStallMs = 3000;  // write() gives up when the socket has taken nothing for this long
 constexpr int      kAcceptBurst = 256;    // connections taken off one listener per hasClient()
 constexpr int      kMaxLookups = 8;       // DNS lookups running at once
@@ -387,6 +389,7 @@ uint16_t WiFiClient::localPort() const {
 // ------------------------------------------------------------------ WiFiServer
 void WiFiServer::begin(uint16_t port) {
     if (port) port_ = port;
+    if (port_ == kLinkPort) return;  // the cluster's links: it neither listens nor takes callers (nor radio calls) yet
     uint16_t want[2] = {port_, 0};
     bool     lanOnly[2] = {true, false};
     if (port_ != kPanelPort) {  // the board's telnet server: the LAN port, and the public one when it is set
@@ -675,9 +678,11 @@ mdns_search_once_t* mdns_query_async_new(const char*, const char*, const char*, 
 extern "C" axis::bbs::BbsConfig __real__Z10configLoadv();
 extern "C" bool                 __real__Z10configSaveRKN4axis3bbs9BbsConfigE(const axis::bbs::BbsConfig& c);
 
+// In the cluster profiles a board holds 4 sessions at most (the heartbeat and setSlots carry 4), so more loads as 4.
 extern "C" axis::bbs::BbsConfig __wrap__Z10configLoadv() {
     axis::bbs::BbsConfig c = __real__Z10configLoadv();
     if (c.telnetPort == 23) c.telnetPort = lanPort;
+    if (axisProfile() != Profile::Solo && c.sessions > 4) c.sessions = 4;
     return c;
 }
 

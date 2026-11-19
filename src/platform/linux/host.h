@@ -20,3 +20,8 @@ extern int serialOut;
 // the board's network runs by itself while main.cpp waits inside one loop() turn). nullptr: delay() just sleeps.
 extern void (*delayHook)();
 }  // namespace axis::host
+
+// Hangs up every caller and the radio line as the shutdown does, logs "axis: restarting: <why>" and runs the program
+// again in place with the same command line (the profile is decided afresh). If that fails it ends with code 3,
+// which systemd restarts. main_linux.cpp.
+[[noreturn]] void hostRestart(const char* why);

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The ESP32 core's Preferences (NVS namespaces), kept as <data>/prefs/<namespace>.ini: one key=value line each,
+// The ESP32 core's Preferences (NVS namespaces), kept as <prefs>/<namespace>.ini (paths.h: axisPrefsDir(), the
+// profile's prefs folder): one key=value line each,
 // values escaped (\xHH for "\", "=" in a key, and any byte outside printable ASCII). Every put saves the whole
-// namespace at once (a temp file, then a rename), as NVS commits each write. preferences.cpp.
+// namespace at once (a temp file, then a rename), as NVS commits each write. One key is kept apart: namespace "clu",
+// key "key" (the cluster key) is the file <data>/cluster.key in every profile (clusterhost.h). preferences.cpp.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -64,6 +66,7 @@ private:
 
     bool                               open_ = false;
     bool                               readOnly_ = false;
-    std::string                        file_;  // <data>/prefs/<namespace>.ini
+    bool                               clu_ = false;  // namespace "clu": its "key" is <data>/cluster.key
+    std::string                        file_;  // <prefs>/<namespace>.ini
     std::map<std::string, std::string> keys_;
 };
