@@ -386,6 +386,7 @@ private:
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
     uint32_t                  beganMs_ = 0;  // when the call began (begin): the pre-login limit counts from here
+    bool                      everIn_ = false;  // logged in (or a local console) at least once this call
     size_t                    door_ = 0;
     std::vector<DoorEntry>    doorList_;  // what showDoors listed
     std::function<std::string(const std::string&)> scriptLoad_;

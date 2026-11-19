@@ -156,6 +156,7 @@ void Node::setAccounts(UserStore* users, std::function<void()> save, uint32_t (*
 
 void Node::loggedIn() {
     state_ = State::Menu;
+    everIn_ = true;
     callStart_ = lastInput_;
     timeWarned_ = false;
     if (msgStore_) {  // new private mail: said under the main menu
@@ -3821,7 +3822,7 @@ void Node::poll(uint32_t nowMs) {
     // all (a new user's application only the idle part; the splash only the total), so a connection that sends one
     // byte and then sits cannot hold a node for the full idle limit. Radio callers are spared: their screens take
     // minutes to arrive at the slow tiers.
-    if (!callStart_ && !local_ && !viaModem() && state_ != State::Done && state_ != State::Wfc) {
+    if (!everIn_ && !local_ && !viaModem() && state_ != State::Done && state_ != State::Wfc) {
         bool applying = state_ == State::Applying || state_ == State::ApplyAsk || state_ == State::NupAsk ||
                         state_ == State::ApplyBar || state_ == State::Pending;
         bool idle = state_ != State::Splash && nowMs - lastInput_ > kPreLoginIdleMs;
