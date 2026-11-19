@@ -33,7 +33,7 @@ void renderGrid(LGFX_Sprite& dst, int rows, Cells cells);
 void build() {
     for (int a = 0; a < 256; a++) {
         const uint8_t* f = kCga[a & 15];
-        const uint8_t* b = kCga[(a >> 4) & 7];  // bit 7 is blink, not bright background
+        const uint8_t* b = kCga[a >> 4];  // bit 7 is the bright background (iCE colour)
         for (int l = 0; l <= 4; l++)
             lut[a][l] = palNearest((b[0] * (4 - l) + f[0] * l) / 4, (b[1] * (4 - l) + f[1] * l) / 4,
                                (b[2] * (4 - l) + f[2] * l) / 4);
