@@ -240,6 +240,7 @@ void Node::pendingMenu() {
 void Node::begin(uint32_t nowMs) {
     MciScope mciScope(*this);
     lastInput_ = nowMs;
+    beganMs_ = nowMs;
     theme::use(theme::lookFrom(cfg_->theme));  // one look for the whole board: the setting decides
     if (cfg_->loginSplash && !lite()) {  // Rev's RotatoCAM splash first; poll() plays it, a key skips it
         state_ = State::Splash;  // (nothing yet: poll() starts it after the hold, unless the link report says lite by then)
@@ -3815,6 +3816,24 @@ void Node::poll(uint32_t nowMs) {
         wfcDrawn_ = nowMs;
         WfcSnapshot s = wfcSnapshot();
         if (!(s == wfcLast_)) wfcDraw(s, false);
+    }
+    // Before login (no call clock yet) a caller gets a short leash: kPreLoginIdleMs with no key, and kPreLoginMaxMs in
+    // all (a new user's application only the idle part; the splash only the total), so a connection that sends one
+    // byte and then sits cannot hold a node for the full idle limit. Radio callers are spared: their screens take
+    // minutes to arrive at the slow tiers.
+    if (!callStart_ && !local_ && !viaModem() && state_ != State::Done && state_ != State::Wfc) {
+        bool applying = state_ == State::Applying || state_ == State::ApplyAsk || state_ == State::NupAsk ||
+                        state_ == State::ApplyBar || state_ == State::Pending;
+        bool idle = state_ != State::Splash && nowMs - lastInput_ > kPreLoginIdleMs;
+        if (idle || (!applying && nowMs - beganMs_ > kPreLoginMaxMs)) {
+            out_ += "\r\n\r\n   ";
+            out_ += AMBER;
+            out_ += "Logged off: no login in time.";
+            out_ += RST;
+            out_ += "\r\n";
+            state_ = State::Done;
+            return;
+        }
     }
     // the WFC at the board (touchscreen, serial, the panel's console) waits for callers for ever; over telnet it idles out
     bool wfcHere = state_ == State::Wfc && local_;

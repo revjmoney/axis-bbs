@@ -57,6 +57,8 @@ public:
     };
     enum class DoorEnd { Normal, OutOfMemory, CarrierLost, TimeLimit, LoadError, Busy, NotHere };  // NotHere: asked for at the board's own screen (no terminal for a door)  // Busy: another caller here has the slot
     static constexpr size_t   kMaxHandle = 30;
+    static constexpr uint32_t kPreLoginIdleMs = 60000;   // before login: this long with no key logs the caller off
+    static constexpr uint32_t kPreLoginMaxMs = 180000;   // before login: this long in all (not while applying)
 
     // files: the file areas' store (nullptr: the Files menu says the areas are offline)
     // cfg: the board's settings, shared by every node (a change makes a new copy; a caller keeps the one they called into)
@@ -383,6 +385,7 @@ private:
     void                      o2Prompt(const char* menu);
     std::string               out_, line_, handle_;
     uint32_t                  lastInput_ = 0;
+    uint32_t                  beganMs_ = 0;  // when the call began (begin): the pre-login limit counts from here
     size_t                    door_ = 0;
     std::vector<DoorEntry>    doorList_;  // what showDoors listed
     std::function<std::string(const std::string&)> scriptLoad_;
