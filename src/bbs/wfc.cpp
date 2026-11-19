@@ -45,6 +45,7 @@ std::string sdFree(uint32_t kb) {
     return b;
 }
 std::string uptime(uint32_t s) { return std::to_string(s / 86400) + "d " + two(s / 3600 % 24) + ":" + two(s / 60 % 60); }
+}  // namespace (the two below are in wfc.h)
 std::string nodePlatform(const std::string& boardId) {
     if (boardId.size() < 2 || !std::isxdigit((unsigned char)boardId[0]) || !std::isxdigit((unsigned char)boardId[1])) return "";
     unsigned first = (unsigned)std::stoul(boardId.substr(0, 2), nullptr, 16);
@@ -59,6 +60,7 @@ std::string nodeLine(const WfcNode& n) {
     if (!n.link.empty()) l += "  " + n.link;
     return l;
 }
+namespace {
 std::string tenths(int t) {  // 72 -> "7.2", -5 -> "-0.5"
     std::string s = t < 0 ? "-" : "";
     unsigned    a = (unsigned)(t < 0 ? -t : t);
