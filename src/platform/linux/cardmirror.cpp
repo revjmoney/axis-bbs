@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <set>
 
+#include "cluster/cardtree.h"
+
 namespace {
 
 constexpr char kSep = '\x1f';
@@ -76,7 +78,7 @@ bool parseManifest(const std::string& text, Manifest& out) {
         CardEntry e;
         e.path = line.substr(0, a);
         if (!parseU64(line.substr(a + 1, b - a - 1), e.size) || !parseI64(line.substr(b + 1), e.mtime)) return false;
-        m.files[e.path] = e;
+        if (axis::cluster::cardPathMirrored(e.path)) m.files[e.path] = e;  // (anything else is dropped: never a path outside the mirror)
     }
     out = std::move(m);
     return true;

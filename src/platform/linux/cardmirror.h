@@ -24,7 +24,8 @@ struct Manifest {
 
 // "#gen=", "#seq=", "#complete=", "#noon=" lines, then one file a line: path 0x1F size 0x1F mtime
 std::string formatManifest(const Manifest& m);
-// false on anything it cannot read (the caller then treats the manifest as missing); `out` is only set on true
+// false on anything it cannot read (the caller then treats the manifest as missing); `out` is only set on true. A
+// path that cluster/cardtree.h's cardPathMirrored refuses is dropped (never a path outside the mirror).
 bool parseManifest(const std::string& text, Manifest& out);
 
 struct MirrorDiff {

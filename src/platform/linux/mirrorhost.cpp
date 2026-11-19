@@ -6,11 +6,11 @@
 // clusterHostPoll (never inside a request) and makes at most one request a turn, paced (cardmirror.h's Pace).
 #include <errno.h>
 #include <fcntl.h>
+#include <ftw.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <time.h>
 #include <unistd.h>
-#include <utime.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -51,6 +51,11 @@ constexpr uint32_t kLogMs = 600000;            // repeated lines at most this of
 constexpr uint64_t kKeepFree = 64ull << 20;    // a copy must leave this much room on the mirror's disk
 constexpr int      kTries = 3;                 // a file that changes while copied is tried this often a pass
 constexpr uint32_t kMinCharge = 256;           // a request counts at least this many bytes
+// The board notes a path when it is opened for writing, not when it is closed, so a live copy can catch a file still
+// being written (a slow upload). Each live copy is checked again with 'I S' every kVerifyMs until two checks in a row
+// agree with the manifest; a difference copies it again. At most kVerifyMax paths; more asks for a compare pass.
+constexpr uint32_t kVerifyMs = 15000;
+constexpr size_t   kVerifyMax = 64;
 
 enum class Pass { None, First, Check };
 
@@ -92,6 +97,11 @@ bool                            feedKnown = false;  // an 'I C' was answered in 
 uint32_t                        feedAt = 0, feedGen = 0, feedSeq = 0;
 std::map<std::string, uint32_t> pending;  // changed paths, and when they were last seen in the feed
 std::deque<std::string>         liveQ;
+struct Verify {
+    uint32_t at = 0;     // when it was last copied or checked
+    int      agree = 0;  // checks in a row that agreed with the manifest
+};
+std::map<std::string, Verify> verify;
 
 // the pass
 Pass                       pass = Pass::None;
@@ -158,10 +168,70 @@ bool readWhole(const std::string& path, std::string& out) {
     return ok;
 }
 
-void makeDirs(const std::string& rel, bool includeLast) {  // the folders of rel under the mirror
+// Every path here is a card path (cardPathMirrored: no "..", no leading '/'), so local() stays inside the mirror; and
+// nothing below follows a symlink (lstat, O_NOFOLLOW, nftw with FTW_PHYS, utimensat with AT_SYMLINK_NOFOLLOW).
+
+void forgetUnder(const std::string& rel) {  // rel and everything under it leave the manifest
+    std::string under = rel + "/";
+    for (auto it = man.files.lower_bound(rel); it != man.files.end();) {
+        if (it->first == rel || it->first.compare(0, under.size(), under) == 0) {
+            it = man.files.erase(it);
+            dirty = true;
+        } else if (it->first.compare(0, rel.size(), rel) != 0) {
+            break;
+        } else {
+            ++it;
+        }
+    }
+}
+
+int removeOne(const char* p, const struct stat*, int, struct FTW*) {
+    ::remove(p);  // (a symlink itself, never what it points at)
+    return 0;
+}
+
+// rel on the card is a folder: a file or symlink in its place here goes, then the folder is made
+void needDir(const std::string& rel) {
+    std::string p = local(rel);
+    struct stat st;
+    if (::lstat(p.c_str(), &st) == 0) {
+        if (S_ISDIR(st.st_mode)) return;
+        ::unlink(p.c_str());
+        forgetUnder(rel);
+    }
+    ::mkdir(p.c_str(), 0700);
+}
+
+// rel on the card is a file: every folder above it must be a folder here, and a folder (or symlink) in its place goes
+void needFileRoom(const std::string& rel) {
+    for (size_t i = 0; i < rel.size(); i++)
+        if (rel[i] == '/') needDir(rel.substr(0, i));
+    std::string p = local(rel);
+    struct stat st;
+    if (::lstat(p.c_str(), &st) != 0) return;
+    if (S_ISDIR(st.st_mode)) {
+        ::nftw(p.c_str(), removeOne, 16, FTW_DEPTH | FTW_PHYS);
+        forgetUnder(rel);
+        man.files.erase(rel);
+    } else if (S_ISLNK(st.st_mode)) {
+        ::unlink(p.c_str());
+    }
+}
+
+void needDirs(const std::string& rel) {  // rel and the folders above it are folders on the card
     for (size_t i = 0; i <= rel.size(); i++)
-        if ((i < rel.size() && rel[i] == '/') || (i == rel.size() && includeLast))
-            ::mkdir(local(rel.substr(0, i)).c_str(), 0700);
+        if (i == rel.size() || rel[i] == '/') needDir(rel.substr(0, i));
+}
+
+bool isRegular(const std::string& rel, struct stat& st) {  // a plain file here (a symlink is not)
+    return ::lstat(local(rel).c_str(), &st) == 0 && S_ISREG(st.st_mode);
+}
+
+void setTime(const std::string& path, int64_t mtime) {
+    timespec ts[2];
+    ts[0].tv_sec = ts[1].tv_sec = (time_t)mtime;
+    ts[0].tv_nsec = ts[1].tv_nsec = 0;
+    ::utimensat(AT_FDCWD, path.c_str(), ts, AT_SYMLINK_NOFOLLOW);
 }
 
 void ensureLoaded() {
@@ -350,10 +420,8 @@ void walkDone(uint32_t now) {
     for (const CardEntry& e : d.copy) {
         if (pass == Pass::First && !man.files.count(e.path)) {  // Rev may have pre-loaded the mirror from a card copy
             struct stat st;
-            if (::stat(local(e.path).c_str(), &st) == 0 && S_ISREG(st.st_mode) && (uint64_t)st.st_size == e.size) {
-                utimbuf ut;
-                ut.actime = ut.modtime = (time_t)e.mtime;
-                ::utime(local(e.path).c_str(), &ut);
+            if (isRegular(e.path, st) && (uint64_t)st.st_size == e.size) {  // (never through a symlink)
+                setTime(local(e.path), e.mtime);
                 man.files[e.path] = e;
                 dirty = true;
                 matched++;
@@ -373,6 +441,7 @@ void diskFull(uint32_t now) {
     dropTemp();
     liveQ.clear();
     pending.clear();
+    verify.clear();  // (the compare pass after the wait catches what they were waiting for)
     if (pass != Pass::None) {
         walking = false;
         passQ.clear();
@@ -387,19 +456,76 @@ void putBack() {
     dropTemp();
 }
 
-// a file is copied: the pass counts it
-void copyDone() {
+// a live path is checked again from now on (kVerifyMs); a full list asks for a compare pass instead
+void toVerify(const std::string& path, uint32_t now) {
+    auto it = verify.find(path);
+    if (it == verify.end() && verify.size() >= kVerifyMax) {
+        if (!checkWanted) {
+            checkWanted = true;
+            checkWhy = "more files changing than live follow checks";
+        }
+        return;
+    }
+    verify[path] = Verify{now, 0};
+}
+
+bool queuedLive(const std::string& path) {
+    if (cur.active && cur.live && cur.path == path) return true;
+    for (const std::string& q : liveQ)
+        if (q == path) return true;
+    return false;
+}
+
+// a file is copied: the pass counts it, and a live one is checked again (it may still be being written)
+void copyDone(uint32_t now) {
     if (!cur.live) copied++;
+    else toVerify(cur.path, now);
     cur = Copy();
 }
 
-void copyFailed(const std::string& path, bool live) {  // changed while copied, or a request failed
+void copyFailed(const std::string& path, bool live, uint32_t now) {  // changed while copied, or a request failed
     int n = ++tries[path];
     if (n < kTries) {
         (live ? liveQ : passQ).push_back(path);
     } else if (!live) {
         failed++;
+    } else {
+        tries.erase(path);  // (the verify list copies it again once it changes or settles)
+        toVerify(path, now);
     }
+}
+
+// one 'I S' for the verify list's oldest due path: true when it made a request
+bool verifyStep(uint32_t now) {
+    auto due = verify.end();
+    for (auto it = verify.begin(); it != verify.end(); ++it)
+        if (now - it->second.at >= kVerifyMs && (due == verify.end() || (int32_t)(it->second.at - due->second.at) < 0))
+            due = it;
+    if (due == verify.end()) return false;
+    std::string path = due->first;
+    if (queuedLive(path)) {  // (a copy is coming: it puts the path back on the list)
+        verify.erase(due);
+        return false;
+    }
+    std::string reply;
+    if (!ask(req('S', {path}), reply, now)) return true;  // (kept: checked again after the back-off)
+    auto    it = man.files.find(path);
+    int64_t size = 0, mtime = 0;
+    bool    gone = reply == "0";
+    bool    known = !gone && !reply.empty() && reply[0] == '1' && parseStat(reply, size, mtime);
+    if (!gone && !known) return true;
+    bool agrees = gone ? it == man.files.end() : size < 0 || (it != man.files.end() && it->second.size == (uint64_t)size &&
+                                                              it->second.mtime == mtime);
+    if (!agrees) {  // it changed after the copy (or the copy was given up): copy it again
+        verify.erase(path);
+        tries.erase(path);
+        liveQ.push_back(path);
+        return true;
+    }
+    Verify& v = verify[path];
+    v.at = now;
+    if (++v.agree >= 2) verify.erase(path);  // two checks kVerifyMs apart agree: settled
+    return true;
 }
 
 // the next step of the copy in hand: one request
@@ -410,7 +536,7 @@ void copyStep(uint32_t now) {
             std::string p = cur.path;
             bool        live = cur.live;
             dropTemp();
-            copyFailed(p, live);
+            copyFailed(p, live, now);
             return;
         }
         if (reply == "0") {  // gone from the card
@@ -424,20 +550,20 @@ void copyStep(uint32_t now) {
             std::string p = cur.path;
             bool        live = cur.live;
             dropTemp();
-            copyFailed(p, live);
+            copyFailed(p, live, now);
             return;
         }
         if (size < 0) {  // a folder
             std::string p = cur.path;
             dropTemp();
-            makeDirs(p, true);
+            needDirs(p);
             return;
         }
         if (cur.step == Copy::Stat1) {
             auto it = man.files.find(cur.path);
             struct stat st;
             if (it != man.files.end() && it->second.size == (uint64_t)size && it->second.mtime == mtime &&
-                ::stat(local(cur.path).c_str(), &st) == 0) {  // already as the card has it
+                isRegular(cur.path, st) && (uint64_t)st.st_size == (uint64_t)size) {  // already as the card has it
                 if (!cur.live) matched++;
                 cur = Copy();
                 return;
@@ -450,8 +576,13 @@ void copyStep(uint32_t now) {
                     return;
                 }
             }
-            makeDirs(cur.path, false);
-            cur.fd = ::open(local(cur.path + ".ax_").c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+            needFileRoom(cur.path);
+            std::string tmp = local(cur.path + ".ax_");
+            cur.fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+            if (cur.fd < 0 && (errno == EISDIR || errno == ELOOP)) {  // (a temp name is never the card's: clear it)
+                ::nftw(tmp.c_str(), removeOne, 16, FTW_DEPTH | FTW_PHYS);
+                cur.fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+            }
             if (cur.fd < 0) {
                 std::printf("axis: mirror: cannot write %s: %s\n", local(cur.path + ".ax_").c_str(), std::strerror(errno));
                 if (!cur.live) failed++;
@@ -469,26 +600,29 @@ void copyStep(uint32_t now) {
             std::string p = cur.path;
             bool        live = cur.live;
             dropTemp();
-            copyFailed(p, live);
+            copyFailed(p, live, now);
             return;
         }
         bool        ok = ::fsync(cur.fd) == 0;
         ok = ::close(cur.fd) == 0 && ok;
         cur.fd = -1;
         std::string tmp = local(cur.path + ".ax_"), dst = local(cur.path);
-        if (!ok || ::rename(tmp.c_str(), dst.c_str()) != 0) {
+        bool moved = ok && ::rename(tmp.c_str(), dst.c_str()) == 0;
+        if (ok && !moved && (errno == EISDIR || errno == ENOTDIR || errno == ENOTEMPTY || errno == EEXIST)) {
+            needFileRoom(cur.path);  // a folder here where the card now has a file (or the other way round above it)
+            moved = ::rename(tmp.c_str(), dst.c_str()) == 0;
+        }
+        if (!moved) {
             std::printf("axis: mirror: cannot finish %s: %s\n", dst.c_str(), std::strerror(errno));
             ::unlink(tmp.c_str());
             if (!cur.live) failed++;
             cur = Copy();
             return;
         }
-        utimbuf ut;
-        ut.actime = ut.modtime = (time_t)cur.mtime;
-        ::utime(dst.c_str(), &ut);
+        setTime(dst, cur.mtime);
         man.files[cur.path] = CardEntry{cur.path, cur.size, cur.mtime};
         dirty = true;
-        copyDone();
+        copyDone(now);
         return;
     }
     // Read: the next piece
@@ -499,7 +633,7 @@ void copyStep(uint32_t now) {
         std::string p = cur.path;
         bool        live = cur.live;
         dropTemp();
-        copyFailed(p, live);
+        copyFailed(p, live, now);
         return;
     }
     size_t n = reply.size() - 1;
@@ -542,7 +676,7 @@ void walkStep(uint32_t now) {
         std::string rel = w.dir.empty() ? f[1] : w.dir + "/" + f[1];
         if (!axis::cluster::cardPathMirrored(rel)) continue;
         if (f[0] == "d") {
-            makeDirs(rel, true);
+            needDirs(rel);
             walkStack.push_back(WalkDir{rel, 0});
         } else if (f[0] == "f" && f.size() == 4) {
             CardEntry e;
@@ -665,9 +799,7 @@ void mirrorPoll(uint32_t now) {
     }
     for (auto it = pending.begin(); it != pending.end();) {  // quiet long enough: copy it
         if (now - it->second >= kQuietMs) {
-            bool queued = cur.active && cur.live && cur.path == it->first;
-            for (const std::string& q : liveQ) queued = queued || q == it->first;
-            if (!queued) liveQ.push_back(it->first);
+            if (!queuedLive(it->first)) liveQ.push_back(it->first);
             it = pending.erase(it);
         } else {
             ++it;
@@ -715,6 +847,7 @@ void mirrorPoll(uint32_t now) {
         copyStep(now);
         return;
     }
+    if (!stopped && verifyStep(now)) return;
     if (passWaiting && (int32_t)(now - passAgainAt) >= 0) passWaiting = false;
     if (pass == Pass::None && !stopped && !passWaiting) {  // a pass to start? (it starts with its first request)
         if (!man.complete) {
