@@ -9,6 +9,7 @@ add_compile_options(-O2 -Wall -Wextra)
 
 set(AXISCORE_SOURCES
     src/app/boarddata.cpp
+    src/app/commands.cpp
     src/app/session.cpp
     src/app/stats.cpp
     src/app/themeprovider.cpp

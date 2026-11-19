@@ -84,6 +84,7 @@
 #include "app/themeprovider.h"
 #include "app/session.h"
 #include "app/services.h"
+#include "app/commands.h"
 #include "platform/cyd/board.h"
 #include "platform/cyd/clusternet.h"
 #include "platform/cyd/config_store.h"
@@ -5995,58 +5996,20 @@ static void pumpPanel() {
     }
 }
 
-static bool pagedRun = false;  // runCommand under the pager: @POSTS sends the newest first
+// The @ commands that need no board hardware (app/commands.cpp), their replies through `out`.
+static bool portableCommand(const String& cmd, Print& out) {
+    struct PrintOut : axis::app::Out {
+        Print& p;
+        explicit PrintOut(Print& o) : p(o) {}
+        void write(const char* s, size_t n) override { p.write((const uint8_t*)s, n); }
+    } o(out);
+    std::vector<axis::app::Session*> v;  // every slot, null for a free one
+    v.reserve(sessions.size());
+    for (auto& s : sessions) v.push_back(s.get());
+    return axis::app::runPortableCommand(std::string(cmd.c_str(), cmd.length()), services(), v, o);
+}
 
 static void runCommand(const String& cmd, Print& out) {
-    // "@USERS 40", "@SETTINGS 40", "@FILES area|40", "@POSTS area|40": the list from line 40, about 4 KB of it,
-    // then "more <next>" while lines remain. Without the number: the whole list, as always.
-    // A page is whole lines, and with its marker it stays under sysopRun's 6 KB cap (one line too long is cut).
-    if (!pagedRun && (cmd.startsWith("@USERS ") || cmd.startsWith("@SETTINGS ") || cmd.startsWith("@FILES ") || cmd.startsWith("@POSTS "))) {
-        int    at = std::max(cmd.lastIndexOf(' '), cmd.lastIndexOf('|'));
-        String base = cmd.substring(0, at), num = cmd.substring(at + 1);
-        if (String(num.toInt()) == num && (base == "@USERS" || base == "@SETTINGS" || (cmd[at] == '|' && base.length() > 7 && (cmd[1] == 'F' || cmd[1] == 'P')))) {
-            struct Page : Print {
-                const size_t kRoom = 6 * 1024 - 64;
-                Print&       to;
-                size_t       skip, line = 0, sent = 0, next = 0;  // next: where the next page starts (0: none)
-                bool         drop = false;                       // the rest of a cut line
-                std::string  held;                               // the line so far: sent whole, or left for the next page
-                Page(Print& o, size_t s) : to(o), skip(s) {}
-                size_t write(uint8_t b) override {
-                    if (next) return 1;
-                    if (line < skip || drop) {
-                        if (b == '\n') line++, drop = false;
-                        return 1;
-                    }
-                    if (held.empty() && sent >= 4096) {
-                        next = line;
-                        return 1;
-                    }
-                    held += (char)b;
-                    bool end = b == '\n';
-                    if (!end && held.size() < kRoom) return 1;
-                    if (sent && sent + held.size() > kRoom) {  // it starts the next page
-                        next = line;
-                        return 1;
-                    }
-                    if (!end) held += '\n', drop = true;  // longer than a page: cut
-                    to.write((const uint8_t*)held.data(), held.size());
-                    sent += held.size();
-                    held.clear();
-                    if (end) line++;
-                    return 1;
-                }
-            } page(out, (size_t)num.toInt());
-            struct Flag {
-                Flag() { pagedRun = true; }
-                ~Flag() { pagedRun = false; }
-            } flag;
-            runCommand(base, page);
-            if (!page.next && !page.held.empty()) out.write((const uint8_t*)page.held.data(), page.held.size());
-            if (page.next) out.printf("more %u\n", (unsigned)page.next);
-            return;
-        }
-    }
     if (cmd == "@DOORSTATE") {  // the last door's memory (noteDoor), and the heap now
         if (boardDiag_.door == axis::bbs::DoorDiag::None) out.println("axis: no door has run since boot");
         else
@@ -6126,13 +6089,6 @@ static void runCommand(const String& cmd, Print& out) {
                               IPAddress(c.ip).toString().c_str(), (unsigned)(c.freeBytes >> 20), c.alive ? "up" : "DOWN");
         else if (cluster)
             out.println("axis: only the main pools the cards (@CARDS there)");
-#if !AXIS_FILES
-    } else if (cmd == "@AREAS" || cmd.startsWith("@FILES ") || cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") ||
-               cmd.startsWith("@FDEL ") || cmd.startsWith("@FMV ") ||
-               ((cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) &&
-                !cmd.substring(cmd.indexOf(' ') + 1).startsWith("msgs|"))) {
-        out.println("axis: the file areas are not in this firmware");
-#endif
 #if AXIS_SD_POOL  // the pool and its mirror (platformio.ini): without them @MIRROR is an unknown command
     } else if (cmd == "@MIRROR") {  // the mirror job: what it is copying, what it has done (bench)
         std::string areas;
@@ -6142,111 +6098,6 @@ static void runCommand(const String& cmd, Print& out) {
         if (!cluster || cluster->role() != axis::cluster::Role::Main) out.println("axis: only the main runs the mirror");
         else out.printf("axis: mirror %s\n", mirrorJob.state().c_str());
 #endif
-    } else if (cmd.startsWith("@KICK ") || cmd.startsWith("@ADDTIME ") || cmd.startsWith("@FORCETC ") || cmd.startsWith("@NOTE ")) {
-        // a node on this board ("@KICK 3", "@ADDTIME 3 15", "@FORCETC 3", "@NOTE 3 text"); the panel sends
-        // each to the board holding that node
-        String rest = cmd.substring(cmd.indexOf(' ') + 1);
-        int    sp = rest.indexOf(' '), num = rest.toInt(), slot = -1;
-        String arg = sp < 0 ? String() : rest.substring(sp + 1);
-        for (size_t i = 0; i < sessions.size(); i++)
-            if (sessionNumber((int)i) == num) slot = (int)i;
-        axis::bbs::Node* n = slot >= 0 ? sessionNode((size_t)slot) : nullptr;
-        if (!n || !sessionLine((size_t)slot)) out.printf("axis: nobody on node %d here\n", num);
-        else if (cmd.startsWith("@KICK ")) {
-            logEvent(String("sysop: kicked ") + n->handle().c_str());
-            sessionLine((size_t)slot)->hangUp();
-            out.printf("axis: kicked node %d\n", num);
-        } else if (cmd.startsWith("@ADDTIME ")) {
-            n->addMinutes(arg.toInt());
-            logEvent(String("sysop: ") + arg + " more minutes for " + n->handle().c_str());
-            out.printf("axis: node %d gets %d more minutes\n", num, (int)arg.toInt());
-        } else if (cmd.startsWith("@FORCETC ")) {
-            n->nodeIn(axis::bbs::Node::kNodeForce, 0, boardCfg->sysopHandle, "");
-            out.printf("axis: node %d sent to the teleconference\n", num);
-        } else {
-            n->nodeIn(axis::bbs::Node::kNodeNote, 0, boardCfg->sysopHandle, arg.c_str());
-            out.printf("axis: note sent to node %d\n", num);
-        }
-    } else if (cmd.startsWith("@BCAST ")) {  // "@BCAST text": a broadcast to every caller on this board
-        for (size_t i = 0; i < sessions.size(); i++)
-            if (sessionNode(i) && sessionLine(i)) sessionNode(i)->nodeIn(axis::bbs::Node::kNodeBroadcast, 0, boardCfg->sysopHandle, cmd.substring(7).c_str());
-        out.println("axis: broadcast sent");
-    } else if (cmd == "@USERS") {  // one line per user: id|handle|status|security|calls|flags
-        for (auto& u : users.all())
-            out.printf("user %d|%s|%s|%d|%u|%s%s%s%s%s\n", u.id, u.handle.c_str(),
-                       u.status == axis::bbs::User::Status::Pending ? "pending" : u.status == axis::bbs::User::Status::Denied ? "denied" : "valid",
-                       u.security, (unsigned)u.calls, u.permFiles ? "F" : "-", u.permMessages ? "M" : "-", u.permDoors ? "D" : "-",
-                       u.freeDownloads ? "$" : "-", u.twit ? "T" : "-");
-    } else if (cmd.startsWith("@USER ")) {  // a user's details and application answers
-        axis::bbs::User* u = users.find(cmd.substring(6).c_str());
-        if (!u) out.println("axis: no user by that handle");
-        else {
-            out.printf("handle %s\nreal %s\nfrom %s\nemail %s\ntagline %s\nsecurity %d\ncalls %u\nup %u\ndown %u\n", u->handle.c_str(),
-                       u->realName.c_str(), u->location.c_str(), u->email.c_str(), u->tagline.c_str(), u->security, (unsigned)u->calls,
-                       (unsigned)u->uploads, (unsigned)u->downloads);
-            for (auto& a : u->answers) out.printf("answer %s|%s\n", a.first.c_str(), a.second.c_str());
-        }
-    } else if (cmd.startsWith("@VALIDATE ") || cmd.startsWith("@DENY ") || cmd.startsWith("@SEC ") || cmd.startsWith("@PERM ") ||
-               cmd.startsWith("@TWIT ")) {
-        // "@VALIDATE h", "@DENY h", "@SEC h 30", "@PERM h files|msgs|doors|freedl|nets on|off", "@TWIT h on|off"
-        String rest = cmd.substring(cmd.indexOf(' ') + 1), handle = rest, a1, a2;
-        int    sp = rest.indexOf(' ');
-        if (sp > 0 && !cmd.startsWith("@VALIDATE ") && !cmd.startsWith("@DENY ")) {
-            int last = rest.lastIndexOf(' ');
-            if (cmd.startsWith("@PERM ")) {
-                int mid = rest.lastIndexOf(' ', last - 1);
-                handle = rest.substring(0, mid), a1 = rest.substring(mid + 1, last), a2 = rest.substring(last + 1);
-            } else {
-                handle = rest.substring(0, last), a1 = rest.substring(last + 1);
-            }
-        }
-        axis::bbs::User* u = users.find(handle.c_str());
-        if (!u) out.println("axis: no user by that handle");
-        else {
-            bool on = a2 == "on" || a1 == "on";
-            if (cmd.startsWith("@VALIDATE ")) {
-                u->status = axis::bbs::User::Status::Validated;
-                writeWarrior(u->handle.c_str());
-            }
-            else if (cmd.startsWith("@DENY ")) u->status = axis::bbs::User::Status::Denied;
-            else if (cmd.startsWith("@SEC ")) u->security = constrain((int)a1.toInt(), 1, 255);
-            else if (cmd.startsWith("@TWIT ")) u->twit = on;
-            else if (a1 == "files") u->permFiles = on;
-            else if (a1 == "msgs") u->permMessages = on;
-            else if (a1 == "doors") u->permDoors = on;
-            else if (a1 == "freedl") u->freeDownloads = on;
-            else if (a1 == "nets") u->permNets = on;
-            saveUsers();
-            logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + u->handle.c_str());
-            out.printf("axis: %s updated\n", u->handle.c_str());
-        }
-    } else if (cmd == "@SETTINGS") {  // axis.ini without any salt or hash line
-        std::string t = axis::bbs::formatConfig(*boardCfg), line;
-        for (char ch : t) {
-            if (ch != '\n') {
-                line += ch;
-                continue;
-            }
-            if (line.find("_salt=") == std::string::npos && line.find("_hash=") == std::string::npos) out.println(line.c_str());
-            line.clear();
-        }
-    } else if (cmd.startsWith("@VOTEDEL ")) {  // "@VOTEDEL n": booth question n (1-based, as listed) and its ballots
-        if (asFollower()) {
-            out.println("@VOTEDEL the booth lives on the main: run it there");
-        } else {
-            std::vector<std::string> v = boardData.listLoad("votes"), b = boardData.listLoad("ballots");
-            int                      q = cmd.substring(9).toInt();
-            bool                     ok = axis::bbs::voteDelete(v, b, q);
-            if (ok) {
-                boardData.listSave("votes", v);
-                boardData.listSave("ballots", b);
-                logEvent("voting booth: question " + String(q) + " taken out");
-            }
-            out.println(ok ? "@VOTEDEL OK" : "@VOTEDEL no such question");
-        }
-    } else if (cmd == "@RUMORS" || cmd == "@BBSLIST" || cmd == "@VOTES" || cmd == "@LINERS") {
-        std::vector<std::string> v = cmd == "@LINERS" ? boardData.oneLiners() : sharedList(cmd == "@RUMORS" ? "rumors" : cmd == "@BBSLIST" ? "bbslist" : "votes");
-        for (auto& l : v) out.println(l.c_str());
     } else if ((cmd == "@STATS" || cmd.startsWith("@STATS ")) && !statsOwner()) {
         // a follower: the main owns the counters; this is the main's last word plus what is still to be sent up
         if (cmd.length() > 7) {
@@ -6312,91 +6163,14 @@ static void runCommand(const String& cmd, Print& out) {
         out.print(axis::bbs::diagFields(sample).c_str());
         if (sdNotice()) out.print(" sd=missing");  // the SD card notice (bbs/sdnotice.h)
         out.print('\n');
-    } else if (cmd.startsWith("@UEDIT ")) {  // "@UEDIT handle|field|value": realname location email tagline security handle
-        String a = cmd.substring(7);
-        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
-        axis::bbs::User* u = b2 > 0 ? users.find(a.substring(0, b1).c_str()) : nullptr;
-        String f = b2 > 0 ? a.substring(b1 + 1, b2) : String(), v = b2 > 0 ? a.substring(b2 + 1) : String();
-        if (!u) out.println("axis: @UEDIT handle|field|value");
-        else {
-            if (f == "realname") u->realName = v.c_str();
-            else if (f == "location") u->location = v.c_str();
-            else if (f == "email") u->email = v.c_str();
-            else if (f == "tagline") u->tagline = v.c_str();
-            else if (f == "security") u->security = constrain((int)v.toInt(), 1, 255);
-            else if (f == "handle" && v.length() && !users.find(v.c_str())) u->handle = v.c_str();
-            else {
-                out.println("axis: fields: realname location email tagline security handle");
-                return;
-            }
-            saveUsers();
-            logEvent(String("sysop: edited ") + f + " of " + u->handle.c_str());
-            out.printf("axis: %s updated\n", u->handle.c_str());
-        }
-    } else if (cmd.startsWith("@UDEL ")) {  // "@UDEL handle": delete a caller's account
-        axis::bbs::User* u = users.find(cmd.substring(6).c_str());
-        if (!u) out.println("axis: no user by that handle");
-        else {
-            std::string h = u->handle;
-            auto& all = users.all();
-            for (size_t i = 0; i < all.size(); i++)
-                if (&all[i] == u) {
-                    all.erase(all.begin() + (long)i);
-                    break;
-                }
-            saveUsers();
-            logEvent(String("sysop: deleted user ") + h.c_str());
-            out.printf("axis: %s deleted\n", h.c_str());
-        }
-    } else if (cmd == "@AREAS" || cmd == "@MSGAREAS") {  // "N|id|name|level|m" per area
-        auto& v = cmd == "@AREAS" ? boardCfg->areas : boardCfg->msgAreas;
-        for (size_t i = 0; i < v.size(); i++)
-            out.printf("%u|%s|%s|%d|%s\n", (unsigned)i + 1, v[i].id.c_str(), v[i].name.c_str(), v[i].minSecurity, v[i].mirror ? "m" : "");
-    } else if (cmd.startsWith("@AREASET ") || cmd.startsWith("@AREADEL ") || cmd.startsWith("@AREAUP ")) {
-        // "@AREASET files|N|id|name|level" (N past the end adds), "@AREADEL msgs|N", "@AREAUP files|N" (moves it up one)
-        String a = cmd.substring(cmd.indexOf(' ') + 1);
-        std::vector<String> f;
-        for (int from = 0;;) {
-            int bar = a.indexOf('|', from);
-            f.push_back(bar < 0 ? a.substring(from) : a.substring(from, bar));
-            if (bar < 0) break;
-            from = bar + 1;
-        }
-        axis::bbs::BbsConfig& e = cfgEdit();
-        auto& v = f[0] == "msgs" ? e.msgAreas : e.areas;
-        int   n = f.size() > 1 ? (int)f[1].toInt() : 0;
-        bool  ok = n >= 1;
-        if (ok && cmd.startsWith("@AREASET ") && f.size() >= 4) {
-            axis::bbs::FileArea ar{f[2].c_str(), f[3].c_str(), f.size() > 4 ? (int)f[4].toInt() : 0};
-            if (n <= (int)v.size()) ar.mirror = v[(size_t)n - 1].mirror, v[(size_t)n - 1] = ar;
-            else v.push_back(ar);
-        } else if (ok && cmd.startsWith("@AREADEL ") && n <= (int)v.size()) {
-            v.erase(v.begin() + n - 1);
-        } else if (ok && cmd.startsWith("@AREAUP ") && n >= 2 && n <= (int)v.size()) {
-            std::swap(v[(size_t)n - 1], v[(size_t)n - 2]);
-        } else ok = false;
-        if (!ok) out.println("axis: @AREASET files|N|id|name|level, @AREADEL msgs|N, @AREAUP files|N");
-        else {
-            configSave(*boardCfg);
-            if (cluster) cluster->shareSettings();
-            makeAreaFolders();
-            logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a);
-            out.println("axis: areas saved");
-        }
 #if AXIS_FILES
-    } else if (cmd.startsWith("@FILES ")) {  // "@FILES area": name|size|description per file
-        for (auto& e : callerFiles().list(cmd.substring(7).c_str())) out.printf("%s|%u|%s\n", e.name.c_str(), (unsigned)e.size, e.desc.c_str());
-    } else if (cmd.startsWith("@FDESC ") || cmd.startsWith("@FREN ") || cmd.startsWith("@FDEL ") || cmd.startsWith("@FMV ")) {
-        // "@FDESC area|name|text", "@FREN area|old|new", "@FDEL area|name", "@FMV area|name|toarea"
+    } else if (cmd.startsWith("@FMV ")) {  // "@FMV area|name|toarea": a move on this board's card (@FDESC @FREN @FDEL: app/commands.cpp)
         String a = cmd.substring(cmd.indexOf(' ') + 1);
         int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
         std::string area = b1 > 0 ? a.substring(0, b1).c_str() : "", name = b1 > 0 ? (b2 > 0 ? a.substring(b1 + 1, b2) : a.substring(b1 + 1)).c_str() : "",
                     third = b2 > 0 ? a.substring(b2 + 1).c_str() : "";
         bool ok = false;
-        if (cmd.startsWith("@FDESC ")) ok = callerFiles().describe(area, name, third);
-        else if (cmd.startsWith("@FREN ")) ok = !third.empty() && callerFiles().rename(area, name, third);
-        else if (cmd.startsWith("@FDEL ")) ok = callerFiles().remove(area, name);
-        else if (storageHasSd() && axis::bbs::safeFileName(area) && axis::bbs::safeFileName(name) && axis::bbs::safeFileName(third)) {  // a move: same card, another folder
+        if (storageHasSd() && axis::bbs::safeFileName(area) && axis::bbs::safeFileName(name) && axis::bbs::safeFileName(third)) {  // a move: same card, another folder
             ok = ::rename(("/sd/files/" + area + "/" + name).c_str(), ("/sd/files/" + third + "/" + name).c_str()) == 0;
             if (ok) {  // carry its description over: scan the old FILES.BBS a line at a time (a big area's list costs the main too much RAM)
                 File   fb = SD.open(("/files/" + area + "/FILES.BBS").c_str());
@@ -6416,108 +6190,6 @@ static void runCommand(const String& cmd, Print& out) {
         logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + area.c_str() + " " + name.c_str() + (ok ? "" : " (failed)"));
         out.println(ok ? "axis: done" : "axis: that didn't work");
 #endif
-    } else if (cmd.startsWith("@POSTS ")) {  // "@POSTS area": num|from|subject|date per post (the newest 200; paged: newest first)
-        auto v = callerMessages().headers(cmd.substring(7).c_str());
-        if (pagedRun) std::reverse(v.begin(), v.end());
-        for (auto& m : v) out.printf("%d|%s|%s|%s\n", m.num, m.from.c_str(), m.subject.c_str(), m.date.c_str());
-    } else if (cmd.startsWith("@POSTDEL ") || cmd.startsWith("@POSTMV ") || cmd.startsWith("@PURGE ")) {
-        // "@POSTDEL area|num", "@POSTMV area|num|toarea", "@PURGE area|days" (posts older than that)
-        String a = cmd.substring(cmd.indexOf(' ') + 1);
-        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
-        std::string area = b1 > 0 ? a.substring(0, b1).c_str() : "";
-        int         n = b1 > 0 ? (int)(b2 > 0 ? a.substring(b1 + 1, b2) : a.substring(b1 + 1)).toInt() : 0;
-        std::string to = b2 > 0 ? a.substring(b2 + 1).c_str() : "";
-        int         gone = 0;
-        if (cmd.startsWith("@POSTMV ")) {
-            axis::bbs::Message m;
-            if (!to.empty() && callerMessages().read(area, n, m) && callerMessages().post(to, m))
-                gone = callerMessages().drop(area, [n](const axis::bbs::Message& x) { return x.num == n; });
-        } else if (cmd.startsWith("@POSTDEL ")) {
-            gone = callerMessages().drop(area, [n](const axis::bbs::Message& x) { return x.num == n; });
-        } else {
-            time_t cut = time(nullptr) - (time_t)n * 86400;
-            char   stamp[16];
-            strftime(stamp, sizeof stamp, "%Y-%m-%d", localtime(&cut));
-            std::string before = stamp;
-            if (time(nullptr) > 1700000000 && n > 0)
-                gone = callerMessages().drop(area, [&](const axis::bbs::Message& x) { return x.date.substr(0, 10) < before; });
-        }
-        logEvent(String("sysop: ") + cmd.substring(1, cmd.indexOf(' ')) + " " + a + " (" + gone + ")");
-        out.printf("axis: %d post%s\n", gone, gone == 1 ? "" : "s");
-    } else if (cmd == "@MENU") {  // the main menu's items: N|key|name|command (empty: the built-in menu)
-        for (size_t i = 0; i < boardCfg->mainMenu.size(); i++)
-            out.printf("%u|%s|%s|%s\n", (unsigned)i + 1, boardCfg->mainMenu[i].key.c_str(), boardCfg->mainMenu[i].name.c_str(), boardCfg->mainMenu[i].cmd.c_str());
-    } else if (cmd == "@MENUCMDS") {  // what a menu item can run
-        for (auto& c : axis::bbs::menuCommands()) out.printf("%s|%c\n", c.first.c_str(), c.second);
-    } else if (cmd.startsWith("@MENUSET ") || cmd.startsWith("@MENUDEL ") || cmd.startsWith("@MENUUP ") || cmd == "@MENURESET" || cmd == "@MENUSTART") {
-        // "@MENUSET N|key|name|command" (N past the end adds), "@MENUDEL N", "@MENUUP N", "@MENURESET" (built-in again),
-        // "@MENUSTART" (an editable copy of the built-in menu)
-        auto&  v = cfgEdit().mainMenu;
-        String a = cmd.indexOf(' ') > 0 ? cmd.substring(cmd.indexOf(' ') + 1) : String();
-        int    n = (int)a.toInt();
-        bool   ok = true;
-        if (cmd == "@MENURESET") v.clear();
-        else if (cmd == "@MENUSTART") {
-            static const char* const names[] = {"Message Bases", "File Areas", "Doors", "Teleconference", "Who's Online", "Page Sysop",
-                                                "Your Account", "Oneliners", "MultiNode", "Last Callers", "Private Email", "Scan New Msgs",
-                                                "Rumors", "BBS List", "Top Ten", "Voting Booth", "System Info", "Credits", "Goodbye", "Sysop Menu"};
-            v.clear();
-            size_t i = 0;
-            for (auto& c : axis::bbs::menuCommands()) v.push_back({std::string(1, c.second), names[i++ % 20], c.first});
-        } else if (cmd.startsWith("@MENUSET ")) {
-            int b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1), b3 = b2 < 0 ? -1 : a.indexOf('|', b2 + 1);
-            ok = n >= 1 && b3 > 0 && axis::bbs::menuCommandKey(a.substring(b3 + 1).c_str());
-            if (ok) {
-                axis::bbs::MenuItem m{a.substring(b1 + 1, b2).substring(0, 1).c_str(), a.substring(b2 + 1, b3).c_str(), a.substring(b3 + 1).c_str()};
-                if (n <= (int)v.size()) v[(size_t)n - 1] = m;
-                else v.push_back(m);
-            }
-        } else if (cmd.startsWith("@MENUDEL ")) {
-            ok = n >= 1 && n <= (int)v.size();
-            if (ok) v.erase(v.begin() + n - 1);
-        } else {
-            ok = n >= 2 && n <= (int)v.size();
-            if (ok) std::swap(v[(size_t)n - 1], v[(size_t)n - 2]);
-        }
-        if (!ok) out.println("axis: @MENUSET N|key|name|command, @MENUDEL N, @MENUUP N, @MENURESET, @MENUSTART");
-        else {
-            configSave(*boardCfg);
-            if (cluster) cluster->shareSettings();
-            logEvent(String("sysop: ") + cmd.substring(1));
-            out.println("axis: menu saved");
-        }
-    } else if (cmd.startsWith("@SYSOP ")) {  // "@SYSOP handle": make a caller a sysop (validated, security 255)
-        axis::bbs::User* u = users.find(cmd.substring(7).c_str());
-        if (!u) out.println("axis: no user by that handle");
-        else {
-            u->security = axis::bbs::kSysopSecurity;
-            u->status = axis::bbs::User::Status::Validated;
-            logEvent(String("sysop: ") + u->handle.c_str() + " is now a sysop (serial)");
-            saveUsers();
-            out.printf("axis: %s is now a sysop\n", u->handle.c_str());
-        }
-    } else if (cmd.startsWith("@ADDUSER ")) {  // "@ADDUSER handle|location|password": a validated caller (security 20)
-        String a = cmd.substring(9);
-        int    b1 = a.indexOf('|'), b2 = b1 < 0 ? -1 : a.indexOf('|', b1 + 1);
-        if (b1 <= 0 || b2 < 0 || a.length() - b2 - 1 < 6) {
-            out.println("axis: @ADDUSER handle|location|password (6+ characters)");
-        } else if (users.find(a.substring(0, b1).c_str())) {
-            out.println("axis: that handle is taken");
-        } else {
-            axis::bbs::User u;
-            u.handle = a.substring(0, b1).c_str();
-            u.location = a.substring(b1 + 1, b2).c_str();
-            u.salt = axis::bbs::makeSalt(hwRandom);
-            u.hash = axis::bbs::hashPassword(u.salt, a.substring(b2 + 1).c_str());
-            u.status = axis::bbs::User::Status::Validated;
-            u.security = 20;
-            u.created = unixNow();
-            users.add(u);
-            logEvent(String("sysop: added ") + u.handle.c_str() + " (serial)");
-            saveUsers();  // and on to every board
-            writeWarrior(u.handle);
-            out.printf("axis: added %s\n", u.handle.c_str());
-        }
 #if AXIS_WEB
     } else if (cmd.startsWith("@DISCORD")) {  // "@DISCORD https://discord.com/api/webhooks/...": the channel webhook; alone: off
         out.println(web::setDiscord(cmd.length() > 9 ? cmd.substring(9) : String()) ? "axis: discord webhook saved" : "axis: that isn't a Discord webhook URL");
@@ -6640,33 +6312,6 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@BEEP") {
         axis::bbs::station::beep(880, 80);
         out.println("axis: beep");
-    } else if (cmd.startsWith("@DOORLS ")) {  // list a door's folder the way the door sees it
-        std::string           dir = std::string(storageRoot()) + "/doors/" + cmd.substring(8).c_str();
-        axis::PosixHostFs     fs(dir);
-        axis::door::FindState st;
-        fs.find("*.*", 0x10, st);
-        out.printf("axis: %s: %u entries\n", dir.c_str(), (unsigned)st.matches.size());
-        for (auto& f : st.matches)
-            out.printf("axis:   %-12s %8u%s\n", f.name83.c_str(), (unsigned)f.size, f.attr & 0x10 ? " <DIR>" : "");
-    } else if (cmd.startsWith("@DOORCHECK ")) {  // the flash cache belonged to the 8086 runtime, which is not linked
-        out.println("axis: no 8086 in this firmware");
-    } else if (cmd.startsWith("@SET ") && cmd.indexOf('=') > 5) {  // "@SET location=Myrtle Beach, SC"
-        String kv = cmd.substring(5);
-        std::shared_ptr<const axis::bbs::BbsConfig> prev = boardCfg;
-        cfgSet(axis::bbs::parseConfig(axis::bbs::formatConfig(*boardCfg) + kv.c_str() + "\n"));  // the later line wins
-        pushBoardToCallers(prev);
-        bool ok = configSave(*boardCfg);
-        logEvent("sysop: set " + kv.substring(0, kv.indexOf('=')) + (ok ? "" : " (SAVE FAILED)"));
-        if (cluster) cluster->shareSettings();
-        screenDirty = true;
-    } else if (cmd.startsWith("@NUP")) {  // "@NUP secret": the new user password asked before Apply; alone, anyone can apply
-        String pw = cmd.length() > 5 ? cmd.substring(5) : String();
-        axis::bbs::BbsConfig& e = cfgEdit();
-        e.nupSalt = pw.length() ? axis::bbs::makeSalt(hwRandom) : std::string();
-        e.nupHash = pw.length() ? axis::bbs::hashPassword(e.nupSalt, pw.c_str()) : std::string();
-        bool ok = configSave(*boardCfg);
-        if (cluster) cluster->shareSettings();  // every board asks the same one
-        logEvent(String("sysop: new user password ") + (pw.length() ? "set" : "cleared") + (ok ? "" : " (SAVE FAILED)"));
     } else if (cmd == "@HEADLESS" || cmd == "@HEADLESS on" || cmd == "@HEADLESS off") {
         // "@HEADLESS on": this board is a bare ESP32 (no screen, one LED on GPIO 2); "off": a CYD.
         // Per board, in NVS, so it survives every reflash; the board restarts to take it up.
@@ -6738,35 +6383,6 @@ static void runCommand(const String& cmd, Print& out) {
             for (const std::string& l : sharedList("axisnet")) out.println(l.c_str());
             if (sharedList("axisnet").empty()) out.println("axis: axis net is empty");
         }
-    } else if (cmd.startsWith("@RUMOR ")) {  // "@RUMOR text": add a rumor to the board's list (the main keeps them)
-        sharedListAdd("rumors", cmd.substring(7).c_str());
-        out.println("axis: rumor added");
-    } else if (cmd.startsWith("@USERPASS ")) {  // "@USERPASS handle secret": the sysop sets a caller's password (4+ characters)
-        String rest = cmd.substring(10);
-        int    sp = rest.lastIndexOf(' ');
-        axis::bbs::User* u = sp > 0 ? users.find(rest.substring(0, sp).c_str()) : nullptr;
-        String pw = sp > 0 ? rest.substring(sp + 1) : String();
-        if (!u) out.println("axis: @USERPASS handle password");
-        else if (pw.length() < 4) out.println("axis: a password needs 4 or more characters");
-        else {
-            u->salt = axis::bbs::makeSalt(hwRandom);
-            u->hash = axis::bbs::hashPassword(u->salt, pw.c_str());
-            saveUsers();
-            logEvent(String("sysop: password changed for ") + u->handle.c_str());
-            out.printf("axis: password set for %s\n", u->handle.c_str());
-        }
-    } else if (cmd.startsWith("@SYSOPPASS ")) {  // "@SYSOPPASS secret" sets the sysop account's password (4+ characters, as the wizard)
-        String pw = cmd.substring(11);
-        if (pw.length() < 4) {
-            out.println("axis: @SYSOPPASS needs 4 or more characters");
-        } else {
-            axis::bbs::BbsConfig& e = cfgEdit();
-            e.sysopSalt = axis::bbs::makeSalt(hwRandom);
-            e.sysopHash = axis::bbs::hashPassword(e.sysopSalt, pw.c_str());
-            bool ok = configSave(*boardCfg);
-            if (cluster) cluster->shareSettings();  // every board takes the same sysop login
-            logEvent(String("sysop: sysop password changed") + (ok ? "" : " (SAVE FAILED)"));
-        }
     } else if (cmd == "@RESTART" && callersBesideSysop()) {
         out.println("axis: restart refused, a caller is online (serial: @RESTART force)");
     } else if (cmd == "@RESTART" || (cmd == "@RESTART force" && &out == &Serial)) {  // restart this board (the sysop menu's System layer)
@@ -6800,6 +6416,7 @@ static void runCommand(const String& cmd, Print& out) {
         delay(100);
         ESP.restart();
     }
+    else if (portableCommand(cmd, out)) {}  // users, posts, files, lists, settings, menus, the callers here (app/commands.cpp)
 #if AXIS_NATIVE
     else if (nativeCommand(cmd, out)) {}
 #endif
@@ -7116,7 +6733,18 @@ static axis::app::Services& services() {
     };
 #endif
     s.follower = asFollower;
-    s.ready = [] { return boardCfg->setupDone && mode == Mode::Normal; };
+    s.cfgEdit = []() -> axis::bbs::BbsConfig& { return cfgEdit(); };
+    s.cfgReplace = [](axis::bbs::BbsConfig c) {
+        std::shared_ptr<const axis::bbs::BbsConfig> prev = boardCfg;
+        cfgSet(std::move(c));
+        pushBoardToCallers(prev);
+    };
+    s.cfgSave = [] { return configSave(*boardCfg); };
+    s.shareSettings = [] {
+        if (cluster) cluster->shareSettings();
+    };
+    s.areasChanged = makeAreaFolders;
+    s.ready =[] { return boardCfg->setupDone && mode == Mode::Normal; };
     s.setupPin = [] { return std::string(setupPin.c_str()); };
     s.setupChosen = [] { mode = Mode::SetupTelnet; };
     s.setupSave = [](axis::bbs::SetupWizard& w) {

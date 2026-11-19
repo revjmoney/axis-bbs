@@ -69,6 +69,14 @@ struct Services {
     std::function<void(Session&)> netFiles;                               // Net Files on this session's Node (board only)
     std::function<bool()> follower;                                       // a cluster follower (empty: never)
 
+    // the sysop's settings commands (app/commands.h): with cfgEdit, cfgReplace or cfgSave empty, @SET, @NUP, @SYSOPPASS,
+    // @AREASET/@AREADEL/@AREAUP and the @MENU... changes are unknown commands
+    std::function<bbs::BbsConfig&()> cfgEdit;                             // the settings to change in place
+    std::function<void(bbs::BbsConfig)> cfgReplace;                       // new settings, handed on to the callers already on
+    std::function<bool()> cfgSave;                                        // keep the current settings (false: the save failed)
+    std::function<void()> shareSettings;                                  // the settings to every board of the cluster
+    std::function<void()> areasChanged;                                   // the file areas changed: their folders
+
     // the setup over telnet (a board that is not set up yet)
     std::function<bool()> ready;                                          // callers get a Node (empty: cfg->setupDone)
     std::function<std::string()> setupPin;
