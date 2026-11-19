@@ -22,6 +22,9 @@
 
 namespace {
 
+// "1 file", "2 files"
+std::string many(uint64_t n, const char* one) { return std::to_string(n) + " " + one + (n == 1 ? "" : "s"); }
+
 std::string upper(std::string s) {
     for (char& c : s) c = (char)std::toupper((unsigned char)c);
     return s;
@@ -75,17 +78,17 @@ void cardMirror(const std::vector<std::string>& w, std::string& out) {
     MirrorStatus s = mirrorStatus();
     line(std::string("profile ") + axisProfileName(axisProfile()) + ", standing " + standing());
     line(std::string("first copy ") + (s.complete ? "complete" : "not complete"));
-    line(std::to_string(s.files) + " files, " + std::to_string(s.bytes) + " bytes in the manifest");
+    line(many(s.files, "file") + ", " + many(s.bytes, "byte") + " in the manifest");
     if (!s.pass.empty()) line("running now: " + s.pass);
     if (s.lastCheckAt) line("last check " + when(s.lastCheckAt) + ": " + s.lastCheck);
     else line("last check: none in this run");
     line("last noon check: " + (s.noon.empty() ? std::string("none yet") : s.noon));
-    line("live follow: " + std::to_string(s.pending) + " paths waiting, " + std::to_string(s.verifying) +
+    line("live follow: " + many(s.pending, "path") + " waiting, " + std::to_string(s.verifying) +
          " being checked until they settle");
     if (s.stopped) line("copying waits: the disk was full");
     line("last error: " + (s.lastErr.empty() ? std::string("none in this run") : when(s.lastErrAt) + " " + s.lastErr));
     if (axisProfile() == Profile::MirrorMain)
-        line(std::to_string(handbackChangeCount()) + " paths changed here since the takeover (@HANDBACK)");
+        line(many(handbackChangeCount(), "path") + " changed here since the takeover (@HANDBACK)");
 }
 
 void handBack(const std::vector<std::string>& w, std::string& out) {

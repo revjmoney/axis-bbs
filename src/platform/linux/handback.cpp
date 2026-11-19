@@ -65,6 +65,9 @@ constexpr size_t   kShowMax = 30;         // @HANDBACK lists at most this many p
 
 // ---- the change log ----
 
+// "1 file", "2 files"
+std::string many(uint64_t n, const char* one) { return std::to_string(n) + " " + one + (n == 1 ? "" : "s"); }
+
 std::mutex            mu;  // the log's sets (takeoverNote may come from any thread that touches the card)
 bool                  logLoaded = false;
 std::set<std::string> changes;  // every card path written since the takeover (mirror.changes)
@@ -429,8 +432,8 @@ void checkStep(uint32_t now) {
             std::printf("axis: handback stopped at the check: %zu files on the card changed after the takeover, "
                         "nothing written, this computer stays main\n",
                         job.differ.size());
-            lastResult.push_back("stopped at the check: " + std::to_string(job.differ.size()) +
-                                 " files on the card changed after the takeover, nothing written in this pass:");
+            lastResult.push_back("stopped at the check: " + many(job.differ.size(), "file") +
+                                 " on the card changed after the takeover, nothing written in this pass:");
             for (const std::string& d : job.differ) {
                 std::printf("axis: handback: changed on the card: %s\n", d.c_str());
                 lastResult.push_back("  " + d);
@@ -643,7 +646,7 @@ bool keepLeft(const std::string& rel, std::string& how) {
     struct stat ds;
     if (::lstat(dst.c_str(), &ds) == 0 && !S_ISREG(ds.st_mode)) return false;
     if (!writeWhole(dst, text)) return false;
-    how = std::to_string(text.size()) + " bytes";
+    how = many(text.size(), "byte");
     return true;
 }
 
@@ -705,10 +708,10 @@ void finish(uint32_t now) {
     if (::unlink(dataPath("mirror.changes").c_str()) != 0 && errno != ENOENT)
         std::printf("axis: handback: cannot clear mirror.changes: %s\n", std::strerror(errno));
     lastResult.clear();
-    result("finished: " + std::to_string(job.copiedN) + " files copied (" + std::to_string(job.bytesSent) +
-           " bytes), " + std::to_string(job.removedN) + " removed, in " + std::to_string(job.passNo) + " passes");
+    result("finished: " + many(job.copiedN, "file") + " copied (" + many(job.bytesSent, "byte") +
+           "), " + std::to_string(job.removedN) + " removed, in " + std::to_string(job.passNo) + (job.passNo == 1 ? " pass" : " passes"));
     if (!leftLines.empty()) {
-        result(std::to_string(leftLines.size()) + " paths changed during the last pass, kept in " +
+        result(many(leftLines.size(), "path") + " changed during the last pass, kept in " +
                dataPath("handback-left") + " and not on the card:");
         for (const std::string& l : leftLines) result("  " + l);
     }
@@ -813,14 +816,14 @@ void handbackShow(std::string& out) {
     std::set<std::string> log = logSnapshot();
     std::string           why;
     if (!loadKnown(why)) {
-        line(std::to_string(log.size()) + " paths noted since the takeover, but " + why + ", so it cannot be handed back");
+        line(many(log.size(), "path") + " noted since the takeover, but " + why + ", so it cannot be handed back");
     } else {
         Plan plan;
         if (!makePlan(log, plan, why)) {
-            line(std::to_string(log.size()) + " paths noted since the takeover; " + why);
+            line(many(log.size(), "path") + " noted since the takeover; " + why);
         } else {
-            line(std::to_string(log.size()) + " paths noted since the takeover: " + std::to_string(plan.copy.size()) +
-                 " files to copy (" + std::to_string(plan.bytes) + " bytes), " + std::to_string(plan.remove.size()) +
+            line(many(log.size(), "path") + " noted since the takeover: " + many(plan.copy.size(), "file") +
+                 " to copy (" + many(plan.bytes, "byte") + "), " + std::to_string(plan.remove.size()) +
                  " to remove");
             size_t shown = 0;
             for (const std::string& p : plan.copy)
@@ -844,7 +847,7 @@ void handbackShow(std::string& out) {
                              ? "checking the card, " + std::to_string(job.checkAt) + " of " + std::to_string(job.checkList.size())
                          : job.phase == Phase::Work
                              ? (cur.active ? "copying " + cur.path + ", " + std::to_string(cur.off) + " of " +
-                                                 std::to_string(cur.size) + " bytes"
+                                                 many(cur.size, "byte")
                                            : "removing and copying")
                              : "finishing";
         line("running to node " + std::to_string(job.node) + ": pass " + std::to_string(job.passNo) + " of " +
@@ -898,7 +901,7 @@ bool handbackGo(const std::string& nodeArg, std::string& out) {
     std::printf("axis: handback: started to the card board on node %d: %zu paths noted since the takeover\n", job.node,
                 job.base.size());
     out += "axis: handback started to the card board on node " + std::to_string(job.node) + ": " +
-           std::to_string(job.base.size()) + " paths; every file is checked on the card first (@HANDBACK shows how it goes)\n";
+           many(job.base.size(), "path") + "; every file is checked on the card first (@HANDBACK shows how it goes)\n";
     return true;
 }
 
