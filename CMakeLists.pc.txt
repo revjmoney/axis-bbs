@@ -265,6 +265,14 @@ if(AXIS_OFF)
   endif()
 endif()
 
+# The PC program's core (axispc, Project 1a): the caller line and what the app builds on it. Linux for now (the line is
+# Winsock-ready behind _WIN32, but nothing here builds on Windows yet). axispc and the PC tests link it.
+if(UNIX)
+  find_package(Threads REQUIRED)
+  add_library(axispc_core STATIC src/pcapp/pcline.cpp)
+  target_link_libraries(axispc_core PUBLIC axiscore Threads::Threads)
+endif()
+
 # The native Linux program, axis: the board's own src/main.cpp, unchanged, on a Linux host layer
 # (src/platform/linux) that provides the Arduino and ESP-IDF calls it makes. The screens are LovyanGFX's, from
 # the board's PlatformIO copy: cmake -DLOVYANGFX_DIR=<.pio/libdeps/cyd/LovyanGFX>. Without it, axis is skipped.
