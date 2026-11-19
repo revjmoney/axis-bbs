@@ -2977,13 +2977,15 @@ void Node::showYourStats() {
 void Node::showAbout() {
     SysInfo s = info_();
     std::vector<std::pair<std::string, std::string>> rows = {
-        {"software", std::string(kAxisSoftware) + " " + kAxisVersion},
+        {"software", std::string(kAxisProduct) + " " + kAxisVersion},
         {"runs on", s.hardware},
+        {"platforms", "Linux now, Windows coming soon, and ESP32 boards"},
         {"board", cfg_->bbsName},
     };
     if (!cfg_->publicHost.empty()) rows.push_back({"telnet", cfg_->publicHost + " port " + std::to_string(cfg_->advertisedPort())});
     if (!cfg_->sysopHandle.empty()) rows.push_back({"sysop", cfg_->sysopHandle});
     if (!cfg_->location.empty()) rows.push_back({"where", cfg_->location});
+    rows.push_back({"source", "github.com/revjmoney/axis-bbs"});
     rows.push_back({"credit", "Rev. J. Money, rotatocam.com, jmscnc.com"});
     rows.push_back({"license", "GPLv3 or later; keep this credit (see the README)"});
     out_ += theme::CLS;

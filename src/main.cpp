@@ -528,7 +528,7 @@ static axis::bbs::SysInfo sysInfo() {
     s.timeText = timeText().c_str();
     s.storage = storageSummary();
 #if AXIS_NATIVE
-    s.hardware = "PC";  // the native Linux build (About: what the board runs on)
+    s.hardware = "Linux (axis)";  // the native Linux build (About: what the board runs on)
 #else
     s.hardware = "ESP32 CYD " + std::to_string(ESP.getCpuFreqMHz()) + " MHz " +
                  std::to_string(ESP.getFlashChipSize() >> 20) + " MB flash";

@@ -342,7 +342,7 @@ bbs::SysInfo PcBbs::sysInfo() {
     s.timeText = timeText();
     s.storage = "data folder, " + std::to_string((unsigned long long)(host_.sdFreeBytes() >> 20)) + " MB free";
     utsname u{};
-    s.hardware = std::string("PC ") + (::uname(&u) == 0 ? u.machine : "") + " (axispc)";
+    s.hardware = std::string("Linux ") + (::uname(&u) == 0 ? u.machine : "") + " (axispc)";
     s.callsToday = stats_.dayStats.calls;
     s.nodesTotal = (int)listener_.gate().limits().max_callers;
     for (auto& ses : sessions_) s.nodes.push_back(ses && ses->node ? ses->node->handle() : std::string());
