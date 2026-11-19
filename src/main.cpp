@@ -8033,6 +8033,7 @@ void setup() {
             cfgEdit().boardName = ("axis-" + mac.substring(8)).c_str();
             cfgEdit().sessions = 3;  // no screen to draw: room for a third caller
             newSetupPin();     // (only used if a caller arrives before the settings do)
+            Serial.printf("axis: setup PIN %s (no screen to show it: type it when a caller is asked for it)\n", setupPin.c_str());
         } else {
             mode = Mode::SetupChoice;
             newSetupPin();
