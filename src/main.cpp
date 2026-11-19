@@ -5805,12 +5805,13 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     if (t.size() >= 16) w.date = t.substr(0, 10), w.time = t.substr(11, 5);
     w.page = pageText.c_str();
     if (cluster && cluster->nodes().size() > 1) {
-        for (auto& n : cluster->nodes()) w.nodes.push_back({n.number, n.handle, n.activity});
+        for (auto& n : cluster->nodes()) w.nodes.push_back({n.number, n.handle, n.activity, "", axis::bbs::nodePlatform(n.id)});
         std::sort(w.nodes.begin(), w.nodes.end(), [](const axis::bbs::WfcNode& a, const axis::bbs::WfcNode& b) { return a.number < b.number; });
     } else {
         for (size_t i = 0; i < sessions.size(); i++) {
             axis::bbs::Node* n = sessionNode(i);
-            w.nodes.push_back({sessionNumber((int)i), n ? n->handle() : std::string(), n ? "Online" : "", n ? n->linkShown() : ""});
+            w.nodes.push_back({sessionNumber((int)i), n ? n->handle() : std::string(), n ? "Online" : "", n ? n->linkShown() : "",
+                               axis::bbs::nodePlatform(WiFi.macAddress().c_str())});
         }
     }  // (in a cluster the label rides in each board's activity: serviceSession)
 #if AXIS_MODEMLINK

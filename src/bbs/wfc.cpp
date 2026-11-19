@@ -45,8 +45,14 @@ std::string sdFree(uint32_t kb) {
     return b;
 }
 std::string uptime(uint32_t s) { return std::to_string(s / 86400) + "d " + two(s / 3600 % 24) + ":" + two(s / 60 % 60); }
+std::string nodePlatform(const std::string& boardId) {
+    if (boardId.size() < 2 || !std::isxdigit((unsigned char)boardId[0]) || !std::isxdigit((unsigned char)boardId[1])) return "";
+    unsigned first = (unsigned)std::stoul(boardId.substr(0, 2), nullptr, 16);
+    return (first & 0x02u) ? "pc" : "esp";
+}
 std::string nodeLine(const WfcNode& n) {
     std::string l = std::to_string(n.number) + " ";
+    if (!n.platform.empty()) l += n.platform + (n.platform.size() < 3 ? "  " : " ");  // "pc  " and "esp " line up
     if (n.handle.empty()) return l + "waiting";
     l += n.handle;
     if (!n.activity.empty()) l += "  " + n.activity;

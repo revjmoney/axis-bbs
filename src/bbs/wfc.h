@@ -18,10 +18,15 @@ struct WfcNode {
     int         number = 0;
     std::string handle, activity;  // handle "" = waiting
     std::string link;              // "RADIO SF7 -81" for a caller on the LFD3K-SM modem (shown after the activity)
+    std::string platform;          // "pc" or "esp": what the node runs on (nodePlatform), "" when not known
     bool        operator==(const WfcNode& o) const {
-        return number == o.number && handle == o.handle && activity == o.activity && link == o.link;
+        return number == o.number && handle == o.handle && activity == o.activity && link == o.link && platform == o.platform;
     }
 };
+
+// What a node's board runs on, from its cluster id: the Linux program's id is a locally administered address (made from
+// the machine id), which an ESP32's factory MAC never is. "pc" or "esp"; "" for an id that isn't a MAC.
+std::string nodePlatform(const std::string& boardId);
 
 // The newest LFD3K-SM link report on this board (the |R? codes), as the screen shows it; all "" before the first one.
 // "The same" means the same caller, modem and tier: the numbers (label with RSSI, bps, SNR, RSSI, retrains, LZ) move at
