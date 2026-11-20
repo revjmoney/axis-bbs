@@ -20,8 +20,10 @@
 #include <Arduino.h>
 
 #include "platform/cyd/config_store.h"
+#include "bbs/version.h"
 #include "platform/linux/clusterhost.h"
 #include "platform/linux/host.h"
+#include "platform/linux/updatecheck.h"
 #include "platform/linux/hostconf.h"
 #include "platform/linux/hostnet.h"
 #include "platform/linux/modemline.h"
@@ -53,6 +55,7 @@ void turn() {
     hostnetPoll();            // finished DNS lookups call back here, on the board's thread, between loop() turns
     modemLinePoll(millis());  // the radio line (also pumped from delay())
     if (!stopping) clusterHostPoll(millis());  // (never while stopping: it may be what asked for the restart)
+    axis::pcupdate::poll();                    // the release check's result, if its thread has one; it never waits
 }
 
 // A board that is not set up shows its setup PIN only on its own screen, which this program has not got: the sysop
@@ -70,6 +73,7 @@ const char kNotSetUp[] =
 // shutdown and for a restart alike; the board does not run again in this process afterwards.
 void stopEverything() {
     stopping = true;
+    axis::pcupdate::stop();  // the release-check thread, if it is out; it is not waited on for long
     modemLineHangUp();       // first, so a radio caller's hang-up starts from a quiet line
     hostnetHangUpCallers();  // main.cpp finds each caller gone on its next turn and hangs it up as usual
     uint32_t t0 = millis();
@@ -101,6 +105,9 @@ void stopEverything() {
 // stops the board as SIGTERM does.
 [[noreturn]] void runBoard(const volatile bool* running) {
     hostConfLoad(axisDataDir());  // <data>/axis.conf: ports and the accept gate's limits
+    // once a day, off the BBS thread: update_check=0 in axis.conf turns it off. The firmware does not call this.
+    axis::pcupdate::start(axisDataDir(), hostConfInt("update_check", 1, 0, 1) != 0, hostConfStr("update_repo", axis::pcupdate::kDefaultRepo),
+                          axis::bbs::kAxisVersion);
     hostnetStart();
     ModemLineHooks mh;  // a radio call is the telnet server's next caller, from 127.0.0.2; the line pumps from delay() too
     mh.inject = [](int fd) { hostnetInjectClient(fd, inet_addr("127.0.0.2")); };

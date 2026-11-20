@@ -69,6 +69,9 @@
 #include "bbs/transferjob.h"
 #include "bbs/users.h"
 #include "bbs/wfc.h"
+#if AXIS_PC
+#include "platform/linux/updatecheck.h"
+#endif
 #include "bbs/wfcanim.h"
 #include "bbs/wifipicker.h"
 #include "bbs/node.h"
@@ -931,7 +934,10 @@ static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot
     }
     const char* wfcBuiltin = kWfcCydAns;
     auto        at = axis::bbs::drawWfc(wfcArt.empty() ? std::string_view(wfcBuiltin, sizeof kWfcCydAns - 1) : std::string_view(wfcArt), s, *t);
-    if (spots) *spots = std::move(at);
+    if (spots) {
+        *spots = std::move(at);
+        axis::bbs::wfcMarkVersion(s, *t, *spots);  // a newer axispc release: tap the version for the notes
+    }
     if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
     else if (!s.notice.empty()) t->feed("\x1b[24;2H\x1b[0;1;37;41m " + s.notice + " \x1b[0m");  // the SD card notice (40 of 45 cells)
     return t;
@@ -957,9 +963,17 @@ static bool drawWfc() {
     uint32_t now = millis();
     bool     soon = wfcSoon();
     if (wfcSoonUntil && !soon) wfcSoonUntil = 0, wfcStale = true;  // the "coming soon" line goes
-    if (!wfcStale && now - wfcDrawnMs < 5000) return false;
+    if (!wfcStale && now - wfcDrawnMs < axis::bbs::wfcRefreshMs(wfcShown)) return false;
     wfcDrawnMs = now;
     axis::bbs::WfcSnapshot s = wfcSnapshot();
+    if (!wfcStale && wfcAnim.loaded()) {  // a phase change only blinks the still screen; reloading the moving one every half second would restart it
+        axis::bbs::WfcSnapshot held = wfcShown;
+        held.versionPhase = s.versionPhase;
+        if (held == s && wfcShown.versionPhase != s.versionPhase) {
+            wfcShown.versionPhase = s.versionPhase;
+            return false;
+        }
+    }
     if (!wfcStale && s == wfcShown) return false;
     std::vector<axis::bbs::WfcHotspot> spots;
     std::unique_ptr<axis::bbs::AnsiTerm> t;
@@ -5209,6 +5223,16 @@ static axis::bbs::WfcSnapshot wfcSnapshot() {
     w.uptimeS = millis() / 1000;
     w.main = !asFollower();
     if (sdNotice()) w.notice = axis::bbs::kSdNotice;
+#if AXIS_PC
+    {
+        axis::pcupdate::View u = axis::pcupdate::view();
+        if (u.alert) {  // blink *NEW* where VN is. Callers never see this screen.
+            w.versionBlink = axis::pcupdate::kBlink;
+            w.versionPhase = (int)((millis() / 500u) & 1u);
+            w.versionNotes = std::move(u.report);
+        }
+    }
+#endif
     return w;
 }
 
@@ -5727,6 +5751,14 @@ static void startLocal() {
     localFeed();
 }
 
+#if AXIS_PC
+static void openUpdateNotes() {  // the release notes, from a tap on the blinking version
+    openShell(axis::bbs::SysopSection::Top);
+    if (!boardShell) return;
+    boardShell->showPage("UPDATE", axis::pcupdate::report());
+    shellFeed();
+}
+#endif
 static void handleTap(int x, int y) {
     if (!boardHasPanel()) return;  // headless: no screen to tap (and nothing drawn to say where)
     if (mode == Mode::WifiPick) {
@@ -5790,6 +5822,12 @@ static void handleTap(int x, int y) {
         }
         if (k == ' ') {
             startLocal();
+            return;
+        }
+        if (k == 'V') {  // the version spot, only while a newer axispc release is blinking
+#if AXIS_PC
+            openUpdateNotes();
+#endif
             return;
         }
         axis::bbs::SysopSection sec = axis::bbs::SysopSection::Top;
@@ -6230,6 +6268,12 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@WEBTEST") {
         web::announce(String("**") + boardCfg->bbsName.c_str() + "** is online. Telnet in and feed the scene.");
         out.println("axis: test announcement queued");
+#endif
+#if AXIS_PC
+    } else if (cmd == "@PCUPDATE") {  // the once-a-day axispc release check: notes, or that it is off
+        std::string r = axis::pcupdate::report();
+        out.print(r.c_str());
+        if (r.empty() || r.back() != '\n') out.print('\n');
 #endif
     } else if (cmd == "@LED") {  // status light (bench): blue LED on the ring, RGB on a CYD
         ledReport = true;

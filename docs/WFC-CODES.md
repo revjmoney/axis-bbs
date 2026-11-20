@@ -21,7 +21,7 @@ Waiting-for-caller (WFC) screens are ANSI art with pipe codes. Each theme (or WF
 | `EA`..`EE` | Newest five events, newest first |
 | `PG` | Sysop page text |
 | `MB` | "main board" or "follower board" |
-| `VN` | The firmware version, e.g. `0.53` (the classic and all eight pack WFCs show it) |
+| `VN` | The firmware version, e.g. `0.53` (the classic and all eight pack WFCs show it). On the Linux program, a newer `pc-v` release blinks `*NEW*` in this spot; `V` or a tap on it shows the notes. Callers do not see the waiting screen. |
 
 ## Radio codes (the LFD3K-SM modem)
 

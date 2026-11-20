@@ -48,15 +48,23 @@ struct WfcSnapshot {
     bool                     main = true;  // "main board" / "follower board"
     WfcRadio                 radio;        // the newest radio link (|RL |RW |RO |RT |RB |RS |RR |RN |RZ)
     std::string              notice;       // drawn over the bottom row whatever the art (the SD card notice); "" = none
+    // axispc only: a newer pc release blinks in the VN spot. Empty on the firmware, so the screen is unchanged there.
+    // versionNotes is the sysop's release text (V, or System / Update). It is not drawn, so it is not part of "the same screen".
+    std::string              versionBlink;
+    int                      versionPhase = 0;  // 0: the version, 1: versionBlink
+    std::string              versionNotes;
     // "the same screen": the uptime by the minute and free RAM in 8 KB steps (time is HH:MM), so an idle WFC is redrawn
-    // once a minute, not at every 5 s check while the heap wobbles
+    // once a minute, not at every 5 s check while the heap wobbles. The blink phase is part of the screen, so it does redraw.
     bool operator==(const WfcSnapshot& o) const {
         return bbsName == o.bbsName && sysop == o.sysop && lastCaller == o.lastCaller && ip == o.ip && time == o.time && date == o.date &&
                page == o.page && nodes == o.nodes && events == o.events && callsToday == o.callsToday && postsToday == o.postsToday &&
                uploadsToday == o.uploadsToday && totalCalls == o.totalCalls && sdFreeKb == o.sdFreeKb && ramFreeKb / 8 == o.ramFreeKb / 8 && uptimeS / 60 == o.uptimeS / 60 &&
-               main == o.main && radio == o.radio && notice == o.notice;
+               main == o.main && radio == o.radio && notice == o.notice && versionBlink == o.versionBlink && versionPhase == o.versionPhase;
     }
 };
+
+// How soon to draw the waiting screen again. 5 s, or half a second while a newer axispc release is blinking in the version spot.
+inline uint32_t wfcRefreshMs(const WfcSnapshot& shown) { return shown.versionBlink.empty() ? 5000u : 500u; }
 
 // the |XX / @XX###@ value function for expandArt (it reads `s` in place: `s` must outlive the function it returns)
 ArtValue wfcValues(const WfcSnapshot& s);
@@ -70,6 +78,9 @@ struct WfcHotspot {
 
 // Expands WFC art into `term`, recording where the |K? and |N? codes landed.
 std::vector<WfcHotspot> drawWfc(std::string_view art, const WfcSnapshot& s, AnsiTerm& term);
+
+// When `s` has an update blink, the cells showing the version (or the blink text) become a 'V' tap: the release notes.
+void wfcMarkVersion(const WfcSnapshot& s, const AnsiTerm& term, std::vector<WfcHotspot>& spots);
 
 // A theme's WFC art made safe to draw or send: cut at kWfcArtCap and at a SAUCE/EOF mark, no escape left open at the end, bare LF
 // made CR LF.

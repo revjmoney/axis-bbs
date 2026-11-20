@@ -26,6 +26,7 @@
 #include "bbs/setup_wizard.h"
 #include "bbs/theme.h"
 #include "bbs/version.h"
+#include "platform/linux/updatecheck.h"
 #include "bbs/viewcache.h"
 #include "lord/game.h"
 #include "net/areas.h"
@@ -387,6 +388,12 @@ bbs::WfcSnapshot PcBbs::wfcSnapshot() {
     w.ramFreeKb = mem > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)mem;
     w.uptimeS = host_.nowMs() / 1000;
     w.main = true;
+    pcupdate::View u = pcupdate::view();
+    if (u.alert) {  // blink *NEW* where the version already is. Callers are not on this screen.
+        w.versionBlink = pcupdate::kBlink;
+        w.versionPhase = (int)((host_.nowMs() / 500u) & 1u);
+        w.versionNotes = std::move(u.report);
+    }
     return w;
 }
 
@@ -714,6 +721,7 @@ bool PcBbs::turn() {
 }
 
 void PcBbs::stop() {
+    pcupdate::stop();  // the release-check thread, if it is out; it is not waited on for long
     std::printf("axis: stopping: hanging up callers\n");
     listener_.stop();
     modemLineHangUp();  // first, so a radio caller's hang-up starts from a quiet line
@@ -812,6 +820,10 @@ void PcBbs::runCommand(const std::string& cmd, app::Out& out) {
         out.print(line);
         out.print(bbs::diagFields(d));
         out.print('\n');
+    } else if (cmd == "@PCUPDATE") {  // the once-a-day release check: notes, or that it is off
+        std::string r = pcupdate::report();
+        out.print(r.c_str());
+        if (r.empty() || r.back() != '\n') out.print('\n');
     } else if (cmd == "@LOGCLEAR") {  // the event log (screen and files) and the page shown on the WFC
         host_.clearEvents();
         pageText_.clear();

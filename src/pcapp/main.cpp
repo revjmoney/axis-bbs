@@ -19,10 +19,13 @@
 #include <string>
 #include <thread>
 
+#include "bbs/sysopshell.h"
+#include "bbs/version.h"
 #include "pcapp/console.h"
 #include "pcapp/pchost.h"
 #include "platform/linux/hostconf.h"
 #include "platform/linux/paths.h"
+#include "platform/linux/updatecheck.h"
 
 namespace {
 volatile sig_atomic_t stopAsked = 0;
@@ -112,9 +115,14 @@ int main(int argc, char** argv) {
     }
     std::printf("axis: axispc starting, %s mode, data folder %s\n", terminal ? "terminal" : "headless", axisDataDir().c_str());
     hostConfLoad(axisDataDir());  // <data>/axis.conf: the ports, the gate's limits, the modem
+    // once a day, off this thread: update_check=0 in axis.conf turns it off. The firmware does not call this.
+    axis::pcupdate::start(axisDataDir(), hostConfInt("update_check", 1, 0, 1) != 0, hostConfStr("update_repo", axis::pcupdate::kDefaultRepo),
+                          axis::bbs::kAxisVersion);
+    axis::bbs::setPcUpdateRow(true);  // System lists Update; the host tests never set this, so their menus stay put
     {
         axis::pcapp::PcBbs bbs(axisDataDir());
         if (!bbs.start(modem, why)) {
+            axis::pcupdate::stop();
             std::printf("axis: %s\n", why.c_str());
             axis::pcapp::Console::restore();
             // The reason can hold the data folder's path (from $HOME), so the terminal gets a pointer to the log, which has it.
@@ -126,6 +134,7 @@ int main(int argc, char** argv) {
         while (!stopAsked) {
             bool moved = bbs.turn();
             if (console) moved = console->poll() || moved;
+            axis::pcupdate::poll();  // the release check's result, if its thread has one; it never waits
             if (!moved) std::this_thread::sleep_for(std::chrono::milliseconds(5));  // nothing moved: a 5 ms nap
         }
         console.reset();
