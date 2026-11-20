@@ -14,7 +14,7 @@ The software behind **AXIS UNDERGROUND CNC**. Made by Rev. J. Money, the maker o
 
 ## Where AXIS is going
 
-The ESP32 is a great little BBS, but it is small: 4 MB of flash and no PSRAM. The goal now is a BBS that can grow and be better than the other telnet BBS packages, with an edge nobody else has: retro and radio dial-in (the LFD3K-SM LoRa modem, mesh, and old C64, Amiga and Z80 callers).
+The ESP32 is a great little BBS, but it is small: 4 MB of flash and no PSRAM. The goal now is a BBS that can grow and hold it's own with the other telnet BBS packages, with an edge nobody else has: retro and radio dial-in (the LFD3K-SM LoRa modem, mesh, and old C64, Amiga and Z80 callers).
 
 - **One shared core.** The BBS itself (menus, screens, messages, files, doors, the sysop commands) is one C++ code base in `src/bbs` and `src/app`. The PC program and the board both build from it.
 - **The PC is the main.** On Linux, `axispc` runs many callers in one program. In a cluster the PC is always the main board, and the ESP32 boards join it as nodes.
