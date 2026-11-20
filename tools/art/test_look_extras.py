@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Rev. J. Money
+"""The look packs keep GOODBYE, the list templates and the lite screens, and the installer copies them."""
+import os
+import sys
+import tempfile
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, '..'))
+
+import check_looks  # noqa: E402
+import install_cyd  # noqa: E402
+
+
+class LookPackTest(unittest.TestCase):
+    def test_every_look_has_goodbye_lists_and_lite_screens(self):
+        self.assertEqual(check_looks.check_repo(ROOT), 0)
+
+    def test_installer_copies_the_axis_folder_next_to_the_numbered_screens(self):
+        look, fn, _saylor = check_looks.PACKS[0]
+        src = os.path.join(ROOT, 'art', 'packs', fn)
+        out = tempfile.mkdtemp()
+        try:
+            written = dict(install_cyd.map_theme_zip(src, out))
+            for name in ('MAIN.ANS', 'GOODBYE.ANS', 'GOODBYE.LITE.ANS', 'MAIN.LITE.ANS',
+                         'LOGIN.LITE.ANS', 'FILES.LST', 'MSGS.LST', 'USERS.LST', 'THEME.CFG'):
+                self.assertIn(name, written, name)
+                self.assertTrue(os.path.isfile(os.path.join(out, name)))
+            self.assertLessEqual(written['GOODBYE.LITE.ANS'], 2048)
+            self.assertLessEqual(written['MAIN.LITE.ANS'], 2048)
+            with open(os.path.join(out, 'THEME.CFG'), encoding='ascii') as fh:
+                text = fh.read()
+            self.assertIn('dialect=axis', text)
+            self.assertEqual(look, 'crt')
+        finally:
+            for name in os.listdir(out):
+                os.remove(os.path.join(out, name))
+            os.rmdir(out)
+
+
+if __name__ == '__main__':
+    unittest.main()

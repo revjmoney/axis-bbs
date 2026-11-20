@@ -65,6 +65,12 @@ ROLES = {
 }
 # The main keeps 12 KB of a theme screen. A follower receives at most 8 KB (cluster frame).
 THEME_CAP = 12288
+# axis/ inside a look zip: logoff, lite screens, list templates, the dialect file. Copied by
+# their firmware names next to the numbered screens. tools/art/make_look_extras.py rebuilds them.
+AXIS_EXTRA = re.compile(
+    r'^(GOODBYE|MAIN|LOGIN|FASTLOGN|NEWUSER|MATRIX|FILES|DOORS|MSGS|PRELOGON|SHOP|MILL|BULLETIN|SAYLOR|SAYLORLG)'
+    r'(\.LITE)?\.ANS$|^(FILES|MSGS|USERS)\.LST$|^THEME\.CFG$'
+)
 
 PACKS = [
     ("crt", "axis-crt-hardcore-ansi-2026-11-07-v2.zip", "CRT hardcore"),
@@ -239,6 +245,17 @@ def map_theme_zip(zip_path, out_dir):
             with open(path, "wb") as f:
                 f.write(data)
             written.append((dest_name, len(data)))
+        for n in z.namelist():
+            norm = n.replace("\\", "/")
+            if not norm.startswith("axis/") or norm.endswith("/"):
+                continue
+            base = os.path.basename(norm)
+            if not AXIS_EXTRA.match(base):
+                continue
+            data = z.read(n)
+            with open(os.path.join(out_dir, base), "wb") as f:
+                f.write(data)
+            written.append((base, len(data)))
     return written
 
 

@@ -1,0 +1,6 @@
+; User list. Tokens and widths: docs/MENU-ART.md
+geom=4,6,76,16
+colours=111,15
+caption=|08handle               from                calls  tagline
+rule=1
+row=|15@HN20@ |07@LO19@ |06@CA>5@  |08@TG22@|TW
