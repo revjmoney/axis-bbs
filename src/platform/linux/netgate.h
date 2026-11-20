@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
 // The accept gate: every TCP caller passes here before main.cpp sees it. A refused caller is closed at once, so a
-// flood from one address never reaches the board's code and never holds a node. Plain C++17 and POSIX only (no
-// Arduino, no host globals): the clock is passed in, so the tests can drive it.
+// flood from one address never reaches the board's code and never holds a node. Plain C++17 (no Arduino, no host
+// globals): the clock is passed in, so the tests can drive it.
 //
 // Refused when: open callers in all >= max_callers; open from this address >= max_per_ip (max_per_ip_lan for a LAN
 // address); or this address made >= rate_per_ip new connections in the last 60 s (every attempt counts, refused or

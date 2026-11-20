@@ -102,7 +102,7 @@ private:
     struct CountingMsgs;
 
     void wireServices();
-    void answer(int fd, uint32_t ip, bool gated);
+    void answer(intptr_t fd, uint32_t ip, bool gated);
     int  freeSlot() const;
     int  callersOnline() const;
     void deliverChat(int fromNode, const std::string& handle, const std::string& text, bool page, int kind, int to);

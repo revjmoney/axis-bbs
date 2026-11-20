@@ -7,7 +7,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <direct.h>
+#else
 #include <unistd.h>
+#endif
 
 #include "doctest.h"
 
@@ -263,12 +269,25 @@ TEST_CASE("update_check is written into axis.conf without touching the other lin
 }
 
 TEST_CASE("the sysop switch saves update_check and clears the blink until it is turned on") {
+#ifdef _WIN32
+    char dirStore[MAX_PATH];
+    char tmp[MAX_PATH];
+    char* dir = nullptr;
+    DWORD got = GetTempPathA(sizeof tmp, tmp);
+    if (got && got < sizeof tmp) {
+        for (int n = 0; n < 100 && !dir; n++) {
+            std::snprintf(dirStore, sizeof dirStore, "%saxis-up-%lu-%d", tmp, (unsigned long)GetCurrentProcessId(), n);
+            if (_mkdir(dirStore) == 0) dir = dirStore;
+        }
+    }
+#else
     char tmpl[] = "/tmp/axis-up-XXXXXX";
     char* dir = mkdtemp(tmpl);
+#endif
     REQUIRE(dir != nullptr);
     std::string data = dir;
     {
-        std::ofstream conf(data + "/axis.conf");
+        std::ofstream conf(data + "/axis.conf", std::ios::binary);
         conf << "# keep me\nlan_port=2399\nupdate_check=1\n";
     }
     Cache cached;
@@ -278,7 +297,7 @@ TEST_CASE("the sysop switch saves update_check and clears the blink until it is 
     cached.summary = "Faster doors";
     cached.url = "https://github.com/revjmoney/axis-bbs/releases/tag/pc-v0.54";
     {
-        std::ofstream cache(data + "/update-check");
+        std::ofstream cache(data + "/update-check", std::ios::binary);
         cache << writeCache(cached);
     }
     hostConfLoad(data);
@@ -292,11 +311,12 @@ TEST_CASE("the sysop switch saves update_check and clears the blink until it is 
     CHECK_FALSE(view().alert);  // the waiting screen stops blinking
     CHECK(hostConfInt("update_check", 1, 0, 1) == 0);
     CHECK(command("state") == "off\n");
-    std::ifstream back(data + "/axis.conf");
+    std::ifstream back(data + "/axis.conf", std::ios::binary);
     std::string   saved((std::istreambuf_iterator<char>(back)), std::istreambuf_iterator<char>());
     CHECK(saved.find("# keep me\n") == 0);
     CHECK(saved.find("lan_port=2399\n") != std::string::npos);
     CHECK(saved.find("update_check=0\n") != std::string::npos);
+    back.close();  // Windows will not replace axis.conf while this handle has it open
     CHECK(command("on").find("on") != std::string::npos);
     CHECK(enabled());
     CHECK(view().alert);  // the cached newer release blinks again

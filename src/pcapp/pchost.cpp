@@ -4,15 +4,6 @@
 // loop), without the board: one Session per caller, any number of them, all on this one thread.
 #include "pcapp/pchost.h"
 
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <netinet/in.h>
-#include <sys/stat.h>
-#include <sys/statvfs.h>
-#include <sys/utsname.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -27,6 +18,7 @@
 #include "bbs/theme.h"
 #include "bbs/version.h"
 #include "platform/linux/updatecheck.h"
+#include "platform/os/os.h"
 #include "bbs/viewcache.h"
 #include "lord/game.h"
 #include "net/areas.h"
@@ -87,7 +79,13 @@ bool writeFileSafe(const std::string& path, const std::string& temp, const std::
         std::remove(temp.c_str());  // the old file stays as it was
         return false;
     }
-    return std::rename(temp.c_str(), path.c_str()) == 0;
+    if (std::rename(temp.c_str(), path.c_str()) == 0) return true;
+#ifdef _WIN32
+    // rename does not replace a file that is already there. The new file is written; the old one is removed only
+    // after that, so a failure before the remove leaves the old file.
+    if (std::remove(path.c_str()) == 0 && std::rename(temp.c_str(), path.c_str()) == 0) return true;
+#endif
+    return false;
 }
 
 uint32_t pcRandom() {  // Services::rng is a plain function
@@ -95,34 +93,12 @@ uint32_t pcRandom() {  // Services::rng is a plain function
     return (uint32_t)rd();
 }
 
-uint64_t memAvailable() {  // bytes (0 when /proc/meminfo has no answer)
-    FILE* f = std::fopen("/proc/meminfo", "r");
-    if (!f) return 0;
-    char               line[128];
-    unsigned long long kb = 0;
-    while (std::fgets(line, sizeof line, f))
-        if (std::sscanf(line, "MemAvailable: %llu kB", &kb) == 1) break;
-    std::fclose(f);
-    return (uint64_t)kb * 1024u;
-}
+uint64_t memAvailable() { return os::memAvailable(); }  // bytes (0 when the OS has no answer)
 
 // A locally administered address made from the machine id, as the Linux axis's WiFi.macAddress(): stable, never a real
 // MAC, and nodePlatform() calls it "pc".
 std::string machineId() {
-    std::string id;
-    for (const char* p : {"/etc/machine-id", "/var/lib/dbus/machine-id"}) {
-        FILE* f = std::fopen(p, "r");
-        if (!f) continue;
-        char buf[128] = {0};
-        if (std::fgets(buf, sizeof buf, f)) id = buf;
-        std::fclose(f);
-        if (!id.empty()) break;
-    }
-    if (id.empty()) {
-        char host[256] = {0};
-        ::gethostname(host, sizeof host - 1);
-        id = host;
-    }
+    std::string id = os::machineIdText();
     uint64_t h = 1469598103934665603ull;  // FNV-1a over "axis-mac:" + the id
     for (char c : std::string("axis-mac:") + id) {
         h ^= (uint8_t)c;
@@ -155,11 +131,7 @@ uint32_t PcHost::unixNow() {
 
 uint32_t PcHost::random32() { return (uint32_t)rd_(); }
 
-uint64_t PcHost::sdFreeBytes() {
-    struct statvfs v;
-    if (::statvfs(sd_.c_str(), &v) != 0) return 0;
-    return (uint64_t)v.f_bavail * v.f_frsize;
-}
+uint64_t PcHost::sdFreeBytes() { return os::diskFree(sd_); }
 
 void PcHost::openEventFile() {
     file_.reset(new bbs::RotatingLog(flash_ + "/events.log", flash_ + "/events.old", 8192));  // 16 KB at most, as the board
@@ -262,9 +234,9 @@ void PcBbs::saveUsers() {
 void PcBbs::makeAreaFolders() {
     if (!AXIS_FILES) return;
     std::string root = host_.sdRoot() + "/files";
-    ::mkdir(root.c_str(), 0777);
-    ::mkdir((root + "/" + bbs::viewcache::kArea).c_str(), 0777);  // the ANSI viewer's unpacked pieces
-    for (auto& a : cfg_->areas) ::mkdir((root + "/" + a.id).c_str(), 0777);
+    os::makeDir(root, 0777);
+    os::makeDir(root + "/" + bbs::viewcache::kArea, 0777);  // the ANSI viewer's unpacked pieces
+    for (auto& a : cfg_->areas) os::makeDir(root + "/" + a.id, 0777);
 }
 
 std::string PcBbs::lordFolderId() const {
@@ -288,7 +260,7 @@ bool PcBbs::writeWarrior(const std::string& handle) {
 bbs::MessageStore& PcBbs::messages() {
     if (!msgs_) {
         std::string root = host_.sdRoot() + "/msgs";
-        ::mkdir(root.c_str(), 0777);
+        os::makeDir(root, 0777);
         msgs_.reset(new CountingMsgs(root, stats_));
     }
     return *msgs_;
@@ -307,15 +279,7 @@ std::string PcBbs::lanAddress() {  // the first IPv4 address that is up and not 
     if (haveLanIp_ && now - lanIpMs_ < 30000u) return lanIp_;
     haveLanIp_ = true;
     lanIpMs_ = now;
-    lanIp_.clear();
-    ifaddrs* all = nullptr;
-    if (::getifaddrs(&all) != 0) return lanIp_;
-    for (ifaddrs* a = all; a; a = a->ifa_next) {
-        if (!a->ifa_addr || a->ifa_addr->sa_family != AF_INET || !(a->ifa_flags & IFF_UP) || (a->ifa_flags & IFF_LOOPBACK)) continue;
-        lanIp_ = NetGate::ipText(((sockaddr_in*)a->ifa_addr)->sin_addr.s_addr);
-        break;
-    }
-    ::freeifaddrs(all);
+    lanIp_ = os::lanIpv4();
     return lanIp_;
 }
 
@@ -342,8 +306,7 @@ bbs::SysInfo PcBbs::sysInfo() {
     s.freeHeap = mem > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)mem;
     s.timeText = timeText();
     s.storage = "data folder, " + std::to_string((unsigned long long)(host_.sdFreeBytes() >> 20)) + " MB free";
-    utsname u{};
-    s.hardware = std::string("Linux ") + (::uname(&u) == 0 ? u.machine : "") + " (axispc)";
+    s.hardware = os::osMachine() + " (axispc)";
     s.callsToday = stats_.dayStats.calls;
     s.nodesTotal = (int)listener_.gate().limits().max_callers;
     for (auto& ses : sessions_) s.nodes.push_back(ses && ses->node ? ses->node->handle() : std::string());
@@ -627,7 +590,7 @@ bool PcBbs::start(const std::string& modemPath, std::string& why) {
 }
 
 // A call: through the login lockout and (on a board not set up) the one setup caller, onto the lowest free node.
-void PcBbs::answer(int fd, uint32_t ip, bool gated) {
+void PcBbs::answer(intptr_t fd, uint32_t ip, bool gated) {
     std::unique_ptr<PcLine> l = PcLine::fromFd(fd, ip);
     if (gated) l->closed = [this, ip] { listener_.closed(ip); };
     uint32_t now = host_.nowMs();
@@ -692,7 +655,7 @@ bool PcBbs::turn() {
     if (!radioFds_.empty()) {
         std::vector<int> fds;
         fds.swap(radioFds_);
-        for (int fd : fds) answer(fd, inet_addr("127.0.0.2"), false);  // (never gated: a radio caller is not refused)
+        for (int fd : fds) answer(fd, os::ipv4("127.0.0.2"), false);  // (never gated: a radio caller is not refused)
         changed = true;
     }
     for (size_t i = 0; i < sessions_.size(); i++) {

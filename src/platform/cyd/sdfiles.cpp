@@ -12,6 +12,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#ifndef O_BINARY
+#define O_BINARY 0  // text-mode files are a Windows thing; Linux and the board stay as they are
+#endif
+
 using axis::bbs::FileEntry;
 
 namespace {
@@ -95,7 +99,7 @@ std::unique_ptr<axis::bbs::RandomFile> SdFileLibrary::open(const std::string& ar
     std::string             path = folderOf(areaId) + "/" + name;
     struct stat             st;
     if (::stat(path.c_str(), &st) != 0) return nullptr;
-    f->fd = ::open(path.c_str(), O_RDONLY);
+    f->fd = ::open(path.c_str(), O_RDONLY | O_BINARY);
     if (f->fd < 0) return nullptr;
     f->bytes = (uint32_t)st.st_size;
     return std::unique_ptr<axis::bbs::RandomFile>(f.release());
@@ -109,14 +113,14 @@ std::unique_ptr<axis::bbs::WriteFile> SdFileLibrary::create(const std::string& a
     static uint32_t serial = 0;
     w->temp = folderOf(areaId) + "/.upload" + std::to_string(++serial % 100) + ".tmp";
     ::unlink(w->temp.c_str());  // a leftover from a dropped call
-    w->fd = ::open(w->temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    w->fd = ::open(w->temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
     if (w->fd < 0) return nullptr;
     return std::unique_ptr<axis::bbs::WriteFile>(w.release());
 }
 
 bool SdFileLibrary::describe(const std::string& areaId, const std::string& name, const std::string& desc) {
     if (!hasSd() || !safeName(areaId) || !safeName(name)) return false;
-    int fd = ::open((folderOf(areaId) + "/FILES.BBS").c_str(), O_WRONLY | O_CREAT | O_APPEND, 0666);
+    int fd = ::open((folderOf(areaId) + "/FILES.BBS").c_str(), O_WRONLY | O_CREAT | O_APPEND | O_BINARY, 0666);
     if (fd < 0) return false;
     std::string line = name;
     line += std::string(name.size() < 13 ? 13 - name.size() : 1, ' ') + desc + "\r\n";
@@ -141,7 +145,7 @@ bool SdFileLibrary::rename(const std::string& areaId, const std::string& from, c
 bool SdFileLibrary::read(const std::string& areaId, const std::string& name, std::string& out, size_t max) {
     out.clear();
     if (!hasSd() || !safeName(areaId) || !safeName(name)) return false;
-    int fd = ::open((folderOf(areaId) + "/" + name).c_str(), O_RDONLY);  // no stdio: its 128-byte buffer is slow
+    int fd = ::open((folderOf(areaId) + "/" + name).c_str(), O_RDONLY | O_BINARY);  // no stdio: its 128-byte buffer is slow
     if (fd < 0) return false;
     char buf[1024];
     int  n;
