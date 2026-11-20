@@ -114,8 +114,9 @@ struct View {
     std::string report;
 };
 
-// Linux program only. start() reads the cache and returns. poll() is called every loop turn and does
-// not block: the request runs on a side thread. stop() asks that thread to quit and does not wait long.
+// The PC program (Linux and Windows). start() reads the cache and returns. poll() is called every loop turn and
+// does not block: the request runs on a side thread. stop() asks that thread to quit and does not wait long.
+// The firmware never calls this.
 void        start(const std::string& dataDir, bool enabled, const std::string& repo, const std::string& currentVersion);
 void        poll();
 void        stop();

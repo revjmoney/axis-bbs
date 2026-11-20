@@ -30,7 +30,8 @@ std::string axisPrefsDir();
 std::string hostPath(const char* boardPath);
 
 // Makes the data folder ready: `requested` from --data, or "" for the default (/var/lib/axis when the program runs
-// as user axis, else ~/.axis). Creates it (mode 0700) with sd/, flash/, prefs/, log/, cluster/flash/,
-// cluster/prefs/ and mirror/ (all 0700); if `seed` is given and
+// as user axis, else ~/.axis; on Windows, %LOCALAPPDATA%\axis, else %USERPROFILE%\.axis). Creates it (mode 0700 on
+// Linux; the user's normal permissions on Windows) with sd/, flash/, prefs/, log/, cluster/flash/,
+// cluster/prefs/ and mirror/; if `seed` is given and
 // sd/ is empty, copies that folder (a board card's contents) into sd/. On failure says why in `why` and returns false.
 bool axisDataSetup(const std::string& requested, const std::string& seed, std::string& why);

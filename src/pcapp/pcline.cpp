@@ -17,6 +17,14 @@ static void nonBlocking(intptr_t s) {
 }
 static bool wouldBlock() { return WSAGetLastError() == WSAEWOULDBLOCK || WSAGetLastError() == WSAEINTR; }
 static void shutdownSend(intptr_t s) { ::shutdown((sock_t)s, SD_SEND); }
+static void netStart() {
+    static bool done = false;
+    if (!done) {
+        WSADATA w;
+        WSAStartup(MAKEWORD(2, 2), &w);
+        done = true;
+    }
+}
 static constexpr int kSendFlags = 0;  // the socket is non-blocking already
 static constexpr int kPeekFlags = MSG_PEEK;
 #else
@@ -44,6 +52,9 @@ namespace axis::pcapp {
 void (*PcLine::tap)(PcLine*, const uint8_t*, size_t) = nullptr;
 
 PcLine::PcLine(intptr_t fd, uint32_t ip) : fd_(fd), ip_(ip) {
+#ifdef _WIN32
+    netStart();
+#endif
     nonBlocking(fd_);
     int one = 1;
     // TCP_NODELAY fails harmlessly on a socketpair

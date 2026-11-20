@@ -5,6 +5,13 @@ cmake_minimum_required(VERSION 3.20)
 project(axis_bbs C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+  message(FATAL_ERROR "axispc's Windows build uses MinGW-w64 (GCC). The shared core is built with GCC and the POSIX file calls MinGW provides. On Windows use MSYS2's UCRT64 gcc, or the mingw-w64 cross compilers.")
+endif()
+if(MINGW)
+  # One file the user can copy: libgcc, libstdc++ and winpthread inside the exe. ws2_32 and winhttp stay system DLLs.
+  add_link_options(-static -static-libgcc -static-libstdc++)
+endif()
 add_compile_options(-O2 -Wall -Wextra)
 
 set(AXISCORE_SOURCES
@@ -231,6 +238,18 @@ if(UNIX AND NOT APPLE)  # the native Linux program's accept gate and card mirror
                                     src/platform/linux/hostconf.cpp)  # compiled here so CI builds the checker without LovyanGFX
   target_link_libraries(axis_tests PRIVATE pthread)
 endif()
+if(WIN32)  # the same gate, caller line and release check, on Winsock and WinHTTP
+  find_package(Threads REQUIRED)
+  target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp
+                                    tests/test_pcline.cpp src/pcapp/pcline.cpp
+                                    tests/test_win_os.cpp
+                                    src/platform/cyd/sdfiles.cpp
+                                    src/platform/win/updatecheck.cpp
+                                    src/platform/win/paths.cpp
+                                    src/platform/os/os_win.cpp
+                                    src/platform/linux/hostconf.cpp)
+  target_link_libraries(axis_tests PRIVATE Threads::Threads winhttp iphlpapi advapi32)
+endif()
 if(WIN32)
   target_link_libraries(axiscore PUBLIC ws2_32)
 endif()
@@ -278,17 +297,29 @@ if(AXIS_OFF)
   endif()
 endif()
 
-# The PC program's core (axispc, Project 1a): the caller line and what the app builds on it. Linux for now (the line is
-# Winsock-ready behind _WIN32, but nothing here builds on Windows yet). axispc and the PC tests link it.
-if(UNIX)
+# The PC program's core (axispc): the caller line. Linux and Windows (Winsock is the _WIN32 half of pcline.cpp).
+if(UNIX OR WIN32)
   find_package(Threads REQUIRED)
   add_library(axispc_core STATIC src/pcapp/pcline.cpp)
   target_link_libraries(axispc_core PUBLIC axiscore Threads::Threads)
 endif()
-# The PC program itself (Linux): the shared core through axispc_core, the Linux program's accept gate, axis.conf, data
-# folder and radio line (none of them needs the Arduino shim), and the board's SD file library on <data>/sd/files. No
-# main.cpp, no arduino_core.cpp, no LovyanGFX.
-if(UNIX AND NOT APPLE)
+# The PC program itself: the shared core through axispc_core, the accept gate, axis.conf, the data folder and the
+# radio line (the Windows radio line is a stub), and the board's SD file library on <data>/sd/files. No main.cpp of
+# the board, no arduino_core.cpp, no LovyanGFX. The OS layer is platform/os; Windows-only pieces are platform/win.
+if((UNIX AND NOT APPLE) OR WIN32)
+  set(AXISPC_OS
+      src/platform/linux/paths.cpp
+      src/platform/linux/modemline.cpp
+      src/platform/linux/updatecheck_linux.cpp
+      src/platform/os/os_posix.cpp)
+  if(WIN32)
+    set(AXISPC_OS
+        src/platform/win/paths.cpp
+        src/platform/win/modemline.cpp
+        src/platform/win/updatecheck.cpp
+        src/platform/os/os_win.cpp
+        installer/pc/axispc.rc)
+  endif()
   add_executable(axispc
       src/pcapp/main.cpp
       src/pcapp/pchost.cpp
@@ -296,12 +327,13 @@ if(UNIX AND NOT APPLE)
       src/pcapp/console.cpp
       src/platform/linux/netgate.cpp
       src/platform/linux/hostconf.cpp
-      src/platform/linux/paths.cpp
-      src/platform/linux/modemline.cpp
       src/platform/linux/updatecheck.cpp
-      src/platform/linux/updatecheck_linux.cpp
-      src/platform/cyd/sdfiles.cpp)
+      src/platform/cyd/sdfiles.cpp
+      ${AXISPC_OS})
   target_link_libraries(axispc PRIVATE axispc_core)
+  if(WIN32)
+    target_link_libraries(axispc PRIVATE winhttp iphlpapi advapi32)
+  endif()
 endif()
 
 # The native Linux program, axis: the board's own src/main.cpp, unchanged, on a Linux host layer

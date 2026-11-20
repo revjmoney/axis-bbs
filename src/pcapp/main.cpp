@@ -4,15 +4,16 @@
 //   axispc [--terminal | --headless] [--data DIR] [--seed DIR] [--modem /dev/ttyUSB0]
 // --terminal (the default on a terminal): the sysop's WFC screen here (console.h). --headless (the default otherwise): no
 // screen, the log on stdout. --data: the data folder (plan 1's layout: sd/, flash/, prefs/, axis.conf; the default is
-// /var/lib/axis for user axis, else ~/.axis), so a folder the Linux axis made works as it is. --seed: a board card's
-// folder, copied into an empty <data>/sd. --modem: the LRA FLOWTRON DATAMASTER 3000 SERIAL MODEM's tty (else axis.conf's
-// modem=). It refuses to run as root. SIGTERM, SIGINT and SIGHUP stop it: every caller hung up, the users and the stats
-// saved, exit 0 (a stop that takes more than 5 s is forced; a second Ctrl-C stops at once).
-#include <signal.h>
+// /var/lib/axis for user axis, else ~/.axis, and %LOCALAPPDATA%\axis on Windows), so a folder the Linux axis made works
+// as it is. --seed: a board card's folder, copied into an empty <data>/sd. --modem: the LRA FLOWTRON DATAMASTER 3000
+// SERIAL MODEM's tty (else axis.conf's modem=). On Windows that port is not opened yet. It refuses to run as root, or
+// as an elevated administrator. SIGTERM, SIGINT and SIGHUP (Ctrl-C, and closing the console, on Windows) stop it:
+// every caller hung up, the users and the stats saved, exit 0 (a stop that takes more than 5 s is forced; a second
+// Ctrl-C stops at once).
+#include <csignal>
 #include <unistd.h>
 
 #include <chrono>
-#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -26,6 +27,7 @@
 #include "platform/linux/hostconf.h"
 #include "platform/linux/paths.h"
 #include "platform/linux/updatecheck.h"
+#include "platform/os/os.h"
 
 namespace {
 volatile sig_atomic_t stopAsked = 0;
@@ -41,7 +43,7 @@ void onStop(int sig) {
         say("axis: stopped at once (asked twice)\n");
         _exit(130);
     }
-    if (!stopAsked) alarm(5);  // the stop's own deadline
+    if (!stopAsked) axis::os::armStopDeadline();  // the stop's own deadline (5 s)
     stopAsked = 1;
 }
 
@@ -56,22 +58,7 @@ void onCrash(int sig) {  // SA_RESETHAND: the default action follows once the te
     raise(sig);
 }
 
-void signalsInstall() {
-    struct sigaction sa{};
-    sigemptyset(&sa.sa_mask);
-    sa.sa_handler = onStop;
-    sigaction(SIGINT, &sa, nullptr);
-    sigaction(SIGTERM, &sa, nullptr);
-    struct sigaction was{};
-    if (sigaction(SIGHUP, nullptr, &was) == 0 && was.sa_handler != SIG_IGN)  // (`nohup axispc` keeps running)
-        sigaction(SIGHUP, &sa, nullptr);
-    sa.sa_handler = onHardStop;
-    sigaction(SIGALRM, &sa, nullptr);
-    sa.sa_handler = onCrash;
-    sa.sa_flags = SA_RESETHAND;
-    for (int s : {SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL}) sigaction(s, &sa, nullptr);
-    std::signal(SIGPIPE, SIG_IGN);  // a caller who hangs up mid-write is an error return, not the end of the BBS
-}
+void signalsInstall() { axis::os::installStop(onStop, onHardStop, onCrash); }
 
 int usage() {
     std::fprintf(stderr, "usage: axispc [--terminal | --headless] [--data DIR] [--seed CARD_FOLDER] [--modem TTY]\n");
@@ -91,11 +78,16 @@ int main(int argc, char** argv) {
         else return usage();
     }
     // Root could write anywhere a stray path points; the service runs as its own user, people as themselves.
-    if (::geteuid() == 0) {
+    // On Windows the same rule is an elevated administrator (the manifest asks to run as the normal user).
+    if (axis::os::privileged()) {
+#ifdef _WIN32
+        std::fprintf(stderr, "axis: not starting as an elevated administrator: run axispc as an ordinary user\n");
+#else
         std::fprintf(stderr, "axis: not starting as root: run axispc as an ordinary user\n");
+#endif
         return 1;
     }
-    bool tty = ::isatty(STDIN_FILENO) && ::isatty(STDOUT_FILENO);
+    bool tty = axis::os::interactive();
     bool terminal = asked ? asked == 1 : tty;
     if (terminal && !tty) {
         std::fprintf(stderr, "axis: --terminal needs a terminal on stdin and stdout; running headless\n");

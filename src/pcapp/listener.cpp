@@ -1,14 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// axispc's telnet ports (listener.h).
+// axispc's telnet ports (listener.h). The sockets themselves are platform/os (POSIX on Linux, Winsock on Windows).
 #include "pcapp/listener.h"
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <sys/resource.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <cerrno>
 #include <cstdio>
@@ -16,6 +9,7 @@
 #include <string>
 
 #include "platform/linux/hostconf.h"
+#include "platform/os/os.h"
 
 namespace axis::pcapp {
 
@@ -24,38 +18,18 @@ constexpr int kAcceptBurst = 32;  // callers taken from one port in one poll, at
 
 void gateLog(const std::string& line) { std::printf("axis: net: %s\n", line.c_str()); }
 
-int listenOn(uint16_t port) {
-    int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (fd < 0) {
-        std::printf("axis: net: cannot make a socket for port %u: %s\n", port, std::strerror(errno));
-        return -1;
-    }
-    int on = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = htonl(INADDR_ANY);
-    sa.sin_port = htons(port);
-    if (::bind(fd, (sockaddr*)&sa, sizeof sa) < 0 || ::listen(fd, 128) < 0) {
-        std::printf("axis: net: cannot listen on port %u: %s\n", port, std::strerror(errno));
-        ::close(fd);
-        return -1;
-    }
-    return fd;
+void warnFiles(unsigned long n) {
+    std::printf("axis: net: WARNING: only %lu file handles allowed (ulimit -n), callers may be refused\n", n);
 }
 
-void raiseFileLimit() {  // as the Linux axis: every caller is a socket
-    rlimit r{};
-    if (::getrlimit(RLIMIT_NOFILE, &r) != 0) return;
-    rlim_t want = r.rlim_max == RLIM_INFINITY ? (rlim_t)1048576 : r.rlim_max;
-    if (r.rlim_cur < want) {
-        rlimit n = r;
-        n.rlim_cur = want;
-        if (::setrlimit(RLIMIT_NOFILE, &n) == 0) r = n;
+os::Socket listenOn(uint16_t port) {
+    os::ListenOut r = os::listenAny(port);
+    if (r.fd == os::kBadSocket) {
+        const char* what = r.socketFailed ? "make a socket for" : "listen on";
+        std::printf("axis: net: cannot %s port %u: %s\n", what, port, os::errorText(r.err).c_str());
+        return os::kBadSocket;
     }
-    if (r.rlim_cur < 256)
-        std::printf("axis: net: WARNING: only %lu file handles allowed (ulimit -n), callers may be refused\n",
-                    (unsigned long)r.rlim_cur);
+    return r.fd;
 }
 }  // namespace
 
@@ -74,50 +48,48 @@ bool Listener::start(uint32_t /*nowMs*/) {
     gate_.log = gateLog;
     std::printf("axis: net: telnet on LAN port %u, public port %s; gate: %u callers, %u per address (%u LAN), %u new a minute\n",
                 lanPort_, pub ? std::to_string(pub).c_str() : "off", l.max_callers, l.max_per_ip, l.max_per_ip_lan, l.rate_per_ip);
-    raiseFileLimit();
+    os::netStart();
+    os::raiseNoFile(warnFiles);
     uint16_t want[2] = {lanPort_, pub};
     for (int i = 0; i < 2; i++) {
         if (!want[i]) continue;
         fd_[i] = listenOn(want[i]);
         port_[i] = want[i];
-        if (fd_[i] >= 0) std::printf("axis: net: listening on 0.0.0.0:%u (%s)\n", want[i], i ? "public port" : "LAN port");
+        if (fd_[i] != os::kBadSocket) std::printf("axis: net: listening on 0.0.0.0:%u (%s)\n", want[i], i ? "public port" : "LAN port");
     }
-    return fd_[0] >= 0 || fd_[1] >= 0;
+    return fd_[0] != os::kBadSocket || fd_[1] != os::kBadSocket;
 }
 
 void Listener::stop() {
     for (int i = 0; i < 2; i++) {
-        if (fd_[i] >= 0) ::close(fd_[i]);
-        fd_[i] = -1;
+        if (fd_[i] != os::kBadSocket) os::closeSocket(fd_[i]);
+        fd_[i] = os::kBadSocket;
     }
 }
 
 std::vector<Listener::Caller> Listener::poll(uint32_t nowMs) {
     std::vector<Caller> out;
     for (int i = 0; i < 2; i++)
-        if (fd_[i] >= 0) drain(fd_[i], port_[i], nowMs, out);
+        if (fd_[i] != os::kBadSocket) drain(fd_[i], port_[i], nowMs, out);
     return out;
 }
 
-void Listener::drain(int fd, uint16_t /*port*/, uint32_t nowMs, std::vector<Caller>& out) {
+void Listener::drain(intptr_t fd, uint16_t /*port*/, uint32_t nowMs, std::vector<Caller>& out) {
     for (int k = 0; k < kAcceptBurst; k++) {
-        sockaddr_in sa{};
-        socklen_t   len = sizeof sa;
-        int         c = ::accept4(fd, (sockaddr*)&sa, &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if (c < 0) {
-            if (errno == EINTR || errno == ECONNABORTED) continue;
-            if ((errno == EMFILE || errno == ENFILE) && nowMs - lastFdLog_ > 10000) {
+        os::Accepted c = os::acceptOne(fd);
+        if (c.retry) continue;
+        if (c.fd == os::kBadSocket) {
+            if (c.noFiles && nowMs - lastFdLog_ > 10000) {
                 std::printf("axis: net: out of file handles, callers wait in the queue\n");
                 lastFdLog_ = nowMs;
             }
-            return;  // (EAGAIN: nobody else waiting)
+            return;
         }
-        uint32_t ip = sa.sin_family == AF_INET ? sa.sin_addr.s_addr : 0;
-        if (!gate_.admit(ip, NetGate::isLan(ip), nowMs)) {
-            ::close(c);  // refused: closed before the BBS ever sees it
+        if (!gate_.admit(c.ip, NetGate::isLan(c.ip), nowMs)) {
+            os::closeSocket(c.fd);  // refused: closed before the BBS ever sees it
             continue;
         }
-        out.push_back({c, ip});
+        out.push_back({c.fd, c.ip});
     }
 }
 

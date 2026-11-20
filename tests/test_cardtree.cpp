@@ -189,6 +189,7 @@ TEST_CASE("a write shows the file only once finished, at the size given") {
     CHECK_FALSE(card.has("d/e/x.ax_"));
     std::ifstream in(card.root / "d/e/x", std::ios::binary);
     std::string   got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();  // Windows will not replace a file another handle still has open
     CHECK(got == "hello");
     CHECK(rd(s, "S", "d/e/x") == "1" + std::string("5") + kSepS + "1600000000");
 
