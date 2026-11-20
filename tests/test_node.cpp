@@ -90,7 +90,7 @@ TEST_CASE("credits name Rev J Money, rotatocam.com and jmscnc.com") {
     CHECK(out.find("rotatocam.com") != std::string::npos);
     CHECK(out.find("jmscnc.com") != std::string::npos);
     CHECK(out.find("GPL") != std::string::npos);
-    CHECK(out.find("Axis Micro BBS Firmware") != std::string::npos);
+    CHECK(out.find("AXIS BBS") != std::string::npos);
 }
 
 TEST_CASE("info shows the board's uptime, not its address") {
@@ -213,6 +213,9 @@ TEST_CASE("about shows the public address only when set") {
     CHECK(out.find("Rev. J. Money, rotatocam.com, jmscnc.com") != std::string::npos);
     CHECK(out.find("GPLv3") != std::string::npos);
     CHECK(out.find(axis::bbs::kAxisVersion) != std::string::npos);
+    CHECK(out.find("AXIS BBS") != std::string::npos);
+    CHECK(out.find("Linux now, Windows coming soon, and ESP32 boards") != std::string::npos);
+    CHECK(out.find("github.com/revjmoney/axis-bbs") != std::string::npos);
     CHECK(out.find("PC") != std::string::npos);
     axis::bbs::BbsConfig c = statsCfg();
     c.publicHost = "bbs.example.org";
