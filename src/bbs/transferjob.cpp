@@ -32,7 +32,8 @@ std::string cleanUploadName(const std::string& in) {
     return out;
 }
 
-TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info, ArchivePolicy policy)
+TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info,
+                          const ArchivePolicy& policy)
     : lib_(lib), req_(std::move(req)), line_(line), info_(std::move(info)), policy_(policy) {
     if (!req_.upload) {
         src_ = lib_.open(req_.area, req_.name);

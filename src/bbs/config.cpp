@@ -356,7 +356,7 @@ namespace {
 ArchiveMode modeOf(const std::string& w) {
     return w == "reject" ? ArchiveMode::Reject : w == "check" ? ArchiveMode::Check : ArchiveMode::Keep;
 }
-std::string upperExt(std::string name) {
+std::string upperExt(const std::string& name) {
     size_t dot = name.rfind('.');
     std::string ext = dot == std::string::npos ? std::string() : name.substr(dot);
     for (char& c : ext) c = (char)std::toupper((unsigned char)c);

@@ -30,7 +30,8 @@ std::string cleanUploadName(const std::string& name);  // upper case, safe chara
 #if AXIS_TRANSFERS
 class TransferJob {
 public:
-    TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info = {}, ArchivePolicy policy = {});
+    TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info = {},
+                const ArchivePolicy& policy = {});
 #if AXIS_NETS
     // A download from a file that is already open (a Net Files fetch: req.area and req.name are only for the
     // host's log and screen). ready, when set, holds the sender until the data is there (transfer.h). The
