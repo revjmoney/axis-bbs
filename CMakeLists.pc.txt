@@ -167,6 +167,8 @@ add_executable(axis_tests
     tests/test_ansiterm.cpp
     tests/test_wfcanim.cpp
     tests/test_wfc.cpp
+    tests/test_updatecheck.cpp
+    src/platform/linux/updatecheck.cpp
     tests/test_daystats.cpp
     tests/test_statsshare.cpp
     tests/test_announce.cpp
@@ -223,7 +225,10 @@ if(UNIX AND NOT APPLE)  # the native Linux program's accept gate and card mirror
   target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp
                                     tests/test_cardmirror.cpp src/platform/linux/cardmirror.cpp
                                     tests/test_app_session.cpp
-                                    tests/test_pcline.cpp src/pcapp/pcline.cpp)
+                                    tests/test_pcline.cpp src/pcapp/pcline.cpp
+                                    src/platform/linux/updatecheck_linux.cpp
+                                    src/platform/linux/hostconf.cpp)  # compiled here so CI builds the checker without LovyanGFX
+  target_link_libraries(axis_tests PRIVATE pthread)
 endif()
 if(WIN32)
   target_link_libraries(axiscore PUBLIC ws2_32)
@@ -292,6 +297,8 @@ if(UNIX AND NOT APPLE)
       src/platform/linux/hostconf.cpp
       src/platform/linux/paths.cpp
       src/platform/linux/modemline.cpp
+      src/platform/linux/updatecheck.cpp
+      src/platform/linux/updatecheck_linux.cpp
       src/platform/cyd/sdfiles.cpp)
   target_link_libraries(axispc PRIVATE axispc_core)
 endif()
@@ -339,15 +346,18 @@ if(UNIX AND NOT APPLE)
 
     # The core again, built the way axis is: the cluster with the host's hooks (AXIS_CLUSTER=1 AXIS_NATIVE=1, see
     # src/cluster/cluster.h) and no SD pool (AXIS_SD_POOL stays unset, so 0), every other feature at the board's
-    # default (bbs/features.h). axiscore above keeps the test flags.
+    # default (bbs/features.h). axiscore above keeps the test flags. AXIS_PC adds the release-check row on this
+    # program only; the firmware and the host tests never set it.
     add_library(axiscore_native STATIC ${AXISCORE_SOURCES})
     target_include_directories(axiscore_native PUBLIC src dosemu third_party/i8086 PRIVATE third_party/sha256 third_party/monocypher third_party/miniz)
-    target_compile_definitions(axiscore_native PUBLIC AXIS_CLUSTER=1 AXIS_NATIVE=1 AXIS_BENCH=1)  # (and axis: the bench commands stay in)
+    target_compile_definitions(axiscore_native PUBLIC AXIS_CLUSTER=1 AXIS_NATIVE=1 AXIS_BENCH=1 AXIS_PC=1)
     target_compile_options(axiscore_native PRIVATE -w)  # as the board builds it: the core's warnings are its own
 
     add_executable(axis
         src/main.cpp
         src/platform/linux/main_linux.cpp
+        src/platform/linux/updatecheck.cpp
+        src/platform/linux/updatecheck_linux.cpp
         src/platform/linux/arduino_core.cpp
         src/platform/linux/board.cpp
         src/platform/linux/wifi.cpp
@@ -385,7 +395,7 @@ if(UNIX AND NOT APPLE)
     set_source_files_properties(src/platform/cyd/clusternet.cpp PROPERTIES COMPILE_OPTIONS "-w")  # the board's too
     target_include_directories(axis BEFORE PRIVATE src/platform/linux/arduino)
     target_include_directories(axis PRIVATE src/platform/cyd third_party/monocypher)
-    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=1 AXIS_NATIVE=1 LGFX_USE_V1= AXIS_WINDOW=$<BOOL:${AXIS_WINDOW}>)
+    target_compile_definitions(axis PRIVATE AXIS_CLUSTER=1 AXIS_NATIVE=1 AXIS_PC=1 LGFX_USE_V1= AXIS_WINDOW=$<BOOL:${AXIS_WINDOW}>)
     target_link_libraries(axis PRIVATE axiscore_native lgfx_host)
     target_link_options(axis PRIVATE -Wl,--gc-sections)
     # The board's paths (/sd, /littlefs) become the data folder's at link time: every call below, from main.cpp,

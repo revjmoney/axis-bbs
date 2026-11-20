@@ -102,7 +102,10 @@ ArtValue wfcValues(const WfcSnapshot& s) {
         if (k == "DT") return s.date;
         if (k == "PG") return s.page;
         if (k == "MB") return s.main ? "main board" : "follower board";
-        if (k == "VN") return kAxisVersion;  // the firmware version
+        if (k == "VN") {  // the version. axispc blinks versionBlink here when a newer pc release is waiting; empty on the firmware
+            if (!s.versionBlink.empty() && s.versionPhase) return s.versionBlink;
+            return kAxisVersion;
+        }
 #if AXIS_MODEMLINK  // (built without the modem link the |R? codes show nothing, as before the first report)
         if (k.size() == 2 && k[0] == 'R') {  // the newest LFD3K-SM radio link
             switch (k[1]) {
@@ -223,6 +226,23 @@ std::vector<WfcHotspot> drawWfc(std::string_view art, const WfcSnapshot& s, Ansi
         h.span = end - h.col + 1;
     }
     return spots;
+}
+
+void wfcMarkVersion(const WfcSnapshot& s, const AnsiTerm& term, std::vector<WfcHotspot>& spots) {
+    if (s.versionBlink.empty()) return;
+    const std::string text = s.versionPhase ? s.versionBlink : std::string(kAxisVersion);
+    const int         n = (int)text.size();
+    if (n < 1 || n > term.cols()) return;
+    for (int r = 0; r < term.rows(); r++) {
+        for (int c = 0; c + n <= term.cols(); c++) {
+            int i = 0;
+            for (; i < n; i++)
+                if (term.cell(r, c + i).ch != (unsigned char)text[i]) break;
+            if (i != n) continue;
+            spots.push_back({r, c, 'V', 0, n});
+            return;
+        }
+    }
 }
 
 // whatever a theme file holds, made safe to send: cut at the cap and at a SAUCE/EOF mark, no escape left open at the end (it would

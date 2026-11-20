@@ -796,3 +796,26 @@ TEST_CASE("Net Files row: an area toggles in or out of net_files_areas, spaces i
 #endif
 
 #endif
+
+TEST_CASE("System, Update check, sends the on/off switch and is absent until axispc asks for it") {
+    Rig plainRig;
+    plainRig.shell.beginAt(axis::bbs::SysopSection::System);
+    CHECK(plain(plainRig.out).find("Update check") == std::string::npos);  // the firmware and the host tests
+    struct Guard {
+        Guard() { axis::bbs::setPcUpdateRow(true); }
+        ~Guard() { axis::bbs::setPcUpdateRow(false); }
+    } guard;
+    Rig r;
+    r.replies["@PCUPDATE state"] = "on\n";
+    r.shell.beginAt(axis::bbs::SysopSection::System);
+    std::string o = plain(r.out);
+    CHECK(o.find("Update check") != std::string::npos);
+    CHECK(o.find("Update check") < o.find("SD cards"));
+    r.type("4");  // Event log, Nodes, Status, then Update check
+    CHECK(r.ranCmd("@PCUPDATE off"));
+    r.replies["@PCUPDATE state"] = "off\n";
+    r.out.clear();
+    r.shell.beginAt(axis::bbs::SysopSection::System);
+    r.type("4");
+    CHECK(r.ranCmd("@PCUPDATE on"));
+}

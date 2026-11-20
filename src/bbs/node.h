@@ -74,8 +74,9 @@ public:
     // * opens the user editor. The touch sysop menu is the panel, not this session.
     void setSysopRun(std::function<std::string(const std::string&)> run) { sysopRun_ = std::move(run); }
     // The 80x25 waiting-for-caller screen (State::Wfc): the theme's WFC.ANS (through setArt) or the built-in one, filled with this
-    // snapshot, redrawn every 5 s when it changed. Keys: S U # B F L open the sysop shell at that section (Esc comes back here),
-    // E A ! are coming soon, Space goes to the main menu as this sysop, Q leaves (State::Done).
+    // snapshot, redrawn every 5 s when it changed (every half second while a newer axispc release blinks in the version).
+    // Keys: S U # B F L open the sysop shell at that section (Esc comes back here), E A ! are coming soon, Space goes to the
+    // main menu as this sysop, Q leaves (State::Done). V, only while that blink is up, shows the release notes.
     void setWfcSnapshot(std::function<WfcSnapshot()> snap) { wfcSnap_ = std::move(snap); }
     // The cleaned WFC.ANS, read once by the owner and shared (null: the built-in art). When set, wfcDraw uses it instead of setArt.
     void setWfcArt(std::function<std::shared_ptr<const std::string>()> art) { wfcArt_ = std::move(art); }
@@ -411,6 +412,7 @@ private:
     uint32_t                                       wfcDrawn_ = 0;
     bool                                           wfcReturn_ = false;  // the shell was opened from the WFC: Esc comes back to it
     int                                            wfcEsc_ = 0;         // 1 after ESC, 2 inside a CSI (arrow keys are nothing)
+    bool                                           wfcNotes_ = false;   // the axispc release notes are up; the next key returns to the WFC
     bool                                           wfcFromShell_ = false;
     // a login step's screen is done: the next step runs once the key (or poll) that ended it has returned,
     // never nested under it (the loop task's stack is a few KB)

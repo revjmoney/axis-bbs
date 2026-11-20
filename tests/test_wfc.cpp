@@ -174,4 +174,39 @@ TEST_CASE("|VN is the firmware version on the WFC") {
     WfcSnapshot s;
     CHECK(expandArt("v|VN", {}, wfcValues(s)) == std::string("v") + kAxisVersion);
     CHECK(expandArt("[@VN######@]", {}, wfcValues(s)).find(kAxisVersion) != std::string::npos);
+    CHECK(wfcRefreshMs(s) == 5000);
+}
+
+TEST_CASE("a newer axispc release blinks in the version spot and that spot is a tap") {
+    WfcSnapshot s;
+    s.versionBlink = "*NEW*";
+    s.versionPhase = 0;
+    CHECK(expandArt("|VN", {}, wfcValues(s)) == std::string(kAxisVersion));
+    CHECK(expandArt("@VN#@", {}, wfcValues(s)).find(kAxisVersion) == 0);  // the 5-column CYD field
+    s.versionPhase = 1;
+    CHECK(expandArt("|VN", {}, wfcValues(s)) == "*NEW*");
+    CHECK(expandArt("@VN#@", {}, wfcValues(s)) == "*NEW*");  // exactly the CYD field, so the row does not shift
+    WfcSnapshot off = s;
+    off.versionPhase = 0;
+    CHECK_FALSE(s == off);
+    CHECK(wfcRefreshMs(s) == 500);
+    AnsiTerm term(40, 5);
+    auto     spots = drawWfc("@VN#@", s, term);
+    wfcMarkVersion(s, term, spots);
+    bool tap = false;
+    for (const auto& h : spots)
+        if (h.key == 'V') tap = true;
+    CHECK(tap);
+    s.versionBlink.clear();  // the sysop turned the check off: the host stops sending the blink
+    s.versionPhase = 0;
+    CHECK(expandArt("|VN", {}, wfcValues(s)) == std::string(kAxisVersion));
+    CHECK(wfcRefreshMs(s) == 5000);
+    spots.clear();
+    wfcMarkVersion(s, term, spots);
+    for (const auto& h : spots) CHECK(h.key != 'V');
+    WfcSnapshot plain;
+    AnsiTerm    quiet(40, 5);
+    auto        none = drawWfc("@VN#@", plain, quiet);
+    wfcMarkVersion(plain, quiet, none);
+    for (const auto& h : none) CHECK(h.key != 'V');
 }

@@ -53,7 +53,14 @@ and systemd starts it again after 2 seconds. A clean stop stays stopped.
 
 Other `axis.conf` keys: `lan_port`, `public_port`, `max_callers`, `max_per_ip`,
 `max_per_ip_lan`, `rate_per_ip`, `modem`, `drain_minutes`, `no_main_seconds`, `noon`, `mirror_rate`,
-`takeover_wait_seconds`, `mirror_max_age_minutes`. Edit as root, then restart.
+`takeover_wait_seconds`, `mirror_max_age_minutes`, `update_check`, `update_repo`. Edit as root, then restart.
+
+Once a day, axis looks up the newest `pc-v*` GitHub release (not the ESP32 `v*` tags). When one is newer
+than this build, `*NEW*` blinks where the waiting screen shows the version. `V` on that screen, a tap on
+that spot, or System then Update, shows the notes and the release URL. System, Update check, turns the
+check off and on again; that writes `update_check` in `axis.conf` (`0` off, `1` the default) so a restart
+keeps it. The last result is kept in `<data>/update-check`, so a restart the same day does not ask again.
+A missing network, a timeout or a bad reply is one log line and does not stop the BBS.
 
 ## In a cluster of boards
 

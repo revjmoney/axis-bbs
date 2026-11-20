@@ -28,6 +28,10 @@ bool boardOnlyCommand(const std::string& cmd);
 // The main's answer to a follower's "C" request: a board-only command is refused, anything else is run.
 std::string followerCommand(const std::string& cmd, const std::function<std::string(const std::string&)>& run);
 
+// axispc turns this on so System lists Update. The firmware and the host tests leave it off, so those menus stay put.
+// The LovyanGFX axis program compiles the row in instead (AXIS_PC) and does not need this.
+void setPcUpdateRow(bool on);
+
 class SysopShell {
 public:
     using Run = std::function<std::string(const std::string&)>;  // "@USERS" -> its output
@@ -37,6 +41,7 @@ public:
     SysopShell(std::string& out, Run run, int cols = 80, bool local = false);
     void begin();
     void beginAt(SysopSection s);  // straight into a section; Esc from there leaves the shell
+    void showPage(const std::string& title, const std::string& text);  // one read-only page; Q leaves it
     bool key(char c);          // false once the sysop has left the top layer
     void tapRow(int row);      // a tap on that screen row (0 = the top line)
     bool open() const { return !layers_.empty(); }

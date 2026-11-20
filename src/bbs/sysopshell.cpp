@@ -65,7 +65,10 @@ bool inGroups(const std::string& k) {
     return k.rfind("area", 0) == 0 || k.rfind("msgarea", 0) == 0 || k.rfind("door", 0) == 0 || k.rfind("menu.", 0) == 0 ||
            k == "messages_on" || k == "files_on" || k == "doors_on" || k == "setup_done" || k[0] == '#';
 }
+bool pcUpdateRow = false;
 }  // namespace
+
+void setPcUpdateRow(bool on) { pcUpdateRow = on; }
 
 bool boardOnlyCommand(const std::string& cmd) {
     static const char* const kMine[] = {"@CLUSTERKEY", "@HANDBACK", "@CARDMIRROR", "@RESTART", "@RERUNSETUP", "@RESETSETUP", "@SDFORMAT", "@SDCHECK", "@HEADLESS", "@RELAY",
@@ -246,6 +249,14 @@ void SysopShell::enter(SysopSection s) {
         case SysopSection::Look: push("LOOK", [this](Layer& x) { look(x); }); break;
         case SysopSection::Top: begin(); break;
     }
+}
+
+void SysopShell::showPage(const std::string& title, const std::string& text) {
+    layers_.clear();
+    note_.clear();
+    asking_ = false;
+    esc_ = 0;
+    pushText(title, text);
 }
 
 void SysopShell::beginAt(SysopSection s) {
@@ -806,6 +817,20 @@ void SysopShell::system(Layer& l) {
     l.items.push_back({"Event log", "", show("EVENT LOG", "@LOG")});
     l.items.push_back(page("Nodes", "", "NODES", [this](Layer& x) { nodes(x); }));
     l.items.push_back({"Status", "", show("STATUS", "@STATUS")});
+#if AXIS_PC
+    bool updateRow = true;
+#else
+    bool updateRow = pcUpdateRow;  // axispc, whose core is not built with AXIS_PC
+#endif
+    if (updateRow) {  // the firmware leaves this out, so its System list does not move
+        std::string st;
+        for (auto& line : lines("@PCUPDATE state")) st += line;
+        bool on = st.find("off") == std::string::npos;
+        l.items.push_back({"Update check", on ? "on" : "off", [this, on] {
+                               did(run_(std::string("@PCUPDATE ") + (on ? "off" : "on")));
+                           }});
+        l.items.push_back({"Update", "", show("UPDATE", "@PCUPDATE")});
+    }
     l.items.push_back({"SD cards", "", show("CARDS", "@CARDS")});
     l.items.push_back({"Web, No-IP, Discord", "", show("WEB", "@WEB")});
     l.items.push_back({"Update No-IP now", "", show("NO-IP", "@NOIPNOW")});

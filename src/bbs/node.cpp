@@ -1630,6 +1630,7 @@ void Node::wfcDraw(const WfcSnapshot& s, bool clear) {
 }
 
 void Node::openWfc(uint32_t nowMs) {
+    wfcNotes_ = false;
     if (inSeq_ && (state_ == State::Poster || state_ == State::SeqPause) && seqAt_ > 0) {  // the WFC takes the screen mid login step
         seqAt_--;  // (beginLocal then openWfc): that step again once Space leaves the WFC, not skipped
         seqUnheld_ = seqPauseNext_ = false;
@@ -1645,6 +1646,27 @@ void Node::openWfc(uint32_t nowMs) {
 }
 
 void Node::wfcKey(char c) {
+    if (wfcNotes_) {  // the release notes are up: any key returns to the waiting screen
+        wfcNotes_ = false;
+        wfcEsc_ = 0;
+        wfcDraw(wfcSnapshot(), true);
+        return;
+    }
+    if ((c == 'v' || c == 'V') && !wfcSnapshot().versionBlink.empty()) {
+        WfcSnapshot s = wfcSnapshot();
+        wfcNotes_ = true;
+        wfcEsc_ = 0;
+        out_ += CLS;
+        out_ += "\r\n";
+        if (s.versionNotes.empty()) out_ += "  A newer axispc release is available.\r\n";
+        else {
+            out_ += s.versionNotes;
+            if (s.versionNotes.back() != '\n') out_ += "\r\n";
+        }
+        out_ += "\r\n  Press a key to return to the waiting screen.\r\n";
+        out_ += RST;
+        return;
+    }
     if (wfcEsc_) {  // an arrow key or other escape sequence: nothing here
         if (wfcEsc_ == 1) {
             wfcEsc_ = (c == '[' || c == 'O') ? 2 : 0;
@@ -3957,7 +3979,7 @@ void Node::poll(uint32_t nowMs) {
         leaveWfc();
         return;
     }
-    if (state_ == State::Wfc && nowMs - wfcDrawn_ >= 5000) {  // redraw when something on it changed
+    if (state_ == State::Wfc && !wfcNotes_ && nowMs - wfcDrawn_ >= wfcRefreshMs(wfcLast_)) {  // redraw when something on it changed
         wfcDrawn_ = nowMs;
         WfcSnapshot s = wfcSnapshot();
         if (!(s == wfcLast_)) wfcDraw(s, false);
