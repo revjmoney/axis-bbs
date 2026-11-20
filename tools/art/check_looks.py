@@ -3,7 +3,8 @@
 """Check GOODBYE screens, list templates and slow-radio lite art for every AXIS look.
 
 The house look lives in art/menus. The other seven live in art/packs (the axis/ folder inside each zip).
-A lite screen is NAME.LITE.ANS beside the full screen. List templates are FILES.LST, MSGS.LST and USERS.LST.
+A lite screen is NAME.LITE.ANS beside the full screen. List templates are FILES.LST, MSGS.LST, USERS.LST
+and the account, who's online, doors and sysop templates. The new header lite screens stay under 700 bytes.
 """
 import os
 import re
@@ -43,6 +44,9 @@ MSGS_ROW = '@NW1@@NM>4@ @FR12@ @TO12@ @SU24@'
 FILES_GEOM = '3,6,74,14'
 MSGS_GEOM = '3,6,74,14'
 USERS_GEOM = '4,6,76,16'
+HEAD_LITE = {'ACCOUNT.LITE.ANS', 'WHO.LITE.ANS', 'DOORLB.LITE.ANS', 'SYSOP.LITE.ANS', 'MENUS.LITE.ANS'}
+HEAD_ANS = ['ACCOUNT.ANS', 'WHO.ANS', 'DOORLB.ANS', 'SYSOP.ANS', 'MENUS.ANS']
+HEAD_LST = ['ACCOUNT.LST', 'WHO.LST', 'DOORLB.LST', 'SYSOP.LST']
 
 
 class Term:
@@ -153,6 +157,8 @@ def lint_screen(name, data, kind):
     cap = LITE_CAP if kind != 'goodbye' else THEME_CAP
     if len(data) > cap:
         probs.append('%d bytes, over the %d byte cap' % (len(data), cap))
+    if name in HEAD_LITE and len(data) > 700:
+        probs.append('%d bytes, over the 700 byte lite cap' % len(data))
     if '%BN' not in text or '%NN' not in text:
         probs.append('row 6 wants %BN and %NN')
     if kind == 'goodbye' and 'Call back soon' not in text:
@@ -233,6 +239,28 @@ def lint_lst(name, data):
         for tok in ('@HN20@', '@LO19@', '@CA>5@', '@TG22@', '|TW'):
             if tok not in row:
                 probs.append('missing ' + tok)
+    elif name == 'ACCOUNT.LST':
+        row = kv.get('row', '')
+        if '@LB' not in row or '@VL' not in row:
+            probs.append('account row wants @LB and @VL')
+    elif name == 'WHO.LST':
+        row = kv.get('row', '')
+        for tok in ('@ND', '@HN', '@AC', '@LK'):
+            if tok not in row:
+                probs.append('missing ' + tok)
+    elif name == 'DOORLB.LST':
+        row = kv.get('row', '')
+        if '@KY' not in row or '@NM' not in row:
+            probs.append('door row wants @KY and @NM')
+        if re.search(r'\|\d', row):
+            probs.append('a colour code in the door row cuts the lightbar')
+    elif name == 'SYSOP.LST':
+        row = kv.get('row', '')
+        for tok in ('@KY', '@LB', '@VL'):
+            if tok not in row:
+                probs.append('missing ' + tok)
+        if re.search(r'\|\d', row):
+            probs.append('a colour code in the sysop row cuts the lightbar')
     else:
         probs.append('unexpected list ' + name)
     colours = kv.get('colours', '')
@@ -300,7 +328,7 @@ def kind_of(name):
 def check_menus(menus):
     bad = 0
     print('== axis menus  %s' % menus)
-    need = ['GOODBYE.ANS', 'GOODBYE.LITE.ANS', 'FILES.LST', 'MSGS.LST', 'USERS.LST', 'THEME.CFG']
+    need = ['GOODBYE.ANS', 'GOODBYE.LITE.ANS', 'FILES.LST', 'MSGS.LST', 'USERS.LST', 'THEME.CFG'] + HEAD_ANS + HEAD_LST
     for name in sorted(os.listdir(menus)):
         if name.upper().endswith('.ANS') and not name.upper().endswith('.LITE.ANS'):
             lite = name[:-4] + '.LITE.ANS'
@@ -338,7 +366,7 @@ def check_pack(path, saylor):
         return _report(os.path.basename(path), ['missing'])
     with zipfile.ZipFile(path) as z:
         files = axis_members(z)
-    need = ['GOODBYE.ANS', 'THEME.CFG', 'FILES.LST', 'MSGS.LST', 'USERS.LST'] + PACK_LITE
+    need = ['GOODBYE.ANS', 'THEME.CFG', 'FILES.LST', 'MSGS.LST', 'USERS.LST'] + PACK_LITE + HEAD_ANS + sorted(HEAD_LITE) + HEAD_LST
     if saylor:
         need.append('SAYLOR.LITE.ANS')
     for name in need:

@@ -226,6 +226,8 @@ private:
     void showMenu();
     void showMainMenu();  // the full-screen menu: the drippy MENU banner and every command
     void showDoors();
+    void openListedDoor(size_t pick, char echo);  // the door the list picked (a number, a letter, or the lightbar's Enter)
+    void leaveDoors();                            // back to the menu, the numbered list and the lightbar both leave this way
     void loggedIn();
     void showPending();
     void pendingMenu();
@@ -401,7 +403,8 @@ private:
     uint32_t                  beganMs_ = 0;  // when the call began (begin): the pre-login limit counts from here
     bool                      everIn_ = false;  // logged in (or a local console) at least once this call
     size_t                    door_ = 0;
-    std::vector<DoorEntry>    doorList_;  // what showDoors listed
+    std::vector<DoorEntry>      doorList_;  // what showDoors listed
+    std::unique_ptr<ScrollList> doorBar_;   // the doors lightbar when the look has DOORLB.LST; null keeps the numbered window
     std::function<std::string(const std::string&)> scriptLoad_;
     std::function<std::vector<std::string>()>      scriptList_;
     std::unique_ptr<ScriptProg>                    script_;

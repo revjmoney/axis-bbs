@@ -3,6 +3,8 @@
 #pragma GCC optimize("Os")  // menus and screens: size over speed (the door CPU and transfers stay -O2)
 #include "bbs/usersettings.h"
 
+#include "bbs/listscreen.h"
+#include "bbs/listtemplate.h"
 #include "bbs/password.h"
 #include "bbs/theme.h"
 
@@ -15,18 +17,39 @@ void UserSettings::begin() {
 
 void UserSettings::show() {
     auto kb = [](uint32_t b) { return std::to_string(b / 1024) + " KB"; };
-    out_ += theme::CLS;
-    out_ += "\r\n" + theme::drip("ACCOUNT");
-    out_ += theme::window("YOUR ACCOUNT", {{"handle", u_.handle},
-                                           {"real name", u_.realName},
-                                           {"location", u_.location},
-                                           {"email", u_.email},
-                                           {"tagline", u_.tagline.empty() ? "(none: it signs your posts)" : u_.tagline},
-                                           {"security", std::to_string(u_.security)},
-                                           {"calls", std::to_string(u_.calls)},
-                                           {"up / down", kb(u_.uploads) + " / " + kb(u_.downloads)}});
-    out_ += "\r\n   " + theme::key("R", "eal name   ") + theme::key("L", "ocation   ") + theme::key("E", "mail   ") +
-            theme::key("T", "agline   ") + theme::key("P", "assword   ") + theme::key("Q", "uit");
+    const std::vector<std::pair<std::string, std::string>> rows = {
+        {"handle", u_.handle},
+        {"real name", u_.realName},
+        {"location", u_.location},
+        {"email", u_.email},
+        {"tagline", u_.tagline.empty() ? "(none: it signs your posts)" : u_.tagline},
+        {"security", std::to_string(u_.security)},
+        {"calls", std::to_string(u_.calls)},
+        {"up / down", kb(u_.uploads) + " / " + kb(u_.downloads)},
+    };
+    std::string keys = theme::key("R", "eal name   ") + theme::key("L", "ocation   ") + theme::key("E", "mail   ") +
+                       theme::key("T", "agline   ") + theme::key("P", "assword   ") + theme::key("Q", "uit");
+    ListTemplate        tpl;
+    const ListTemplate* t = listScreenTemplate("ACCOUNT.LST", tpl) ? &tpl : nullptr;
+    if (!t) {  // the built-in account window, unchanged when the look has no template
+        out_ += theme::CLS;
+        out_ += "\r\n" + theme::drip("ACCOUNT");
+        out_ += theme::window("YOUR ACCOUNT", rows);
+        out_ += "\r\n   " + keys;
+        prompt();
+        return;
+    }
+    out_ += listScreenTop("ACCOUNT", "", t);
+    const ArtStyle style = theme::artStyle();
+    int            n = 0;
+    for (const auto& r : rows) {
+        if (n >= t->rows) break;
+        out_ += "\x1b[" + std::to_string(t->y + n) + ";" + std::to_string(t->x) + "H" +
+                renderRow(*t, AcsUser{}, [&](const std::string& k) { return k == "LB" ? r.first : k == "VL" ? r.second : std::string(); }, style) +
+                theme::RESET;
+        n++;
+    }
+    out_ += listScreenKeys(keys, t);
     prompt();
 }
 

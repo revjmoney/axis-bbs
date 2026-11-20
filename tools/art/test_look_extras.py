@@ -26,11 +26,18 @@ class LookPackTest(unittest.TestCase):
         try:
             written = dict(install_cyd.map_theme_zip(src, out))
             for name in ('MAIN.ANS', 'GOODBYE.ANS', 'GOODBYE.LITE.ANS', 'MAIN.LITE.ANS',
-                         'LOGIN.LITE.ANS', 'FILES.LST', 'MSGS.LST', 'USERS.LST', 'THEME.CFG'):
+                         'LOGIN.LITE.ANS', 'FILES.LST', 'MSGS.LST', 'USERS.LST', 'THEME.CFG',
+                         'ACCOUNT.ANS', 'ACCOUNT.LITE.ANS', 'ACCOUNT.LST',
+                         'WHO.ANS', 'WHO.LITE.ANS', 'WHO.LST',
+                         'DOORLB.ANS', 'DOORLB.LITE.ANS', 'DOORLB.LST',
+                         'SYSOP.ANS', 'SYSOP.LITE.ANS', 'SYSOP.LST',
+                         'MENUS.ANS', 'MENUS.LITE.ANS'):
                 self.assertIn(name, written, name)
                 self.assertTrue(os.path.isfile(os.path.join(out, name)))
             self.assertLessEqual(written['GOODBYE.LITE.ANS'], 2048)
             self.assertLessEqual(written['MAIN.LITE.ANS'], 2048)
+            for name in ('ACCOUNT.LITE.ANS', 'WHO.LITE.ANS', 'DOORLB.LITE.ANS', 'SYSOP.LITE.ANS', 'MENUS.LITE.ANS'):
+                self.assertLessEqual(written[name], 700, name)
             with open(os.path.join(out, 'THEME.CFG'), encoding='ascii') as fh:
                 text = fh.read()
             self.assertIn('dialect=axis', text)
