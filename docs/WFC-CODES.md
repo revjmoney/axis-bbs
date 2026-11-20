@@ -51,14 +51,14 @@ Each prints the key's letter where it stands and makes that spot a tap target (t
 | `KB` | B | Boards |
 | `KF` | F | Files |
 | `KL` | L | Logs (the sysop menu's System section, where the event log is) |
-| `KE` | E | Events |
-| `KA` | A | Archive editor |
-| `KV` | ! | Validate |
+| `KE` | E | Events: the event log, and the jobs the board already runs (poll the message net, purge old posts, clear the log, mirror status, restart). Anything that deletes or restarts asks first |
+| `KA` | A | Archive editor: each type is checked, kept unchecked, or rejected. ZIP is the one this board can check. AXISBBS.NFO on or off |
+| `KV` | ! | Validate: uploads waiting to be listed. Validate, delete, move or info |
 | `KO` | space | Local logon |
 
 Example: `[|KS]ettings` draws `[S]ettings` with `S` tappable. A node line (`NA`..`NH`) is tappable anywhere on its row.
 
-The same letters work at the keyboard on the WFC and, for sysops, after `//` online (`//U` goes straight to Users). At the board `//` alone opens the WFC; over telnet it opens the sysop menu, whose "Waiting for caller screen" item shows the WFC, and there Q or Esc goes back (it never hangs up). `wfc=classic` keeps the built-in WFC (`art/wfc80.ans`, `art/wfccyd.ans`) whatever the theme. `L` opens the System section of the sysop menu (the event log is there). `E`, `A` and `!` say "coming soon" for now. A line that starts with `@` leaves the WFC on the serial console.
+The same letters work at the keyboard on the WFC and, for sysops, after `//` online (`//U` goes straight to Users). At the board `//` alone opens the WFC; over telnet it opens the sysop menu, whose "Waiting for caller screen" item shows the WFC, and there Q or Esc goes back (it never hangs up). `wfc=classic` keeps the built-in WFC (`art/wfc80.ans`, `art/wfccyd.ans`) whatever the theme. `L` opens the System section of the sysop menu (the event log is there). `E` opens Events, `A` the archive editor and `!` the upload queue (see the table). A line that starts with `@` leaves the WFC on the serial console. A new upload is kept off the caller lists until the sysop validates it.
 
 ## Art rules
 

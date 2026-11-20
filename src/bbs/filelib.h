@@ -46,6 +46,8 @@ public:
     virtual bool describe(const std::string&, const std::string&, const std::string&) { return false; }  // add to FILES.BBS
     virtual bool remove(const std::string&, const std::string&) { return false; }
     virtual bool rename(const std::string&, const std::string& /*from*/, const std::string& /*to: must not exist*/) { return false; }
+    // Move one file into another area, keeping its description (including a validation hold). False when it cannot.
+    virtual bool moveTo(const std::string&, const std::string&, const std::string&) { return false; }
     virtual ~FileLibrary() = default;
 };
 
@@ -59,6 +61,13 @@ std::vector<FileEntry> mergeFilesBbs(const std::string& filesBbs,
 // characters, no '/', '\' or ':', no control characters, and not starting with '.' (so "." and
 // ".." are out). Every store checks names with this, and so does the main for a follower's request.
 bool safeFileName(const std::string& name);
+
+// A new upload is listed in FILES.BBS with a description that starts with '~' until the sysop validates it
+// (the WFC ! queue). Callers never see those rows. A description the sysop wrote does not start with '~'.
+bool fileAwaitingValidation(const std::string& desc);
+std::string filePublicDesc(const std::string& desc);   // the text after the hold mark, or the description as it is
+std::string fileHoldDesc(const std::string& callerDesc);  // the description stored while it waits
+std::vector<FileEntry> publicFiles(std::vector<FileEntry> files);  // the rows callers may see
 
 std::string fileSizeText(uint32_t bytes);  // "512", "48K", "21.0M"
 // A file list only has room for `width` columns. A description that says "movie" past that

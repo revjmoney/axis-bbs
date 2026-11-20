@@ -133,7 +133,7 @@ void AnsiViewer::showPacks() {
     file_.reset();
     packs_.clear();
     for (auto& f : lib_.list(area_))
-        if (ext(f.name) == "ZIP") packs_.push_back(f);
+        if (ext(f.name) == "ZIP" && !fileAwaitingValidation(f.desc)) packs_.push_back(f);
     std::stable_partition(packs_.begin(), packs_.end(), [](const FileEntry& f) {
         std::string low = f.desc;
         for (char& c : low) c = (char)std::tolower((unsigned char)c);

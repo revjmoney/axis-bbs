@@ -32,8 +32,8 @@ std::string cleanUploadName(const std::string& in) {
     return out;
 }
 
-TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info)
-    : lib_(lib), req_(std::move(req)), line_(line), info_(std::move(info)) {
+TransferJob::TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info, ArchivePolicy policy)
+    : lib_(lib), req_(std::move(req)), line_(line), info_(std::move(info)), policy_(policy) {
     if (!req_.upload) {
         src_ = lib_.open(req_.area, req_.name);
         if (!src_) {
@@ -147,15 +147,19 @@ void TransferJob::finish() {
         note_ = proc_->note();
         return;
     }
-    lib_.describe(req_.area, saved_, req_.desc.empty() ? "(uploaded, no description)" : req_.desc);
+    awaiting_ = true;
+    lib_.describe(req_.area, saved_, fileHoldDesc(req_.desc));
     ok_ = true;
     if (proc_) note_ = proc_->note();
+    if (!note_.empty()) note_ += " ";
+    note_ += "Waiting for the sysop to validate it.";
 }
 
 void TransferJob::beginProcessing(uint8_t* workspace, size_t size, uint8_t* zipState) {
     wantWorkspace_ = false;
     proc_.reset(new UploadProcessor(lib_, req_.area, saved_, info_, workspace, size));
     proc_->setZipState(zipState);
+    proc_->setAddInfo(policy_.nfo);
     std::string s = "\r\n\r\n";
     s += theme::window("PROCESSING UPLOAD", {{"file", saved_},
                                              {"step 1", "unzip, test every file's CRC"},
@@ -207,10 +211,19 @@ bool TransferJob::step(uint32_t now) {
         return false;
     }
     if (kept_) {
-        size_t dot = saved_.rfind('.');
-        std::string ext = dot == std::string::npos ? "" : saved_.substr(dot);
-        for (char& c : ext) c = (char)std::toupper((unsigned char)c);
-        if (ext == ".ZIP") {
+        ArchiveMode mode = policy_.forName(saved_);
+        if (mode == ArchiveMode::Reject) {
+            lib_.remove(req_.area, saved_);
+            kept_ = false;
+            ok_ = false;
+            done_ = true;
+            size_t      dot = saved_.rfind('.');
+            std::string ext = dot == std::string::npos ? std::string() : saved_.substr(dot);
+            for (char& c : ext) c = (char)std::toupper((unsigned char)c);
+            note_ = ext.empty() ? "this board does not take that upload" : "this board does not take " + ext + " uploads";
+            return false;
+        }
+        if (mode == ArchiveMode::Check) {  // ZIP only: forName never says Check for a type this board cannot unpack
             wantWorkspace_ = true;
             return true;
         }

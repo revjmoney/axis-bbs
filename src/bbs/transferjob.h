@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "bbs/config.h"
 #include "bbs/features.h"
 #include "bbs/filelib.h"
 #include "bbs/uploadproc.h"
@@ -29,7 +30,7 @@ std::string cleanUploadName(const std::string& name);  // upper case, safe chara
 #if AXIS_TRANSFERS
 class TransferJob {
 public:
-    TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info = {});
+    TransferJob(FileLibrary& lib, TransferRequest req, door::ByteStream& line, UploadInfo info = {}, ArchivePolicy policy = {});
 #if AXIS_NETS
     // A download from a file that is already open (a Net Files fetch: req.area and req.name are only for the
     // host's log and screen). ready, when set, holds the sender until the data is there (transfer.h). The
@@ -52,6 +53,7 @@ public:
     uint32_t           size() const { return size_; }
     const std::string& savedName() const { return saved_; }
     const std::string& note() const { return note_; }  // why it failed, in plain words
+    bool held() const { return awaiting_; }  // saved, and waiting for the sysop to validate it
     const TransferRequest& request() const { return req_; }
 
 private:
@@ -69,9 +71,10 @@ private:
     std::unique_ptr<net::Transfer> xfer_;
     std::unique_ptr<UploadProcessor> proc_;
     UploadInfo                     info_;
+    ArchivePolicy                  policy_;
     std::string                    saved_, note_, held_;  // held_: 1Ah bytes that may be XMODEM padding
     uint32_t                       size_ = 0;
-    bool                           ok_ = false, done_ = false, gotFile_ = false, kept_ = false, wantWorkspace_ = false;
+    bool                           ok_ = false, done_ = false, gotFile_ = false, kept_ = false, wantWorkspace_ = false, awaiting_ = false;
     uint32_t                       lastDraw_ = 0;
 };
 #else

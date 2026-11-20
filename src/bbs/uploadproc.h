@@ -29,6 +29,7 @@ public:
     UploadProcessor(FileLibrary& lib, std::string area, std::string name, UploadInfo info, uint8_t* workspace,
                     size_t workspaceSize);
     void               setZipState(uint8_t* state) { state_ = state; }  // ZipReader::kStateBytes, when the workspace is only the 32 KB window
+    void               setAddInfo(bool on) { addInfo_ = on; }  // false: still check and rezip, but leave AXISBBS.NFO out
     bool               step();  // false once finished
     Result             result() const { return result_; }
     Stage              stage() const { return stage_; }
@@ -62,6 +63,7 @@ private:
     size_t               at_ = 0;
     Stage                stage_ = Stage::Open;
     Result               result_ = Result::Running;
+    bool                 addInfo_ = true;
     std::string          note_;
 };
 

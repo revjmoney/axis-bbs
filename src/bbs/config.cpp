@@ -62,6 +62,16 @@ namespace {
 bool areaFrom(const std::string& v, FileArea& a);
 }  // namespace
 
+namespace {
+// "check", "keep" or "reject". A type this board cannot unpack never stores "check" (it is keep).
+const char* archiveWord(const std::string& v, bool allowCheck) {
+    if (v == "reject") return "reject";
+    if (v == "keep") return "keep";
+    if (v == "check") return allowCheck ? "check" : "keep";
+    return nullptr;
+}
+}  // namespace
+
 BbsConfig parseConfig(const std::string& ini) {
     BbsConfig              c;
     c.loginSplash = true;  // on unless the settings say login_splash=0
@@ -132,6 +142,13 @@ BbsConfig parseConfig(const std::string& ini) {
         else if (k == "nuv_no") c.nuvNo = (int)n;
         else if (k == "nuv_level") c.nuvLevel = (int)n;
         else if (k == "free_kb") c.freeKb = (int)n;
+        else if (k == "archive_zip") { if (const char* w = archiveWord(v, true)) c.archiveZip = w; }
+        else if (k == "archive_rar") { if (const char* w = archiveWord(v, false)) c.archiveRar = w; }
+        else if (k == "archive_arj") { if (const char* w = archiveWord(v, false)) c.archiveArj = w; }
+        else if (k == "archive_tar") { if (const char* w = archiveWord(v, false)) c.archiveTar = w; }
+        else if (k == "archive_gz") { if (const char* w = archiveWord(v, false)) c.archiveGz = w; }
+        else if (k == "archive_other") { if (const char* w = archiveWord(v, false)) c.archiveOther = w; }
+        else if (k == "archive_nfo") c.archiveNfo = n != 0;
         else if (k == "theme") {
             if (const char* id = theme::knownLook(v)) c.theme = id;
         } else if (k == "wfc") {  // a look id, or blank to follow the theme. Anything else is ignored.
@@ -312,6 +329,13 @@ std::string formatConfig(const BbsConfig& c) {
     kv("nuv_no", std::to_string(c.nuvNo));
     kv("nuv_level", std::to_string(c.nuvLevel));
     kv("free_kb", std::to_string(c.freeKb));
+    kv("archive_zip", c.archiveZip);
+    kv("archive_rar", c.archiveRar);
+    kv("archive_arj", c.archiveArj);
+    kv("archive_tar", c.archiveTar);
+    kv("archive_gz", c.archiveGz);
+    kv("archive_other", c.archiveOther);
+    kv("archive_nfo", c.archiveNfo ? "1" : "0");
     for (size_t i = 0; i < c.doors.size(); i++) {
         const DoorEntry& d = c.doors[i];
         kv(("door" + std::to_string(i + 1)).c_str(),
@@ -326,6 +350,40 @@ std::string formatConfig(const BbsConfig& c) {
     for (auto& u : c.unknown) kv(u.first.c_str(), u.second);
     kv("setup_done", c.setupDone ? "1" : "0");
     return s;
+}
+
+namespace {
+ArchiveMode modeOf(const std::string& w) {
+    return w == "reject" ? ArchiveMode::Reject : w == "check" ? ArchiveMode::Check : ArchiveMode::Keep;
+}
+std::string upperExt(std::string name) {
+    size_t dot = name.rfind('.');
+    std::string ext = dot == std::string::npos ? std::string() : name.substr(dot);
+    for (char& c : ext) c = (char)std::toupper((unsigned char)c);
+    return ext;
+}
+}  // namespace
+
+ArchiveMode ArchivePolicy::forName(const std::string& name) const {
+    std::string ext = upperExt(name);
+    if (ext == ".ZIP") return zip;
+    if (ext == ".RAR") return rar == ArchiveMode::Check ? ArchiveMode::Keep : rar;
+    if (ext == ".ARJ") return arj == ArchiveMode::Check ? ArchiveMode::Keep : arj;
+    if (ext == ".TAR") return tar == ArchiveMode::Check ? ArchiveMode::Keep : tar;
+    if (ext == ".GZ" || ext == ".TGZ" || ext == ".GZIP") return gz == ArchiveMode::Check ? ArchiveMode::Keep : gz;
+    return other == ArchiveMode::Check ? ArchiveMode::Keep : other;
+}
+
+ArchivePolicy archivePolicy(const BbsConfig& c) {
+    ArchivePolicy p;
+    p.zip = modeOf(c.archiveZip);
+    p.rar = modeOf(c.archiveRar);
+    p.arj = modeOf(c.archiveArj);
+    p.tar = modeOf(c.archiveTar);
+    p.gz = modeOf(c.archiveGz);
+    p.other = modeOf(c.archiveOther);
+    p.nfo = c.archiveNfo;
+    return p;
 }
 
 const std::vector<std::pair<std::string, char>>& menuCommands() {
