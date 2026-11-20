@@ -17,7 +17,7 @@ The default data folder is `/var/lib/axis` for the service user `axis`, else `~/
 
 ## The .deb package
 
-Install the package built for your architecture (`<version>` is the release, e.g. 0.53):
+Install the package built for your architecture (`<version>` is the release, e.g. 0.54):
 
     sudo apt install ./axispc_<version>_amd64.deb
 
