@@ -369,7 +369,7 @@ def check(g, data, size, nodes):
     return labels
 
 
-SAMPLE = {'BN': 'AXIS UNDERGROUND CNC', 'SN': 'Rev', 'MB': 'main board', 'VN': '0.53', 'CT': '12', 'TC': '4821', 'PT': '4', 'UT': '2', 'LC': 'Saylor',
+SAMPLE = {'BN': 'AXIS UNDERGROUND CNC', 'SN': 'Rev', 'MB': 'main board', 'VN': '0.54', 'CT': '12', 'TC': '4821', 'PT': '4', 'UT': '2', 'LC': 'Saylor',
           'SD': '14.2G', 'RM': '143', 'IP': '192.168.1.164', 'UP': '3d 04:12', 'TM': '21:04', 'DT': '2026-11-08',
           'NA': '1 Rev  reading messages', 'NB': '2 Saylor  in a door: LORD', 'NC': '3 waiting', 'ND': '4 waiting',
           'EA': '21:03 Saylor logged on to node 2', 'EB': '20:58 upload: AXISFLSH.ZIP (1.9 MB)',
