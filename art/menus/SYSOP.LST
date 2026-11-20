@@ -1,0 +1,7 @@
+; Sysop panel. KY the key, LB the label, VL the value. CR in the caption is the breadcrumb.
+geom=3,6,74,14
+colours=111,15
+head=SYSOP
+caption=|08@CR60@
+rule=1
+row=@KY1@ @LB30@ @VL40@

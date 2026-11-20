@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Rev. J. Money
-"""Rebuild GOODBYE screens, list templates, THEME.CFG and slow-radio lite art for all eight looks.
+"""Rebuild GOODBYE screens, list templates, THEME.CFG, the remaining caller screens and slow-radio lite art.
 
     python3 tools/art/make_look_extras.py
 
@@ -310,6 +310,86 @@ def users_lst(st):
     ).encode('ascii')
 
 
+# Header screens for the screens that were still drawn in code. A lite one is three short lines, under 700 bytes.
+HEADS = (
+    ('ACCOUNT', 'YOUR ACCOUNT'),
+    ('WHO', "WHO'S ONLINE"),
+    ('DOORLB', 'DOORS'),
+    ('SYSOP', 'SYSOP'),
+    ('MENUS', 'MENUS'),
+)
+
+
+def draw_head(look, title, lite):
+    g = Grid()
+    st = LOOKS[look]
+    g.text(0, 1, st['mark'], st['hot'])
+    g.text(1, 1, title, st['accent'])
+    if lite:
+        g.text(2, 1, '%BN  node %NN', st['body'])
+        return emit(g)
+    rule(g, 2, st)
+    motif(g, 0, 64, look)
+    g.text(3, 1, '%BN  node %NN', st['body'])
+    return emit(g)
+
+
+def account_lst(st):
+    return (
+        '; Account screen. LB the label, VL the value. A missing file keeps the built-in window.\n'
+        'geom=4,8,70,10\n'
+        'colours=%d,%d\n'
+        'head=ACCOUNT\n'
+        'caption=|%02dYOUR ACCOUNT\n'
+        'rule=1\n'
+        'row=|%02d@LB10@ |%02d@VL40@\n'
+        'keys=|08[|%02dR|08]eal name   [|%02dL|08]ocation   [|%02dE|08]mail   [|%02dT|08]agline   [|%02dP|08]assword   [|%02dQ|08]uit\n'
+        % (st['hi'], st['reg'], st['dim'], st['hot'], st['value'], st['hot'], st['hot'], st['hot'], st['hot'], st['hot'], st['hot'])
+    ).encode('ascii')
+
+
+def who_lst(st):
+    return (
+        '; Who is online. ND node, HN handle, AC what they are doing, LK the radio link.\n'
+        'geom=4,8,74,12\n'
+        'colours=%d,%d\n'
+        'head=WHO\n'
+        "caption=|%02dWHO'S ONLINE\n"
+        'rule=1\n'
+        'row=|%02d@ND>4@ |%02d@HN24@ |%02d@AC@LK\n'
+        % (st['hi'], st['reg'], st['dim'], st['hot'], st['value'], st['body'])
+    ).encode('ascii')
+
+
+def doorlb_lst(st):
+    # No colour codes in the row: the lightbar paints the whole line.
+    return (
+        '; Doors lightbar. KY the key (1-9, then A), NM the name, ID the door id.\n'
+        'geom=4,8,44,14\n'
+        'colours=%d,%d\n'
+        'head=DOORLB\n'
+        'caption=|%02dDoor\n'
+        'rule=1\n'
+        'row=[@KY1@] @NM30@\n'
+        'keys=|08Door number  arrows move, |%02dEnter|08 picks, or the key\n'
+        % (st['hi'], st['reg'], st['dim'], st['hot'])
+    ).encode('ascii')
+
+
+def sysop_lst(st):
+    # No colour codes in the row: the bar colour is colours=.
+    return (
+        '; Sysop panel. KY the key, LB the label, VL the value. CR in the caption is the breadcrumb.\n'
+        'geom=3,6,74,14\n'
+        'colours=%d,%d\n'
+        'head=SYSOP\n'
+        'caption=|%02d@CR60@\n'
+        'rule=1\n'
+        'row=@KY1@ @LB30@ @VL40@\n'
+        % (st['hi'], st['reg'], st['dim'])
+    ).encode('ascii')
+
+
 def theme_cfg(look):
     return (
         '; %s draws with the AXIS pipe colours.\n'
@@ -325,8 +405,15 @@ def bundle(look, menus):
         'FILES.LST': files_lst(st),
         'MSGS.LST': msgs_lst(st),
         'USERS.LST': users_lst(st),
+        'ACCOUNT.LST': account_lst(st),
+        'WHO.LST': who_lst(st),
+        'DOORLB.LST': doorlb_lst(st),
+        'SYSOP.LST': sysop_lst(st),
         'THEME.CFG': theme_cfg(look),
     }
+    for stem, title in HEADS:
+        files[stem + '.ANS'] = draw_head(look, title, False)
+        files[stem + '.LITE.ANS'] = draw_head(look, title, True)
     menu_files = {}
     for theme_name, menu_name, title, kind in SCREENS:
         data = draw_lite(look, title, kind)
@@ -340,7 +427,14 @@ def bundle(look, menus):
         menu_files['FILES.LST'] = files['FILES.LST']
         menu_files['MSGS.LST'] = files['MSGS.LST']
         menu_files['USERS.LST'] = files['USERS.LST']
+        menu_files['ACCOUNT.LST'] = files['ACCOUNT.LST']
+        menu_files['WHO.LST'] = files['WHO.LST']
+        menu_files['DOORLB.LST'] = files['DOORLB.LST']
+        menu_files['SYSOP.LST'] = files['SYSOP.LST']
         menu_files['THEME.CFG'] = files['THEME.CFG']
+        for stem, _title in HEADS:
+            menu_files[stem + '.ANS'] = files[stem + '.ANS']
+            menu_files[stem + '.LITE.ANS'] = files[stem + '.LITE.ANS']
         for name, title, kind in MENU_ONLY:
             menu_files[name] = draw_lite(look, title, kind)
     return files, menu_files

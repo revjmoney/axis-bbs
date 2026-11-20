@@ -40,6 +40,16 @@ bool ThemeProvider::readThemeFileAppend(const char* folder, const std::string& n
     if (out.size() - old > artMax_) artMax_ = out.size() - old;
     return true;
 }
+bool ThemeProvider::readMenusArtAppend(const std::string& name, size_t cap, size_t offset, std::string& out) {
+    if (!axis::bbs::theme::menuSetArt(name) || !host_.hasSd()) return false;
+    FILE* f = fopen((host_.sdRoot() + "/menus/" + name).c_str(), "rb");
+    if (!f) return false;
+    const size_t old = out.size();
+    axis::bbs::readFileAppend(f, cap, offset, out);
+    fclose(f);
+    if (out.size() - old > artMax_) artMax_ = out.size() - old;
+    return true;
+}
 std::string ThemeProvider::readThemeFile(const char* folder, const std::string& name, size_t cap, size_t offset, bool* opened) {
     std::string s;
     bool        ok = readThemeFileAppend(folder, name, cap, offset, s);
@@ -88,6 +98,7 @@ std::string ThemeProvider::themeArtLocal(const std::string& name) {
     const std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg()) : cfg().theme;
     std::string       s = readThemeFile(folder.c_str(), name);
     if (s.empty()) s = readThemeFile(axis::bbs::theme::legacyThemeFolder(folder), name);
+    if (s.empty()) readMenusArtAppend(name, kThemeArtCap, 0, s);  // theme folder, then the menu set
     return s;
 }
 // The main's answer to "T name offset": one piece of a theme file, at most kPosterChunk bytes, so the reply stays under the
@@ -103,9 +114,12 @@ bool ThemeProvider::themeArtPieceAppend(const std::string& name, size_t off, siz
     // the waiting screens come from the WFC skin's folder (the theme's, unless the sysop picked another); the rest from the theme;
     // "crt:MAIN.ANS" from that look's folder (the sysop's preview on a follower)
     std::string folder = wfcScreen(name) ? axis::bbs::wfcFolder(cfg()) : cfg().theme, file = name, look;
-    if (axis::bbs::theme::splitLookFile(name, look, file)) folder = look;
+    bool preview = axis::bbs::theme::splitLookFile(name, look, file);
+    if (preview) folder = look;
     if (readThemeFileAppend(folder.c_str(), file, want, off, out)) return true;
-    return readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, out);
+    if (readThemeFileAppend(axis::bbs::theme::legacyThemeFolder(folder), file, want, off, out)) return true;
+    if (preview) return false;  // a look preview is that look's file only
+    return readMenusArtAppend(file, want, off, out);  // the menu set, for the screens whose default art lives there
 }
 // A follower pulls a theme file from the main in pieces. *answered: every request was answered (an empty file is a real "none").
 std::string ThemeProvider::themeArtRemote(const std::string& name, bool* answered, size_t cap, bool reserve) {
@@ -149,6 +163,13 @@ std::string ThemeProvider::themeArtTop(const std::string& name, int rows) {
     if (!host_.hasSd() || name.find('/') != std::string::npos) return "";
     std::string s = readThemeTop(cfg().theme.c_str(), name, rows);
     if (s.empty()) s = readThemeTop(axis::bbs::theme::legacyThemeFolder(cfg().theme), name, rows);
+    if (s.empty() && axis::bbs::theme::menuSetArt(name) && host_.hasSd()) {
+        if (FILE* f = fopen((host_.sdRoot() + "/menus/" + name).c_str(), "rb")) {
+            axis::bbs::readTopRowsAppend(f, rows, kThemeArtCap, s);
+            fclose(f);
+            if (s.size() > artMax_) artMax_ = s.size();
+        }
+    }
     return s;
 }
 // The cleaned WFC.ANS every WFC screen (telnet, serial, local) draws: read once, shared, and read again only when something may have

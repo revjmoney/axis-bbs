@@ -76,6 +76,8 @@ private:
     const axis::bbs::BbsConfig& cfg() { return config(); }
     std::string themesDir() { return host_.sdRoot() + "/themes/"; }
     bool        readThemeFileAppend(const char* folder, const std::string& name, size_t cap, size_t offset, std::string& out);
+    // ACCOUNT.ANS and the other menu-set screens (theme::menuSetArt): the theme folder missed, so /menus is next.
+    bool        readMenusArtAppend(const std::string& name, size_t cap, size_t offset, std::string& out);
     bool        posterPieceLocalAppend(const std::string& name, size_t offset, size_t want, std::string& out);
     std::string posterPieceLocal(const std::string& name, size_t offset, size_t want, bool* opened);
     // cap 0: today's (the poster's, else kThemeArtCap, all of it reserved); a small file gives its own cap and reserves nothing

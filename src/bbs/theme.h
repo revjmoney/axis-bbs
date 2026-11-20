@@ -78,9 +78,13 @@ void setArt(std::function<std::string(const std::string&)> art);
 // whole file through setArt's reader and cuts it.
 void setArtTop(std::function<std::string(const std::string&, int rows)> top);
 std::string artFor(const std::string& title, int rows = 0);  // "" when there is none; rows > 0: only its first rows
-// A look's list template (FILES.LST, MSGS.LST, USERS.LST): `read` gives the raw text by name ("" when the look has none), read on
-// demand and never kept here; `bad` hears a name whose file would not parse, once per name (the log line).
+// A look's list template (FILES.LST, MSGS.LST, USERS.LST, and the account, who's online, doors and sysop templates): `read`
+// gives the raw text by name ("" when the look has none), read on demand and never kept here; `bad` hears a name whose file
+// would not parse, once per name (the log line).
 void setListTemplate(std::function<std::string(const std::string& name)> read, std::function<void(const std::string& name)> bad = nullptr);
+// True for the header art whose default file ships in the menu set (ACCOUNT.ANS, WHO.ANS, DOORLB.ANS, SYSOP.ANS, MENUS.ANS
+// and their .LITE.ANS). The theme folder is still tried first. Other screens stay on their own lookup.
+bool menuSetArt(const std::string& name);
 // true and `out` filled when the look has NAME.LST and it parses; false otherwise (the caller draws its built-in frame)
 bool listTemplate(const std::string& name, ListTemplate& out);
 // The active look's THEME.CFG text (its art dialect and colours): `read` fills it ("" when the look has none) and returns false when the ask got no answer (the style is then not cached: the next screen asks again), `bad` hears why a

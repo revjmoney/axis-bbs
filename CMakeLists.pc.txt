@@ -147,6 +147,7 @@ add_executable(axis_tests
     tests/test_menufile.cpp
     tests/test_listtemplate.cpp
     tests/test_listscreen.cpp
+    tests/test_lookscreens.cpp
     tests/test_lightbar.cpp
     tests/test_menurunner.cpp
     tests/test_node_menus.cpp

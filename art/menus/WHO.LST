@@ -1,0 +1,7 @@
+; Who is online. ND node, HN handle, AC what they are doing, LK the radio link.
+geom=4,8,74,12
+colours=111,15
+head=WHO
+caption=|08WHO'S ONLINE
+rule=1
+row=|14@ND>4@ |15@HN24@ |07@AC@LK
