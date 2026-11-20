@@ -231,6 +231,8 @@ const LookRow kLooks[] = {
     {"skulls", "Skulls", "skulls", Look::Axis, nullptr},
     {"underground", "Underground", "underground", Look::Axis, nullptr},
     {"wasteland", "Wasteland", "wasteland", Look::Axis, nullptr},
+    {"vision", "Vision", "vision/3 bars", Look::Axis, nullptr},
+    {"outpost", "Outpost", "renegade rampart", Look::Axis, nullptr},
 };
 
 const LookRow* findLook(const std::string& name) {
@@ -471,6 +473,8 @@ WfcColours wfcColoursFor(const std::string& name) {
     if (std::string(id) == "cathedral") return {5, 13, 7, 15, 8, 8, 5, 5, 8, 13, 15, {13, 13, 5, 5, 4, 4, 5}};
     if (std::string(id) == "skulls") return {4, 12, 7, 15, 8, 8, 4, 4, 8, 13, 15, {12, 12, 4, 4, 4, 8, 8}};
     if (std::string(id) == "wasteland") return {6, 14, 7, 15, 8, 8, 6, 6, 8, 13, 14, {14, 6, 6, 6, 8, 8, 6}};
+    if (std::string(id) == "vision") return {1, 11, 7, 15, 8, 8, 1, 3, 8, 13, 15, {11, 11, 3, 3, 9, 9, 1}};  // blue bar, cyan type
+    if (std::string(id) == "outpost") return {4, 12, 7, 15, 8, 8, 1, 9, 8, 13, 15, {12, 12, 4, 4, 9, 1, 1}};  // red and blue, the rampart
     return wfcColours(Look::Axis);  // axis and underground
 }
 

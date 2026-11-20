@@ -80,6 +80,8 @@ PACKS = [
     ("skulls", "axis-skulls-ansi-2026-11-07.zip", "Skulls"),
     ("underground", "axis-underground-ansi-2026-11-07.zip", "Underground (Saylor poster)"),
     ("wasteland", "axis-wasteland-ansi-2026-11-07.zip", "Wasteland"),
+    ("vision", "axis-vision-gate-ansi-2026-11-20.zip", "Vision Gate (ViSiON/3)"),
+    ("outpost", "axis-outpost-rampart-ansi-2026-11-20.zip", "Outpost (Renegade)"),
 ]
 
 # Public Synchronet menu packs. Same @# names as lordtxt.lrd. Not copied into git.

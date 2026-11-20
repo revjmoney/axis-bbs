@@ -40,6 +40,29 @@ class LookPackTest(unittest.TestCase):
                 os.remove(os.path.join(out, name))
             os.rmdir(out)
 
+    def test_dialect_packs_ship_the_screen_set(self):
+        import make_dialect_packs
+        self.assertEqual(make_dialect_packs.verify(ROOT), 0)
+        for look in (make_dialect_packs.VISION, make_dialect_packs.OUTPOST):
+            src = os.path.join(ROOT, 'art', 'packs', look.zipname)
+            out = tempfile.mkdtemp()
+            try:
+                written = dict(install_cyd.map_theme_zip(src, out))
+                for name in ('MAIN.ANS', 'LOGIN.ANS', 'GOODBYE.ANS', 'BULLETIN.ANS', 'FILES.LST',
+                             'MSGS.LST', 'USERS.LST', 'THEME.CFG', 'MAIN.LITE.ANS', 'GOODBYE.LITE.ANS'):
+                    self.assertIn(name, written, name)
+                    self.assertTrue(os.path.isfile(os.path.join(out, name)))
+                self.assertLessEqual(written['MAIN.LITE.ANS'], 700)
+                self.assertLessEqual(written['GOODBYE.LITE.ANS'], 700)
+                with open(os.path.join(out, 'THEME.CFG'), encoding='ascii') as fh:
+                    text = fh.read()
+                want = 'dialect=vision3' if look.id == 'vision' else 'dialect=renegade'
+                self.assertIn(want, text)
+            finally:
+                for name in os.listdir(out):
+                    os.remove(os.path.join(out, name))
+                os.rmdir(out)
+
 
 if __name__ == '__main__':
     unittest.main()

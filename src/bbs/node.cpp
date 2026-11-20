@@ -582,7 +582,7 @@ void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the ha
     if (a.find("|{") != std::string::npos) {
         // the key: the raw art plus the width of every value its pipe codes can expand to before a field
         size_t key = std::hash<std::string>{}(a) * 3 + (size_t)style.dialect;  // (a dialect reads `||` and `^n` differently)
-        for (const char* k : {"UH", "NAME", "LEVEL", "GL", "CALLS", "TL", "NODE", "MN", "TIME", "DATE", "BN", "UPLDS", "DNLDS", "LCALL", "CAN", "CFAN", "%UN", "%BN", "%SN", "%NN", "%DT", "%VN", "%TL", "%MA", "%FA"})
+        for (const char* k : {"UH", "NAME", "LEVEL", "GL", "CALLS", "TL", "NODE", "MN", "TIME", "DATE", "BN", "UPLDS", "DNLDS", "LCALL", "CAN", "CFAN", "%UN", "%BN", "%SN", "%NN", "%ND", "%DT", "%VN", "%TL", "%MA", "%FA"})
             key = key * 131 + menuValue(k).size() + 1;
         LoginCells* hit = nullptr;
         for (int i = 0; i < g_loginCellsN; i++)
@@ -929,9 +929,10 @@ std::string Node::mci(const std::string& s) const {
             else if (code == "NN") v = std::to_string(node_);
             else if (code == "DT" || code == "TM") v = info_().timeText;
             else if (code == "VN") v = kAxisVersion;
-            else if (theme::artStyle().dialect == Dialect::Renegade) {  // Renegade's own: time left, the open areas; the rest AXIS has no data for
+            else if (theme::artStyle().dialect == Dialect::Renegade) {  // Renegade's own: time left, the node, the open areas
                 known = true;
                 if (code == "TL") v = menuValue("TL");
+                else if (code == "ND") v = std::to_string(node_);
                 else if (code == "MA") v = menuValue("CAN");
                 else if (code == "FA") v = menuValue("CFAN");
                 else known = code == "CF" || code == "CM" || code == "MP" || code == "PE" || code == "NL";  // (blank)
