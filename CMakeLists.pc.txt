@@ -243,6 +243,7 @@ if(WIN32)  # the same gate, caller line and release check, on Winsock and WinHTT
   target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp
                                     tests/test_pcline.cpp src/pcapp/pcline.cpp
                                     tests/test_win_os.cpp
+                                    src/platform/cyd/sdfiles.cpp
                                     src/platform/win/updatecheck.cpp
                                     src/platform/win/paths.cpp
                                     src/platform/os/os_win.cpp
