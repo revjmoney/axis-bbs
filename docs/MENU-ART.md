@@ -107,6 +107,21 @@ rule=1
 row=|15@HN20@ |07@LO19@ |06@CA>5@  |08@TG22@|TW
 ```
 
+## The looks that ship
+
+The `theme` setting is one id for every caller. Ten ids are known. Eight of them ship a screen set:
+
+| Look | Where the files live |
+|---|---|
+| `axis` | `art/menus` (the house set). On a card, `/sd/themes/axis/` |
+| `crt`, `sea`, `haunted`, `cathedral`, `skulls`, `underground`, `wasteland` | the `axis/` folder inside that look's zip in `art/packs` |
+
+Each of those eight has `GOODBYE.ANS` (the logoff screen, with `%BN` and `%NN`), `FILES.LST`, `MSGS.LST`, `USERS.LST`, `THEME.CFG` set to `dialect=axis`, and a `.LITE.ANS` beside each menu screen a slow radio caller draws. The underground pack also has `SAYLOR.LITE.ANS`. `tools/art/make_look_extras.py` rebuilds them. `tools/install_cyd.py` copies a pack's `axis/` folder into the theme folder.
+
+`cyan` and `green` are built-in colour chromes. Older files say `oblivion` and `iniquity`; those load as `cyan` and `green`. They do not ship the goodbye screen, the list templates, the lite screens or a `THEME.CFG`. An unknown `theme` value is `axis`.
+
+The eight shipped `THEME.CFG` files say `dialect=axis`. The board also reads `dialect=vision3` and `dialect=renegade` when a look's file says so. It does not read Mystic, Synchronet or WWIV codes.
+
 ## Dialects
 
 A look draws its art in one of three dialects, set by an optional `THEME.CFG` in the look's folder (its legacy folder name
