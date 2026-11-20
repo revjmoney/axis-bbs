@@ -92,6 +92,11 @@ struct BbsConfig {
     int         sessions = 2;
     int         nuvYes = 3, nuvNo = 3, nuvLevel = 20;  // new user voting: yes votes in, no votes out (0 = sysop only), who votes ("nuv_yes", "nuv_no", "nuv_level")
     int         ratio = 0, freeKb = 0;  // downloads up to ratio x uploads + freeKb ("ratio", "free_kb"; 0 = no ratio)
+    // Archive editor (WFC A). "check", "keep" or "reject" ("archive_zip" and the rest). ZIP defaults to check
+    // (CRC, then rezip). The others default to keep: this board lists them and does not unpack them.
+    std::string archiveZip = "check", archiveRar = "keep", archiveArj = "keep", archiveTar = "keep", archiveGz = "keep",
+                archiveOther = "keep";
+    bool archiveNfo = true;  // "archive_nfo": add AXISBBS.NFO when a ZIP is checked (on unless 0)
     std::string theme = "axis";  // the one look ("theme"): axis, cyan, green, or a card screenset id
     std::string wfc;             // the waiting screen skin: a look id, or blank to follow the theme. Use wfcFolder().
     bool        loginSplash = false;  // Rev's RotatoCAM ANSI splash before the login screen ("login_splash", on unless 0)  // callers this board takes at once (1 to 4). Each can be in LORD, a movie, a pack, or a transfer. A deflated piece or a ZIP check borrows the board's one inflate window, one at a time.
@@ -151,6 +156,16 @@ struct BbsConfig {
 // The file areas: switched on in the settings ("files_on") and built into this firmware (features.h). A build without
 // them keeps the saved files_on line as written and never offers them.
 inline bool filesOffered(const BbsConfig& c) { return AXIS_FILES && c.filesOn; }
+
+// What an upload of each archive type does. Check is only meaningful for ZIP (the one type this board unpacks).
+enum class ArchiveMode { Check, Keep, Reject };
+struct ArchivePolicy {
+    ArchiveMode zip = ArchiveMode::Check, rar = ArchiveMode::Keep, arj = ArchiveMode::Keep;
+    ArchiveMode tar = ArchiveMode::Keep, gz = ArchiveMode::Keep, other = ArchiveMode::Keep;
+    bool        nfo = true;
+    ArchiveMode forName(const std::string& name) const;  // by the file's extension
+};
+ArchivePolicy archivePolicy(const BbsConfig& c);
 
 BbsConfig   parseConfig(const std::string& ini);
 std::string formatConfig(const BbsConfig& c);

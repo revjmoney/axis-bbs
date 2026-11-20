@@ -12,6 +12,7 @@
 
 #include "app/services.h"
 #include "app/session.h"
+#include "bbs/archive.h"
 #include "bbs/config.h"
 #include "bbs/features.h"
 #include "bbs/filelib.h"
@@ -131,7 +132,7 @@ bool run(const std::string& cmd, Services& s, std::vector<Session*>& sessions, O
     };
 #if !AXIS_FILES
     if (cmd == "@AREAS" || starts(cmd, "@FILES ") || starts(cmd, "@FDESC ") || starts(cmd, "@FREN ") || starts(cmd, "@FDEL ") ||
-        starts(cmd, "@FMV ") ||
+        starts(cmd, "@FMV ") || starts(cmd, "@FINFO ") ||
         ((starts(cmd, "@AREASET ") || starts(cmd, "@AREADEL ") || starts(cmd, "@AREAUP ")) && !starts(sub(cmd, (unsigned)indexOf(cmd, ' ') + 1), "msgs|"))) {
         out.println("axis: the file areas are not in this firmware");
     } else
@@ -330,6 +331,36 @@ bool run(const std::string& cmd, Services& s, std::vector<Session*>& sessions, O
         else ok = s.files().remove(area, name);
         s.host.event("sysop: " + sub(cmd, 1, (unsigned)indexOf(cmd, ' ')) + " " + area + " " + name + (ok ? "" : " (failed)"));
         out.println(ok ? "axis: done" : "axis: that didn't work");
+    } else if (starts(cmd, "@FMV ")) {  // "@FMV area|name|toarea" (the board's own runCommand does this on its card first)
+        std::string a = sub(cmd, (unsigned)indexOf(cmd, ' ') + 1);
+        int         b1 = indexOf(a, '|'), b2 = b1 < 0 ? -1 : indexOf(a, '|', (unsigned)b1 + 1);
+        std::string area = b1 > 0 ? sub(a, 0, (unsigned)b1) : "", name = b1 > 0 ? (b2 > 0 ? sub(a, (unsigned)b1 + 1, (unsigned)b2) : sub(a, (unsigned)b1 + 1)) : "",
+                    third = b2 > 0 ? sub(a, (unsigned)b2 + 1) : "";
+        bool ok = s.files && bbs::safeFileName(area) && bbs::safeFileName(name) && bbs::safeFileName(third) && area != third &&
+                  s.files().moveTo(area, name, third);
+        s.host.event("sysop: FMV " + area + " " + name + (ok ? "" : " (failed)"));
+        out.println(ok ? "axis: done" : "axis: that didn't work");
+    } else if (starts(cmd, "@FINFO ")) {  // "@FINFO area|name": what is inside, for the validation queue
+        std::string a = sub(cmd, 7);
+        int         bar = indexOf(a, '|');
+        std::string area = bar > 0 ? sub(a, 0, (unsigned)bar) : "", name = bar > 0 ? sub(a, (unsigned)bar + 1) : "";
+        std::unique_ptr<bbs::RandomFile> f = s.files ? s.files().open(area, name) : nullptr;
+        if (!f) out.println("axis: that file isn't there");
+        else {
+            bbs::ArchiveInfo info = bbs::listArchive(name, *f);
+            if (info.kind.empty()) out.printf("not an archive this board reads\n%u bytes\n", (unsigned)f->size());
+            else {
+                out.printf("%s  %u files\n", info.kind.c_str(), (unsigned)info.entries.size());
+                size_t n = 0;
+                for (auto& e : info.entries) {
+                    if (n++ == 30) {
+                        out.println("...");
+                        break;
+                    }
+                    out.printf("%s  %u\n", e.name.c_str(), (unsigned)e.size);
+                }
+            }
+        }
 #endif
     } else if (starts(cmd, "@POSTS ")) {  // "@POSTS area": num|from|subject|date per post (the newest 200; paged: newest first)
         if (s.messages) {

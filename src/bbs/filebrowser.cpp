@@ -65,7 +65,7 @@ void FileBrowser::showAreas() {
         out_ += std::string("   ") + theme::ORANGE + std::string(70, '\xcd') + "\r\n";
         usingList_ = false;
         for (size_t i = 0; i < areas_.size(); i++) {
-            size_t n = lib_.list(areas_[i].id).size();
+            size_t n = publicFiles(lib_.list(areas_[i].id)).size();
             char   b[128];
             std::snprintf(b, sizeof b, "   %s[%2u]%s %-34s%s%4u file%s\r\n", CYAN, (unsigned)(i + 1), HI, areas_[i].name.c_str(), DIM,
                           (unsigned)n, n == 1 ? "" : "s");
@@ -85,7 +85,7 @@ void FileBrowser::showAreas() {
     std::vector<std::string> rows;
     rows.reserve(areas_.size());
     for (size_t i = 0; i < areas_.size(); i++) {  // names and counts only: one pass, not every file's bytes
-        size_t n = lib_.list(areas_[i].id).size();
+        size_t n = publicFiles(lib_.list(areas_[i].id)).size();
         char   b[80];
         std::snprintf(b, sizeof b, "%-40.40s %4u file%s", areas_[i].name.c_str(), (unsigned)n, n == 1 ? "" : "s");
         rows.emplace_back(b);
@@ -107,7 +107,7 @@ void FileBrowser::openArea(size_t i) {
 #if AXIS_NET_FILES
     skip_ = 0;
 #endif
-    if (!net()) files_ = lib_.list(areas_[i].id);
+    if (!net()) files_ = publicFiles(lib_.list(areas_[i].id));
     hasTpl_ = bars_ && listScreenTemplate("FILES.LST", tpl_);  // once per open area: every page and redraw uses this one
     st_ = St::List;
     showPage();
@@ -450,7 +450,7 @@ void FileBrowser::search(const std::string& what) {
     char b[160];
     for (const FileArea& a : areas_) {
         bool header = false;
-        for (const FileEntry& f : lib_.list(a.id)) {
+        for (const FileEntry& f : publicFiles(lib_.list(a.id))) {
             if (lower(f.name).find(want) == std::string::npos && lower(f.desc).find(want) == std::string::npos) continue;
             if (!header) {
                 out_ += std::string("\r\n   ") + theme::ORANGE + a.name + "\r\n";
@@ -472,7 +472,7 @@ void FileBrowser::showNewFiles() {
     char b[160];
     for (const FileArea& a : areas_) {
         bool header = false;
-        for (const FileEntry& f : lib_.list(a.id)) {
+        for (const FileEntry& f : publicFiles(lib_.list(a.id))) {
             if (f.date <= since_) continue;
             if (!header) {
                 out_ += std::string("\r\n   ") + theme::ORANGE + a.name + "\r\n";
@@ -666,7 +666,7 @@ void FileBrowser::transferDone(bool ok, uint32_t bytes, uint32_t ms, const std::
     if (!ok) rows.push_back({"why", note.empty() ? "stopped" : note});
     out_ += "\r\n\r\n";
     out_ += theme::window(ok ? (req_.upload ? "UPLOAD COMPLETE" : "DOWNLOAD COMPLETE") : "TRANSFER FAILED", rows);
-    if (!net()) files_ = lib_.list(areas_[area_].id);  // an upload is in the list now (Net Files: showPage asks again)
+    if (!net()) files_ = publicFiles(lib_.list(areas_[area_].id));  // a held upload stays off the list (Net Files: showPage asks again)
     if (bars_) showPage();
     else {
         st_ = St::List;

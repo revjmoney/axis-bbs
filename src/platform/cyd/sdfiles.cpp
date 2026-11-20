@@ -134,6 +134,22 @@ bool SdFileLibrary::remove(const std::string& areaId, const std::string& name) {
     return ::unlink((folderOf(areaId) + "/" + name).c_str()) == 0;
 }
 
+bool SdFileLibrary::moveTo(const std::string& fromArea, const std::string& name, const std::string& toArea) {
+    if (!hasSd() || !safeName(fromArea) || !safeName(name) || !safeName(toArea) || fromArea == toArea) return false;
+    std::string desc;
+    for (const FileEntry& e : list(fromArea))
+        if (e.name == name) {
+            desc = e.desc;
+            break;
+        }
+    std::string src = folderOf(fromArea) + "/" + name, dst = folderOf(toArea) + "/" + name;
+    struct stat st;
+    if (::stat(dst.c_str(), &st) == 0) return false;
+    if (::rename(src.c_str(), dst.c_str()) != 0) return false;
+    if (!desc.empty()) describe(toArea, name, desc);
+    return true;
+}
+
 bool SdFileLibrary::rename(const std::string& areaId, const std::string& from, const std::string& to) {
     if (!hasSd() || !safeName(areaId) || !safeName(from) || !safeName(to)) return false;
     struct stat st;

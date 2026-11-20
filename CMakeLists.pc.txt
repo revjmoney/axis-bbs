@@ -230,6 +230,7 @@ target_include_directories(axis_tests PRIVATE third_party/doctest)
 target_link_libraries(axis_tests PRIVATE axiscore)
 if(UNIX AND NOT APPLE)  # the native Linux program's accept gate and card mirror bookkeeping: plain C++ and POSIX, so the tests can link them
   target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp
+                                    src/platform/cyd/sdfiles.cpp
                                     tests/test_cardmirror.cpp src/platform/linux/cardmirror.cpp
                                     tests/test_app_session.cpp
                                     tests/test_pcline.cpp src/pcapp/pcline.cpp

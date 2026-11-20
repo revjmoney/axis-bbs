@@ -19,7 +19,7 @@
 namespace axis::bbs {
 
 // the sysop menu's sections: beginAt() goes straight into one (the Renegade hotkeys and the board's own screen)
-enum class SysopSection { Top, Settings, Users, Menus, MsgBases, FileAreas, System, Look };
+enum class SysopSection { Top, Settings, Users, Menus, MsgBases, FileAreas, System, Look, Events, Archive, Validate };
 
 // An @ command that only means something on the board where it was typed (its cluster key, a restart,
 // setup, its SD card, its relays and screen). A follower runs these itself; the main never runs one
@@ -119,6 +119,9 @@ private:
     void nodes(Layer& l);
     void look(Layer& l);
     void lookPick(Layer& l, const std::string& key, bool follow);
+    void events(Layer& l);    // WFC E: the jobs the board already runs, each destructive one asks first
+    void archive(Layer& l);   // WFC A: per type, checked, unchecked or rejected, and AXISBBS.NFO
+    void validate(Layer& l);  // WFC !: uploads waiting to be listed, with validate, delete, move and info
     void station(Layer& l);
     void modem(Layer& l);
 #if AXIS_NETS
