@@ -277,14 +277,13 @@ Version parseVersion(std::string_view text) {
     Version v;
     if (text.empty() || text.size() > 32) return v;
     int acc = -1;
-    for (size_t i = 0; i <= text.size(); i++) {
-        bool end = i == text.size();
-        char c = end ? '.' : text[i];
+    // Index only while i < size. The last component is stored after the loop, so a read never lands on text[size].
+    for (size_t i = 0; i < text.size(); i++) {
+        char c = text[i];
         if (c == '.') {
             if (acc < 0 || v.n >= 4) return Version{};
             v.part[v.n++] = acc;
             acc = -1;
-            if (end) break;
         } else if (c >= '0' && c <= '9') {
             if (acc < 0) acc = 0;
             if (acc > 1000000) return Version{};
@@ -293,7 +292,9 @@ Version parseVersion(std::string_view text) {
             return Version{};
         }
     }
-    v.ok = v.n > 0;
+    if (acc < 0 || v.n >= 4) return Version{};  // a trailing dot, or a fifth component
+    v.part[v.n++] = acc;
+    v.ok = true;
     return v;
 }
 

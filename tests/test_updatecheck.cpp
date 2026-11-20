@@ -28,6 +28,8 @@ TEST_CASE("version order is numeric, and a missing part is zero") {
     CHECK(cmpVersion(parseVersion("1.0"), parseVersion("0.99")) > 0);
     CHECK(cmpVersion(parseVersion("1.2.3"), parseVersion("1.2")) > 0);
     CHECK_FALSE(parseVersion("").ok);
+    CHECK_FALSE(parseVersion("0.53.").ok);
+    CHECK_FALSE(parseVersion("0..1").ok);
     CHECK_FALSE(parseVersion("0.53-rc1").ok);
     CHECK_FALSE(parseVersion("pc-v0.53").ok);
     CHECK(std::string(kBlink).size() <= 5);
