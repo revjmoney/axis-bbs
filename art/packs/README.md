@@ -17,5 +17,17 @@ The numbered `ans/` screens are renamed on install (MAIN.ANS, MSGS.ANS, FILES.AN
 the ANSI file area (8.3 names: AXUNDERG.ZIP, AXCRT.ZIP, AXHAUNT.ZIP, AXDEEPSE.ZIP, AXCATHED.ZIP, AXSKULLS.ZIP,
 AXWASTE.ZIP, SAYLORP4.ZIP, SAYLORP3.ZIP).
 
+Two further packs draw in the other art dialects, built by `tools/art/make_dialect_packs.py`. The art is original.
+
+| Zip | Look id | Dialect |
+|---|---|---|
+| `axis-vision-gate-ansi-2026-11-20.zip` | `vision` | `vision3` (`\|C1` to `\|C7`, `\|\|`, `\|B`, `\|CL`) |
+| `axis-outpost-rampart-ansi-2026-11-20.zip` | `outpost` | `renegade` (`^0` to `^9`, `\|16` to `\|31`, `\|CS`, `%TL`, `%ND`) |
+
+Each has the same screen set as the other looks: numbered `ans/` screens for the installer, and `axis/` copies under
+the firmware names (MAIN, LOGIN, FASTLOGN, NEWUSER, MATRIX, FILES, DOORS, MSGS, PRELOGON, SHOP, MILL, BULLETIN,
+GOODBYE), plus `FILES.LST`, `MSGS.LST`, `USERS.LST`, `THEME.CFG` and a `.LITE.ANS` beside each of those screens.
+A lite screen stays at or under 700 bytes.
+
 The CRT Hardcore v2 zip here leaves out `assets/skull-reference.webp`, the third-party reference picture its README
 names; nothing in the pack needs it to display or rebuild the ANSI.

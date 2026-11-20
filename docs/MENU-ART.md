@@ -109,18 +109,20 @@ row=|15@HN20@ |07@LO19@ |06@CA>5@  |08@TG22@|TW
 
 ## The looks that ship
 
-The `theme` setting is one id for every caller. Ten ids are known. Eight of them ship a screen set:
+The `theme` setting is one id for every caller. Twelve ids are known. Ten of them ship a screen set:
 
 | Look | Where the files live |
 |---|---|
 | `axis` | `art/menus` (the house set). On a card, `/sd/themes/axis/` |
-| `crt`, `sea`, `haunted`, `cathedral`, `skulls`, `underground`, `wasteland` | the `axis/` folder inside that look's zip in `art/packs` |
+| `crt`, `sea`, `haunted`, `cathedral`, `skulls`, `underground`, `wasteland` | the `axis/` folder inside that look's zip in `art/packs`. `THEME.CFG` says `dialect=axis` |
+| `vision` | `axis-vision-gate-ansi-2026-11-20.zip`. `THEME.CFG` says `dialect=vision3` |
+| `outpost` | `axis-outpost-rampart-ansi-2026-11-20.zip`. `THEME.CFG` says `dialect=renegade` |
 
-Each of those eight has `GOODBYE.ANS` (the logoff screen, with `%BN` and `%NN`), `FILES.LST`, `MSGS.LST`, `USERS.LST`, `THEME.CFG` set to `dialect=axis`, and a `.LITE.ANS` beside each menu screen a slow radio caller draws. The underground pack also has `SAYLOR.LITE.ANS`. `tools/art/make_look_extras.py` rebuilds them. `tools/install_cyd.py` copies a pack's `axis/` folder into the theme folder.
+Each of those ten has `GOODBYE.ANS` (the logoff screen, with `%BN` and `%NN`, and a bright `AXIS MICRO BBS` footer), `FILES.LST`, `MSGS.LST`, `USERS.LST`, `THEME.CFG`, and a `.LITE.ANS` beside each menu screen a slow radio caller draws. The underground pack also has `SAYLOR.LITE.ANS`. `tools/art/make_look_extras.py` rebuilds the eight `dialect=axis` looks. `tools/art/make_dialect_packs.py` rebuilds Vision Gate and Outpost. `tools/install_cyd.py` copies a pack's `axis/` folder into the theme folder.
 
 `cyan` and `green` are built-in colour chromes. Older files say `oblivion` and `iniquity`; those load as `cyan` and `green`. They do not ship the goodbye screen, the list templates, the lite screens or a `THEME.CFG`. An unknown `theme` value is `axis`.
 
-The eight shipped `THEME.CFG` files say `dialect=axis`. The board also reads `dialect=vision3` and `dialect=renegade` when a look's file says so. It does not read Mystic, Synchronet or WWIV codes.
+Eight of the shipped `THEME.CFG` files say `dialect=axis`. Vision Gate says `dialect=vision3` and Outpost says `dialect=renegade`. The board reads those three. It does not read Mystic, Synchronet or WWIV codes.
 
 ## Dialects
 
@@ -150,12 +152,12 @@ blue), `r0..r9` = `7,11,14,15,9,13,12,10,8,3`.
 | `\|\|` | as today | one literal `\|` | one literal `\|` |
 | `^0`-`^9` | not a code | not a code | the look's slot `r0..r9`, a full attribute |
 | `\|CS` | not a code | not a code | clear screen (as `\|CL`) |
-| `%TL %MA %FA` | blank | blank | minutes left, the open message area, the open file area |
+| `%TL %ND %MA %FA` | blank | blank | minutes left, the node number, the open message area, the open file area |
 | `%CF %CM %MP %PE %NL` | blank | blank | blank |
 
 Every dialect also fills `|CAN` and `|CFAN` (the message and file area open now, blank at a menu), `|UPLDS` and `|DNLDS`
 (blank: AXIS keeps bytes, not the counts these mean), `|LCALL` (the date of their call before this one, MM/DD/YY) and
-`|POSTS` (blank: AXIS keeps no post count). The `%TL %MA %FA` row above is `renegade` only: in `axis` and `vision3`
+`|POSTS` (blank: AXIS keeps no post count). The `%TL %ND %MA %FA` row above is `renegade` only: in `axis` and `vision3`
 looks those, and `%CF %CM %MP %PE %NL`, print blank on menu art.
 
 The dialect applies to menu screens, the login screen, screens drawn by the art drawer, list templates (`.LST`), and the

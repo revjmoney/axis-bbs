@@ -151,6 +151,7 @@ add_executable(axis_tests
     tests/test_acs.cpp
     tests/test_pipecodes.cpp
     tests/test_dialect.cpp
+    tests/test_dialect_packs.cpp
     tests/test_menufile.cpp
     tests/test_listtemplate.cpp
     tests/test_listscreen.cpp
@@ -269,7 +270,7 @@ if(WIN32)
   target_link_libraries(axis_netpeer PRIVATE bcrypt)
 endif()
 
-target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data")
+target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data" AXIS_ART_PACKS="${CMAKE_SOURCE_DIR}/art/packs")
 
 add_executable(xfertest tools/xfertest/main.cpp)
 target_link_libraries(xfertest PRIVATE axiscore)

@@ -673,6 +673,24 @@ TEST_CASE("BULLETIN.ANS and MAIN.ANS stop at Ctrl-Z, in every dialect") {
     }
 }
 
+TEST_CASE("renegade %ND is the node number and the other dialects leave it blank") {
+    {
+        DialectRig r("dialect=renegade\n", {{"BULLETIN.ANS", "N[%ND]"}});
+        r.login();
+        CHECK(r.all.find("N[1]") != std::string::npos);  // this rig's node is 1
+    }
+    {
+        DialectRig r("dialect=vision3\n", {{"BULLETIN.ANS", "N[%ND]"}});
+        r.login();
+        CHECK(r.all.find("N[]") != std::string::npos);
+    }
+    {
+        DialectRig r("", {{"BULLETIN.ANS", "N[%ND]"}});
+        r.login();
+        CHECK(r.all.find("N[%ND]") != std::string::npos);  // axis keeps the letters, as it does for any % code it does not know
+    }
+}
+
 TEST_CASE("menu codes: %TL is blank in vision3 and filled in renegade; UPLDS and DNLDS blank; LCALL formatted") {
     const std::string art = "T[%TL]U[|UPLDS]D[|DNLDS]L[|LCALL]E";
     {

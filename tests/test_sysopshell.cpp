@@ -62,6 +62,8 @@ TEST_CASE("the look is picked from a numbered list, not typed") {
     CHECK(o.find("Crt, hardcore crt") != std::string::npos);
     CHECK(o.find("Skulls, skulls") != std::string::npos);
     CHECK(o.find("Wasteland, wasteland") != std::string::npos);
+    CHECK(o.find("Vision, vision/3 bars") != std::string::npos);
+    CHECK(o.find("Outpost, renegade rampart") != std::string::npos);
     CHECK(o.find("Oblivion") == std::string::npos);
     CHECK(o.find("now") != std::string::npos);  // the fixture's theme is the old green id
     r.type("2");
