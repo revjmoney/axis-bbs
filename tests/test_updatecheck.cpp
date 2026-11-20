@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Rev. J. Money
 #include "platform/linux/updatecheck.h"
 
+#include "platform/linux/hostconf.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <unistd.h>
+
 #include "doctest.h"
 
 using namespace axis::pcupdate;
@@ -227,5 +234,74 @@ TEST_CASE("the sysop report names the release, the url and how to turn the check
     CHECK(on.find("blinks") != std::string::npos);
     auto off = formatReport(c, "0.53", false);
     CHECK(off.find("off") != std::string::npos);
+    CHECK(off.find("Update check") != std::string::npos);
     CHECK(off.find("0.54") == std::string::npos);
+}
+
+TEST_CASE("the blink is on only while the check is on and a newer release is cached") {
+    CHECK(blinks(true, true));
+    CHECK_FALSE(blinks(false, true));  // opting out clears it even though the cached release is still newer
+    CHECK_FALSE(blinks(true, false));
+    CHECK_FALSE(blinks(false, false));
+}
+
+TEST_CASE("update_check is written into axis.conf without touching the other lines") {
+    std::string text = "# ports\nlan_port=2323\nupdate_check=1  # daily\npublic_port=0\n";
+    std::string out;
+    REQUIRE(hostConfRewrite(text, "update_check", "0", out));
+    CHECK(out.find("# ports\n") == 0);
+    CHECK(out.find("lan_port=2323\n") != std::string::npos);
+    CHECK(out.find("update_check=0 # daily\n") != std::string::npos);
+    CHECK(out.find("public_port=0\n") != std::string::npos);
+    CHECK(out.find("update_check=1") == std::string::npos);
+    std::string added;
+    REQUIRE(hostConfRewrite("lan_port=2323\n", "update_check", "0", added));
+    CHECK(added == "lan_port=2323\nupdate_check=0\n");
+    std::string refused;
+    CHECK_FALSE(hostConfRewrite("a=1\n", "update_check", "0\n1", refused));
+    CHECK(refused.empty());
+}
+
+TEST_CASE("the sysop switch saves update_check and clears the blink until it is turned on") {
+    char tmpl[] = "/tmp/axis-up-XXXXXX";
+    char* dir = mkdtemp(tmpl);
+    REQUIRE(dir != nullptr);
+    std::string data = dir;
+    {
+        std::ofstream conf(data + "/axis.conf");
+        conf << "# keep me\nlan_port=2399\nupdate_check=1\n";
+    }
+    Cache cached;
+    cached.checked = 1700000000;
+    cached.latest = "0.54";
+    cached.newer = true;
+    cached.summary = "Faster doors";
+    cached.url = "https://github.com/revjmoney/axis-bbs/releases/tag/pc-v0.54";
+    {
+        std::ofstream cache(data + "/update-check");
+        cache << writeCache(cached);
+    }
+    hostConfLoad(data);
+    start(data, true, kDefaultRepo, "0.53");
+    CHECK(enabled());
+    CHECK(view().alert);
+    CHECK(command("state") == "on\n");
+    auto off = command("off");
+    CHECK(off.find("off") != std::string::npos);
+    CHECK_FALSE(enabled());
+    CHECK_FALSE(view().alert);  // the waiting screen stops blinking
+    CHECK(hostConfInt("update_check", 1, 0, 1) == 0);
+    CHECK(command("state") == "off\n");
+    std::ifstream back(data + "/axis.conf");
+    std::string   saved((std::istreambuf_iterator<char>(back)), std::istreambuf_iterator<char>());
+    CHECK(saved.find("# keep me\n") == 0);
+    CHECK(saved.find("lan_port=2399\n") != std::string::npos);
+    CHECK(saved.find("update_check=0\n") != std::string::npos);
+    CHECK(command("on").find("on") != std::string::npos);
+    CHECK(enabled());
+    CHECK(view().alert);  // the cached newer release blinks again
+    CHECK(hostConfInt("update_check", 0, 0, 1) == 1);
+    std::remove((data + "/axis.conf").c_str());
+    std::remove((data + "/update-check").c_str());
+    rmdir(dir);
 }

@@ -197,6 +197,13 @@ TEST_CASE("a newer axispc release blinks in the version spot and that spot is a 
     for (const auto& h : spots)
         if (h.key == 'V') tap = true;
     CHECK(tap);
+    s.versionBlink.clear();  // the sysop turned the check off: the host stops sending the blink
+    s.versionPhase = 0;
+    CHECK(expandArt("|VN", {}, wfcValues(s)) == std::string(kAxisVersion));
+    CHECK(wfcRefreshMs(s) == 5000);
+    spots.clear();
+    wfcMarkVersion(s, term, spots);
+    for (const auto& h : spots) CHECK(h.key != 'V');
     WfcSnapshot plain;
     AnsiTerm    quiet(40, 5);
     auto        none = drawWfc("@VN#@", plain, quiet);

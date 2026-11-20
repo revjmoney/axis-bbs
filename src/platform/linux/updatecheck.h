@@ -105,6 +105,9 @@ std::string buildRequest(std::string_view repo, std::string_view version);
 // What the sysop reads (System, Update, or V on the waiting screen). No network.
 std::string formatReport(const Cache& c, std::string_view current, bool enabled);
 
+// The waiting screen blinks only while the check is on and a newer release is cached.
+bool blinks(bool enabled, bool newer);
+
 struct View {
     bool        alert = false;  // blink the version on the waiting screen
     std::string url;
@@ -118,5 +121,9 @@ void        poll();
 void        stop();
 View        view();
 std::string report();
+bool        enabled();
+// "on" / "off" (or 1 / 0) saves update_check in axis.conf and takes effect at once. "state" is "on" or "off".
+// Anything else, including empty, is the report. A save that fails leaves the switch as it was.
+std::string command(std::string_view arg);
 
 }  // namespace axis::pcupdate

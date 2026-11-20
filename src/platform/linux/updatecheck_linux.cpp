@@ -6,6 +6,8 @@
 // body is one log line and a stamp in <data>/update-check, then nothing until the next day.
 #include "platform/linux/updatecheck.h"
 
+#include "platform/linux/hostconf.h"
+
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +18,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -34,7 +37,7 @@ std::string             repoName;
 std::string             dataDir;
 std::string             loggedLatest;
 std::string             pendingLog;
-bool                    enabled = false;
+bool                    checkOn = false;
 bool                    alert = false;
 bool                    saidClock = false;
 bool                    began = false;
@@ -67,8 +70,8 @@ bool repoOk(const std::string& s) {
 }
 
 void rebuild() {  // mu held
-    alert = enabled && cache.newer && !cache.latest.empty();
-    reportText = formatReport(cache, currentVer, enabled);
+    alert = blinks(checkOn, cache.newer && !cache.latest.empty());
+    reportText = formatReport(cache, currentVer, checkOn);
 }
 
 void queueLog(const std::string& line) {  // mu held
@@ -400,7 +403,8 @@ void threadMain() {
         if (got.remember) cache = got.cache;
         else memoryChecked = now > 0 ? now : memoryChecked;
         rebuild();
-        if (got.parsed && cache.newer && cache.latest != loggedLatest) {
+        if (!checkOn) line.clear();  // the sysop turned the check off while this request was out
+        if (got.parsed && checkOn && cache.newer && cache.latest != loggedLatest) {
             line = newerLine(cache.latest);
             loggedLatest = cache.latest;
         } else if (got.remember && !saved && line.empty()) {
@@ -422,7 +426,7 @@ void start(const std::string& dir, bool on, const std::string& repo, const std::
     std::lock_guard<std::mutex> lock(mu);
     if (began) return;
     began = true;
-    enabled = on;
+    checkOn = on;
     dataDir = dir;
     currentVer = currentVersion;
     if (!repoOk(repo)) {
@@ -433,7 +437,7 @@ void start(const std::string& dir, bool on, const std::string& repo, const std::
     }
     if (!dir.empty()) cache = readCache(loadFile(dir + "/update-check"));
     rebuild();
-    if (!enabled) {
+    if (!checkOn) {
         std::printf("axis: update check: off (update_check=0)\n");
         return;
     }
@@ -448,7 +452,7 @@ void poll() {
         std::string line = takeLog();
         if (!line.empty()) std::printf("%s\n", line.c_str());
     }
-    if (!began || !enabled || dataDir.empty()) return;
+    if (!began || !checkOn || dataDir.empty()) return;
     if (inflight.load()) return;
     if (resultReady.exchange(false)) {
         if (worker.joinable()) worker.join();
@@ -514,6 +518,52 @@ std::string report() {
     } catch (...) {
     }
     return "No release check yet.\n";
+}
+
+bool enabled() {
+    std::lock_guard<std::mutex> lock(mu);
+    return checkOn;
+}
+
+namespace {
+std::string lowerArg(std::string_view raw) {
+    while (!raw.empty() && (raw.front() == ' ' || raw.front() == '\t')) raw.remove_prefix(1);
+    while (!raw.empty() && (raw.back() == ' ' || raw.back() == '\t' || raw.back() == '\r' || raw.back() == '\n')) raw.remove_suffix(1);
+    std::string s(raw);
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+// Saves update_check, then the live switch. Off clears the blink and asks a request already running to stop.
+// On lets the next poll look again, and the blink comes back at once when the saved release is still newer.
+bool setEnabled(bool on) {
+    if (!began) return false;
+    if (!hostConfSet("update_check", on ? "1" : "0")) return false;
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        checkOn = on;
+        if (!on) stopFlag.store(true);
+        rebuild();
+        if (on) nextLookMs = 0;
+    }
+    if (!on) wakeFd();
+    return true;
+}
+}  // namespace
+
+std::string command(std::string_view raw) {
+    std::string arg = lowerArg(raw);
+    if (arg.empty()) return report();
+    if (arg == "state") return std::string(enabled() ? "on\n" : "off\n");
+    if (arg == "on" || arg == "1") {
+        if (!setEnabled(true)) return "axis: update check: could not save update_check=1 in axis.conf\n";
+        return "axis: update check on\n";
+    }
+    if (arg == "off" || arg == "0") {
+        if (!setEnabled(false)) return "axis: update check: could not save update_check=0 in axis.conf\n";
+        return "axis: update check off\n";
+    }
+    return report();
 }
 
 }  // namespace axis::pcupdate

@@ -6270,8 +6270,9 @@ static void runCommand(const String& cmd, Print& out) {
         out.println("axis: test announcement queued");
 #endif
 #if AXIS_PC
-    } else if (cmd == "@PCUPDATE") {  // the once-a-day axispc release check: notes, or that it is off
-        std::string r = axis::pcupdate::report();
+    } else if (cmd == "@PCUPDATE" || cmd.startsWith("@PCUPDATE ")) {  // notes, or "on"/"off": the sysop switch
+        String      arg = cmd.length() > 10 ? cmd.substring(10) : String();
+        std::string r = axis::pcupdate::command(arg.c_str());
         out.print(r.c_str());
         if (r.empty() || r.back() != '\n') out.print('\n');
 #endif

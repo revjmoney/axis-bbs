@@ -818,10 +818,19 @@ void SysopShell::system(Layer& l) {
     l.items.push_back(page("Nodes", "", "NODES", [this](Layer& x) { nodes(x); }));
     l.items.push_back({"Status", "", show("STATUS", "@STATUS")});
 #if AXIS_PC
-    l.items.push_back({"Update", "", show("UPDATE", "@PCUPDATE")});  // the axispc release check (not in the firmware)
+    bool updateRow = true;
 #else
-    if (pcUpdateRow) l.items.push_back({"Update", "", show("UPDATE", "@PCUPDATE")});  // axispc, whose core is not built with AXIS_PC
+    bool updateRow = pcUpdateRow;  // axispc, whose core is not built with AXIS_PC
 #endif
+    if (updateRow) {  // the firmware leaves this out, so its System list does not move
+        std::string st;
+        for (auto& line : lines("@PCUPDATE state")) st += line;
+        bool on = st.find("off") == std::string::npos;
+        l.items.push_back({"Update check", on ? "on" : "off", [this, on] {
+                               did(run_(std::string("@PCUPDATE ") + (on ? "off" : "on")));
+                           }});
+        l.items.push_back({"Update", "", show("UPDATE", "@PCUPDATE")});
+    }
     l.items.push_back({"SD cards", "", show("CARDS", "@CARDS")});
     l.items.push_back({"Web, No-IP, Discord", "", show("WEB", "@WEB")});
     l.items.push_back({"Update No-IP now", "", show("NO-IP", "@NOIPNOW")});

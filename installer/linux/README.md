@@ -57,9 +57,10 @@ Other `axis.conf` keys: `lan_port`, `public_port`, `max_callers`, `max_per_ip`,
 
 Once a day, axis looks up the newest `pc-v*` GitHub release (not the ESP32 `v*` tags). When one is newer
 than this build, `*NEW*` blinks where the waiting screen shows the version. `V` on that screen, a tap on
-that spot, or System then Update, shows the notes and the release URL. `update_check=0` turns the check
-off (`1` is the default). The last result is kept in `<data>/update-check`, so a restart the same day
-does not ask again. A missing network, a timeout or a bad reply is one log line and does not stop the BBS.
+that spot, or System then Update, shows the notes and the release URL. System, Update check, turns the
+check off and on again; that writes `update_check` in `axis.conf` (`0` off, `1` the default) so a restart
+keeps it. The last result is kept in `<data>/update-check`, so a restart the same day does not ask again.
+A missing network, a timeout or a bad reply is one log line and does not stop the BBS.
 
 ## In a cluster of boards
 

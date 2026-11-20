@@ -820,8 +820,9 @@ void PcBbs::runCommand(const std::string& cmd, app::Out& out) {
         out.print(line);
         out.print(bbs::diagFields(d));
         out.print('\n');
-    } else if (cmd == "@PCUPDATE") {  // the once-a-day release check: notes, or that it is off
-        std::string r = pcupdate::report();
+    } else if (cmd == "@PCUPDATE" || cmd.rfind("@PCUPDATE ", 0) == 0) {  // notes, or "on"/"off": the sysop switch
+        std::string arg = cmd.size() > 10 ? cmd.substr(10) : std::string();
+        std::string r = pcupdate::command(arg);
         out.print(r.c_str());
         if (r.empty() || r.back() != '\n') out.print('\n');
     } else if (cmd == "@LOGCLEAR") {  // the event log (screen and files) and the page shown on the WFC

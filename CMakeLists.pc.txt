@@ -226,7 +226,8 @@ if(UNIX AND NOT APPLE)  # the native Linux program's accept gate and card mirror
                                     tests/test_cardmirror.cpp src/platform/linux/cardmirror.cpp
                                     tests/test_app_session.cpp
                                     tests/test_pcline.cpp src/pcapp/pcline.cpp
-                                    src/platform/linux/updatecheck_linux.cpp)  # compiled here so CI builds it without LovyanGFX
+                                    src/platform/linux/updatecheck_linux.cpp
+                                    src/platform/linux/hostconf.cpp)  # compiled here so CI builds the checker without LovyanGFX
   target_link_libraries(axis_tests PRIVATE pthread)
 endif()
 if(WIN32)

@@ -595,8 +595,10 @@ std::string buildRequest(std::string_view repo, std::string_view version) {
     return q;
 }
 
+bool blinks(bool enabled, bool newer) { return enabled && newer; }
+
 std::string formatReport(const Cache& c, std::string_view current, bool enabled) {
-    if (!enabled) return "Update check is off.\nSet update_check=1 in axis.conf to turn it on.\n";
+    if (!enabled) return "Update check is off.\nTurn it on from System, Update check, or set update_check=1 in axis.conf.\n";
     std::string o = "axispc ";
     o.append(current);
     o += "\n";
@@ -633,7 +635,7 @@ std::string formatReport(const Cache& c, std::string_view current, bool enabled)
             }
         }
     }
-    o += "Checked once a day. update_check=0 in axis.conf turns this off.\n";
+    o += "Checked once a day. System, Update check, or update_check=0 in axis.conf turns this off.\n";
     return o;
 }
 
@@ -643,6 +645,8 @@ void        poll() {}
 void        stop() {}
 View        view() { return {}; }
 std::string report() { return {}; }
+bool        enabled() { return false; }
+std::string command(std::string_view) { return {}; }
 #endif
 
 }  // namespace axis::pcupdate
