@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <utility>
 
 namespace axis::bbs {
 
@@ -56,6 +57,26 @@ std::vector<FileEntry> mergeFilesBbs(const std::string& filesBbs,
     }
     for (size_t i = 0; i < folder.size(); i++)
         if (!used[i] && upper(folder[i].first) != "FILES.BBS") out.push_back({folder[i].first, folder[i].second, ""});
+    return out;
+}
+
+bool fileAwaitingValidation(const std::string& desc) { return !desc.empty() && desc[0] == '~'; }
+
+std::string filePublicDesc(const std::string& desc) { return fileAwaitingValidation(desc) ? desc.substr(1) : desc; }
+
+std::string fileHoldDesc(const std::string& callerDesc) {
+    std::string d = callerDesc;
+    if (fileAwaitingValidation(d)) d.erase(0, 1);
+    while (!d.empty() && d[0] == ' ') d.erase(0, 1);
+    if (d.empty()) d = "(uploaded, no description)";
+    return "~" + d;
+}
+
+std::vector<FileEntry> publicFiles(std::vector<FileEntry> files) {
+    std::vector<FileEntry> out;
+    out.reserve(files.size());
+    for (FileEntry& e : files)
+        if (!fileAwaitingValidation(e.desc)) out.push_back(std::move(e));
     return out;
 }
 

@@ -794,7 +794,7 @@ static void bigButton(int y, const char* label, uint8_t colour) {
 static int                                detailSession = -1;  // the node detail screen is up for this session (-1: the WFC)
 static std::vector<axis::bbs::WfcHotspot> wfcSpots;            // where the keys and node lines landed
 static axis::bbs::WfcSnapshot             wfcShown;            // the values on the screen
-static uint32_t                           wfcDrawnMs = 0, wfcSoonUntil = 0;  // last expanded; a "coming soon" line until then
+static uint32_t                           wfcDrawnMs = 0;  // last expanded
 static bool                               wfcStale = true;     // draw it at the next turn (another screen was up, a key was tapped)
 static bool                               wfcOnPanel = false;  // the panel shows the WFC (@SHOT draws it again band by band)
 // The panel WFC moving against burn-in ("wfc_anim", bbs/wfcanim.h): it holds a 2,160 B copy of the cells only while it moves,
@@ -912,10 +912,9 @@ static void drawLocal() {
     localTerm->clean();
 }
 
-// The WFC's terminal: the art expanded with these values (and the "coming soon" line), on the heap; nullptr when short of memory.
+// The WFC's terminal: the art expanded with these values, on the heap; nullptr when short of memory.
 // Nothing on the screen changes here (drawWfc and @SHOT both build it): spots, if asked, gets where the keys landed.
-static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot& s, bool soon,
-                                                    std::vector<axis::bbs::WfcHotspot>* spots = nullptr) {
+static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot& s, std::vector<axis::bbs::WfcHotspot>* spots = nullptr) {
     std::unique_ptr<axis::bbs::AnsiTerm> t;
     try {  // (the cells are a vector: a failed allocation throws std::bad_alloc)
         t.reset(new axis::bbs::AnsiTerm(45, 24));
@@ -938,12 +937,9 @@ static std::unique_ptr<axis::bbs::AnsiTerm> wfcTerm(const axis::bbs::WfcSnapshot
         *spots = std::move(at);
         axis::bbs::wfcMarkVersion(s, *t, *spots);  // a newer axispc release: tap the version for the notes
     }
-    if (soon) t->feed("\x1b[24;2H\x1b[0;1;33;44m That one is coming soon. \x1b[0m");
-    else if (!s.notice.empty()) t->feed("\x1b[24;2H\x1b[0;1;37;41m " + s.notice + " \x1b[0m");  // the SD card notice (40 of 45 cells)
+    if (!s.notice.empty()) t->feed("\x1b[24;2H\x1b[0;1;37;41m " + s.notice + " \x1b[0m");  // the SD card notice (40 of 45 cells)
     return t;
 }
-
-static bool wfcSoon() { return wfcSoonUntil && (int32_t)(millis() - wfcSoonUntil) < 0; }
 
 // The panel WFC may move: it is turned on, nobody is online on this board, and the heap's largest block is not short
 // (below 40 KB it stops, above 56 KB it may go again).
@@ -961,8 +957,6 @@ static bool wfcAnimWanted() {
 static bool drawWfc() {
     HeapScope scope("drawWfc");
     uint32_t now = millis();
-    bool     soon = wfcSoon();
-    if (wfcSoonUntil && !soon) wfcSoonUntil = 0, wfcStale = true;  // the "coming soon" line goes
     if (!wfcStale && now - wfcDrawnMs < axis::bbs::wfcRefreshMs(wfcShown)) return false;
     wfcDrawnMs = now;
     axis::bbs::WfcSnapshot s = wfcSnapshot();
@@ -977,7 +971,7 @@ static bool drawWfc() {
     if (!wfcStale && s == wfcShown) return false;
     std::vector<axis::bbs::WfcHotspot> spots;
     std::unique_ptr<axis::bbs::AnsiTerm> t;
-    if (screenBandsInit()) t = wfcTerm(s, soon, &spots);  // (the band is made at boot: this only tries again if that failed)
+    if (screenBandsInit()) t = wfcTerm(s, &spots);  // (the band is made at boot: this only tries again if that failed)
     LGFX_Sprite* band = screenBand();
     if (!t || !band) {  // short on memory: say so (not whatever screen was up before), and try again at the next turn
         wfcAnim.unload();
@@ -3156,6 +3150,7 @@ static void netFilesRenamed(const std::string& area, const std::string& from, co
 // A caller's upload landed (serviceJob): listed once its crc is read.
 static void netFilesUploaded(const std::string& area, const std::string& name, const std::string& desc, const std::string& who) {
     if (asFollower()) return;  // (a follower's uploads land on the main through its file server)
+    if (axis::bbs::fileAwaitingValidation(desc)) return;  // listed for other boards once the sysop validates it
     NetShareItem it;
     it.area = area;
     it.name = name;
@@ -3190,6 +3185,7 @@ static void netListAllNext(NetHost& h) {
     std::vector<axis::bbs::FileEntry> v = callerFiles().list(sh.allArea);
     while (sh.allIx < v.size() && sh.q.size() < kNetShareQueue - kNetShareSpare) {
         const axis::bbs::FileEntry& e = v[sh.allIx++];
+        if (axis::bbs::fileAwaitingValidation(e.desc)) continue;  // not for other boards until the sysop validates it
         uint32_t k = axis::net::crc32((const uint8_t*)e.name.data(), e.name.size());
         if (std::find(sh.allHave.begin(), sh.allHave.end(), k) != sh.allHave.end()) continue;
         NetShareItem it;
@@ -5831,15 +5827,9 @@ static void handleTap(int x, int y) {
             return;
         }
         axis::bbs::SysopSection sec = axis::bbs::SysopSection::Top;
-        bool                    soon = false;
-        if (k && axis::bbs::renegadeKey(k, sec, soon)) {
-            if (!soon) {
-                openShell(sec);
-                return;
-            }
-            wfcSoonUntil = millis() + 2500;  // "That one is coming soon." for a moment
-            if (!wfcSoonUntil) wfcSoonUntil = 1;
-            wfcStale = true;
+        if (k && axis::bbs::renegadeKey(k, sec)) {
+            openShell(sec);
+            return;
         }
         return;
     }
@@ -6285,7 +6275,7 @@ static void runCommand(const String& cmd, Print& out) {
     } else if (cmd == "@SHOT") {  // bench: the screen over serial (tools/screenshots/cyd_shot.py)
         shotDoneMs = millis();
         std::unique_ptr<axis::bbs::AnsiTerm> wfc;  // the WFC on the panel: its terminal again, dumped band by band
-        if (wfcOnPanel && !screenSprite()) wfc = wfcTerm(wfcShown, wfcSoon());
+        if (wfcOnPanel && !screenSprite()) wfc = wfcTerm(wfcShown);
         screenShot([] {  // the cluster keeps its heartbeat while the screen streams out
             if (cluster) cluster->tick(millis());
         }, wfc.get(), wfc && wfcAnim.loaded() ? &wfcAnim : nullptr);

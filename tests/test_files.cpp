@@ -3,6 +3,7 @@
 #include "bbs/features.h"
 #if AXIS_FILES  // a build that leaves the file areas out has nothing here to test
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -14,6 +15,7 @@
 #include "bbs/filebrowser.h"
 #include "bbs/filelib.h"
 #include "bbs/node.h"
+#include "platform/cyd/sdfiles.h"
 
 using namespace axis::bbs;
 
@@ -74,6 +76,48 @@ TEST_CASE("FILES.BBS order and descriptions merge with the folder") {
     CHECK(list[2].name == "EXTRA.BIN");  // not described: listed last, no description
     CHECK(list[2].desc.empty());
 }
+
+TEST_CASE("a held upload stays off the caller's file list and out of search") {
+    FakeLibrary lib = library();
+    lib.areas["axis"].push_back({"NEW.ZIP", 10, "~fresh upload"});
+    BbsConfig   cfg = twoAreas();
+    std::string out;
+    FileBrowser b(cfg.areas, lib, out);
+    b.begin();
+    std::string p = plain(out);
+    CHECK(p.find("2 file") != std::string::npos);  // the two already listed, not the held one
+    CHECK(p.find("NEW.ZIP") == std::string::npos);
+    b.key('/');
+    for (char ch : std::string("fresh\r")) b.key(ch);
+    CHECK(plain(out).find("NEW.ZIP") == std::string::npos);
+    CHECK(plain(out).find("0 found") != std::string::npos);
+}
+
+#ifndef _WIN32
+TEST_CASE("moveTo carries a held description into the other area") {
+    namespace fs = std::filesystem;
+    fs::path root = fs::temp_directory_path() / "axis_moveto_wfc";
+    fs::remove_all(root);
+    fs::create_directories(root / "ansi");
+    fs::create_directories(root / "gcode");
+    {
+        std::ofstream o(root / "ansi" / "PACK.ZIP", std::ios::binary);
+        o << "zipbytes";
+    }
+    SdFileLibrary lib(root.string(), [] { return true; });
+    CHECK(lib.describe("ansi", "PACK.ZIP", "~Test pack"));
+    CHECK(lib.moveTo("ansi", "PACK.ZIP", "gcode"));
+    bool still = false;
+    for (const FileEntry& e : lib.list("ansi"))
+        if (e.name == "PACK.ZIP") still = true;
+    CHECK_FALSE(still);
+    auto there = lib.list("gcode");
+    REQUIRE(there.size() == 1);
+    CHECK(there[0].name == "PACK.ZIP");
+    CHECK(there[0].desc == "~Test pack");
+    fs::remove_all(root);
+}
+#endif
 
 TEST_CASE("file sizes read like a 90s file list") {
     CHECK(fileSizeText(512) == "512");

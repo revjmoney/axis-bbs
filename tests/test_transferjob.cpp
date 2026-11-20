@@ -148,7 +148,8 @@ TEST_CASE("a ZMODEM upload lands in the area with its description") {
     CHECK(job.ok());
     CHECK(job.savedName() == "MYTOOL.BIN");
     CHECK(lib.files["freeware/MYTOOL.BIN"] == file);
-    CHECK(lib.files["freeware/FILES.BBS"].find("MYTOOL.BIN A tool I wrote") != std::string::npos);
+    CHECK(lib.files["freeware/FILES.BBS"].find("MYTOOL.BIN ~A tool I wrote") != std::string::npos);
+    CHECK(job.held());
 }
 
 TEST_CASE("an XMODEM upload uses the typed name and loses the 1Ah padding") {
@@ -203,6 +204,51 @@ std::string packZip() {
 }
 }  // namespace
 
+TEST_CASE("a rejected archive type is removed and not listed") {
+    MemLibrary      lib;
+    std::string     file = packZip();
+    Line            l;
+    TransferRequest req{true, "ansi", "", "Test pack", 'Z'};
+    ArchivePolicy   policy;
+    policy.zip = ArchiveMode::Reject;
+    TransferJob  job(lib, req, l.board, {}, policy);
+    ZmodemSender caller(
+        l.caller,
+        [&](uint32_t off, uint8_t* buf, size_t n) {
+            file.copy((char*)buf, n, off);
+            return true;
+        },
+        (uint32_t)file.size(), "PACK.ZIP");
+    run(job, caller);
+    CHECK_FALSE(job.ok());
+    CHECK_FALSE(job.held());
+    CHECK(job.note().find(".ZIP") != std::string::npos);
+    CHECK(lib.files.count("ansi/PACK.ZIP") == 0);
+    CHECK(lib.files.count("ansi/FILES.BBS") == 0);
+}
+
+TEST_CASE("an unchecked ZIP is kept as uploaded and still waits to be validated") {
+    MemLibrary      lib;
+    std::string     file = packZip();
+    Line            l;
+    TransferRequest req{true, "ansi", "", "Test pack", 'Z'};
+    ArchivePolicy   policy;
+    policy.zip = ArchiveMode::Keep;
+    TransferJob  job(lib, req, l.board, {}, policy);
+    ZmodemSender caller(
+        l.caller,
+        [&](uint32_t off, uint8_t* buf, size_t n) {
+            file.copy((char*)buf, n, off);
+            return true;
+        },
+        (uint32_t)file.size(), "PACK.ZIP");
+    run(job, caller);
+    CHECK(job.ok());
+    CHECK(job.held());
+    CHECK(lib.files["ansi/PACK.ZIP"] == file);  // not rezipped, so no AXISBBS.NFO was added
+    CHECK(lib.files["ansi/FILES.BBS"].find("~Test pack") != std::string::npos);
+}
+
 TEST_CASE("an uploaded zip is checked and gets AXISBBS.NFO before it is listed") {
     MemLibrary      lib;
     std::string     file = packZip();
@@ -219,8 +265,10 @@ TEST_CASE("an uploaded zip is checked and gets AXISBBS.NFO before it is listed")
     run(job, caller);
     CHECK(job.ok());
     CHECK(lib.files["ansi/PACK.ZIP"].find("AXISBBS.NFO") != std::string::npos);
-    CHECK(lib.files["ansi/FILES.BBS"].find("PACK.ZIP Test pack") != std::string::npos);
+    CHECK(lib.files["ansi/FILES.BBS"].find("PACK.ZIP ~Test pack") != std::string::npos);
+    CHECK(job.held());
     CHECK(job.note().find("AXISBBS.NFO") != std::string::npos);
+    CHECK(job.note().find("Waiting for the sysop") != std::string::npos);
     std::string seen(l.ab.begin(), l.ab.end());  // whatever is left for the caller to read
     (void)seen;
 }

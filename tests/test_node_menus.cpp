@@ -308,11 +308,16 @@ TEST_CASE("telnet sysop access off") {
     CHECK(loc.n->state() == Node::State::Sysop);
 }
 
-TEST_CASE("E A and ! are coming soon") {
-    SysRig r;
-    CHECK(r.type("//E\r").find("coming soon") != std::string::npos);
-    CHECK(r.n->state() == Node::State::Menu);
-    CHECK(r.type("//!\r").find("coming soon") != std::string::npos);
+TEST_CASE("E A and ! open their sections") {
+    SysRig e;
+    CHECK(e.type("//E\r").find("EVENTS") != std::string::npos);
+    CHECK(e.n->state() == Node::State::Sysop);
+    SysRig a;
+    CHECK(a.type("//A\r").find("ARCHIVE") != std::string::npos);
+    CHECK(a.n->state() == Node::State::Sysop);
+    SysRig v;
+    CHECK(v.type("//!\r").find("VALIDATE") != std::string::npos);
+    CHECK(v.n->state() == Node::State::Sysop);
 }
 
 TEST_CASE("a lone slash still reaches the menu for a sysop") {
@@ -355,16 +360,17 @@ TEST_CASE("// without a sysop runner says so") {
 
 TEST_CASE("renegadeKey maps the section keys") {
     SysopSection s = SysopSection::Top;
-    bool         soon = true;
-    CHECK(renegadeKey('b', s, soon));
+    CHECK(renegadeKey('b', s));
     CHECK(s == SysopSection::MsgBases);
-    CHECK_FALSE(soon);
-    CHECK(renegadeKey('L', s, soon));
+    CHECK(renegadeKey('L', s));
     CHECK(s == SysopSection::System);  // logs
-    CHECK_FALSE(soon);
-    CHECK(renegadeKey('!', s, soon));
-    CHECK(soon);
-    CHECK_FALSE(renegadeKey('z', s, soon));
+    CHECK(renegadeKey('!', s));
+    CHECK(s == SysopSection::Validate);
+    CHECK(renegadeKey('E', s));
+    CHECK(s == SysopSection::Events);
+    CHECK(renegadeKey('a', s));
+    CHECK(s == SysopSection::Archive);
+    CHECK_FALSE(renegadeKey('z', s));
 }
 
 // ---- the terminal WFC (// then Enter)
@@ -437,15 +443,30 @@ TEST_CASE("U from the wfc and back") {
     CHECK(back.find("AXIS calls 3") != std::string::npos);
 }
 
-TEST_CASE("E A and ! are coming soon on the wfc and stay there") {
+TEST_CASE("E A and ! from the wfc open their sections") {
+    SysRig e;
+    e.n->setWfcSnapshot(snap3);
+    toWfc(e);
+    std::string out = e.type("e");
+    CHECK(out.find("EVENTS") != std::string::npos);
+    CHECK(out.find("coming soon") == std::string::npos);
+    CHECK(e.n->state() == Node::State::Sysop);
+    SysRig a;
+    a.n->setWfcSnapshot(snap3);
+    toWfc(a);
+    CHECK(a.type("A").find("ARCHIVE") != std::string::npos);
+    SysRig v;
+    v.n->setWfcSnapshot(snap3);
+    toWfc(v);
+    CHECK(v.type("!").find("VALIDATE") != std::string::npos);
+    CHECK(v.n->state() == Node::State::Sysop);
+}
+
+TEST_CASE("an arrow key on the wfc does nothing") {
     SysRig r;
     r.n->setWfcSnapshot(snap3);
     toWfc(r);
-    CHECK(r.type("e").find("coming soon") != std::string::npos);
-    CHECK(r.n->state() == Node::State::Wfc);
-    CHECK(r.type("!").find("coming soon") != std::string::npos);
-    CHECK(r.n->state() == Node::State::Wfc);
-    r.type("\x1b[A");  // an arrow key is nothing
+    r.type("\x1b[A");
     CHECK(r.n->state() == Node::State::Wfc);
 }
 

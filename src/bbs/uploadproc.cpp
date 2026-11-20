@@ -172,6 +172,10 @@ bool UploadProcessor::step() {
             return true;
         }
         case Stage::Info: {
+            if (!addInfo_) {
+                stage_ = Stage::Finish;
+                return true;
+            }
             std::string text = infoText(info_);
             uint32_t    crc = net::crc32((const uint8_t*)text.data(), text.size());
             uint16_t    time = 0, date = (uint16_t)((2026 - 1980) << 9 | 11 << 5 | 3);
@@ -223,7 +227,8 @@ bool UploadProcessor::step() {
                 result_ = Result::Rejected;
             } else {
                 result_ = Result::Rezipped;
-                note_ = "checked " + std::to_string(written_.size() - 1) + " files, added " + kInfoName;
+                note_ = addInfo_ ? "checked " + std::to_string(written_.size() - 1) + " files, added " + kInfoName
+                                 : "checked " + std::to_string(written_.size()) + " files";
             }
             stage_ = Stage::Done;
             return false;
