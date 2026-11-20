@@ -237,3 +237,33 @@ TEST_CASE("a theme's section header art gets its codes filled in (%BN board name
     CHECK(out.find("Axis Underground CNC node 1 for Rev") != std::string::npos);
     CHECK(out.find("%BN") == std::string::npos);
 }
+
+namespace {
+struct ArtOff {
+    ~ArtOff() { theme::setArt(nullptr); theme::setMci(nullptr); theme::setLite(false); }
+};
+}  // namespace
+
+TEST_CASE("logoff draws GOODBYE.ANS when the look has one") {
+    ArtOff off;
+    theme::setArt([](const std::string& name) {
+        return name == "GOODBYE.ANS" ? std::string("LOGOFF SCREEN %BN") : std::string();
+    });
+    Rig r;
+    r.login();
+    std::string out = r.type("g");
+    CHECK(out.find("LOGOFF SCREEN") != std::string::npos);
+    CHECK(out.find("Axis Underground CNC") != std::string::npos);
+    CHECK(out.find("Keep your tools sharp") == std::string::npos);
+    CHECK(r.n.wantsHangup());
+}
+
+TEST_CASE("logoff without GOODBYE.ANS keeps the underground line") {
+    ArtOff off;
+    theme::setArt([](const std::string&) { return std::string(); });
+    Rig r;
+    r.login();
+    std::string out = r.type("g");
+    CHECK(out.find("Keep your tools sharp") != std::string::npos);
+    CHECK(r.n.wantsHangup());
+}

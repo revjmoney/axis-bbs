@@ -229,6 +229,9 @@ private:
     void loggedIn();
     void showPending();
     void pendingMenu();
+    // The look's GOODBYE.ANS (a slow radio caller gets GOODBYE.LITE.ANS). False when the look has none, so the
+    // caller keeps the line it already builds.
+    bool showGoodbye();
     void prompt();
     void showWelcome();
     void menuOrLiners();  // after login: the oneliner wall if there is one, then the menu

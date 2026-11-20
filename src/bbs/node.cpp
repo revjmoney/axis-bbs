@@ -241,6 +241,22 @@ void Node::showPending() {
     pendingMenu();
 }
 
+bool Node::showGoodbye() {
+    // Theme folder first (GOODBYE.LITE.ANS on a slow radio call), then the menu set's own file.
+    std::string art = theme::artFor("GOODBYE");
+    if (art.empty() && menuLoad_) {
+        art = cutCtrlZ(menuLoad_("GOODBYE.ANS"));
+        if (!art.empty()) art = artText(art);
+        if (!art.empty() && art.back() != '\n') art += "\r\n";
+    }
+    if (art.empty()) return false;
+    out_ += theme::CLS;
+    out_ += art;
+    out_ += RST;
+    state_ = State::Done;
+    return true;
+}
+
 void Node::pendingMenu() {
     out_ += "\r\n   " + theme::key("S", "tatus   ") + theme::key("C", "redits   ") + theme::key("G", "oodbye");
     out_ += "\r\n   " + theme::fade("Command") + theme::ORANGE + ": " + theme::WHITE;
@@ -626,8 +642,10 @@ void Node::frontKey(char c) {
         out_ += std::string("\x1b[0m\r\n\r\n   ") + theme::fade("Handle to check") + theme::ORANGE + ": " + theme::WHITE;
         state_ = State::CheckAccess;
     } else if (v == "DISCONNECT") {
-        out_ += std::string("\r\n   ") + theme::HOT + "Later." + theme::RESET + "\r\n";
-        state_ = State::Done;
+        if (!showGoodbye()) {
+            out_ += std::string("\r\n   ") + theme::HOT + "Later." + theme::RESET + "\r\n";
+            state_ = State::Done;
+        }
     }
 }
 
@@ -1068,8 +1086,10 @@ void Node::matrixKey(char c) {
             break;
         }
         default:
-            out_ += std::string("   ") + theme::HOT + "Later." + theme::RESET + "\r\n";
-            state_ = State::Done;
+            if (!showGoodbye()) {
+                out_ += std::string("   ") + theme::HOT + "Later." + theme::RESET + "\r\n";
+                state_ = State::Done;
+            }
             break;
     }
 }
@@ -2237,8 +2257,10 @@ void Node::key(char c) {
                 pendingMenu();
                 break;
             case 'g':
-                out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + "Later. The sysop will get to you." + theme::RESET + "\r\n";
-                state_ = State::Done;
+                if (!showGoodbye()) {
+                    out_ += "\r\n\r\n   " + std::string(theme::ORANGE) + "Later. The sysop will get to you." + theme::RESET + "\r\n";
+                    state_ = State::Done;
+                }
                 break;
             default:
                 break;
@@ -2685,12 +2707,14 @@ void Node::key(char c) {
             showAbout();
             break;
         case 'g':
-            out_ += "\r\n\r\n   ";
-            out_ += AMBER;
-            out_ += "Goodbye from the underground. Keep your tools sharp.";
-            out_ += RST;
-            out_ += "\r\n";
-            state_ = State::Done;
+            if (!showGoodbye()) {
+                out_ += "\r\n\r\n   ";
+                out_ += AMBER;
+                out_ += "Goodbye from the underground. Keep your tools sharp.";
+                out_ += RST;
+                out_ += "\r\n";
+                state_ = State::Done;
+            }
             break;
         default:
             prompt();

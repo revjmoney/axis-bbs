@@ -262,6 +262,9 @@ def main():
         print(f'  {os.path.basename(p):13} {len(m["bars"]):2} bars  {"ok" if not probs else "FAIL"}')
         for q in probs:
             print('      ' + q)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import check_looks
+    bad += check_looks.check_repo(ROOT)
     return 1 if bad else 0
 
 
