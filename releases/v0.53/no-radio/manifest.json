@@ -1,0 +1,47 @@
+{
+ "release": "v0.53",
+ "preset": "no-radio",
+ "chip": "ESP32",
+ "off": [
+  "modemlink"
+ ],
+ "fingerprint": "10ab1321eb25",
+ "app_partition": {
+  "offset": 65536,
+  "size": 2359296
+ },
+ "cost": {
+  "flash": 2265680,
+  "dram_static": 48768
+ },
+ "images": [
+  {
+   "role": "bootloader",
+   "file": "bootloader.bin",
+   "offset": 4096,
+   "size": 27248,
+   "sha256": "45037513aadc3c42cb5c93f5753b7726711d5546b29408527e8d8d87243988ee"
+  },
+  {
+   "role": "partitions",
+   "file": "partitions.bin",
+   "offset": 32768,
+   "size": 3072,
+   "sha256": "0e737991d33b2886bd0e71a1c6a7584a6b61ebf98dce41093915d726a31e2eb6"
+  },
+  {
+   "role": "otadata",
+   "file": "ota_data_initial.bin",
+   "offset": 57344,
+   "size": 8192,
+   "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+  },
+  {
+   "role": "app",
+   "file": "firmware.bin",
+   "offset": 65536,
+   "size": 2265680,
+   "sha256": "b95dde2421965ebe9d6f08c38f3115359c2b1c05a6993d7578781a29f6daa4f8"
+  }
+ ]
+}

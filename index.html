@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AXIS BBS: a real telnet BBS for Linux and the ESP32 touchscreen</title>
+<meta name="description" content="AXIS BBS is a real old-school telnet BBS written from scratch in C++, native on Linux (Windows coming soon) and on the ESP32 Cheap Yellow Display: ANSI menus, file areas with ZMODEM, messages, multinode chat, a native Legend of the Red Dragon, and a touch sysop console. Made by Rev. J. Money, the maker of RotatoCAM.">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="Axis Micro BBS Firmware">
+<meta property="og:description" content="A real telnet BBS on a 2.8 inch ESP32 touchscreen board. ANSI, ZMODEM, multinode chat, and a native Legend of the Red Dragon.">
+<meta property="og:image" content="https://revjmoney.github.io/axis-bbs/media/main-menu.png">
+<meta property="og:url" content="https://revjmoney.github.io/axis-bbs/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Cpath d='M3 14V6h2V4h2V2h2v2h2v2h2v8h-3v-3H6v3zM6 9h4V7H6z' fill='%23AA5500'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/AxisVGA.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="home">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">&#9608;</span>AXIS <small>Micro BBS Firmware</small></a>
+    <nav class="site-nav" aria-label="Main">
+      <a class="hide-sm" href="#features"><span class="hk">L</span>earn more</a>
+      <a href="docs.html"><span class="hk">D</span>ocs</a>
+      <a href="install.html"><span class="hk">I</span>nstall</a>
+      <a class="hide-sm" href="https://github.com/revjmoney/axis-bbs"><span class="hk">G</span>itHub</a>
+      <a class="hide-sm" href="https://rotatocam.com">RotatoCAM</a>
+      <a class="nav-coffee" href="https://buymeacoffee.com/revjmoney"><span class="blinky" aria-hidden="true">&#9608;</span> Buy me a coffee</a>
+      <a class="nav-buy" href="#buy"><span class="hk">B</span>uy one</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- the front door: the matrix -->
+<section class="matrix" aria-labelledby="site-title">
+  <div class="wrap">
+    <div class="term-line" aria-hidden="true"><span class="c-grey">ATDT</span> AXIS.LOCAL<span class="c-grey">  ...  </span><span class="c-yellow">CONNECT 9600</span></div>
+    <figure class="term crt dimmed">
+      <div class="screen">
+        <div class="term-splash" hidden>
+          <img src="media/splash.gif" alt="Connecting: the animated RotatoCAM ANSI splash" width="640" height="424">
+          <p class="term-skip">connecting... <span class="c-grey">(any key skips)</span></p>
+        </div>
+        <div class="term-matrix">
+          <img class="matrix-art" src="media/matrix-art.png" alt="The AXIS matrix screen: big AXIS block letters fading white to cyan to green, with underground cnc, axis underground cnc and rev^axis" width="640" height="224">
+          <h1 id="site-title" class="sr-only">Axis Micro BBS Firmware</h1>
+          <nav class="lightbar" aria-label="Front door">
+            <ul>
+              <li><a href="#features" class="lit" data-key="l">learn</a></li>
+              <li><a href="docs.html" data-key="d">docs</a></li>
+              <li><a href="#buy" data-key="b">buy</a></li>
+              <li><a href="#test-board" data-key="t">test</a></li>
+              <li><a href="https://github.com/revjmoney/axis-bbs" data-key="g">github</a></li>
+            </ul>
+            <p class="lightbar-help" aria-hidden="true">arrows move, <span class="c-bright">Enter</span> picks, or press the letter</p>
+          </nav>
+          <p class="term-links"><a href="https://rotatocam.com">rotatocam.com</a> <span class="c-grey">&middot;</span> <a href="https://jmscnc.com">jmscnc.com</a> <span class="c-grey">&middot;</span> <span class="c-bright">axis micro bbs firmware</span></p>
+        </div>
+      </div>
+      <figcaption>AXIS UNDERGROUND CNC, the matrix, node 1</figcaption>
+      <span class="dim dim-x" aria-hidden="true"><b>80 COLUMNS</b></span>
+      <span class="dim dim-y" aria-hidden="true"><b>25 ROWS</b></span>
+      <span class="dim-callout" aria-hidden="true">ANSI / CP437</span>
+    </figure>
+
+    <div class="boxes">
+      <section class="box" aria-labelledby="the-board">
+        <h2 class="box-title" id="the-board">THE BOARD</h2>
+        <dl>
+          <dt>BBS</dt><dd>Axis Micro BBS Firmware</dd>
+          <dt>what</dt><dd>A real telnet BBS, native on Linux, and on a 2.8 inch ESP32 touchscreen with no PC behind it.</dd>
+          <dt>sysop</dt><dd>Rev. J. Money, the maker of <a href="https://rotatocam.com">RotatoCAM</a></dd>
+          <dt>price</dt><dd><span class="c-yellow">$79.00</span> + $9.00 shipping (US), <a href="#buy">ready to plug in</a></dd>
+        </dl>
+      </section>
+      <section class="box" aria-labelledby="the-system">
+        <h2 class="box-title" id="the-system">THE SYSTEM</h2>
+        <dl>
+          <dt>software</dt><dd>Axis Micro BBS Firmware 0.54</dd>
+          <dt>license</dt><dd>GPL-3.0+ by Rev. J. Money</dd>
+          <dt>runs on</dt><dd>Linux (x86_64, ARM64, 32-bit ARM); Windows coming soon; the ESP32-2432S028R board</dd>
+          <dt>doors</dt><dd>Native LORD, in C++, over telnet</dd>
+        </dl>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- the main menu: the site's section index -->
+<section class="mainmenu" aria-labelledby="menu-title">
+  <div class="wrap">
+    <h2 id="menu-title" class="sr-only">Main menu</h2>
+    <div class="menu-bar" aria-hidden="true"><span class="mb-a">&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;</span><span class="mb-b">&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;</span><span class="mb-c">&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;&#9600;</span><span class="mb-d">&#9600;&#9600;&#9600;&#9600;</span></div>
+    <p class="menu-label">main menu...</p>
+    <ul class="o2menu">
+      <li><a href="#features" data-key="l"><kbd>l</kbd>learn more: the tour</a></li>
+      <li><a href="docs.html" data-key="d"><kbd>d</kbd>docs and wiki</a></li>
+      <li><a href="install.html" data-key="i"><kbd>i</kbd>install: flash a board from your browser</a></li>
+      <li><a href="#buy" data-key="b"><kbd>b</kbd>buy one, ready to plug in</a></li>
+      <li><a href="#test-board" data-key="t"><kbd>t</kbd>test board access</a></li>
+      <li><a href="https://github.com/revjmoney/axis-bbs" data-key="g"><kbd>g</kbd>github source</a></li>
+      <li><a href="#updates" data-key="u"><kbd>u</kbd>updates: recent changes</a></li>
+      <li><a href="docs.html#files" data-key="f"><kbd>f</kbd>file vaults</a></li>
+      <li><a href="docs.html#messages" data-key="m"><kbd>m</kbd>messages and email</a></li>
+      <li><a href="docs.html#doors" data-key="o"><kbd>o</kbd>open doors</a></li>
+      <li><a href="docs.html#multinode" data-key="="><kbd>=</kbd>multinode</a></li>
+      <li><a href="docs.html#hardware" data-key="s"><kbd>s</kbd>system stats: hardware</a></li>
+      <li><a href="docs.html#rumor-list" data-key="w"><kbd>w</kbd>rumor wall: every rumor</a></li>
+    </ul>
+    <p class="rumor"><span class="rumor-text"><span class="c-grey">rumor:</span> the ring board dreams in green</span> <button type="button" class="rumor-next" data-key="r"><span class="hk">R</span> another rumor</button></p>
+    <p class="o2prompt" aria-hidden="true"><span class="c-cyan-hi">&#9604;</span><span class="c-cyan">&#9600;</span><span class="c-grey">[</span><span class="c-cyan-hi">M</span><span class="c-cyan">ain </span><span class="c-cyan-hi">M</span><span class="c-cyan">enu</span><span class="c-grey">]</span><span class="c-cyan">&#9600;&#9600;</span><span class="c-grey">[</span><span class="c-cyan-hi">N</span><span class="c-cyan">ode </span><span class="c-bright">1</span><span class="c-grey">]</span><span class="c-cyan">&#9600; </span><span class="c-grey">&#9600; </span>: <span class="cursor">_</span></p>
+  </div>
+</section>
+
+<!-- recent updates, last callers style -->
+<section class="section tight" id="updates" aria-labelledby="updates-title">
+  <div class="wrap">
+    <div class="box callers">
+      <h2 class="box-title" id="updates-title">LAST UPDATES</h2>
+      <ul class="callers-list">
+        <li><span class="cl-date">2026-11-20</span><span class="cl-what">axispc pc-v0.54: .deb and AppImage for x86_64 and ARM64, a .deb for 32-bit ARM</span></li>
+        <li><span class="cl-date">2026-11-19</span><span class="cl-what">The first Linux release, axispc pc-v0.53: .deb and AppImage for x86_64 and ARM64, a .deb for 32-bit ARM</span></li>
+        <li><span class="cl-date">2026-11-20</span><span class="cl-what">Eight looks ship a themed goodbye screen, list templates and lite screens for slow radio links. THEME.CFG reads the axis, vision3 and renegade art dialects.</span></li>
+        <li><span class="cl-date">2026-11-19</span><span class="cl-what">Looks restyle the file and message lists with list templates (.LST)</span></li>
+        <li><span class="cl-date">2026-11-19</span><span class="cl-what">AXIS PC: axispc runs the BBS natively on Linux, many callers in one program, with .deb and AppImage packages. Windows coming soon.</span></li>
+        <li><span class="cl-date">2026-11-19</span><span class="cl-what">Clusters: a Linux box joins the ESP32 boards as nodes, with a card mirror and takeover</span></li>
+        <li><span class="cl-date">2026-11-17</span><span class="cl-what">AXIS Native: the board's own firmware runs on Linux as a service, with a desktop window and the LFD3K-SM radio modem</span></li>
+        <li><span class="cl-date">2026-11-15</span><span class="cl-what">Version 0.53 released, with the web installer for the board</span></li>
+        <li><span class="cl-date">2026-11-08</span><span class="cl-what">Version 0.51: a Renegade-style waiting-for-caller screen in every look, one sysop menu, and a shared cluster key for linked boards</span></li>
+        <li><span class="cl-date">2026-11-07</span><span class="cl-what">LORD on the board is the native C++ door. The DOS emulator is a separate PC build.</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Local console opens on all 80 columns drawn crisp; ZOOM gives 40 big columns</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">File search, quoted replies, a call time limit, the voting booth, a user editor and the twit flag</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">DOS shell: MORE, TREE, DOSKEY history, DATE and TIME, archive listings</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Rumors, a BBS list, top ten and a bulletin screen</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Email, a new message scan, download ratios and new files since your last call</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Oblivion/2 multinode commands and split-screen chat across boards</span></li>
+        <li><span class="cl-date">2026-11-04</span><span class="cl-what">Theme selector with an Oblivion/2 style look</span></li>
+        <li><span class="cl-date">2026-11-03</span><span class="cl-what">LORD 4.07 plays on the CYD over telnet</span></li>
+      </ul>
+      <p class="more-line"><a href="https://github.com/revjmoney/axis-bbs/blob/HEAD/docs/FEATURES.md"><span class="c-grey">&#9472;&#9472;</span> more <span class="c-grey">&#9472;&#9472;</span></a> <span class="c-grey">the full log in FEATURES.md</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- AXIS on Linux -->
+<section class="section tight" id="linux" aria-labelledby="linux-title">
+  <div class="wrap">
+    <div class="eyebrow">The new direction</div>
+    <h2 id="linux-title">AXIS on Linux, Windows coming soon</h2>
+    <p class="lede">AXIS is growing from ESP32 firmware into a full native BBS. <code>axispc</code> runs many callers in one program on Linux, with the waiting-for-caller screen in your terminal or as a service; <code>axis</code> runs the board's own firmware in a desktop window. Packages: .deb and AppImage for x86_64 and ARM64, and a .deb for 32-bit ARM, built by GitHub Actions and published on GitHub Releases: the current Linux release is <a href="https://github.com/revjmoney/axis-bbs/releases/tag/pc-v0.54">axispc pc-v0.54</a>. A native Windows build is coming soon. The ESP32 boards stay in the family as the small, compatible build and as cluster nodes.</p>
+    <div class="fgrid">
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-wfc.png"><img src="media/linux/linux-wfc.png" alt="axispc on Linux: The waiting-for-caller screen in your terminal: nodes, today, events, sysop keys." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>axispc on Linux</h3>
+          <p class="fcard-line">The waiting-for-caller screen in your terminal: nodes, today, events, sysop keys.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-window.png"><img src="media/linux/linux-window.png" alt="The axis window: The board's own firmware in a Linux desktop window." loading="lazy" width="960" height="720"></a>
+        <div class="fcard-body">
+          <h3>The axis window</h3>
+          <p class="fcard-line">The board's own firmware in a Linux desktop window.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-main-menu.png"><img src="media/linux/linux-main-menu.png" alt="Main menu: What a caller sees on the Linux build." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>Main menu</h3>
+          <p class="fcard-line">What a caller sees on the Linux build.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-message-areas.png"><img src="media/linux/linux-message-areas.png" alt="Message areas: The message list, drawn from the look's list template." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>Message areas</h3>
+          <p class="fcard-line">The message list, drawn from the look's list template.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-file-areas.png"><img src="media/linux/linux-file-areas.png" alt="File areas: The file vaults on a Linux data folder." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>File areas</h3>
+          <p class="fcard-line">The file vaults on a Linux data folder.</p>
+        </div>
+      </article>
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/linux/linux-system-stats.png"><img src="media/linux/linux-system-stats.png" alt="System stats: Nodes, calls, members and the top callers." loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>System stats</h3>
+          <p class="fcard-line">Nodes, calls, members and the top callers.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- the tour -->
+<section class="section tight" id="features" aria-labelledby="tour-title">
+  <div class="wrap">
+    <div class="eyebrow">The tour</div>
+    <h2 id="tour-title">Everything a 90s board had</h2>
+    <p class="lede">Real captures from the live boards. Hover or tap a card for more; every card opens its page in the docs.</p>
+    <div class="fgrid">
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/wfc-skins-80.png"><img src="media/wfc-skins-80.png" alt="The eight art looks side by side: axis, crt, sea, haunted, cathedral, skulls, underground and wasteland" loading="lazy" width="2600" height="896"></a>
+        <div class="fcard-body">
+          <h3>Ten looks</h3>
+          <p class="fcard-line">Eight themed packs, plus Vision Gate and Outpost.</p>
+          <div class="fcard-extra"><div><p>axis, crt, sea, haunted, cathedral, skulls, underground and wasteland each ship a themed goodbye screen, list templates and lite screens. Vision Gate draws in the ViSiON/3 dialect and Outpost in the Renegade dialect, with the same screen set. Cyan and green remain built-in colour chromes.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#themes">Themes</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/files.gif"><img src="media/files.gif" alt="Animated tour of the file areas" loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>File areas</h3>
+          <p class="fcard-line">FILES.BBS areas on a microSD card.</p>
+          <div class="fcard-extra"><div><p>Archive listings for ZIP, RAR, ARJ, TAR and GZIP, a search across every area, new files since your last call, and security levels per area.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#files">File areas</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/files-download-gate.png"><img src="media/files-download-gate.png" alt="The download gate asking a new caller to upload first" loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>ZMODEM transfers</h3>
+          <p class="fcard-line">ZMODEM, XMODEM and XMODEM-1K, both ways.</p>
+          <div class="fcard-extra"><div><p>Around 247 KB/s over WiFi. ZIP uploads are CRC-tested and rezipped with the board's NFO. Downloads are earned, with an optional ratio.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#transfers">Transfers</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/messages.gif"><img src="media/messages.gif" alt="Animated message areas" loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>Messages and email</h3>
+          <p class="fcard-line">Message areas, quoting, taglines, private mail.</p>
+          <div class="fcard-extra"><div><p>New counts per area, quoted replies under the writer's initials, a new message scan across every area, and a "you have new mail" notice at login.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#messages">Messages</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/split-chat.gif"><img src="media/split-chat.gif" alt="Two callers typing live in split-screen chat" loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>Live chat</h3>
+          <p class="fcard-line">Callers talk to each other, keystroke by keystroke.</p>
+          <div class="fcard-extra"><div><p>Teleconference across every node, node messages, broadcasts, do-not-disturb, and Oblivion/2 style split-screen chat.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#chat">Chat</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/cluster-family.jpg"><img src="media/cluster-family.jpg" alt="The AXIS cluster family: two CYD boards and a headless ESP32, seven nodes of one BBS" loading="lazy" width="900" height="1200" style="object-position: center 70%"></a>
+        <div class="fcard-body">
+          <h3>Multinode cluster</h3>
+          <p class="fcard-line">Our family: 3 boards, 7 nodes, one BBS.</p>
+          <div class="fcard-extra"><div><p>More boards on your LAN become extra nodes of one BBS with shared users, files and messages. One address for callers, and failover if the main drops. Boards link only when they share a secret cluster key, so a stranger on your network cannot join. SD cards in several boards pool into one library with mirrored areas. Work in progress: an SD disc changer where every card is a hot-swappable disc, Night Owl style.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#multinode">Clustering</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/lord-walk.gif"><img src="media/lord-walk.gif" alt="Animated telnet walk of the native LORD door" loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>Native LORD</h3>
+          <p class="fcard-line">Legend of the Red Dragon, in C++, on the board.</p>
+          <div class="fcard-extra"><div><p>The engine runs in the BBS over telnet and reads the installed LORD folder for warriors, gear, and ANSI scenes. Several callers can play at once. An unmodified EXE, if you want that, is the separate PC build.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#lord">LORD</a> <a href="docs.html#dosemu">DOS emulator</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/ansi-viewer.gif"><img src="media/ansi-viewer.gif" alt="The ANSI Pack Viewer showing art from inside a ZIP" loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>ANSI Pack Viewer</h3>
+          <p class="fcard-line">Artpacks straight out of their ZIPs.</p>
+          <div class="fcard-extra"><div><p>A built-in door that pages through classic artpacks and plays ANSI movies at 2400 to 57600 baud. The test board carries 150 scene packs (ACiD, iCE, Fire, CiA, Mistigris, Blocktronics and more) plus three AXIS packs.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#ansi-viewer">ANSI viewer</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/oneliners.png"><img src="media/oneliners.png" alt="The oneliners wall" loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>The scene</h3>
+          <p class="fcard-line">Oneliners, rumors, voting, top ten.</p>
+          <div class="fcard-extra"><div><p>Plus a BBS list, last callers and a bulletin screen. Rumors are anonymous, like the old days.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#community">Community</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/wfc-skins-cyd.png"><img src="media/wfc-skins-cyd.png" alt="The Renegade-style waiting-for-caller screen drawn in eight different looks" loading="lazy" width="1480" height="864"></a>
+        <div class="fcard-body">
+          <h3>Waiting for caller</h3>
+          <p class="fcard-line">A Renegade-style WFC in all eight looks.</p>
+          <div class="fcard-extra"><div><p>An idle board shows a Renegade-style waiting-for-caller screen with live values: nodes, calls today, free RAM, the last caller. It runs on the touchscreen (45x24), over telnet for a sysop, on the panel console and on the serial console, and it has its own skin setting apart from the theme. Sysops get Renegade keys on it (S, U, #, B, F, L, Space, Q) and type // online.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#wfc">Waiting for caller</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/cyd-wfc.png"><img src="media/cyd-wfc.png" alt="The CYD activity screen with status lights" loading="lazy" width="640" height="480"></a>
+        <div class="fcard-body">
+          <h3>Sysop console</h3>
+          <p class="fcard-line">One sysop menu, on the board and online.</p>
+          <div class="fcard-extra"><div><p>One layered sysop menu, the same one on the touchscreen (f2), online with * or //, and on the serial console: users, file areas and files, message bases and posts, every setting, a menu editor, a Look section for the theme and the WFC skin. Plus a PC/phone control panel with a live wall of every node's screen.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#cyd-console">Sysop console</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <a class="fcard-thumb lb" href="media/cyd-local-sharp.png"><img src="media/cyd-local-sharp.png" alt="The local console showing all 80 columns on the CYD" loading="lazy" width="640" height="480"></a>
+        <div class="fcard-body">
+          <h3>Local console</h3>
+          <p class="fcard-line">Log in on the 2.8 inch screen itself.</p>
+          <div class="fcard-extra"><div><p>All 80 columns drawn crisp, or ZOOM for 40 big columns that follow the cursor, with a touch keyboard.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#local-console">Local console</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+      <article class="fcard cy">
+        <a class="fcard-thumb lb" href="media/user-editor-caller.png"><img src="media/user-editor-caller.png" alt="The sysop user editor over telnet" loading="lazy" width="640" height="424"></a>
+        <div class="fcard-body">
+          <h3>Accounts</h3>
+          <p class="fcard-line">An underground new user application, validated by you.</p>
+          <div class="fcard-extra"><div><p>Security levels, per-area access, permissions, call time limits, a twit flag, and a user editor over telnet.</p></div></div>
+          <div class="fcard-foot"><a href="docs.html#accounts">Accounts</a><button type="button" class="fcard-more" aria-expanded="false">More</button></div>
+        </div>
+      </article>
+
+    </div>
+    <p class="more-line"><a href="docs.html"><span class="c-grey">&#9472;&#9472;</span> more <span class="c-grey">&#9472;&#9472;</span></a> <span class="c-grey">every feature, in the docs</span></p>
+  </div>
+</section>
+
+<section class="section tight" id="buy">
+  <div class="wrap strips">
+    <div class="panel bolted buy-box strip">
+      <figure class="sheet">
+        <img src="media/axisbbs-cyd.jpg" alt="The AXIS BBS board in its clear case with a USB cable and stylus, its screen showing the activity screen" loading="lazy" width="1194" height="740">
+        <svg viewBox="0 0 1194 740" aria-hidden="true" focusable="false">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0 1 10 5 0 9z" fill="#0000AA"/></marker>
+          </defs>
+          <g stroke="#0000AA" stroke-width="2" fill="none">
+            <path d="M136 72V14M786 72V14"/>
+            <path d="M136 30H786" marker-start="url(#ah)" marker-end="url(#ah)"/>
+            <path d="M152 548 770 86" marker-start="url(#ah)" marker-end="url(#ah)"/>
+            <path d="M852 560 890 706H1140"/>
+            <path d="M1012 64 1012 22 960 22"/>
+            <path d="M560 668 560 716 600 716"/>
+          </g>
+          <g font-family="Martian Mono, Consolas, monospace" font-size="24" fill="#0000AA" stroke="#FFFFFF" stroke-width="8" paint-order="stroke" font-weight="600">
+            <text x="461" y="24" text-anchor="middle">320 x 240 px</text>
+            <text x="461" y="330" text-anchor="middle" font-size="30">2.8 in DIAG.</text>
+            <text x="896" y="698">ESP32-2432S028R</text>
+            <text x="958" y="16" text-anchor="end" font-size="20">USB CABLE</text>
+            <text x="606" y="724" font-size="20">STYLUS</text>
+          </g>
+        </svg>
+        <figcaption><span>FIG. 1  AXIS BBS, READY TO PLUG IN</span><span>DIMS NOMINAL</span></figcaption>
+      </figure>
+      <div class="buy-text">
+        <div class="eyebrow">Get one</div>
+        <h2>Ready to plug in: <span class="glow-o">$79.00</span> + $9.00 shipping (US)</h2>
+        <p>The 2.8 inch ESP32 touchscreen board in a clear acrylic case with the firmware installed and tested, a touch stylus and a USB cable. You supply USB power and 2.4 GHz WiFi. <strong>microSD card not included:</strong> add your own (FAT32) to turn on the file areas.</p>
+        <a class="btn btn-primary" href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/"><span class="hk">B</span>uy on jmscnc.com</a>
+      </div>
+    </div>
+    <div class="banner strip" id="test-board">
+      <div>
+        <div class="status-led">Online</div>
+        <h2 style="margin-top:10px">Our test board, AXIS UNDERGROUND CNC, is up and running</h2>
+        <p>Want to call in? Ask for private test access by email or on Discord and you'll get the address and a login.</p>
+        <p class="small">Email: <span class="mono">therealrevjmoney@gmail.com</span> (subject "AXIS private test access")</p>
+      </div>
+      <div class="btn-row">
+        <a class="btn btn-cyan" href="mailto:therealrevjmoney@gmail.com?subject=AXIS%20UNDERGROUND%20CNC%20private%20test%20access&amp;body=Hi%20Rev%2C%20I%27d%20like%20to%20call%20the%20AXIS%20UNDERGROUND%20CNC%20test%20board.%0A%0AHandle%20I%27d%20like%3A%0AWhat%20I%27ll%20call%20in%20with%20(SyncTERM%2C%20NetRunner%20...)%3A%0A">Email for access</a>
+        <a class="btn" href="https://discord.gg/23KqHWM6vd">Ask on Discord</a>
+      </div>
+    </div>
+    <div class="panel strip">
+      <div>
+        <div class="eyebrow cyan">Open source</div>
+        <h2>Or flash your own</h2>
+        <p>GPL-3.0-or-later. Grab a CYD, install PlatformIO, and flash it in one command. The <a href="docs.html#getting-started">docs</a> walk you through it.</p>
+      </div>
+      <a class="btn btn-ghost" href="https://github.com/revjmoney/axis-bbs"><span class="hk">G</span>itHub source</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="titleblock" role="contentinfo" aria-label="Title block">
+      <div class="tb title wide"><span>Title</span><b>Axis Micro BBS Firmware</b></div>
+      <div class="tb"><span>Part</span><b>AXIS-BBS</b></div>
+      <div class="tb"><span>Rev</span><b>0.54</b></div>
+      <div class="tb wide"><span>Drawn</span><b>Rev. J. Money, the maker of RotatoCAM</b></div>
+      <div class="tb"><span>Scale</span><b>1:1</b></div>
+      <div class="tb"><span>Sheet</span><b>1 OF 1</b></div>
+      <div class="tb"><span>Material</span><b>ESP32</b></div>
+      <div class="tb"><span>Board</span><b>ESP32-2432S028R</b></div>
+      <div class="tb links"><span>References</span>
+        <ul>
+          <li><a href="https://rotatocam.com">rotatocam.com</a></li>
+          <li><a href="https://jmscnc.com">jmscnc.com</a></li>
+          <li><a href="https://github.com/revjmoney/axis-bbs">GitHub source</a></li>
+          <li><a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/">Buy a ready-to-plug-in unit</a></li>
+          <li><a href="docs.html">Docs / Wiki</a></li>
+          <li><a class="coffee" href="https://buymeacoffee.com/revjmoney">Buy me a coffee</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="fineprint">Copyright (C) 2026 Rev. J. Money. GPL-3.0-or-later with an attribution term: keep the credit "Rev. J. Money, rotatocam.com, jmscnc.com".</p>
+<p class="fineprint coffee-line"><a href="https://buymeacoffee.com/revjmoney"><span class="blinky" aria-hidden="true">&#9608;</span> Like the board? Buy Rev a coffee</a></p>
+<p class="fineprint">Text face: the IBM VGA 8x16 glyphs as packaged by VileR (int10h.org), CC BY-SA 4.0, built into a webfont from the board's own font table.</p>
+  </div>
+</footer>
+<div class="statusbar">
+  <span class="sb-name">AXIS UNDERGROUND CNC</span>
+  <span class="sb-hide">Node 1</span>
+  <span class="sb-hide">9600 bps</span>
+  <span class="sb-hide">ANSI</span>
+  <span class="sb-keys"><a href="docs.html"><span class="hk">D</span>ocs</a> <a href="https://jmscnc.com/product/axis-underground-bbs-ready-to-plug-in/"><span class="hk">B</span>uy</a> <a href="#test-board"><span class="hk">T</span>est access</a></span>
+</div>
+<script src="site.js"></script>
+</body>
+</html>

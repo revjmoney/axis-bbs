@@ -1,0 +1,126 @@
+{
+ "release": "v0.53",
+ "app_partition": 2359296,
+ "presets": [
+  {
+   "id": "everything",
+   "label": "Everything",
+   "flash": 2282912,
+   "flash_pct": 96.8,
+   "flash_freed": 0,
+   "dram_static": 48960,
+   "dram_static_freed": 0,
+   "spikes_gone": [],
+   "spikes_gone_kb": 0
+  },
+  {
+   "id": "no-doors",
+   "label": "No doors",
+   "flash": 2203328,
+   "flash_pct": 93.4,
+   "flash_freed": 79584,
+   "dram_static": 48960,
+   "dram_static_freed": 0,
+   "spikes_gone": [
+    {
+     "id": "lord",
+     "peak_kb": 20,
+     "what": "LORD, about 20 KB with its event script held in memory"
+    }
+   ],
+   "spikes_gone_kb": 20
+  },
+  {
+   "id": "no-files",
+   "label": "No file areas",
+   "flash": 2164128,
+   "flash_pct": 91.7,
+   "flash_freed": 118784,
+   "dram_static": 48848,
+   "dram_static_freed": 112,
+   "spikes_gone": [
+    {
+     "id": "ansiview",
+     "peak_kb": 44,
+     "what": "ZIP window, 32 KB inflate window plus 12 KB decompressor state"
+    },
+    {
+     "id": "transfers",
+     "peak_kb": 8,
+     "what": "XMODEM and ZMODEM buffers (estimate, not yet measured)"
+    }
+   ],
+   "spikes_gone_kb": 52
+  },
+  {
+   "id": "no-radio",
+   "label": "No radio link",
+   "flash": 2265680,
+   "flash_pct": 96.0,
+   "flash_freed": 17232,
+   "dram_static": 48768,
+   "dram_static_freed": 192,
+   "spikes_gone": [],
+   "spikes_gone_kb": 0
+  },
+  {
+   "id": "just-bbs",
+   "label": "Just the BBS",
+   "flash": 1701792,
+   "flash_pct": 72.1,
+   "flash_freed": 581120,
+   "dram_static": 45676,
+   "dram_static_freed": 3284,
+   "spikes_gone": [
+    {
+     "id": "ansiview",
+     "peak_kb": 44,
+     "what": "ZIP window, 32 KB inflate window plus 12 KB decompressor state"
+    },
+    {
+     "id": "lord",
+     "peak_kb": 20,
+     "what": "LORD, about 20 KB with its event script held in memory"
+    },
+    {
+     "id": "transfers",
+     "peak_kb": 8,
+     "what": "XMODEM and ZMODEM buffers (estimate, not yet measured)"
+    },
+    {
+     "id": "web",
+     "peak_kb": 48,
+     "what": "TLS handshake, about 48 KB"
+    }
+   ],
+   "spikes_gone_kb": 120
+  },
+  {
+   "id": "no-sd",
+   "label": "No SD card",
+   "flash": 1969360,
+   "flash_pct": 83.5,
+   "flash_freed": 313552,
+   "dram_static": 47528,
+   "dram_static_freed": 1432,
+   "spikes_gone": [
+    {
+     "id": "ansiview",
+     "peak_kb": 44,
+     "what": "ZIP window, 32 KB inflate window plus 12 KB decompressor state"
+    },
+    {
+     "id": "lord",
+     "peak_kb": 20,
+     "what": "LORD, about 20 KB with its event script held in memory"
+    },
+    {
+     "id": "transfers",
+     "peak_kb": 8,
+     "what": "XMODEM and ZMODEM buffers (estimate, not yet measured)"
+    }
+   ],
+   "spikes_gone_kb": 72
+  }
+ ]
+}

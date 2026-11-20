@@ -1,0 +1,45 @@
+{
+ "release": "v0.53",
+ "preset": "everything",
+ "chip": "ESP32",
+ "off": [],
+ "fingerprint": "a01b96eb50f5",
+ "app_partition": {
+  "offset": 65536,
+  "size": 2359296
+ },
+ "cost": {
+  "flash": 2282912,
+  "dram_static": 48960
+ },
+ "images": [
+  {
+   "role": "bootloader",
+   "file": "bootloader.bin",
+   "offset": 4096,
+   "size": 27248,
+   "sha256": "45037513aadc3c42cb5c93f5753b7726711d5546b29408527e8d8d87243988ee"
+  },
+  {
+   "role": "partitions",
+   "file": "partitions.bin",
+   "offset": 32768,
+   "size": 3072,
+   "sha256": "0e737991d33b2886bd0e71a1c6a7584a6b61ebf98dce41093915d726a31e2eb6"
+  },
+  {
+   "role": "otadata",
+   "file": "ota_data_initial.bin",
+   "offset": 57344,
+   "size": 8192,
+   "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+  },
+  {
+   "role": "app",
+   "file": "firmware.bin",
+   "offset": 65536,
+   "size": 2282912,
+   "sha256": "79c6169fde28caca9929651a6c8b1e887817adb01c8159d186a835be49b26e27"
+  }
+ ]
+}
