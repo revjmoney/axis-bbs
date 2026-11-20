@@ -57,7 +57,7 @@ Both keep everything in one data folder (`--data DIR`, default `~/.axis`, or `/v
 
 ### Get it
 
-- **Linux packages.** GitHub Actions builds `axispc` and runs the host tests on every change. It makes a **.deb** and an **AppImage** for **x86_64** and **ARM64**, and a .deb for **32-bit ARM** (Raspberry Pi and friends). A `pc-v*` tag publishes them on [GitHub Releases](https://github.com/revjmoney/axis-bbs/releases). **The first Linux release is out: [axispc pc-v0.53](https://github.com/revjmoney/axis-bbs/releases/tag/pc-v0.53).** Install the .deb with `sudo apt install ./axispc_*.deb`, or make the AppImage executable and run it. You can also build from source (below).
+- **Linux packages.** GitHub Actions builds `axispc` and runs the host tests on every change. It makes a **.deb** and an **AppImage** for **x86_64** and **ARM64**, and a .deb for **32-bit ARM** (Raspberry Pi and friends). A `pc-v*` tag publishes them on [GitHub Releases](https://github.com/revjmoney/axis-bbs/releases). **The current Linux release is [axispc pc-v0.54](https://github.com/revjmoney/axis-bbs/releases/tag/pc-v0.54).** Install the .deb with `sudo apt install ./axispc_0.54_amd64.deb` (ARM64: `axispc_0.54_arm64.deb`, 32-bit ARM: `axispc_0.54_armhf.deb`). For the AppImage, `chmod +x axispc-0.54-x86_64.AppImage` (ARM64: `axispc-0.54-aarch64.AppImage`) and run it. You can also build from source (below).
 - **As a service.** `installer/linux/install.sh` installs the system service (its own `axis` user, `/var/lib/axis`, the modem's serial group), and `installer/linux/harden-i5.sh` sets up the firewall and fail2ban. See [installer/linux/README.md](installer/linux/README.md).
 - **Windows: coming soon.** A native Windows build and installer are on the roadmap (project 7).
 
