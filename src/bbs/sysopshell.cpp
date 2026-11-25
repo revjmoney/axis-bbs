@@ -11,6 +11,9 @@
 #include "bbs/config.h"
 #include "bbs/features.h"  // AXIS_BENCH (boardOnlyCommand)
 #include "bbs/filelib.h"
+#include "bbs/lightbar.h"
+#include "bbs/listscreen.h"
+#include "bbs/listtemplate.h"
 #include "bbs/theme.h"
 
 namespace axis::bbs {
@@ -94,6 +97,13 @@ std::string followerCommand(const std::string& cmd, const std::function<std::str
 }
 
 SysopShell::SysopShell(std::string& out, Run run, int cols, bool local) : out_(out), run_(std::move(run)), cols_(cols), local_(local) {}
+
+size_t SysopShell::page_() const {
+    if (cols_ < 80) return 7;  // the board's own screen stays on today's page
+    ListTemplate tpl;
+    if (listScreenTemplate("SYSOP.LST", tpl)) return (size_t)tpl.rows;
+    return 14;
+}
 
 // the theme's header art (80 columns) online; one bright title line on the board's 40-column screen
 std::string SysopShell::header(const std::string& title) const {
@@ -317,11 +327,30 @@ std::string SysopShell::setting(const std::string& key) {
 void SysopShell::draw() {
     if (layers_.empty()) return;
     Layer& l = layers_.back();
+    ListTemplate        tpl;
+    const ListTemplate* t = cols_ >= 80 && listScreenTemplate("SYSOP.LST", tpl) ? &tpl : nullptr;
     out_ += theme::CLS;
-    out_ += header(l.title);
+    bool artHead = false;
+    if (t) {
+        // The page's own art (MENUS.ANS on the menu page) when the look has it, else the template's head (SYSOP.ANS).
+        std::string art = theme::artFor(l.title, 3);
+        if (art.empty()) art = theme::artFor(t->head.empty() ? std::string("SYSOP") : t->head, 3);
+        if (!art.empty()) {
+            out_ += art;
+            out_ += "\x1b[4;1H\x1b[J";  // the header's top rows stay; the list starts under them
+            artHead = true;
+        }
+    }
+    if (!artHead) out_ += header(l.title);
     std::string crumbs;
     for (size_t i = 0; i < layers_.size(); i++) crumbs += (i ? " > " : "") + layers_[i].title;
-    out_ += " " + std::string(theme::DGREY) + fit(crumbs, (size_t)cols_ - 4) + theme::TEXT + "\r\n";
+    if (t && !t->caption.empty()) {
+        out_ += renderLine(t->caption, t->width, AcsUser{}, [&](const std::string& k) { return k == "CR" ? crumbs : std::string(); }, theme::artStyle()) +
+                theme::RESET + "\r\n";
+        if (t->rule)
+            out_ += std::string(theme::ORANGE) + std::string((size_t)std::max(0, t->width), '\xcd') + theme::RESET + "\r\n";
+    } else
+        out_ += " " + std::string(theme::DGREY) + fit(crumbs, (size_t)cols_ - 4) + theme::TEXT + "\r\n";
     if (!l.text.empty() || !l.build) {  // a read-only page
         size_t from = l.at;
         for (size_t i = from; i < l.text.size() && i < from + page_() + (cols_ >= 80 ? 2 : 1); i++) out_ += "   " + std::string(theme::TEXT) + fit(l.text[i], 74) + "\r\n";
@@ -329,9 +358,20 @@ void SysopShell::draw() {
         return;
     }
     size_t page = l.at / page_(), from = page * page_();
+    const ArtStyle style = t ? theme::artStyle() : ArtStyle{};
     for (size_t i = from; i < l.items.size() && i < from + page_(); i++) {
         const Item& it = l.items[i];
         bool        on = i == l.at;
+        if (t) {  // SYSOP.LST's row: KY the key, LB the label, VL the value. The bar colour is colours=.
+            char        key = keyFor(i - from);
+            std::string label = it.label, value = it.value;
+            out_ += std::string(cols_ >= 80 ? "  " : "") + dosColour(on ? t->hi : t->reg) +
+                    renderRow(*t, AcsUser{}, [key, label, value](const std::string& k) {
+                        return k == "KY" ? std::string(1, key) : k == "LB" ? label : k == "VL" ? value : std::string();
+                    }, style) +
+                    "\x1b[0m\r\n";
+            continue;
+        }
         size_t      lw = cols_ >= 80 ? 30 : 21, vw = cols_ >= 80 ? 40 : (size_t)cols_ - 26;
         std::string label = fit(it.label, lw), value = fit(it.value, vw);
         out_ += cols_ >= 80 ? "  " : "";
@@ -347,7 +387,9 @@ void SysopShell::draw() {
     if (!note_.empty()) out_ += std::string(theme::HOT) + fit(note_, 70) + theme::TEXT + "\r\n   ";
     if (pages > 1 && cols_ < 80) out_ += std::string(theme::DGREY) + "page " + std::to_string(page + 1) + "/" + std::to_string(pages) + " (tap: more)  ";  // the board: no N key
     else if (pages > 1) out_ += std::string(theme::DGREY) + "page " + std::to_string(page + 1) + "/" + std::to_string(pages) + "  " + theme::key("N", "/") + theme::key("P", "  ");
-    out_ += theme::key("Enter", " pick  ") + theme::key("Q", " back") + " ";
+    if (t && !t->keys.empty())
+        out_ += renderLine(t->keys, t->width, AcsUser{}, [](const std::string&) { return std::string(); }, style) + theme::RESET;
+    else out_ += theme::key("Enter", " pick  ") + theme::key("Q", " back") + " ";
 }
 
 // ---- questions

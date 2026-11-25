@@ -1,0 +1,8 @@
+; Account screen. LB the label, VL the value. A missing file keeps the built-in window.
+geom=4,8,70,10
+colours=111,15
+head=ACCOUNT
+caption=|08YOUR ACCOUNT
+rule=1
+row=|14@LB10@ |15@VL40@
+keys=|08[|14R|08]eal name   [|14L|08]ocation   [|14E|08]mail   [|14T|08]agline   [|14P|08]assword   [|14Q|08]uit

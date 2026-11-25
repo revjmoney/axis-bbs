@@ -1,0 +1,8 @@
+; Doors lightbar. KY the key (1-9, then A), NM the name, ID the door id.
+geom=4,8,44,14
+colours=111,15
+head=DOORLB
+caption=|08Door
+rule=1
+row=[@KY1@] @NM30@
+keys=|08Door number  arrows move, |14Enter|08 picks, or the key

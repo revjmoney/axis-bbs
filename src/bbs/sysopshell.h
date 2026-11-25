@@ -160,8 +160,8 @@ private:
     std::vector<size_t>                    recPages_;     // the record list: the index each page starts at (Older, Newer)
     std::string                            voteComment_;  // New Board Voting: the comment typed for the next vote
 #endif
-    std::string                            header(const std::string& title) const;
-    size_t page_() const { return cols_ >= 80 ? 14 : 7; }  // items a page: 14 online, 7 on the board's 12-line screen
+    std::string header(const std::string& title) const;
+    size_t      page_() const;  // items a page: the look's SYSOP.LST rows, else 14 online, 7 on the board's screen
 };
 
 }  // namespace axis::bbs

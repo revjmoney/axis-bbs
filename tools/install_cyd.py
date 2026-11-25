@@ -68,8 +68,9 @@ THEME_CAP = 12288
 # axis/ inside a look zip: logoff, lite screens, list templates, the dialect file. Copied by
 # their firmware names next to the numbered screens. tools/art/make_look_extras.py rebuilds them.
 AXIS_EXTRA = re.compile(
-    r'^(GOODBYE|MAIN|LOGIN|FASTLOGN|NEWUSER|MATRIX|FILES|DOORS|MSGS|PRELOGON|SHOP|MILL|BULLETIN|SAYLOR|SAYLORLG)'
-    r'(\.LITE)?\.ANS$|^(FILES|MSGS|USERS)\.LST$|^THEME\.CFG$'
+    r'^(GOODBYE|MAIN|LOGIN|FASTLOGN|NEWUSER|MATRIX|FILES|DOORS|MSGS|PRELOGON|SHOP|MILL|BULLETIN|SAYLOR|SAYLORLG'
+    r'|ACCOUNT|WHO|DOORLB|SYSOP|MENUS)'
+    r'(\.LITE)?\.ANS$|^(FILES|MSGS|USERS|ACCOUNT|WHO|DOORLB|SYSOP)\.LST$|^THEME\.CFG$'
 )
 
 PACKS = [

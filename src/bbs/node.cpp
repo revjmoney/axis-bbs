@@ -6,6 +6,8 @@
 #include "bbs/axisnet.h"
 #include "bbs/features.h"
 #include "bbs/ansiterm.h"
+#include "bbs/listscreen.h"
+#include "bbs/listtemplate.h"
 #include "bbs/login_art.h"
 #include "bbs/password.h"
 #include "bbs/theme.h"
@@ -1331,11 +1333,52 @@ bool Node::scriptDoor() {
     return true;
 }
 
+void Node::openListedDoor(size_t pick, char echo) {
+    doorBar_.reset();
+    door_ = pick;
+    out_ += echo;
+    if (scriptDoor()) return;
+    state_ = State::InDoor;
+    out_ += "\r\n\r\n   ";
+    out_ += DIM;
+    out_ += "Opening " + door().name + "...";
+    out_ += RST;
+    out_ += "\r\n";
+}
+
+void Node::leaveDoors() {
+    doorBar_.reset();
+    state_ = State::Menu;
+    if (menu_ && !builtin_) showMainMenu();
+    else showMenu();
+}
+
 void Node::showDoors() {
+    doorBar_.reset();
+    doorList_ = doorChoices();
+    ListTemplate        tpl;
+    const ListTemplate* t = listScreenTemplate("DOORLB.LST", tpl) ? &tpl : nullptr;
+    if (t) {  // a lightbar over the look's row template; the numbered window stays when the look has no file
+        out_ += listScreenTop(t->head.empty() ? std::string("DOORLB") : t->head, "", t);
+        std::vector<std::string> items;
+        const ArtStyle           style = theme::artStyle();
+        for (size_t i = 0; i < doorList_.size() && i < 35; i++) {  // 1 to 9, then A, B, C ...
+            char        key = i < 9 ? (char)('1' + i) : (char)('A' + i - 9);
+            std::string name = doorList_[i].name, id = doorList_[i].id;
+            items.push_back(renderRow(*t, menuWho(), [key, name, id](const std::string& k) {
+                return k == "KY" ? std::string(1, key) : k == "NM" ? name : k == "ID" ? id : std::string();
+            }, style));
+        }
+        doorBar_.reset(new ScrollList(t->x, t->y, t->width, t->rows, t->hi, t->reg));
+        doorBar_->setItems(std::move(items));
+        out_ += doorBar_->draw();
+        out_ += listScreenKeys(std::string(theme::DGREY) + "Door number  arrows move, " + theme::HOT + "Enter" + theme::DGREY + " picks, or the key", t);
+        state_ = State::Doors;
+        return;
+    }
     out_ += theme::CLS;
     out_ += "\r\n" + theme::drip("DOORS");
     std::vector<std::pair<std::string, std::string>> rows;
-    doorList_ = doorChoices();
     for (size_t i = 0; i < doorList_.size() && i < 35; i++)  // 1 to 9, then A, B, C ...
         rows.push_back({"[" + std::string(1, i < 9 ? (char)('1' + i) : (char)('A' + i - 9)) + "]", doorList_[i].name});
     out_ += theme::window("Doors", rows);
@@ -2262,22 +2305,16 @@ void Node::key(char c) {
         return;
     }
     if (state_ == State::Doors) {
-        size_t pick = c >= '1' && c <= '9' ? (size_t)(c - '1') : (c | 0x20) >= 'a' && (c | 0x20) <= 'z' ? (size_t)(9 + (c | 0x20) - 'a') : doorList_.size();
-        if (pick < doorList_.size()) {
-            door_ = pick;
-            out_ += c;
-            if (scriptDoor()) return;
-            state_ = State::InDoor;
-            out_ += "\r\n\r\n   ";
-            out_ += DIM;
-            out_ += "Opening " + door().name + "...";
-            out_ += RST;
-            out_ += "\r\n";
-        } else {  // left the list: straight back to the menu, nothing to hold
-            state_ = State::Menu;
-            if (menu_ && !builtin_) showMainMenu();
-            else showMenu();
+        if (doorBar_ && (doorBar_->midKey() || c == '\x1b' || c == '\r')) {  // arrows move the bar, Enter picks it
+            int picked = doorBar_->key(c);
+            if (picked >= 0) openListedDoor((size_t)picked, c);
+            else if (doorBar_->escaped()) leaveDoors();
+            else out_ += doorBar_->takeRedraw();
+            return;
         }
+        size_t pick = c >= '1' && c <= '9' ? (size_t)(c - '1') : (c | 0x20) >= 'a' && (c | 0x20) <= 'z' ? (size_t)(9 + (c | 0x20) - 'a') : doorList_.size();
+        if (pick < doorList_.size()) openListedDoor(pick, c);
+        else leaveDoors();  // left the list: straight back to the menu, nothing to hold
         return;
     }
     if (state_ == State::Transfer) return;  // the line belongs to the transfer
@@ -2905,21 +2942,46 @@ void Node::multiKey(char c) {
 }
 
 void Node::showWhoOnline() {
-    out_ += theme::CLS;
-    out_ += "\r\n" + theme::drip("WHO") + "   ";
-    out_ += theme::fade("WHO'S ONLINE");
-    out_ += "\r\n";
     std::vector<WhoLine> all;
     if (who_) all = who_();
     else all.push_back({node_, handle_, "Menu"});
-    for (const WhoLine& w : all) {
-        char b[192];
-        bool link = !w.handle.empty() && !w.link.empty();
-        std::snprintf(b, sizeof b, "   %snode %-3d %s%-24s %s%s%s%s\r\n", theme::ORANGE, w.node, theme::WHITE,
-                      w.handle.empty() ? "" : w.handle.c_str(), theme::TEXT,
-                      w.handle.empty() ? "waiting for a caller" : w.activity.c_str(), link ? "  " : "", link ? w.link.c_str() : "");
-        out_ += b;
+    ListTemplate        tpl;
+    const ListTemplate* t = listScreenTemplate("WHO.LST", tpl) ? &tpl : nullptr;
+    if (!t) {  // the built-in listing, unchanged when the look has no template
+        out_ += theme::CLS;
+        out_ += "\r\n" + theme::drip("WHO") + "   ";
+        out_ += theme::fade("WHO'S ONLINE");
+        out_ += "\r\n";
+        for (const WhoLine& w : all) {
+            char b[192];
+            bool link = !w.handle.empty() && !w.link.empty();
+            std::snprintf(b, sizeof b, "   %snode %-3d %s%-24s %s%s%s%s\r\n", theme::ORANGE, w.node, theme::WHITE,
+                          w.handle.empty() ? "" : w.handle.c_str(), theme::TEXT,
+                          w.handle.empty() ? "waiting for a caller" : w.activity.c_str(), link ? "  " : "", link ? w.link.c_str() : "");
+            out_ += b;
+        }
+        showMenu();
+        return;
     }
+    out_ += listScreenTop(t->head.empty() ? std::string("WHO") : t->head, "", t);
+    const ArtStyle style = theme::artStyle();
+    int            n = 0;
+    for (const WhoLine& w : all) {
+        if (n >= t->rows) break;
+        bool        waiting = w.handle.empty();
+        std::string link = !waiting && !w.link.empty() ? "  " + w.link : std::string();
+        out_ += "\x1b[" + std::to_string(t->y + n) + ";" + std::to_string(t->x) + "H" +
+                renderRow(*t, menuWho(), [&](const std::string& k) {
+                    return k == "ND" ? std::to_string(w.node) : k == "HN" ? w.handle : k == "AC" ? (waiting ? "waiting for a caller" : w.activity)
+                                                                                                : k == "LK" ? link : std::string();
+                }, style) +
+                theme::RESET;
+        n++;
+    }
+    if (n == 0) out_ += "\x1b[" + std::to_string(t->y) + ";" + std::to_string(t->x) + "H" + theme::TEXT + "(nobody online)\r\n";
+    else if ((int)all.size() > n)
+        out_ += listScreenStatus(theme::DGREY + ("and " + std::to_string((int)all.size() - n) + " more"), t);
+    else out_ += "\x1b[" + std::to_string(t->y + n) + ";1H";
     showMenu();
 }
 
@@ -3935,6 +3997,10 @@ void Node::poll(uint32_t nowMs) {
     if (!drawings_.empty()) pumpArt();  // a screen still going out to a slow caller
     if (state_ == State::Script) pumpScript();
     if (menu_ && !builtin_ && state_ == State::Menu) menu_->tick(nowMs);  // a lone ESC on a lightbar: Esc after a pause
+    if (state_ == State::Doors && doorBar_ && doorBar_->midKey() && nowMs - lastInput_ > 300) {
+        doorBar_->keyTimeout();
+        if (doorBar_->escaped()) leaveDoors();
+    }
     if (state_ == State::AxisNet && net_ && !net_->tick(nowMs, lastInput_)) {
         net_.reset();
         showMainMenu();

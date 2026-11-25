@@ -270,6 +270,9 @@ const char* menuScreenFile(const std::string& name) {
         {"PRELOGON2.ANS", "SHOP.ANS"},  {"PRELOGON3.ANS", "MILL.ANS"},
         {"THEME.CFG", "THEME.CFG"},
         {"FILES.LST", "FILES.LST"},     {"MSGS.LST", "MSGS.LST"},         {"USERS.LST", "USERS.LST"},
+        {"ACCOUNT.LST", "ACCOUNT.LST"}, {"WHO.LST", "WHO.LST"},           {"DOORLB.LST", "DOORLB.LST"}, {"SYSOP.LST", "SYSOP.LST"},
+        {"ACCOUNT.ANS", "ACCOUNT.ANS"}, {"WHO.ANS", "WHO.ANS"},           {"DOORLB.ANS", "DOORLB.ANS"},
+        {"SYSOP.ANS", "SYSOP.ANS"},     {"MENUS.ANS", "MENUS.ANS"},
     };
     for (const auto& m : kMap)
         if (name == m[0]) return m[1];
@@ -278,10 +281,23 @@ const char* menuScreenFile(const std::string& name) {
         {"NEWUSER.LITE.ANS", "NEWUSER.LITE.ANS"}, {"PDMATRIX.LITE.ANS", "MATRIX.LITE.ANS"}, {"FILEM.LITE.ANS", "FILES.LITE.ANS"},
         {"DOORSM.LITE.ANS", "DOORS.LITE.ANS"},    {"MSGMENU.LITE.ANS", "MSGS.LITE.ANS"},    {"PRELOGON1.LITE.ANS", "PRELOGON.LITE.ANS"},
         {"PRELOGON2.LITE.ANS", "SHOP.LITE.ANS"},  {"PRELOGON3.LITE.ANS", "MILL.LITE.ANS"},
+        {"ACCOUNT.LITE.ANS", "ACCOUNT.LITE.ANS"}, {"WHO.LITE.ANS", "WHO.LITE.ANS"},         {"DOORLB.LITE.ANS", "DOORLB.LITE.ANS"},
+        {"SYSOP.LITE.ANS", "SYSOP.LITE.ANS"},     {"MENUS.LITE.ANS", "MENUS.LITE.ANS"},
     };
     for (const auto& m : kLite)
         if (name == m[0]) return m[1];
     return nullptr;
+}
+
+bool menuSetArt(const std::string& name) {
+    // The default art for these screens lives in the menu set. A look's own file still wins (the reader tries the theme folder first).
+    static const char* const k[] = {
+        "ACCOUNT.ANS", "ACCOUNT.LITE.ANS", "WHO.ANS",     "WHO.LITE.ANS", "DOORLB.ANS", "DOORLB.LITE.ANS",
+        "SYSOP.ANS",   "SYSOP.LITE.ANS",   "MENUS.ANS",   "MENUS.LITE.ANS",
+    };
+    for (const char* n : k)
+        if (name == n) return true;
+    return false;
 }
 
 bool isClassicWfc(const std::string& v) {
