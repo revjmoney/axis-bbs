@@ -2,6 +2,8 @@
 file(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.cpp ${CMAKE_SOURCE_DIR}/src/*.c)
 list(FILTER app_sources EXCLUDE REGEX ".*/platform/pc/.*")
 list(FILTER app_sources EXCLUDE REGEX ".*/platform/linux/.*")  # the native Linux program's host layer
+list(FILTER app_sources EXCLUDE REGEX ".*/platform/os/.*")     # axispc's Linux/Windows OS layer (CMakeLists.pc.txt)
+list(FILTER app_sources EXCLUDE REGEX ".*/platform/win/.*")    # axispc's Windows pieces (CMakeLists.pc.txt)
 list(FILTER app_sources EXCLUDE REGEX ".*/pcapp/.*")  # the PC program, axispc (CMakeLists.pc.txt)
 idf_component_register(SRCS ${app_sources} INCLUDE_DIRS ".")
 target_compile_options(${COMPONENT_LIB} PRIVATE -w -O2 -std=gnu++17)

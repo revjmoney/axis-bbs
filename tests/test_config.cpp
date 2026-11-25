@@ -391,6 +391,25 @@ TEST_CASE("a LORD.EXE row with no on/off flag is off, and a later door number re
     CHECK(on.doors[0].exe == "LORD.EXE");
 }
 
+TEST_CASE("archive policy: ZIP is checked, a type this board cannot unpack is not, and it round trips") {
+    CHECK(parseConfig("").archiveZip == "check");
+    CHECK(parseConfig("").archiveRar == "keep");
+    CHECK(parseConfig("").archiveNfo);
+    BbsConfig c = parseConfig("archive_zip=reject\narchive_rar=check\narchive_nfo=0\narchive_other=reject\n");
+    CHECK(c.archiveZip == "reject");
+    CHECK(c.archiveRar == "keep");  // "check" is not stored for a type this board cannot unpack
+    CHECK(c.archiveOther == "reject");
+    CHECK_FALSE(c.archiveNfo);
+    CHECK(parseConfig(formatConfig(c)).archiveZip == "reject");
+    CHECK_FALSE(parseConfig(formatConfig(c)).archiveNfo);
+    ArchivePolicy p = archivePolicy(c);
+    CHECK(p.forName("PACK.ZIP") == ArchiveMode::Reject);
+    CHECK(p.forName("notes.RAR") == ArchiveMode::Keep);
+    CHECK(p.forName("readme.txt") == ArchiveMode::Reject);
+    CHECK(p.forName("pack.zip") == ArchiveMode::Reject);
+    CHECK_FALSE(p.nfo);
+}
+
 TEST_CASE("sysop_telnet defaults on and round trips") {
     CHECK(parseConfig("").sysopTelnet);
     BbsConfig off = parseConfig("sysop_telnet=0\n");

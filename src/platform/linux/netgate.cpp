@@ -4,8 +4,7 @@
 // the clock does no harm.
 #include "platform/linux/netgate.h"
 
-#include <arpa/inet.h>
-
+#include <cstdio>
 #include <cstring>
 
 bool NetGate::isLan(uint32_t ip) {
@@ -19,10 +18,10 @@ bool NetGate::isLan(uint32_t ip) {
 }
 
 std::string NetGate::ipText(uint32_t ip) {
-    char    s[INET_ADDRSTRLEN] = "?";
-    in_addr a;
-    a.s_addr = ip;
-    inet_ntop(AF_INET, &a, s, sizeof s);
+    uint8_t b[4];
+    std::memcpy(b, &ip, 4);  // network order, same bytes inet_ntop would print
+    char s[16];
+    std::snprintf(s, sizeof s, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
     return s;
 }
 

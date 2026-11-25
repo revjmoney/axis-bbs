@@ -3,7 +3,8 @@
 // ViSiON/3's art and prompt codes, turned into ANSI as the text streams out:
 //   |00..|15 foreground (DOS colours), |B0..|B15 background, |CL clear screen, |XYcc,rr move the cursor,
 //   |XX a two-letter placeholder (value("XX")), @XX####@ a placeholder padded to the field's width,
-//   (a look's dialect, ArtStyle, adds |C1..|C7 and || for vision3; ^0..^9, |16..|31 backgrounds, |CS and || for renegade)
+//   (a look's dialect, ArtStyle, adds |C1..|C7 and || for vision3; ^0..^9, |16..|31 backgrounds, |CS and || for renegade.
+//    Renegade also fills %ND, the node number, in the value callback.)
 //   %XX AXIS's own codes (the same values as |XX), {{ACS}}...{{/}} shown only to callers the access string allows, else blanked to the same width.
 #pragma once
 #include <cstddef>

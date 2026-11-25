@@ -639,7 +639,7 @@ std::string formatReport(const Cache& c, std::string_view current, bool enabled)
     return o;
 }
 
-#if !defined(__linux__)
+#if !defined(__linux__) && !defined(_WIN32)
 void        start(const std::string&, bool, const std::string&, const std::string&) {}
 void        poll() {}
 void        stop() {}

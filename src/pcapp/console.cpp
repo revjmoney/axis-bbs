@@ -3,25 +3,17 @@
 // axispc's terminal mode (console.h).
 #include "pcapp/console.h"
 
-#include <fcntl.h>
-#include <poll.h>
-#include <termios.h>
-#include <unistd.h>
-
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "pcapp/pchost.h"
+#include "platform/os/os.h"
 
 namespace axis::pcapp {
 
 namespace {
-volatile sig_atomic_t termOn = 0;  // the terminal is raw and on the alternate screen
-termios               saved{};
-int                   termOut = -1;  // the terminal, after the log took fd 1 and 2
-
 // CP437's upper half as Unicode, for a UTF-8 terminal (the art is CP437 bytes)
 const uint16_t kCp437[128] = {
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, 0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x00EC, 0x00C4, 0x00C5,
@@ -33,15 +25,7 @@ const uint16_t kCp437[128] = {
     0x03B1, 0x00DF, 0x0393, 0x03C0, 0x03A3, 0x03C3, 0x00B5, 0x03C4, 0x03A6, 0x0398, 0x03A9, 0x03B4, 0x221E, 0x03C6, 0x03B5, 0x2229,
     0x2261, 0x00B1, 0x2265, 0x2264, 0x2320, 0x2321, 0x00F7, 0x2248, 0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x25A0, 0x00A0};
 
-void putOut(const char* s, size_t n) {  // async-signal-safe
-    if (termOut < 0) return;
-    while (n) {
-        ssize_t w = ::write(termOut, s, n);
-        if (w <= 0) return;
-        s += w;
-        n -= (size_t)w;
-    }
-}
+void putOut(const char* s, size_t n) { os::termWrite(s, n); }  // the real terminal; signal-safe on Linux
 void putOut(const std::string& s) { putOut(s.data(), s.size()); }
 
 void putGlyph(std::string& out, uint8_t ch) {
@@ -70,62 +54,14 @@ std::string sgr(uint8_t attr) {
 }  // namespace
 
 bool Console::start(const std::string& logPath, std::string& why) {
-    if (::tcgetattr(STDIN_FILENO, &saved) != 0) {
-        why = "cannot read the terminal's settings";
-        return false;
-    }
-    int out = ::dup(STDOUT_FILENO);  // the console keeps the terminal; fd 1 and 2 (the program's log) move to the file
-    int log = ::open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
-    if (out < 0 || log < 0) {
-        if (out >= 0) ::close(out);
-        if (log >= 0) ::close(log);
-        why = "cannot open the log file " + logPath;
-        return false;
-    }
-    std::fflush(stdout);
-    std::fflush(stderr);
-    ::dup2(log, STDOUT_FILENO);
-    ::dup2(log, STDERR_FILENO);
-    ::close(log);
-    ::fcntl(out, F_SETFD, FD_CLOEXEC);
-    termOut = out;
-    termios raw = saved;
-    // keys straight in: no line editing, no echo, CR stays CR, no flow control; Ctrl-C still stops the program
-    raw.c_iflag &= ~(tcflag_t)(BRKINT | ICRNL | INLCR | IGNCR | INPCK | ISTRIP | IXON | IXOFF);
-    raw.c_lflag &= ~(tcflag_t)(ICANON | ECHO | ECHONL | IEXTEN);
-    raw.c_lflag |= ISIG;
-    raw.c_cflag |= CS8;
-    raw.c_cc[VQUIT] = _POSIX_VDISABLE;
-    raw.c_cc[VSUSP] = _POSIX_VDISABLE;
-    raw.c_cc[VMIN] = 1;
-    raw.c_cc[VTIME] = 0;
-    if (::tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) {
-        ::dup2(out, STDOUT_FILENO);
-        ::dup2(out, STDERR_FILENO);
-        ::close(out);
-        termOut = -1;
-        why = "cannot put the terminal in raw mode";
-        return false;
-    }
-    termOn = 1;
+    if (!os::termStart(logPath, why)) return false;
     std::atexit(restore);
-    const char on[] = "\x1b[?1049h\x1b[?25l\x1b[0m\x1b[2J\x1b[H";  // the alternate screen, cursor hidden
-    putOut(on, sizeof on - 1);
     return true;
 }
 
-void Console::restore() {
-    if (!termOn) return;
-    termOn = 0;
-    const char off[] = "\x1b[0m\x1b[?25h\x1b[?1049l";
-    putOut(off, sizeof off - 1);
-    ::tcsetattr(STDIN_FILENO, TCSANOW, &saved);  // (not TCSAFLUSH: a gone terminal never takes the output)
-}
+void Console::restore() { os::termRestore(); }
 
-void Console::tell(const std::string& line) {
-    if (termOut >= 0) putOut(line + "\n");
-    else std::fprintf(stderr, "%s\n", line.c_str());
-}
+void Console::tell(const std::string& line) { os::termTell(line); }
 
 Console::Console(PcBbs& bbs) : bbs_(bbs), term_(80, 25) {}
 
@@ -201,14 +137,11 @@ bool Console::poll() {
             moved = true;
         }
     }
-    char          keys[256];
-    struct pollfd p = {STDIN_FILENO, POLLIN, 0};
-    if (::poll(&p, 1, 0) > 0 && (p.revents & POLLIN)) {
-        ssize_t n = ::read(STDIN_FILENO, keys, sizeof keys);
-        if (n > 0) {
-            moved = true;
-            if (node_) node_->input((const uint8_t*)keys, (size_t)n, now);
-        }
+    char keys[256];
+    int  n = 0;
+    if (os::termRead(keys, (int)sizeof keys, n) && n > 0) {
+        moved = true;
+        if (node_) node_->input((const uint8_t*)keys, (size_t)n, now);
     }
     if (node_) {
         node_->poll(now);

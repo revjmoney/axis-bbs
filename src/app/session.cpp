@@ -537,13 +537,15 @@ AXIS_NOINLINE void Session::serviceJob() {
 #if AXIS_NETS && AXIS_TRANSFERS
         if (s_.netJobNote) s_.netJobNote(job.get(), note);  // a Net Files download whose fetch stopped
 #endif
+        bool held = r.upload && job->ok() && job->held();  // waiting for the sysop: not on the net, and not announced as a fresh file
         if (r.upload && job->ok()) {
             s_.stats.countUpload();
 #if AXIS_NETS && AXIS_FILES
-            if (s_.netUploaded) s_.netUploaded(r.area, job->savedName(), r.desc, node->handle());  // listed when shared on User Net
+            if (!held && s_.netUploaded) s_.netUploaded(r.area, job->savedName(), r.desc, node->handle());
 #endif
         }
-        s_.host.event(node->handle() + (r.upload ? " uploaded " : " downloaded ") + (r.upload ? job->savedName() : r.name) +
+        std::string verb = !r.upload ? " downloaded " : (held ? " held upload " : " uploaded ");
+        s_.host.event(node->handle() + verb + (r.upload ? job->savedName() : r.name) +
                       (job->ok() ? std::string() : " (failed: " + note + ")"));
         doing("idle");
         if (line && line->carrier()) {
@@ -643,7 +645,7 @@ AXIS_NOINLINE void Session::service(uint32_t nowMs) {
                     sendApp(node->takeOutput());
                     return;
                 }
-                job.reset(new bbs::TransferJob(s_.files(), node->transfer(), *line, info));
+                job.reset(new bbs::TransferJob(s_.files(), node->transfer(), *line, info, bbs::archivePolicy(*s_.cfg)));
                 return;
             }
 #endif

@@ -584,7 +584,7 @@ void Node::showLoginScreen() {  // LOGIN.ANS; its |{P} and |{O} say where the ha
     if (a.find("|{") != std::string::npos) {
         // the key: the raw art plus the width of every value its pipe codes can expand to before a field
         size_t key = std::hash<std::string>{}(a) * 3 + (size_t)style.dialect;  // (a dialect reads `||` and `^n` differently)
-        for (const char* k : {"UH", "NAME", "LEVEL", "GL", "CALLS", "TL", "NODE", "MN", "TIME", "DATE", "BN", "UPLDS", "DNLDS", "LCALL", "CAN", "CFAN", "%UN", "%BN", "%SN", "%NN", "%DT", "%VN", "%TL", "%MA", "%FA"})
+        for (const char* k : {"UH", "NAME", "LEVEL", "GL", "CALLS", "TL", "NODE", "MN", "TIME", "DATE", "BN", "UPLDS", "DNLDS", "LCALL", "CAN", "CFAN", "%UN", "%BN", "%SN", "%NN", "%ND", "%DT", "%VN", "%TL", "%MA", "%FA"})
             key = key * 131 + menuValue(k).size() + 1;
         LoginCells* hit = nullptr;
         for (int i = 0; i < g_loginCellsN; i++)
@@ -931,9 +931,10 @@ std::string Node::mci(const std::string& s) const {
             else if (code == "NN") v = std::to_string(node_);
             else if (code == "DT" || code == "TM") v = info_().timeText;
             else if (code == "VN") v = kAxisVersion;
-            else if (theme::artStyle().dialect == Dialect::Renegade) {  // Renegade's own: time left, the open areas; the rest AXIS has no data for
+            else if (theme::artStyle().dialect == Dialect::Renegade) {  // Renegade's own: time left, the node, the open areas
                 known = true;
                 if (code == "TL") v = menuValue("TL");
+                else if (code == "ND") v = std::to_string(node_);
                 else if (code == "MA") v = menuValue("CAN");
                 else if (code == "FA") v = menuValue("CFAN");
                 else known = code == "CF" || code == "CM" || code == "MP" || code == "PE" || code == "NL";  // (blank)
@@ -1575,8 +1576,7 @@ void Node::drainSeq() {
     }
 }
 
-bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
-    comingSoon = false;
+bool renegadeKey(char key, SysopSection& section) {
     char k = key >= 'A' && key <= 'Z' ? (char)(key | 0x20) : key;
     switch (k) {
         case 's': section = SysopSection::Settings; return true;
@@ -1588,9 +1588,9 @@ bool renegadeKey(char key, SysopSection& section, bool& comingSoon) {
             section = SysopSection::FileAreas;
             return true;
         case 'l': section = SysopSection::System; return true;  // logs: the event log is under System (Look is on the top menu)
-        case 'e':
-        case 'a':
-        case '!': comingSoon = true; return true;
+        case 'e': section = SysopSection::Events; return true;
+        case 'a': section = SysopSection::Archive; return true;
+        case '!': section = SysopSection::Validate; return true;
     }
     return false;
 }
@@ -1688,7 +1688,7 @@ void Node::wfcDraw(const WfcSnapshot& s, bool clear) {
         });
     if (heldCr) out_ += '\r';
     out_ += RST;
-    if (!clear) out_ += "\x1b[J";  // whatever was below (a coming soon line)
+    if (!clear) out_ += "\x1b[J";  // whatever was below (a notice line)
     if (!s.notice.empty()) out_ += std::string("\x1b[24;2H\x1b[0;1;37;41m ") + s.notice + " " + RST;  // the bottom row, whatever the art
 }
 
@@ -1757,12 +1757,7 @@ void Node::wfcKey(char c) {
         return;
     }
     SysopSection s = SysopSection::Top;
-    bool         soon = false;
-    if (!renegadeKey(c, s, soon)) return;
-    if (soon) {
-        out_ += std::string("\x1b[25;1H\x1b[0;33m   That one is coming soon.") + RST + "\x1b[K";
-        return;
-    }
+    if (!renegadeKey(c, s)) return;
     if (!sysopRun_) {
         out_ += std::string("\x1b[25;1H\x1b[0;33m   Sysop menu unavailable.") + RST + "\x1b[K";
         return;
@@ -1917,7 +1912,6 @@ bool Node::slashKey(char c) {
         return false;
     }
     SysopSection s = SysopSection::Top;
-    bool         soon = false;
     if (c == '\r') {
         std::string typed = slash_;
         slash_.clear();
@@ -1926,14 +1920,14 @@ bool Node::slashKey(char c) {
             if (sysopRun_ && local_) openWfc(lastInput_);  // // alone at the board: the waiting-for-caller screen
             else openSysop(false, s);  // over telnet: the sysop menu (its WFC item is the way there); or says it is unavailable
         }
-        else if (renegadeKey(typed[2], s, soon) && !soon) openSysop(true, s);
+        else if (renegadeKey(typed[2], s)) openSysop(true, s);
         else {
-            out_ += std::string("\r\n   ") + AMBER + (soon ? "That one is coming soon." : "Not on this menu.") + theme::TEXT;
+            out_ += std::string("\r\n   ") + AMBER + "Not on this menu." + theme::TEXT;
             prompt();
         }
         return true;
     }
-    if (slash_.size() == 1 || (slash_.size() == 2 && renegadeKey(c, s, soon))) {
+    if (slash_.size() == 1 || (slash_.size() == 2 && renegadeKey(c, s))) {
         slash_ += c;
         out_ += c;
         return true;

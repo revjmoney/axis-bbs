@@ -62,6 +62,8 @@ TEST_CASE("the look is picked from a numbered list, not typed") {
     CHECK(o.find("Crt, hardcore crt") != std::string::npos);
     CHECK(o.find("Skulls, skulls") != std::string::npos);
     CHECK(o.find("Wasteland, wasteland") != std::string::npos);
+    CHECK(o.find("Vision, vision/3 bars") != std::string::npos);
+    CHECK(o.find("Outpost, renegade rampart") != std::string::npos);
     CHECK(o.find("Oblivion") == std::string::npos);
     CHECK(o.find("now") != std::string::npos);  // the fixture's theme is the old green id
     r.type("2");
@@ -818,4 +820,85 @@ TEST_CASE("System, Update check, sends the on/off switch and is absent until axi
     r.shell.beginAt(axis::bbs::SysopSection::System);
     r.type("4");
     CHECK(r.ranCmd("@PCUPDATE on"));
+}
+
+TEST_CASE("events runs a job only after yes, and restart is only at the board") {
+    using axis::bbs::SysopSection;
+    Rig r;
+    r.shell.beginAt(SysopSection::Events);
+    std::string o = plain(r.out);
+    CHECK(o.find("EVENTS") != std::string::npos);
+    CHECK(o.find("Event log") != std::string::npos);
+    CHECK(o.find("Poll message net") != std::string::npos);
+    CHECK(o.find("Clear event log") != std::string::npos);
+    CHECK(o.find("Restart this board") != std::string::npos);
+    r.type("4");  // clear the log
+    CHECK_FALSE(r.ranCmd("@LOGCLEAR"));
+    r.type("n");
+    CHECK_FALSE(r.ranCmd("@LOGCLEAR"));
+    r.type("4y");
+    CHECK(r.ranCmd("@LOGCLEAR"));
+    r.type("2n");
+    CHECK_FALSE(r.ranCmd("@NET SYNC"));
+    r.type("2y");
+    CHECK(r.ranCmd("@NET SYNC"));
+    r.type("6n");
+    CHECK_FALSE(r.ranCmd("@RESTART"));
+    r.type("6y");
+    CHECK(r.ranCmd("@RESTART"));
+    r.type("3");  // purge: the area is typed, then it still asks
+    r.type("general|30\r");
+    CHECK_FALSE(r.ranCmd("@PURGE general|30"));
+    r.type("y");
+    CHECK(r.ranCmd("@PURGE general|30"));
+    std::string remoteOut;
+    SysopShell remote(remoteOut, r.run, 80, false);
+    remote.beginAt(SysopSection::Events);
+    CHECK(plain(remoteOut).find("Restart") == std::string::npos);
+}
+
+TEST_CASE("archive editor cycles ZIP and turns AXISBBS.NFO off") {
+    using axis::bbs::SysopSection;
+    Rig r;
+    r.shell.beginAt(SysopSection::Archive);
+    std::string o = plain(r.out);
+    CHECK(o.find("ZIP") != std::string::npos);
+    CHECK(o.find("checked") != std::string::npos);
+    CHECK(o.find("AXISBBS.NFO") != std::string::npos);
+    r.type("1");
+    CHECK(r.ranCmd("@SET archive_zip=keep"));
+    r.type("6");  // other files: keep, then reject
+    CHECK(r.ranCmd("@SET archive_other=reject"));
+    r.type("7");
+    CHECK(r.ranCmd("@SET archive_nfo=0"));
+}
+
+TEST_CASE("validate lists a held upload and asks before listing or deleting it") {
+    using axis::bbs::SysopSection;
+    Rig r;
+    r.replies["@AREAS"] = "1|ansi|ANSI Packs|0|\n";
+    r.replies["@FILES ansi|0"] = "PACK.ZIP|100|~Test pack\nREADME.TXT|10|already listed\n";
+    r.shell.beginAt(SysopSection::Validate);
+    std::string o = plain(r.out);
+    CHECK(o.find("PACK.ZIP") != std::string::npos);
+    CHECK(o.find("README.TXT") == std::string::npos);
+    r.type("1");  // the upload
+    CHECK(plain(r.out).find("Validate") != std::string::npos);
+    r.type("1n");
+    CHECK_FALSE(r.ranCmd("@FDESC ansi|PACK.ZIP|Test pack"));
+    r.type("1y");
+    CHECK(r.ranCmd("@FDESC ansi|PACK.ZIP|Test pack"));
+    r.shell.beginAt(SysopSection::Validate);
+    r.type("1");
+    r.type("2n");
+    CHECK_FALSE(r.ranCmd("@FDEL ansi|PACK.ZIP"));
+    r.type("2y");
+    CHECK(r.ranCmd("@FDEL ansi|PACK.ZIP"));
+    r.shell.beginAt(SysopSection::Validate);
+    r.type("1");
+    r.type("3gcode\r");
+    CHECK(r.ranCmd("@FMV ansi|PACK.ZIP|gcode"));
+    r.shell.beginAt(SysopSection::Validate);
+    r.type("14");  // open it, then Info
+    CHECK(r.ranCmdPrefix("@FINFO ansi|PACK.ZIP"));
 }

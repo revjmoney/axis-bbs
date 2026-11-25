@@ -18,7 +18,7 @@ The ESP32 is a great little BBS, but it is small: 4 MB of flash and no PSRAM. Th
 
 - **One shared core.** The BBS itself (menus, screens, messages, files, doors, the sysop commands) is one C++ code base in `src/bbs` and `src/app`. The PC program and the board both build from it.
 - **The PC is the main.** On Linux, `axispc` runs many callers in one program. In a cluster the PC is always the main board, and the ESP32 boards join it as nodes.
-- **A BBS that looks the way you want.** Every caller-facing screen is moving to theme art plus a menu or list definition, so a look restyles the whole board. Menu sets and art packs from ViSiON/3, Renegade, Iniquity and Oblivion/2 are first, then Mystic, Synchronet and WWIV.
+- **A BBS that looks the way you want.** Caller screens come from theme art plus a menu or list definition, so a look restyles the board. Ten looks ship that art: axis, crt, sea, haunted, cathedral, skulls, underground, wasteland, Vision Gate and Outpost, each with a goodbye screen, list templates and lite screens for slow radio links. `THEME.CFG` selects an art dialect the board already reads: `axis`, `vision3` (Vision Gate) or `renegade` (Outpost). Importing whole menu sets, and Mystic, Synchronet and WWIV codes, are still ahead.
 - **The sysop panel lives inside the BBS**, themed and lightbar-driven, on telnet, the window and the WFC.
 - **No Python in the product.** C++ throughout (Rust only for small self-contained parts).
 
@@ -27,7 +27,7 @@ The ESP32 is a great little BBS, but it is small: 4 MB of flash and no PSRAM. Th
 | Project | What it brings | Status |
 |---|---|---|
 | 1. PC app foundation | `axispc` for Linux: many callers, telnet, radio, the terminal WFC, packages, CI | Done |
-| 2. Screen and menu engine | List templates (`.LST`), art dialects (ViSiON/3, Renegade), the in-BBS sysop panel, lightbar doors, menu import, art packs | In progress |
+| 2. Screen and menu engine | List templates (`.LST`), `THEME.CFG` dialects (`axis`, `vision3`, `renegade`) and the ten look packs are in. Menu import, and Mystic, Synchronet and WWIV codes, are not | In progress |
 | 3. PC-main cluster | The PC as the cluster's main with ESP32 boards as nodes | Next |
 | 4. Retro callers | C64, Amiga and Z80 terminals | Planned |
 | 5. Mesh dial-in | Callers over a radio mesh | Planned |
@@ -91,7 +91,7 @@ Our test cluster: board 1 (SD card, nodes 1+2), board 2 (nodes 3+4) and a headle
 
 | Feature | What you get | Docs |
 |---|---|---|
-| Looks | Drippy orange Axis, an Oblivion/2 style with a lightbar front door, green and grey Iniquity, and the card screensets; your own ANSI screens with pipe and MCI codes; list screens restyled by a look's `.LST` files ([art and menus](docs/MENU-ART.md)) | [themes](https://revjmoney.github.io/axis-bbs/docs.html#themes) |
+| Looks | Ten art looks: axis, crt, sea, haunted, cathedral, skulls, underground, wasteland, Vision Gate (`dialect=vision3`) and Outpost (`dialect=renegade`). Each ships a themed goodbye screen, `.LST` list templates, lite screens for slow radio links, and `THEME.CFG`. The first eight say `dialect=axis`. Cyan and green remain built-in colour chromes (older names oblivion and iniquity) ([art and menus](docs/MENU-ART.md)) | [themes](https://revjmoney.github.io/axis-bbs/docs.html#themes) |
 | File areas | FILES.BBS areas on SD, archive listings (ZIP, RAR, RAR 5, ARJ, TAR, GZIP), search, new files | [files](https://revjmoney.github.io/axis-bbs/docs.html#files) |
 | Transfers | ZMODEM, XMODEM, XMODEM-1K both ways; ZIP uploads CRC-checked; download gate and ratio | [transfers](https://revjmoney.github.io/axis-bbs/docs.html#transfers) |
 | Messages | Areas, quoted replies, taglines, new scan, private email | [messages](https://revjmoney.github.io/axis-bbs/docs.html#messages) |

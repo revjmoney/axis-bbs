@@ -42,8 +42,8 @@ struct SysInfo {
 
 class AxisNetMenu;
 
-// Renegade sysop keys: S U # B F L open a section; E A ! are coming soon
-bool renegadeKey(char key, SysopSection& section, bool& comingSoon);
+// Renegade sysop keys: S U # B F L E A ! open a section of the sysop menu
+bool renegadeKey(char key, SysopSection& section);
 
 class Node {
 public:
@@ -75,7 +75,7 @@ public:
     void setSysopRun(std::function<std::string(const std::string&)> run) { sysopRun_ = std::move(run); }
     // The 80x25 waiting-for-caller screen (State::Wfc): the theme's WFC.ANS (through setArt) or the built-in one, filled with this
     // snapshot, redrawn every 5 s when it changed (every half second while a newer axispc release blinks in the version).
-    // Keys: S U # B F L open the sysop shell at that section (Esc comes back here), E A ! are coming soon, Space goes to the
+    // Keys: S U # B F L E A ! open the sysop shell at that section (Esc comes back here), Space goes to the
     // main menu as this sysop, Q leaves (State::Done). V, only while that blink is up, shows the release notes.
     void setWfcSnapshot(std::function<WfcSnapshot()> snap) { wfcSnap_ = std::move(snap); }
     // The cleaned WFC.ANS, read once by the owner and shared (null: the built-in art). When set, wfcDraw uses it instead of setArt.

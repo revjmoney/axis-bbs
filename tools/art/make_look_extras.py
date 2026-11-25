@@ -5,9 +5,9 @@
     python3 tools/art/make_look_extras.py
 
 Writes the house look into art/menus and the axis/ folder of each look zip in art/packs.
-Palettes and motifs match tools/art/make_wfc_packs.py. Lite screens stay under 2 KB: one
-colour per run, a short rule, no shade blocks. Menu screens leave rows 9 to 21, columns 4
-to 44 blank, with %BN and %NN on row 6.
+Palettes and motifs match tools/art/make_wfc_packs.py. Lite screens stay under 700 bytes:
+one colour per run, a short rule, no shade blocks. The footer is the look's bright colour.
+Menu screens leave rows 9 to 21, columns 4 to 44 blank, with %BN and %NN on row 6.
 """
 import os
 import sys
@@ -235,7 +235,8 @@ def chrome(g, look, title, motif_row):
     g.text(5, 46, '%BN  node %NN', st['body'])
     rule(g, 6, st)
     motif(g, motif_row, 62, look)
-    g.text(23, 1, 'AXIS MICRO BBS', st['dim'])
+    # dim (DOS 8) is bright black on black. The footer uses the look's bright colour.
+    g.text(23, 1, 'AXIS MICRO BBS', st['hot'])
     g.text(23, 20, st['mark'], st['hot'])
     return st
 
@@ -258,6 +259,144 @@ def draw_lite(look, title, kind):
     return emit(g)
 
 
+def ink(g, r, c, ch, fg):
+    """Paint one cell only when it is still empty, so the word-art and the logoff lines stay put."""
+    if ch not in (' ', '\0') and 0 <= r < 24 and 0 <= c < 79 and g.cells[r][c] is None:
+        g.put(r, c, ch, fg)
+
+
+def stamp(g, r, c, lines):
+    """lines: (text, fg). A fg that is a list is one colour per column. Spaces stay empty."""
+    for y, item in enumerate(lines):
+        text, fg = item
+        for x, ch in enumerate(text):
+            colour = fg[x] if isinstance(fg, (list, tuple)) else fg
+            ink(g, r + y, c + x, ch, colour)
+
+
+def stripe(pattern, width, colours):
+    """colours: one DOS colour per character of pattern, repeated across width."""
+    text = tile(pattern, width)
+    fg = (colours * ((width // len(colours)) + 1))[:width]
+    return text, fg
+
+
+def tile(pattern, width):
+    return (pattern * ((width // len(pattern)) + 1))[:width]
+
+
+def dress_goodbye(g, look):
+    """Fill the open black around the logoff lines. Row 24 (index 23) is the footer, left alone.
+    No shade blocks: check_looks rejects them. Colours are the look's bright ones, not DOS 8.
+    """
+    st = LOOKS[look]
+    hot, frame, body, accent = st['hot'], st['frame'], st['body'], st['accent']
+    # A short taper in the open corner beside the GOODBYE letters. Bright in every look.
+    for i, n in enumerate((22, 14, 6)):
+        stamp(g, 1 + i, 76 - n, [(tile('─', n), hot)])
+    # The icon sits at column 58 on rows 9-12. A lip under it keeps it from floating.
+    stamp(g, 13, 58, [('▀' * 16, hot)])
+    # About 48 columns, ending before the icon at column 58.
+    left = {
+        'axis': [
+            (tile(' ▄▄▄  ', 48), hot),
+            (tile('█████ ', 48), frame),
+            (tile(' ███▌ ', 48), hot),
+            (tile('█████ ', 48), frame),
+            (tile(' ▀▀▀  ', 48), hot),
+        ],
+        'crt': [
+            ('╔' + '═' * 46 + '╗', hot),
+            ('║ ' + '▀' * 44 + ' ║', hot),
+            ('║ ' + '▄' * 44 + ' ║', body),
+            ('║ ' + '▀' * 44 + ' ║', hot),
+            ('╚' + '═' * 46 + '╝', hot),
+        ],
+        'haunted': [
+            (tile('┌─┐ ', 48), hot),
+            (tile('│+│ ', 48), hot),
+            (tile('└┬┘ ', 48), hot),
+            (tile('─┴──', 48), frame if frame >= 6 else hot),
+        ],
+        'sea': [
+            (tile('  ·     ', 48), hot),
+            (tile(' o    ', 48), body),
+            (tile('≈', 48), hot),
+            (tile('~≈', 48), accent),
+        ],
+        'cathedral': [
+            (tile('  /\\  ', 48), hot),
+            (tile(' /  \\ ', 48), hot),
+            (tile(' │  │ ', 48), hot),
+            (tile('═╩══╩═', 48), hot),
+        ],
+        'skulls': [
+            (tile('▄█▄   ', 48), hot),
+            (tile('█ █   ', 48), body),
+            (tile('▀▀▀   ', 48), hot),
+        ],
+        'underground': [
+            (tile(' ╔═╗  ', 48), hot),
+            (tile('═╣█╠══', 48), accent),
+            (tile(' ╚═╝  ', 48), hot),
+        ],
+        'wasteland': [
+            (tile(' █ ▄▄', 48), hot),
+            (tile('██ ██', 48), frame),
+            (tile('▄██▄█', 48), hot),
+            (tile('▀▀▀▀▀', 48), frame),
+        ],
+    }
+    # The farewell lines own rows 15, 16 and 18. The picture stays above them.
+    top = 9 if look != 'underground' else 10
+    stamp(g, top, 4, left[look])
+    width = 72
+    lower = {
+        'axis': [
+            (tile(' │ ', width), hot),
+            ('▄' * width, frame),
+            ('▀' * width, hot),
+        ],
+        'crt': [
+            ('─' * width, hot),
+            (tile(' · ', width), body),
+            ('─' * width, hot),
+        ],
+        'haunted': [
+            (tile('  ~ ', width), hot),
+            (tile(' ▄  ', width), hot),
+            ('▀' * width, hot),
+        ],
+        'sea': [
+            (tile('≈~', width), hot),
+            (tile('~≈', width), accent),
+            (tile('≈~', width), hot),
+        ],
+        'cathedral': [
+            (tile(' /\\ ', width), hot),
+            (tile(' ││ ', width), hot),
+            (tile('═╩', width), hot),
+        ],
+        'skulls': [
+            (tile('▄█▄   ', width), hot),
+            (tile('█ █   ', width), body),
+            (tile('▀▀▀   ', width), hot),
+        ],
+        'underground': [
+            (tile('▄▀', width), hot),
+            (tile('═╬', width), frame),
+            (tile('▀▄', width), hot),
+        ],
+        'wasteland': [
+            stripe('▀▄', width, (hot, frame)),
+            stripe('▄▀', width, (frame, hot)),
+            stripe('▀▄', width, (hot, frame)),
+        ],
+    }
+    # Rows 20-22: the band under "Call back soon." (row 18). Row 23 is the footer.
+    stamp(g, 20, 3, lower[look])
+
+
 def draw_goodbye(look):
     g = Grid()
     st = LOOKS[look]
@@ -269,7 +408,8 @@ def draw_goodbye(look):
     g.text(15, 3, 'Thanks for calling.', st['body'])
     g.text(16, 3, st['farewell'], st['hot'])
     g.text(18, 3, 'Call back soon.', st['accent'])
-    g.text(23, 1, 'AXIS MICRO BBS', st['dim'])
+    dress_goodbye(g, look)
+    g.text(23, 1, 'AXIS MICRO BBS', st['hot'])
     g.text(23, 20, st['mark'], st['hot'])
     return emit(g)
 
@@ -476,13 +616,20 @@ def main():
         files, menu_files = bundle(look, look == 'axis')
         for name, data in files.items():
             check_pair(look, name, data)
+        lites = {k: v for k, v in files.items() if k.endswith('.LITE.ANS')}
+        if menu_files:
+            lites.update({k: v for k, v in menu_files.items() if k.endswith('.LITE.ANS')})
+        for name, data in lites.items():
+            if len(data) > 700:
+                raise SystemExit('%s %s is %d bytes, over 700' % (look, name, len(data)))
         if look == 'axis':
             for name, data in menu_files.items():
                 check_pair('menus', name, data)
                 with open(os.path.join(menus, name), 'wb') as fh:
                     fh.write(data)
-            print('axis menus', len(menu_files), 'files, largest lite',
-                  max(len(v) for k, v in menu_files.items() if k.endswith('.LITE.ANS')))
+            print('axis menus', len(menu_files), 'files, goodbye %d B, largest lite %d' % (
+                len(files['GOODBYE.ANS']),
+                max(len(v) for k, v in menu_files.items() if k.endswith('.LITE.ANS'))))
         else:
             fn = dict((a, b) for a, b, _s in check_looks.PACKS)[look]
             write_zip(os.path.join(ROOT, 'art', 'packs', fn), files)

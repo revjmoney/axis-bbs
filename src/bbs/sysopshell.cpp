@@ -10,6 +10,7 @@
 
 #include "bbs/config.h"
 #include "bbs/features.h"  // AXIS_BENCH (boardOnlyCommand)
+#include "bbs/filelib.h"
 #include "bbs/lightbar.h"
 #include "bbs/listscreen.h"
 #include "bbs/listtemplate.h"
@@ -66,7 +67,7 @@ bool inGroups(const std::string& k) {
     if (k == "modem_link" || k == "lite_below_bps") return true;  // kept as saved, shown nowhere: the modem link is not built in
 #endif
     return k.rfind("area", 0) == 0 || k.rfind("msgarea", 0) == 0 || k.rfind("door", 0) == 0 || k.rfind("menu.", 0) == 0 ||
-           k == "messages_on" || k == "files_on" || k == "doors_on" || k == "setup_done" || k[0] == '#';
+           k.rfind("archive_", 0) == 0 || k == "messages_on" || k == "files_on" || k == "doors_on" || k == "setup_done" || k[0] == '#';
 }
 bool pcUpdateRow = false;
 }  // namespace
@@ -257,6 +258,15 @@ void SysopShell::enter(SysopSection s) {
         case SysopSection::Menus: push("MENUS", [this](Layer& x) { menus(x); }); break;
         case SysopSection::System: push("SYSTEM", [this](Layer& x) { system(x); }); break;
         case SysopSection::Look: push("LOOK", [this](Layer& x) { look(x); }); break;
+        case SysopSection::Events: push("EVENTS", [this](Layer& x) { events(x); }); break;
+        case SysopSection::Archive: push("ARCHIVE", [this](Layer& x) { archive(x); }); break;
+        case SysopSection::Validate:
+#if AXIS_FILES
+            push("VALIDATE", [this](Layer& x) { validate(x); });
+#else
+            pushText("VALIDATE", "The file areas are not in this firmware.");
+#endif
+            break;
         case SysopSection::Top: begin(); break;
     }
 }
@@ -413,7 +423,7 @@ bool SysopShell::key(char c) {
             std::string a = line_;
             size_t      depth = layers_.size();
             if (!a.empty()) answer_(a);
-            if (!layers_.empty() && layers_.size() == depth) refresh();  // (an answer that opened a layer has drawn it)
+            if (!layers_.empty() && layers_.size() == depth && !asking_) refresh();  // (an answer that opened a layer, or a confirm, has drawn it)
         } else if (c == 0x1b) {
             asking_ = false;
             refresh();
@@ -917,6 +927,112 @@ void SysopShell::system(Layer& l) {
     l.items.push_back(userPage);
 #endif
     l.items.push_back(doorMem);
+}
+
+// ---- events (WFC E): the jobs this board already has. There is no separate clock here. The message net
+// already dials on its own (net_sync_min). Picking a row runs that job now. Anything that deletes or restarts asks first.
+void SysopShell::events(Layer& l) {
+    auto show = [this](const char* title, const char* cmd) { return [this, title, cmd] { pushText(title, run_(cmd)); }; };
+    l.items.push_back({"Event log", "", show("EVENT LOG", "@LOG")});
+#if AXIS_NETS
+    l.items.push_back({"Poll message net", "asks first", [this] {
+                           confirm("Poll the message net now?", [this] { did(run_("@NET SYNC")); });
+                       }});
+#endif
+    l.items.push_back({"Purge old posts", "asks first", [this] {
+                           ask("area|days (posts older than that go)", false, [this](const std::string& a) {
+                               confirm("Purge those posts? This cannot be undone.", [this, a] { did(run_("@PURGE " + a)); });
+                           });
+                       }});
+    l.items.push_back({"Clear event log", "asks first", [this] {
+                           confirm("Clear the event log? This cannot be undone.", [this] { did(run_("@LOGCLEAR")); });
+                       }});
+    l.items.push_back({"Mirror status", "the copy job", [this] {
+                           std::string t = run_("@MIRROR");
+                           if (t.find("mirror") == std::string::npos)
+                               t = "The mirror copies files on its own when this build has the SD pool. Nothing to start from here.\n" + t;
+                           pushText("MIRROR", t);
+                       }});
+    if (local_)
+        l.items.push_back({"Restart this board", "asks first", [this] {
+                               confirm("Restart the board now?", [this] { did(run_("@RESTART")); });
+                           }});
+}
+
+// ---- archive editor (WFC A): one row per type this board knows. ZIP can be checked (CRC, then rezip).
+// The others are kept as uploaded or rejected: this board lists them and does not unpack them. AXISBBS.NFO is
+// added only when a ZIP is checked.
+void SysopShell::archive(Layer& l) {
+    struct Row {
+        const char* key;
+        const char* label;
+        bool        canCheck;
+        const char* fallback;
+    };
+    static const Row rows[] = {{"archive_zip", "ZIP", true, "check"},   {"archive_rar", "RAR", false, "keep"},
+                               {"archive_arj", "ARJ", false, "keep"},   {"archive_tar", "TAR", false, "keep"},
+                               {"archive_gz", "GZIP", false, "keep"},   {"archive_other", "Other files", false, "keep"}};
+    for (const Row& r : rows) {
+        std::string cur = setting(r.key);
+        if (cur != "check" && cur != "keep" && cur != "reject") cur = r.fallback;
+        if (!r.canCheck && cur == "check") cur = "keep";
+        std::string next = cur == "reject" ? (r.canCheck ? "check" : "keep") : cur == "check" ? "keep" : "reject";
+        std::string shown = cur == "check" ? "checked" : cur == "reject" ? "rejected" : "unchecked";
+        std::string key = r.key;
+        l.items.push_back({r.label, shown, [this, key, next] { did(run_("@SET " + key + "=" + next)); }});
+    }
+    bool nfo = setting("archive_nfo") != "0";
+    l.items.push_back({"AXISBBS.NFO", nfo ? "on" : "off", [this, nfo] {
+                           did(run_(std::string("@SET archive_nfo=") + (nfo ? "0" : "1")));
+                       }});
+}
+
+// ---- validate uploads (WFC !): files whose FILES.BBS description still starts with '~'. Validate lists the
+// file for callers, Delete removes it, Move sends it to another area (still held), Info lists an archive.
+void SysopShell::validate(Layer& l) {
+    struct Held {
+        std::string area, name, pub;
+    };
+    std::vector<Held> held;
+    for (auto& line : lines("@AREAS")) {
+        auto f = split(line, '|');
+        if (f.size() < 2 || f[1].empty()) continue;
+        std::string area = f[1];
+        if (held.size() >= 40) break;
+        walk("@FILES " + area + "|", [&](const std::string& row) {
+            auto p = split(row, '|');
+            if (p.size() < 3 || !fileAwaitingValidation(p[2])) return false;
+            std::string pub = filePublicDesc(p[2]);
+            if (pub.empty()) pub = "(no description)";
+            held.push_back({area, p[0], pub});
+            return held.size() >= 40;
+        });
+    }
+    for (const Held& h : held) {
+        l.items.push_back(page(h.name, h.area + "  " + h.pub, "UPLOAD", [this, h](Layer& x) {
+            x.items.push_back({"Validate", "list it for callers", [this, h] {
+                                   confirm("List " + h.name + " for callers?", [this, h] {
+                                       did(run_("@FDESC " + h.area + "|" + h.name + "|" + h.pub));
+                                       pop();
+                                   });
+                               }});
+            x.items.push_back({"Delete", "asks first", [this, h] {
+                                   confirm("Delete " + h.name + " from the card?", [this, h] {
+                                       did(run_("@FDEL " + h.area + "|" + h.name));
+                                       pop();
+                                   });
+                               }});
+            x.items.push_back({"Move", "still waiting", [this, h] {
+                                   ask("Area id to move it to", false, [this, h](const std::string& v) {
+                                       did(run_("@FMV " + h.area + "|" + h.name + "|" + v));
+                                       pop();
+                                   });
+                               }});
+            x.items.push_back({"Info", "what is inside", [this, h] { pushText("INFO", run_("@FINFO " + h.area + "|" + h.name)); }});
+        }));
+    }
+    if (held.size() >= 40) l.items.push_back({"(first 40 shown)", "", nullptr});
+    if (l.items.empty()) l.items.push_back({"(no uploads waiting)", "", nullptr});
 }
 
 // ---- station: sensors (read only), the relays (pick to flip), a beep

@@ -180,6 +180,19 @@ def lint_screen(name, data, kind):
         row = t.text().split('\n')[21]
         if 'arrows move' not in row:
             probs.append('the lightbar hint is not on row 22')
+    # DOS 8 is bright black. On a black cell the footer disappears. A bright colour (not 8) reads.
+    for r, row in enumerate(t.cells):
+        chars = ''.join(c[0] for c in row)
+        at = chars.find('AXIS MICRO BBS')
+        if at < 0:
+            continue
+        for c in range(at, at + len('AXIS MICRO BBS')):
+            ch, fg, bg = row[c]
+            if ch == ' ':
+                continue
+            if fg < 9 or bg:
+                probs.append('footer hard to read at %d,%d (colour %d on %d)' % (c + 1, r + 1, fg, bg))
+                return probs
     if kind == 'login':
         rows = t.text().split('\n')
         for mark in ('|{P}', '|{O}'):

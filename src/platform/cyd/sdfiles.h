@@ -22,6 +22,7 @@ public:
     bool describe(const std::string& areaId, const std::string& name, const std::string& desc) override;
     bool remove(const std::string& areaId, const std::string& name) override;
     bool rename(const std::string& areaId, const std::string& from, const std::string& to) override;
+    bool moveTo(const std::string& fromArea, const std::string& name, const std::string& toArea) override;
 
 private:
     std::string folderOf(const std::string& areaId) const { return folder_ + "/" + areaId; }

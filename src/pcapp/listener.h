@@ -14,7 +14,7 @@ namespace axis::pcapp {
 class Listener {
 public:
     struct Caller {
-        int      fd;
+        intptr_t fd;  // a socket (Winsock's SOCKET does not fit in an int)
         uint32_t ip;  // network order
     };
 
@@ -36,10 +36,10 @@ public:
     NetGate& gate() { return gate_; }
 
 private:
-    void drain(int fd, uint16_t port, uint32_t nowMs, std::vector<Caller>& out);
+    void drain(intptr_t fd, uint16_t port, uint32_t nowMs, std::vector<Caller>& out);
 
     NetGate  gate_;
-    int      fd_[2] = {-1, -1};
+    intptr_t fd_[2] = {-1, -1};
     uint16_t port_[2] = {0, 0};
     uint16_t lanPort_ = 2323;
     uint32_t lastFdLog_ = 0;

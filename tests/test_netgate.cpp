@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Rev. J. Money
-// The native Linux program's accept gate (src/platform/linux/netgate.h): its limits and its ban, on a fake clock.
-// Linux only (CMakeLists.pc.txt links netgate.cpp into axis_tests there).
+// The accept gate (src/platform/linux/netgate.h): its limits and its ban, on a fake clock.
 #include "platform/linux/netgate.h"
 
-#include <arpa/inet.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 
 #include "doctest.h"
 
 namespace {
-uint32_t ip(const char* s) { return inet_addr(s); }  // network byte order, as the gate takes it
+// Network order, the same bytes inet_addr stores, so this test does not need a socket library.
+uint32_t ip(const char* s) {
+    unsigned b[4] = {};
+    if (std::sscanf(s, "%u.%u.%u.%u", &b[0], &b[1], &b[2], &b[3]) != 4) return 0;
+    uint8_t  bytes[4] = {(uint8_t)b[0], (uint8_t)b[1], (uint8_t)b[2], (uint8_t)b[3]};
+    uint32_t n = 0;
+    std::memcpy(&n, bytes, 4);
+    return n;
+}
 }  // namespace
 
 TEST_CASE("netgate: LAN addresses are told apart") {

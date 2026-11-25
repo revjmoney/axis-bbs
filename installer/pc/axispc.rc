@@ -1,0 +1,3 @@
+// The portable exe asks for a normal user (not an administrator) and for UTF-8 paths, so the
+// shared fopen calls take the same UTF-8 strings the rest of axispc builds.
+1 24 "axispc.manifest"

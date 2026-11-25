@@ -34,7 +34,7 @@ void hostConfLoad(const std::string& dataDir) {
     conf.clear();
     confPath = dataDir.empty() ? std::string() : dataDir + "/axis.conf";
     std::string path = confPath;
-    FILE*       f = std::fopen(path.c_str(), "r");
+    FILE*       f = std::fopen(path.c_str(), "rb");  // binary: a Windows text read would turn \n into the file's \r\n and back
     if (!f) {
         if (errno == ENOENT) std::printf("axis: conf: no %s, using the defaults\n", path.c_str());
         else std::printf("axis: conf: cannot read %s (%s), using the defaults\n", path.c_str(), std::strerror(errno));
@@ -134,7 +134,7 @@ bool hostConfSet(const char* key, const std::string& value) {
     std::string next;
     std::string cur;
     if (confPath.empty()) return false;
-    FILE* f = std::fopen(confPath.c_str(), "r");
+    FILE* f = std::fopen(confPath.c_str(), "rb");
     if (f) {
         char buf[1024];
         while (std::fgets(buf, sizeof buf, f)) cur += buf;
@@ -142,7 +142,7 @@ bool hostConfSet(const char* key, const std::string& value) {
     }
     if (!hostConfRewrite(cur, key, value, next)) return false;
     std::string tmp = confPath + ".tmp";
-    FILE*       w = std::fopen(tmp.c_str(), "w");
+    FILE*       w = std::fopen(tmp.c_str(), "wb");
     if (!w) return false;
     size_t n = std::fwrite(next.data(), 1, next.size(), w);
     if (n != next.size() || std::fflush(w) != 0) {
@@ -155,8 +155,16 @@ bool hostConfSet(const char* key, const std::string& value) {
         return false;
     }
     if (std::rename(tmp.c_str(), confPath.c_str()) != 0) {
+#ifdef _WIN32
+        // Windows will not rename onto a file that is already there. Linux rename replaces it, so this is not that path.
+        if (std::remove(confPath.c_str()) != 0 || std::rename(tmp.c_str(), confPath.c_str()) != 0) {
+            std::remove(tmp.c_str());
+            return false;
+        }
+#else
         std::remove(tmp.c_str());
         return false;
+#endif
     }
     conf[key] = value;
     return true;

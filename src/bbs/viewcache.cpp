@@ -91,7 +91,7 @@ bool Filler::nextPack() {
         if (!listed_) {
             packs_.clear();
             for (auto& f : lib_.list(areas_[area_]))
-                if (isZip(f.name)) packs_.push_back(f.name);
+                if (isZip(f.name) && !fileAwaitingValidation(f.desc)) packs_.push_back(f.name);
             pack_ = 0;
             listed_ = true;
             return true;  // listing an area is a step of its own

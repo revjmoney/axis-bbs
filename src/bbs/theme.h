@@ -23,8 +23,8 @@ constexpr const char* RESET = "\x1b[0m";
 constexpr const char* CLS = "\x1b[0m\x1b[2J\x1b[H";
 // The board's look (setting "theme"). One id for caller screens and the waiting screen.
 // Built in: "axis", "cyan", "green". Screensets from the card: crt, sea, haunted, cathedral,
-// skulls, underground, wasteland. Older files say "oblivion" and "iniquity"; those load as
-// cyan and green. The names on screen are ours.
+// skulls, underground, wasteland, vision (ViSiON/3 dialect), outpost (Renegade dialect).
+// Older files say "oblivion" and "iniquity"; those load as cyan and green. The names on screen are ours.
 enum class Look { Axis, Oblivion, Iniquity };
 void        use(Look look);
 Look        look();

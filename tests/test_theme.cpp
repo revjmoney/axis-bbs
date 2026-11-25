@@ -136,8 +136,8 @@ TEST_CASE("a theme name from the settings picks the look; anything unknown is th
     CHECK(theme::legacyThemeFolder("axis") == nullptr);
 }
 
-TEST_CASE("the look list is the three built-in looks plus the seven screensets") {
-    CHECK(theme::lookCount() == 10);
+TEST_CASE("the look list is the three built-in looks plus the screensets") {
+    CHECK(theme::lookCount() == 12);
     CHECK(std::string(theme::lookId(0)) == "axis");
     CHECK(std::string(theme::lookId(1)) == "cyan");
     CHECK(std::string(theme::lookId(2)) == "green");
@@ -148,7 +148,9 @@ TEST_CASE("the look list is the three built-in looks plus the seven screensets")
     CHECK(std::string(theme::lookId(7)) == "skulls");
     CHECK(std::string(theme::lookId(8)) == "underground");
     CHECK(std::string(theme::lookId(9)) == "wasteland");
-    CHECK(theme::lookId(10) == nullptr);
+    CHECK(std::string(theme::lookId(10)) == "vision");
+    CHECK(std::string(theme::lookId(11)) == "outpost");
+    CHECK(theme::lookId(12) == nullptr);
     CHECK(std::string(theme::knownLook("skulls")) == "skulls");
     CHECK(std::string(theme::knownLook("CRT")) == "crt");
     CHECK(theme::knownLook("nope") == nullptr);
@@ -157,7 +159,9 @@ TEST_CASE("the look list is the three built-in looks plus the seven screensets")
     CHECK(theme::lookFrom("cathedral") == theme::Look::Axis);
     CHECK(std::string(theme::nextLook("axis")) == "cyan");
     CHECK(std::string(theme::nextLook("green")) == "crt");
-    CHECK(std::string(theme::nextLook("wasteland")) == "axis");
+    CHECK(std::string(theme::nextLook("wasteland")) == "vision");
+    CHECK(std::string(theme::nextLook("vision")) == "outpost");
+    CHECK(std::string(theme::nextLook("outpost")) == "axis");
     CHECK(std::string(theme::nextLook("nope")) == "axis");
     CHECK(theme::legacyThemeFolder("crt") == nullptr);
     CHECK(theme::legacyThemeFolder("underground") == nullptr);
@@ -170,7 +174,13 @@ TEST_CASE("the look list is the three built-in looks plus the seven screensets")
     CHECK(theme::wfcColoursFor("skulls").accent == 4);
     CHECK(theme::wfcColoursFor("wasteland").accent == 6);
     CHECK(theme::wfcColoursFor("underground").accent == theme::wfcColours(theme::Look::Axis).accent);
+    CHECK(theme::wfcColoursFor("vision").accent == 1);
+    CHECK(theme::wfcColoursFor("outpost").accent == 4);
     CHECK(std::string(theme::lookBlurb("sea")) == "deep sea");
+    CHECK(std::string(theme::lookBlurb("vision")) == "vision/3 bars");
+    CHECK(std::string(theme::lookBlurb("outpost")) == "renegade rampart");
+    CHECK(std::string(theme::knownLook("VISION")) == "vision");
+    CHECK(theme::lookFrom("outpost") == theme::Look::Axis);
 }
 
 TEST_CASE("the green look fades in greens and is named in the settings") {
