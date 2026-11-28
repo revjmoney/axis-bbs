@@ -197,6 +197,7 @@ add_executable(axis_tests
     tests/test_script.cpp
     tests/test_ledsignal.cpp
     tests/test_msgbase.cpp
+    tests/test_bridgebundle.cpp
     tests/test_setupportal.cpp
     tests/test_splash.cpp
     tests/test_transfer.cpp
@@ -229,7 +230,7 @@ add_executable(axis_tests
     tests/test_features.cpp
     tests/test_memory.cpp)
 target_include_directories(axis_tests PRIVATE third_party/doctest)
-target_link_libraries(axis_tests PRIVATE axiscore)
+target_link_libraries(axis_tests PRIVATE axiscore axisbridge)
 if(UNIX AND NOT APPLE)  # the native Linux program's accept gate and card mirror bookkeeping: plain C++ and POSIX, so the tests can link them
   target_sources(axis_tests PRIVATE tests/test_netgate.cpp src/platform/linux/netgate.cpp
                                     src/platform/cyd/sdfiles.cpp
@@ -272,6 +273,13 @@ if(WIN32)
 endif()
 
 target_compile_definitions(axis_tests PRIVATE AXIS_TEST_DATA="${CMAKE_SOURCE_DIR}/tests/data" AXIS_ART_PACKS="${CMAKE_SOURCE_DIR}/art/packs")
+
+# axis_bridge: message areas to and from NecroTechs RadNet bundles (PC only, never in the board image)
+add_library(axisbridge STATIC tools/bridge/bridgebundle.cpp)
+target_link_libraries(axisbridge PUBLIC axiscore)
+target_include_directories(axisbridge PUBLIC tools/bridge)
+add_executable(axis_bridge tools/bridge/main.cpp)
+target_link_libraries(axis_bridge PRIVATE axisbridge)
 
 add_executable(xfertest tools/xfertest/main.cpp)
 target_link_libraries(xfertest PRIVATE axiscore)
